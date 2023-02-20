@@ -1,0 +1,16 @@
+# Package
+-r ./requirements.txt
+
+# Documentation
+-r ./docs/requirements.txt
+
+# Testing
+-r ./tests/requirements.txt
+
+# Code-style
+flake8
+
+# Building
+setuptools
+wheel
+build
