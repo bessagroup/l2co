@@ -54,7 +54,7 @@ fi
 
 #Executing my python program
 
-python main.py hydra.run.dir=outputs/${now:%Y-%m-%d}/${JOB_ID} --jobid ${PBS_ARRAYID}
+python main.py +hpc.jobid=${PBS_ARRAYID} hydra.run.dir=outputs/${now:%Y-%m-%d}/${JOB_ID}
 
 # job done, copy everything back
 # echo "Copying from ${TMP}/ to ${PBS_O_WORKDIR}/"

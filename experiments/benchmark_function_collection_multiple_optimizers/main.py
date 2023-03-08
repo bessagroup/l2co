@@ -20,7 +20,7 @@ def convert_config_to_input(config: Config) -> List[dict]:
     seed = np.random.randint(low=0, high=1e5)
 
     # Sample a dimension
-    dimensionality = np.random.choice(config.design.dimensionality_list)
+    dimensionality = int(np.random.choice(config.design.dimensionality_list))
     # dimensionality = np.random.randint(
     #     low=config.design.dimensionality_lower_bound, high=config.design.dimensionality_upper_bound + 1
     # )
@@ -63,23 +63,18 @@ def convert_config_to_input(config: Config) -> List[dict]:
     ]
 
 def filehandler():
-    pass
+    print('Hello world!')
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-id", "--jobid", dest="jobid")
-    args = parser.parse_args()
-
-    if args.jobid == 0:
+@hydra.main(config_path=".", config_name="config")
+def main(cfg: Config):
+    if cfg.hpc.jobid == 0:
         filehandler()
 
     else:
-        job()
+        job(cfg)
 
-@hydra.main(config_path=".", config_name="config")
+
 def job(cfg: Config):
-
-
     # If not the first arrayjob:
 
     for _ in range(cfg.execution.number_of_functions):

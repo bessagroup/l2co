@@ -34,6 +34,9 @@ class ExecutionConfig:
     realizations: int
     parallelization: bool
 
+@dataclass
+class HPCConfig:
+    jobid: int
 
 @dataclass
 class Config:
@@ -42,3 +45,4 @@ class Config:
     optimizers: OptimizersConfig
     sampler: SamplerConfig
     execution: ExecutionConfig
+    hpc: HPCConfig
