@@ -1,4 +1,6 @@
+import json
 import logging
+from pathlib import Path
 from typing import List
 
 import f3dasm
@@ -7,7 +9,9 @@ import numpy as np
 from config import Config
 from hydra.core.config_store import ConfigStore
 
-from l2co.create_recommender_dataset import create_recommender_data_csv
+from l2co.create_recommender_dataset import (
+    create_recommender_data_features_csv,
+    create_recommender_data_interactions_csv)
 
 
 def convert_config_to_input(config: Config) -> List[dict]:
@@ -63,19 +67,32 @@ def main(cfg: Config):
     for _ in range(cfg.execution.number_of_functions):
         options_list = convert_config_to_input(config=cfg)
 
-        results = []
+        results: List[f3dasm.OptimizationResult] = []
 
         for options in options_list:
             results.append(f3dasm.run_multiple_realizations(**options))
 
         filename: str = f"{options_list[0]['function'].get_name()}_seed{options_list[0]['seed']}_dim{options_list[0]['function'].dimensionality}"
-        # f3dasm.write_pickle(filename, results)
 
-        df = f3dasm.margin_of_victory(results)
-        rating = create_recommender_data_csv(df)
-        rating.to_csv(f"{filename}.csv", index=False)
+        # Create dirs
+        Path("./raw").mkdir(parents=True, exist_ok=True)
+        Path("./interactions").mkdir(parents=True, exist_ok=True)
+        Path("./features").mkdir(parents=True, exist_ok=True)
 
-        # f3dasm.write_pickle('mov_'+filename, df)
+        # Save raw data
+        json_data = json.dumps([result.to_json() for result in results])
+        f3dasm.write_json(name="./raw/"+filename, json_string=json_data)
+
+        # Create features matrix
+        features = create_recommender_data_features_csv(results)
+        features.to_csv(f"./features/{filename}.csv", index=False)
+        
+        # Create interactions matrix
+        rating = create_recommender_data_interactions_csv(results)
+        rating.to_csv(f"./interactions/{filename}.csv", index=False)
+
+
+
 
 
 cs = ConfigStore.instance()
