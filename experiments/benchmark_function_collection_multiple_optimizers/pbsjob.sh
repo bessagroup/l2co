@@ -46,9 +46,15 @@ source activate f3dasm_env
 OMP_NUM_THREADS=12
 export OMP_NUM_THREADS=12
 
+
+# Check if PBS_ARRAYID exists, else set to 1
+if ! [ -n "${PBS_ARRAYID+1}" ]; then
+  PBS_ARRAYID=1
+fi
+
 #Executing my python program
 
-python main.py hydra.run.dir=outputs/${now:%Y-%m-%d}/${JOB_ID}
+python main.py hydra.run.dir=outputs/${now:%Y-%m-%d}/${JOB_ID} --jobid ${PBS_ARRAYID}
 
 # job done, copy everything back
 # echo "Copying from ${TMP}/ to ${PBS_O_WORKDIR}/"
