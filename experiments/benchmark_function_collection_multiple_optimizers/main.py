@@ -1,4 +1,5 @@
 import logging
+import json
 from typing import List
 
 import f3dasm
@@ -63,20 +64,21 @@ def main(cfg: Config):
     for _ in range(cfg.execution.number_of_functions):
         options_list = convert_config_to_input(config=cfg)
 
-        results = []
+        results: List[f3dasm.OptimizationResult] = []
 
         for options in options_list:
             results.append(f3dasm.run_multiple_realizations(**options))
 
-        filename: str = f"{options_list[0]['function'].get_name()}_seed{options_list[0]['seed']}_dim{options_list[0]['function'].dimensionality}"
-        # f3dasm.write_pickle(filename, results)
+        # Store the results in JSON files
+        json_results: str = json.dumps([res.to_json() for res in results])
 
-        df = f3dasm.margin_of_victory(results)
-        rating = create_recommender_data_csv(df)
-        rating.to_csv(f"{filename}.csv", index=False)
+        filename: str = (f"{options_list[0]['function'].get_name()}_seed{options_list[0]['seed']}"
+            f"_dim{options_list[0]['function'].dimensionality}")
+        f3dasm.write_json(name=filename, json_string=json_results)
+
+        # df = f3dasm.margin_of_victory(results)
 
         # f3dasm.write_pickle('mov_'+filename, df)
-
 
 cs = ConfigStore.instance()
 cs.store(name="f3dasm_config", node=Config)
