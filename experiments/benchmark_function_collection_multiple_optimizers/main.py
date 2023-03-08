@@ -110,6 +110,7 @@ def job(cfg: Config):
 
 
 
+        # f3dasm.write_pickle('mov_'+filename, df)
 
 
 cs = ConfigStore.instance()
