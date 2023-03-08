@@ -1,8 +1,9 @@
 design:
   lower_bound: -1.0
   upper_bound: 1.0
-  dimensionality_lower_bound: 2
-  dimensionality_upper_bound: 10
+  # dimensionality_lower_bound: 2
+  # dimensionality_upper_bound: 10
+  dimensionality_list: [2, 5, 20, 100]
 
 function:
   noise: 0.2

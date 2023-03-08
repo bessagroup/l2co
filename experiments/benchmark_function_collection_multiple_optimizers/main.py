@@ -8,7 +8,6 @@ import hydra
 import numpy as np
 from config import Config
 from hydra.core.config_store import ConfigStore
-
 from l2co.create_recommender_dataset import (
     create_recommender_data_features_csv,
     create_recommender_data_interactions_csv)
@@ -20,9 +19,11 @@ def convert_config_to_input(config: Config) -> List[dict]:
     seed = np.random.randint(low=0, high=1e5)
 
     # Sample a dimension
-    dimensionality = np.random.randint(
-        low=config.design.dimensionality_lower_bound, high=config.design.dimensionality_upper_bound + 1
-    )
+    dimensionality = np.random.choice(config.design.dimensionality_list)
+    # dimensionality = np.random.randint(
+    #     low=config.design.dimensionality_lower_bound, high=config.design.dimensionality_upper_bound + 1
+    # )
+
 
     functions_list = f3dasm.functions.get_functions(d=dimensionality)
 

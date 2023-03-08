@@ -6,8 +6,9 @@ from typing import Any, List
 class DesignConfig:
     lower_bound: float
     upper_bound: float
-    dimensionality_lower_bound: int
-    dimensionality_upper_bound: int
+    # dimensionality_lower_bound: int
+    # dimensionality_upper_bound: int
+    dimensionality_list: List[int]
 
 
 @dataclass
