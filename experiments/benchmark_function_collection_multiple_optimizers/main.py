@@ -1,3 +1,4 @@
+import argparse
 import json
 import logging
 from pathlib import Path
@@ -60,9 +61,25 @@ def convert_config_to_input(config: Config) -> List[dict]:
         for optimizer in optimizers
     ]
 
+def filehandler():
+    pass
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-id", "--jobid", dest="jobid")
+    args = parser.parse_args()
+
+    if args.jobid == 0:
+        filehandler()
+
+    else:
+        job()
 
 @hydra.main(config_path=".", config_name="config")
-def main(cfg: Config):
+def job(cfg: Config):
+
+
+    # If not the first arrayjob:
 
     for _ in range(cfg.execution.number_of_functions):
         options_list = convert_config_to_input(config=cfg)
