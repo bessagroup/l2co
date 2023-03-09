@@ -1,7 +1,7 @@
-import argparse
 import json
 import logging
 from pathlib import Path
+from time import sleep
 from typing import List
 
 import f3dasm
@@ -9,9 +9,11 @@ import hydra
 import numpy as np
 from config import Config
 from hydra.core.config_store import ConfigStore
+
 from l2co.create_recommender_dataset import (
     create_recommender_data_features_csv,
     create_recommender_data_interactions_csv)
+from l2co.filehandlers import CombineFeaturesFileHandler
 
 
 def convert_config_to_input(config: Config) -> List[dict]:
@@ -63,7 +65,13 @@ def convert_config_to_input(config: Config) -> List[dict]:
     ]
 
 def filehandler():
-    print('Hello world!')
+    features_filehandler = CombineFeaturesFileHandler(dir_name='features', master_file='totalfeatures')
+    interactions_filehandler = CombineFeaturesFileHandler(dir_name='interactions', master_file='totalinteractions')
+
+    while True:
+        features_filehandler.run()
+        interactions_filehandler.run()
+        sleep(10)
 
 @hydra.main(config_path=".", config_name="config")
 def main(cfg: Config):
@@ -75,8 +83,6 @@ def main(cfg: Config):
 
 
 def job(cfg: Config):
-    # If not the first arrayjob:
-
     for _ in range(cfg.execution.number_of_functions):
         options_list = convert_config_to_input(config=cfg)
 

@@ -9,7 +9,7 @@ function:
   noise: 0.2
 
 optimizers:
-  optimizers_names: [Adam, PSO, CMAES, RandomSearch,]
+  optimizers_names: [Adam, PSO, CMAES, RandomSearch]
 
 # CG,
 # SimulatedAnnealing,
@@ -30,3 +30,6 @@ execution:
   iterations: 1000
   realizations: 10
   parallelization: True
+
+hpc:
+  jobid: 1

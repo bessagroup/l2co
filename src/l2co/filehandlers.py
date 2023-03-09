@@ -1,8 +1,24 @@
+#                                                                       Modules
+# =============================================================================
+
+# Standard
 import glob
 import os
 from typing import List, Union
 
+# Third-party
 import pandas as pd
+
+# Locals
+
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Stable'
+# =============================================================================
+#
+# =============================================================================
 
 
 class FileHandler:
