@@ -1,5 +1,6 @@
 import json
 import logging
+from os import path
 from pathlib import Path
 from shutil import copyfile
 from time import sleep
@@ -69,7 +70,7 @@ def convert_config_to_input(config: Config) -> List[dict]:
 def filehandler():
     Path("./recommender").mkdir(parents=True, exist_ok=True)
 
-    features_filehandler = CombineFeaturesFileHandler(dir_name='features', master_file='totalfeatures')
+    features_filehandler = CombineFeaturesFileHandler(dir_name='features', master_file='totalfeatures_functions')
     interactions_filehandler = CombineFeaturesFileHandler(
         dir_name='interactions', master_file='totalinteractions')
 
@@ -78,7 +79,7 @@ def filehandler():
         interactions_filehandler.run()
 
         if features_filehandler.does_master_file_exist():
-            copyfile('./features/totalfeatures.csv', './recommender/totalfeatures.csv')
+            copyfile('./features/totalfeatures.csv', './recommender/totalfeatures_functions.csv')
 
         if interactions_filehandler.does_master_file_exist():
             copyfile('./interactions/totalinteractions.csv', './recommender/totalinteractions.csv')
@@ -116,8 +117,14 @@ def job(cfg: Config):
         f3dasm.write_json(name="./raw/"+filename, json_string=json_data)
 
         # Create features functions matrix
-        features = create_recommender_data_features_functions_csv(results)
-        features.to_csv(f"./features/{filename}.csv", index=False)
+        features_functions = create_recommender_data_features_functions_csv(results)
+        features_functions.to_csv(f"./features/{filename}.csv", index=False)
+
+        # Create features optimizers matrix
+
+        if not path.exists("./recommender/totalfeature_optimizers.csv"):  # done only once
+            features_optimizer = create_recommender_data_features_optimizers_csv(results)
+            features_optimizer.to_csv("./recommender/totalfeature_optimizers.csv")
 
         # Create interactions matrix
         rating = create_recommender_data_interactions_csv(results)
