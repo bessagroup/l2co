@@ -1,4 +1,4 @@
 numpy >= 1.22
 scipy >= 1.9
-f3dasm >= 0.2.97
+f3dasm[all] == 0.2.98
 recommenders

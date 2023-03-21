@@ -105,7 +105,7 @@ def job(cfg: Config):
         # Create features matrix
         features = create_recommender_data_features_csv(results)
         features.to_csv(f"./features/{filename}.csv", index=False)
-        
+
         # Create interactions matrix
         rating = create_recommender_data_interactions_csv(results)
         rating.to_csv(f"./interactions/{filename}.csv", index=False)

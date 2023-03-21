@@ -134,3 +134,6 @@ dmypy.json
 # Output files
 outputs/
 *.csv
+*.json
+
+*.ipynb

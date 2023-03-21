@@ -1,16 +1,28 @@
+# Standard
 import datetime
 import glob
 import logging
-import random
 from typing import List
 
+# Third-party
 import numpy as np
 import pandas as pd
-from f3dasm.run_optimization import OptimizationResult, margin_of_victory
+from f3dasm.run_optimization import OptimizationResult, calculate_mean_std
 from recommenders.utils.constants import DEFAULT_HEADER
+from sklearn import preprocessing
 
 
-def create_recommender_data_features_csv(results: List[OptimizationResult]) -> pd.DataFrame:
+def create_recommender_data_features_optimizers_csv(results: List[OptimizationResult]) -> pd.DataFrame:
+    data = []
+
+    for index, result in enumerate(results):
+        f = ",".join(result.optimizer.get_info())
+        data.append([index+1, f])
+
+    df = pd.DataFrame(data, columns=['userID', 'information'])
+    return df
+
+def create_recommender_data_features_functions_csv(results: List[OptimizationResult]) -> pd.DataFrame:
     f = results[0].function
     hash: int = f.seed
 
@@ -88,3 +100,51 @@ def combine_all_ratings(query: str) -> pd.DataFrame:
             total = pd.concat([total, f], ignore_index=True)
 
     return total
+
+def margin_of_victory(results: List[OptimizationResult]) -> pd.DataFrame:
+    """Calculate the margin of victory of optimizationresults
+
+    Parameters
+    ----------
+    results
+        OptimizationResults object
+
+    Returns
+    -------
+        DataFrame containing the algorithms and the margin of victory
+    """
+
+    # Create df with all results
+    df = pd.concat([calculate_mean_std(results[i])[0] for i, _ in enumerate(results)], axis=1)
+
+    # Change columnnames
+    optimizer_names = [results[i].optimizer.get_name() for i, _ in enumerate(results)]
+    df.columns = optimizer_names
+
+    # Normalize
+    min_max_scaler = preprocessing.MinMaxScaler()
+
+    # Reshape to 1D array
+    df_numpy = df.values  # returns a numpy array
+    df_numpy_reshaped = df_numpy.reshape(-1, 1)
+
+    x_scaled = min_max_scaler.fit_transform(df_numpy_reshaped)
+
+    # Transform back
+    x_scaled = x_scaled.reshape(df_numpy.shape)
+    df = pd.DataFrame(x_scaled)
+    df.columns = optimizer_names
+
+    # Calculate margin of victory
+    mov = []
+    for name in optimizer_names:
+        df_dropped = df.drop(name, axis=1)
+        mov.append(df_dropped.min(axis=1) - df[name])
+
+    # Create df with all MoV
+    df_margin_of_victory = pd.concat(mov, axis=1)
+
+    # Change columnnames
+    df_margin_of_victory.columns = optimizer_names
+
+    return df_margin_of_victory

@@ -6,7 +6,7 @@ from abc import ABC
 from typing import List, Tuple
 
 # Locals
-from f3dasm.base.function import Function
+from f3dasm.functions import Function
 from f3dasm.design.experimentdata import ExperimentData
 from f3dasm.optimization.optimizer import Optimizer, OptimizerParameters
 
