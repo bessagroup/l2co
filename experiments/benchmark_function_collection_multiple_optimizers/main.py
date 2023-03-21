@@ -1,6 +1,7 @@
 import json
 import logging
 from pathlib import Path
+from shutil import copyfile
 from time import sleep
 from typing import List
 
@@ -11,7 +12,8 @@ from config import Config
 from hydra.core.config_store import ConfigStore
 
 from l2co.create_recommender_dataset import (
-    create_recommender_data_features_csv,
+    create_recommender_data_features_functions_csv,
+    create_recommender_data_features_optimizers_csv,
     create_recommender_data_interactions_csv)
 from l2co.filehandlers import CombineFeaturesFileHandler
 
@@ -26,7 +28,6 @@ def convert_config_to_input(config: Config) -> List[dict]:
     # dimensionality = np.random.randint(
     #     low=config.design.dimensionality_lower_bound, high=config.design.dimensionality_upper_bound + 1
     # )
-
 
     functions_list = f3dasm.functions.get_functions(d=dimensionality)
 
@@ -64,18 +65,30 @@ def convert_config_to_input(config: Config) -> List[dict]:
         for optimizer in optimizers
     ]
 
+
 def filehandler():
+    Path("./recommender").mkdir(parents=True, exist_ok=True)
+
     features_filehandler = CombineFeaturesFileHandler(dir_name='features', master_file='totalfeatures')
-    interactions_filehandler = CombineFeaturesFileHandler(dir_name='interactions', master_file='totalinteractions')
+    interactions_filehandler = CombineFeaturesFileHandler(
+        dir_name='interactions', master_file='totalinteractions')
 
     while True:
         features_filehandler.run()
         interactions_filehandler.run()
+
+        if features_filehandler.does_master_file_exist():
+            copyfile('./features/totalfeatures.csv', './recommender/totalfeatures.csv')
+
+        if interactions_filehandler.does_master_file_exist():
+            copyfile('./interactions/totalinteractions.csv', './interactions/totalinteractions.csv')
+
         sleep(10)
+
 
 @hydra.main(config_path=".", config_name="config")
 def main(cfg: Config):
-    if cfg.hpc.jobid == 0:
+    if cfg.hpc.jobid == 1:
         filehandler()
 
     else:
@@ -102,15 +115,13 @@ def job(cfg: Config):
         json_data = json.dumps([result.to_json() for result in results])
         f3dasm.write_json(name="./raw/"+filename, json_string=json_data)
 
-        # Create features matrix
-        features = create_recommender_data_features_csv(results)
+        # Create features functions matrix
+        features = create_recommender_data_features_functions_csv(results)
         features.to_csv(f"./features/{filename}.csv", index=False)
 
         # Create interactions matrix
         rating = create_recommender_data_interactions_csv(results)
         rating.to_csv(f"./interactions/{filename}.csv", index=False)
-
-
 
         # f3dasm.write_pickle('mov_'+filename, df)
 
