@@ -81,7 +81,7 @@ def filehandler():
             copyfile('./features/totalfeatures.csv', './recommender/totalfeatures.csv')
 
         if interactions_filehandler.does_master_file_exist():
-            copyfile('./interactions/totalinteractions.csv', './interactions/totalinteractions.csv')
+            copyfile('./interactions/totalinteractions.csv', './recommender/totalinteractions.csv')
 
         sleep(10)
 
