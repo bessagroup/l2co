@@ -79,7 +79,7 @@ def filehandler():
         interactions_filehandler.run()
 
         if features_filehandler.does_master_file_exist():
-            copyfile('./features/totalfeatures.csv', './recommender/totalfeatures_functions.csv')
+            copyfile('./features/totalfeatures_functions.csv', './recommender/totalfeatures_functions.csv')
 
         if interactions_filehandler.does_master_file_exist():
             copyfile('./interactions/totalinteractions.csv', './recommender/totalinteractions.csv')
