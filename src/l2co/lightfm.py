@@ -52,11 +52,12 @@ def create_predictions_df_with_lightfm(folder_to_files: str) -> pd.DataFrame:
 
     # Combine to one dataframe 'data':
     features = pd.DataFrame([data_itemfeatures[data_itemfeatures['itemID'] == d]
-                            ['genres'].values for d in data_interactions['itemID']])
+                            ['genres'].values for d in data_interactions['itemID']], columns=['genres'])
     occupation = pd.DataFrame([data_userfeatures[data_userfeatures['userID'] == d]
-                               ['information'].values for d in data_interactions['userID']])
-    data_interactions['genres'] = features
-    data_interactions['information'] = occupation
+                              ['information'].values for d in data_interactions['userID']], columns=['information'])
+
+    data_interactions['genres'] = features['genres']
+    data_interactions['information'] = occupation['information']
 
     # retrieve the all the unique categories in the data
     movie_genre = [x.split(',') for x in data_itemfeatures['genres']]
