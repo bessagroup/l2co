@@ -122,7 +122,7 @@ def job(cfg: Config):
 
         # Create features optimizers matrix
 
-        if not path.exists("./recommender/totalfeature_optimizers.csv"):  # done only once
+        if not path.exists("./recommender/totalfeatures_optimizers.csv"):  # done only once
             features_optimizer = create_recommender_data_features_optimizers_csv(results)
             features_optimizer.to_csv("./recommender/totalfeature_optimizers.csv")
 
