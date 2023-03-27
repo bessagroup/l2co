@@ -4,7 +4,7 @@ import json
 from copy import copy
 from os import path
 from typing import Dict, List, Union
-
+import logging
 # Third-party
 import numpy as np
 import pandas as pd
@@ -84,6 +84,7 @@ def create_recommendation_results(path_of_files: str, recommendations: Dict[int,
 
     for file in filelist:
         results = load_results(file)
+        logging.inf(f"Loaded file: {file}")
 
         optimizer_number: dict = {index: r.optimizer.get_name() for index, r in enumerate(results)}
         mov = margin_of_victory(results)
