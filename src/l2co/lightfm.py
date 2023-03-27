@@ -47,8 +47,8 @@ SEED = 42
 def create_predictions_df_with_lightfm(folder_to_files: str) -> pd.DataFrame:
     # Read datasets
     data_interactions = pd.read_csv(f'{folder_to_files}/totalinteractions.csv', index_col=0)
-    data_userfeatures = pd.read_csv(f'{folder_to_files}/totalfeatures_users.csv', index_col=0)
-    data_itemfeatures = pd.read_csv(f'{folder_to_files}/totalfeatures_items.csv', index_col=0)
+    data_userfeatures = pd.read_csv(f'{folder_to_files}/totalfeatures_optimizers.csv', index_col=0)
+    data_itemfeatures = pd.read_csv(f'{folder_to_files}/totalfeatures_functions.csv', index_col=0)
 
     # Combine to one dataframe 'data':
     features = pd.DataFrame([data_itemfeatures[data_itemfeatures['itemID'] == d]
