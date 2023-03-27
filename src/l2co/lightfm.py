@@ -51,8 +51,9 @@ def create_predictions_df_with_lightfm(folder_to_files: str) -> pd.DataFrame:
     data_itemfeatures = pd.read_csv(f'{folder_to_files}/totalfeatures_functions.csv', index_col=0)
 
     # Combine to one dataframe 'data':
+    # Note the [0] index is because duplicates exists in seeds, fix this!
     features = pd.DataFrame([data_itemfeatures[data_itemfeatures['itemID'] == d]
-                            ['genres'].values for d in data_interactions['itemID']], columns=['genres'])
+                            ['genres'].values[0] for d in data_interactions['itemID']], columns=['genres'])
     occupation = pd.DataFrame([data_userfeatures[data_userfeatures['userID'] == d]
                               ['information'].values for d in data_interactions['userID']], columns=['information'])
 
