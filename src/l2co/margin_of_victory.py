@@ -83,6 +83,7 @@ def create_recommendation_results(path_of_files: str, recommendations: Dict[int,
         filelist: List[str] = [glob.glob(path.join(path_of_files, f'*{_id}*.json'))[0] for _id in selection]
 
     for file in filelist:
+        count_continue: int = 0
         results = load_results(file)
         logging.info(f"Loaded file: {file}")
 
@@ -91,7 +92,13 @@ def create_recommendation_results(path_of_files: str, recommendations: Dict[int,
 
         # Select recommendation
         function_id = results[0].seeds[0]
-        recommendation_id = recommendations[function_id]
+        try:
+            recommendation_id = recommendations[function_id]
+        except KeyError:  # No recommendation found
+            count_continue += 1
+            logging.info(f"Key {function_id} not found! Continue (count={count_continue})")
+            continue
+
         recommendation = optimizer_number[recommendation_id]
 
         mov['Recommendation'] = mov[recommendation]
