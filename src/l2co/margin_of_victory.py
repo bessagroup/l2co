@@ -84,7 +84,7 @@ def create_recommendation_results(path_of_files: str, recommendations: Dict[int,
 
     for file in filelist:
         results = load_results(file)
-        logging.inf(f"Loaded file: {file}")
+        logging.info(f"Loaded file: {file}")
 
         optimizer_number: dict = {index: r.optimizer.get_name() for index, r in enumerate(results)}
         mov = margin_of_victory(results)
