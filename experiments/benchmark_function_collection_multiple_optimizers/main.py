@@ -89,7 +89,7 @@ def filehandler():
 
 @hydra.main(config_path=".", config_name="config")
 def main(cfg: Config):
-    if cfg.hpc.jobid == 1:
+    if cfg.hpc.jobid == 0:
         filehandler()
 
     else:
