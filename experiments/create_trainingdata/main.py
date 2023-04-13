@@ -80,6 +80,10 @@ def initial_script(config: Config):
             copyfile(f'./{config.files.dirname_interactions}/totalinteractions.csv',
                      f'./{config.files.dirname_recommender}/totalinteractions.csv')
 
+        if job_queue.is_all_finished():
+            logging.info("All jobs are finished. Exiting filehandler loop!")
+            break
+
         sleep(10)
 
 
