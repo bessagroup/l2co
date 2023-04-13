@@ -1,0 +1,31 @@
+defaults:
+  - override hydra/job_logging: custom
+
+design:
+  name: "benchmarkfunctions"
+  functions: "all"
+  dimensionality_list: ["2", "3", "5", "10", "20"]
+  noise_list: ["0.0", "0.1"]
+  sampler: RandomUniform
+  seed: 43
+  number_of_samples: 5
+
+optimization:
+  optimizers_names: [Adam, PSO, CMAES, RandomSearch]
+  lower_bound: -1.0
+  upper_bound: 1.0
+  sampler_name: LatinHypercube
+  number_of_samples: 30
+  iterations: 1000
+  realizations: 3
+  parallelization: True
+
+files:
+  dirname_raw: raw
+  dirname_interactions: interactions
+  dirname_features: features
+  dirname_recommender: recommender
+
+hpc:
+  jobid: -1
+  jobqueue_filename: "jobqueue"

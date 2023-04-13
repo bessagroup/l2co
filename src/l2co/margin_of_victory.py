@@ -1,37 +1,68 @@
 # Standard
-import glob
-import json
-from copy import copy
-from os import path
-from typing import Dict, List, Union
-import logging
+from typing import Union, List
+
 # Third-party
 import numpy as np
 import pandas as pd
-from f3dasm import create_optimizationresult_from_json
+import xarray as xr
 from f3dasm.run_optimization import OptimizationResult, calculate_mean_std
 from sklearn import preprocessing
 
 
-def margin_of_victory(results: List[OptimizationResult]) -> pd.DataFrame:
+def calculate_mean_std_xarray(xd: xr.Dataset) -> xr.Dataset:
+    # WORKING: get the cummin of the y values for each optimizer and realization
+
+    xd = xd.assign(y_cummin=(['optimizer', 'realization', 'index'], np.nan*np.ones(xd['y'].shape)))
+
+    # loop over the optimizer and realization dimensions
+    for opt in xd.optimizer.values:
+        for r in xd.realization.values:
+
+            y_cummin = xd['y_cummin'].sel(optimizer=opt, realization=r)
+
+            y: np.ndarray = xd['y'].sel(optimizer=opt, realization=r).values
+            y_accumulate = np.minimum.accumulate(y)  # 1D numpy array
+
+            y_cummin[:] = y_accumulate
+
+    # WORKING: retrieve the mean of the dataset over the realizations
+    xd_mean = xd.mean(dim="realization")
+
+    df_xd = xd_mean.to_dataframe()
+    df = df_xd.pivot_table(values='y_cummin', index='index', columns='optimizer')
+
+    return df
+
+
+def calculate_mean_std_listoptimizationresult(results: List[OptimizationResult]) -> pd.DataFrame:
+    # Create df with all results
+    df = pd.concat([calculate_mean_std(results[i])[0] for i, _ in enumerate(results)], axis=1)
+
+    # Change columnnames
+    df.columns = [results[i].optimizer.get_name() for i, _ in enumerate(results)]
+
+    return df
+
+
+def margin_of_victory(results: Union[List[OptimizationResult], xr.Dataset]) -> pd.DataFrame:
     """Calculate the margin of victory of optimizationresults
 
     Parameters
     ----------
     results
-        OptimizationResults object
+        List of OptimizationResults objects or a xr.Dataset
 
     Returns
     -------
         DataFrame containing the algorithms and the margin of victory
     """
+    if isinstance(results, xr.Dataset):
+        df = calculate_mean_std_xarray(results)
+        optimizer_names = list(results.optimizer.values)
 
-    # Create df with all results
-    df = pd.concat([calculate_mean_std(results[i])[0] for i, _ in enumerate(results)], axis=1)
-
-    # Change columnnames
-    optimizer_names = [results[i].optimizer.get_name() for i, _ in enumerate(results)]
-    df.columns = optimizer_names
+    else:
+        df = calculate_mean_std_listoptimizationresult(results)
+        optimizer_names = [results[i].optimizer.get_name() for i, _ in enumerate(results)]
 
     # Normalize
     min_max_scaler = preprocessing.MinMaxScaler()
@@ -60,97 +91,3 @@ def margin_of_victory(results: List[OptimizationResult]) -> pd.DataFrame:
     df_margin_of_victory.columns = optimizer_names
 
     return df_margin_of_victory
-
-
-def load_results(filepath: str) -> List[OptimizationResult]:
-    # Load results
-    with open(filepath) as f:
-        json_string = json.load(f)
-
-    json_results = json.loads(json_string)
-    results = [create_optimizationresult_from_json(r) for r in json_results]
-    return results
-
-
-def create_recommendation_results(path_of_files: str, recommendations: Dict[int, int],
-                                  selection: Union[None, List[str]] = None) -> pd.Series:
-    total_mov = None
-
-    if selection is None:
-        filelist: List[str] = glob.glob(path.join(path_of_files, '*.json'))
-
-    else:
-        filelist: List[str] = [glob.glob(path.join(path_of_files, f'*{_id}*.json'))[0] for _id in selection]
-
-    for file in filelist:
-        count_continue: int = 0
-        results = load_results(file)
-        logging.info(f"Loaded file: {file}")
-
-        optimizer_number: dict = {index+1: r.optimizer.get_name() for index, r in enumerate(results)}
-        mov = margin_of_victory(results)
-
-        # Select recommendation
-        function_id = results[0].seeds[0]
-        try:
-            recommendation_id = recommendations[function_id]
-        except KeyError:  # No recommendation found
-            count_continue += 1
-            logging.info(f"Key {function_id} not found! Continue (count={count_continue})")
-            continue
-
-        recommendation = optimizer_number[recommendation_id]
-
-        mov['Recommendation'] = mov[recommendation]
-
-        if total_mov is None:
-            total_mov = mov
-            total_temp = copy(total_mov)
-
-        else:
-            total_temp = copy(total_mov)
-            total_mov = sum((total_mov, mov))
-
-        if total_mov.isnull().values.any():  # Check for NaN values of mov
-            total_mov = total_temp
-
-    return total_mov
-
-
-def create_individual_optimizers_results(path_of_files: str, selection: Union[None, List[str]] = None) -> pd.DataFrame:
-    total_mov = None
-
-    if selection is None:
-        filelist: List[str] = glob.glob(path.join(path_of_files, '*.json'))
-
-    else:
-        filelist: List[str] = [glob.glob(path.join(path_of_files, f'*{_id}*.json'))[0] for _id in selection]
-
-    for file in filelist:
-        results = load_results(file)
-
-        mov = margin_of_victory(results)
-
-        if total_mov is None:
-            total_mov = mov
-        else:
-            total_mov += mov
-
-    return total_mov
-
-
-def create_random_strategy(path_of_files: str, selection: Union[None, List[str]] = None) -> Dict[int, int]:
-    strategy_dict = {}
-
-    if selection is None:
-        filelist: List[str] = glob.glob(path.join(path_of_files, '*.json'))
-
-    else:
-        filelist: List[str] = [glob.glob(path.join(path_of_files, f'*{_id}*.json'))[0] for _id in selection]
-
-    for file in filelist:
-        results = load_results(file)
-        optimizer_number: dict = {index: r.optimizer.get_name() for index, r in enumerate(results)}
-        function_id = results[0].seeds[0]
-        strategy_dict[function_id] = np.random.choice(list(optimizer_number.keys()))
-    return strategy_dict
