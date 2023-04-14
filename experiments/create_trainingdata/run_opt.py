@@ -1,4 +1,3 @@
-import json
 from copy import copy
 from os import path
 from pathlib import Path
@@ -56,7 +55,7 @@ def convert_config_to_input(config: Config, function_name: str, dimensionality: 
     ]
 
 
-def execute(config: Config, function_name: str, dimensionality: str, noise: str, seed: int):
+def execute(config: Config, function_name: str, dimensionality: str, noise: str, seed: int) -> str:
 
     results: List[f3dasm.OptimizationResult] = []
 
@@ -72,10 +71,6 @@ def execute(config: Config, function_name: str, dimensionality: str, noise: str,
     Path(f"./{config.files.dirname_raw}").mkdir(parents=True, exist_ok=True)
     Path(f"./{config.files.dirname_interactions}").mkdir(parents=True, exist_ok=True)
     Path(f"./{config.files.dirname_features}").mkdir(parents=True, exist_ok=True)
-
-    # Save raw data
-    json_data = json.dumps([result.to_json() for result in results])
-    f3dasm.write_json(name="./raw/"+filename, json_string=json_data)
 
     # Create features functions matrix
     features_functions = create_recommender_data_features_functions_csv(results)
@@ -93,3 +88,6 @@ def execute(config: Config, function_name: str, dimensionality: str, noise: str,
 
     # Save raw data cdf
     save_as_cdf(name=f"./{config.files.dirname_raw}/{filename}", results=copy(results))
+
+    # Return the raw data filename
+    return filename

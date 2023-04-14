@@ -7,8 +7,8 @@ design:
   dimensionality_list: ["2", "3", "5", "10", "20"]
   noise_list: ["0.0", "0.1"]
   sampler: RandomUniform
-  seed: 43
-  number_of_samples: 50
+  seed: 798
+  number_of_samples: 200
 
 optimization:
   optimizers_names: [Adam, PSO, CMAES, RandomSearch]
@@ -17,7 +17,7 @@ optimization:
   sampler_name: LatinHypercube
   number_of_samples: 30
   iterations: 1000
-  realizations: 10
+  realizations: 20
   parallelization: True
 
 files:

@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 from shutil import copyfile
 from time import sleep
+from typing import Callable
 
 import f3dasm
 import hydra
@@ -102,30 +103,48 @@ def main(config: Config):
 
     elif config.hpc.jobid == -1:  # Sequential
         initial_script(config)
-        job(config)
+        job(config, execute)
 
     else:
         sleep(3*config.hpc.jobid)  # Just to asynchronize the jobs
         job(config)
 
 
-def job(config: Config):
+def job(config: Config, execute_callable: Callable):
+    """Main script that handles the execution of open jobs
+
+    Parameters
+    ----------
+    config
+        Hydra configuration file object
+    execute_callable
+        function to execute a job. Requires to arguments; the config and any **kwargs from the design
+    """
 
     # Retrieve the queue
     job_queue = f3dasm.experiment.JobQueue(filename=config.hpc.jobqueue_filename)
 
+    # Let the node repeat the execution of jobs
     while True:
         try:
             jobnumber = job_queue.get()
         except f3dasm.experiment.NoOpenJobsError:
+            logging.info("There are no open jobs left!")
             break
 
-        data = f3dasm.design.load_experimentdata(filename=config.design.name)
-        args = data.get_inputdata_by_index(jobnumber)
+        data = f3dasm.ExperimentData.from_csv(filename=config.design.name)
+        designparameters = data.get_inputdata_by_index(jobnumber)
 
-        _ = execute(config, **args)
+        try:
+            returnvalue = execute_callable(config, **designparameters)
+            job_queue.mark_finished(jobnumber)
+        except Exception as e:
+            logging.exception(f"An exception of type {type(e).__name__} occurred: {e}")
+            returnvalue = 'ERROR'
+            job_queue.mark_error(jobnumber)
 
-        job_queue.mark_finished(jobnumber)
+        data.write_outputdata_by_index(filename=config.design.name, index=jobnumber, value=returnvalue)
+
 
 
 cs = ConfigStore.instance()
