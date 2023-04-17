@@ -1,21 +1,55 @@
+#                                                                       Modules
+# =============================================================================
+
+# Standard
 from copy import copy
 from os import path
 from pathlib import Path
 from typing import List
 
+# Third-party
 import f3dasm
 import numpy as np
 from config import Config
 
+# Local
 from l2co.create_recommender_dataset import (
     create_recommender_data_features_functions_csv,
     create_recommender_data_features_optimizers_csv,
     create_recommender_data_interactions_csv)
 from l2co.saving import save_as_cdf
 
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Stable'
+# =============================================================================
+#
+# =============================================================================
+
 
 def convert_config_to_input(config: Config, function_name: str, dimensionality: str,
                             noise: str, seed: int) -> List[dict]:
+    """Convert the hydra configuration and design parameters to classes and objects
+
+    Parameters
+    ----------
+    config
+        full configuration parameters from Hydra YAML file
+    function_name
+        design parameter: classname of the benchmark function
+    dimensionality
+        design parameter: dimensionality of the benchmark function
+    noise
+        design parameter: standard deviation of Gaussian noise on benchmark function
+    seed
+        design parameter: seed of the benchmark function
+
+    Returns
+    -------
+        List of dictionaries, compatible to be used with the f3dasm.run_multiple_realizations function
+    """
 
     dimensionality = int(dimensionality)
 
@@ -56,6 +90,25 @@ def convert_config_to_input(config: Config, function_name: str, dimensionality: 
 
 
 def execute(config: Config, function_name: str, dimensionality: str, noise: str, seed: int) -> str:
+    """Main program to create optimization training results and create the recommender matrices  
+
+    Parameters
+    ----------
+    config
+        full configuration parameters from Hydra YAML file
+    function_name
+        design parameter: classname of the benchmark function
+    dimensionality
+        design parameter: dimensionality of the benchmark function
+    noise
+        design parameter: standard deviation of Gaussian noise on benchmark function
+    seed
+        design parameter: seed of the benchmark function
+
+    Returns
+    -------
+        filename of the raw results file
+    """
 
     results: List[f3dasm.OptimizationResult] = []
 

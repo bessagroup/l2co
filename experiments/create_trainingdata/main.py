@@ -1,9 +1,14 @@
+#                                                                       Modules
+# =============================================================================
+
+# Standard
 import logging
 from pathlib import Path
 from shutil import copyfile
 from time import sleep
 from typing import Callable
 
+# Third-party
 import f3dasm
 import hydra
 import numpy as np
@@ -11,62 +16,63 @@ from config import Config
 from hydra.core.config_store import ConfigStore
 from run_opt import execute
 
+# Local
 from l2co.filehandlers import CombineFeaturesFileHandler
+
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Stable'
+# =============================================================================
+#
+# =============================================================================
 
 
 def initial_script(config: Config):
 
-    if config.design.functions == 'all':
-        function_names = [f.__name__ for f in f3dasm.functions.FUNCTIONS]
+    # Create the designspace from the hydra yaml file
+    design = f3dasm.DesignSpace.from_yaml(config.design)
 
-    # Create design of experiments
-    function_name = f3dasm.CategoricalParameter(name='function_name', categories=function_names)
-    dimensionality = f3dasm.CategoricalParameter(
-        name='dimensionality', categories=list(config.design.dimensionality_list))
-    noise = f3dasm.CategoricalParameter(name='noise', categories=list(config.design.noise_list))
-    seed = f3dasm.DiscreteParameter(name='seed', lower_bound=0, upper_bound=int(1e6))
+    # Create the sampler from the hydra yaml file
+    sampler_name = f3dasm.sampling.find_sampler(config.experimentdata.sampler)
+    sampler: f3dasm.Sampler = sampler_name(design=design, seed=config.experimentdata.seed)
 
-    status = f3dasm.ConstantParameter(name='status', value='')
+    # Create samples and ExperimentData object
+    data = sampler.get_samples(numsamples=config.experimentdata.number_of_samples)
 
-    design = f3dasm.DesignSpace(input_space=[function_name, dimensionality, noise, seed], output_space=[status])
-
-    sampler_name = f3dasm.sampling.find_sampler(config.design.sampler)
-    sampler: f3dasm.Sampler = sampler_name(design=design, seed=config.design.seed)
-
-    data = sampler.get_samples(numsamples=config.design.number_of_samples)
-
-    # Make sure dimenionality and function comply!
+    # Specific to this experiment: make sure dimenionality and function comply!
     for index in range(data.get_number_of_datapoints()):
         i = data.get_inputdata_by_index(index)
         function_class: f3dasm.functions.PyBenchFunction = f3dasm.find_class(
             module=f3dasm.functions, query=i['function_name'])
         if not function_class.is_dim_compatible(int(i['dimensionality'])):
             while not function_class.is_dim_compatible(int(i['dimensionality'])):
-                i['dimensionality'] = np.random.choice(list(config.design.dimensionality_list))
+                i['dimensionality'] = np.random.choice(list(design.input_space[1].categories))
 
             data.set_inputdata_by_index(index, i)
 
-    # Store the experimentdata to a csv file
-    data.store(config.design.name)
+    # Store the ExperimentData to a csv file
+    data.store(config.experimentdata.name)
 
     # Create the JobQueue object
-    job_queue = f3dasm.experiment.JobQueue(filename=config.hpc.jobqueue_filename)
-    job_queue.create_jobs_from_experimentdata(data)
+    job_queue = f3dasm.experiment.JobQueue.from_experimentdata(
+        filename=config.hpc.jobqueue_filename, experimentdata=data)
 
     # Write the JobQueue object to a file
     job_queue.write_new_jobfile()
 
-    # Initialize filehandler
-
+    # Make directory for recommender results
     Path(f"./{config.files.dirname_recommender}").mkdir(parents=True, exist_ok=True)
 
+    # Initialize filehandler
     features_filehandler = CombineFeaturesFileHandler(dir_name='features', master_file='totalfeatures_functions')
     interactions_filehandler = CombineFeaturesFileHandler(
         dir_name=config.files.dirname_interactions, master_file='totalinteractions')
 
     # Continuous check on newly created datafiles
 
-    if config.hpc.jobid == -1:
+    if config.hpc.jobid == -1:  # Pass if on local machine
         return
 
     while True:
@@ -107,7 +113,7 @@ def main(config: Config):
 
     else:
         sleep(3*config.hpc.jobid)  # Just to asynchronize the jobs
-        job(config)
+        job(config, execute)
 
 
 def job(config: Config, execute_callable: Callable):
@@ -132,7 +138,7 @@ def job(config: Config, execute_callable: Callable):
             logging.info("There are no open jobs left!")
             break
 
-        data = f3dasm.ExperimentData.from_csv(filename=config.design.name)
+        data = f3dasm.ExperimentData.from_csv(filename=config.experimentdata.name)
         designparameters = data.get_inputdata_by_index(jobnumber)
 
         try:
@@ -143,8 +149,7 @@ def job(config: Config, execute_callable: Callable):
             returnvalue = 'ERROR'
             job_queue.mark_error(jobnumber)
 
-        data.write_outputdata_by_index(filename=config.design.name, index=jobnumber, value=returnvalue)
-
+        data.write_outputdata_by_index(filename=config.experimentdata.name, index=jobnumber, value=returnvalue)
 
 
 cs = ConfigStore.instance()

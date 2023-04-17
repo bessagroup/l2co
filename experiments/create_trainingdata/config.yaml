@@ -2,13 +2,103 @@ defaults:
   - override hydra/job_logging: custom
 
 design:
+  input_space:
+    - name: function_name
+      class: CategoricalParameter
+      categories:
+        [
+          "Ackley",
+          "AckleyN2",
+          "AckleyN3",
+          "AckleyN4",
+          "Adjiman",
+          "Bartels",
+          "Beale",
+          "Bird",
+          "BohachevskyN1",
+          "BohachevskyN2",
+          "BohachevskyN3",
+          "Booth",
+          "Branin",
+          "Brent",
+          "Brown",
+          "BukinN6",
+          "CrossInTray",
+          "DeJongN5",
+          "DeckkersAarts",
+          "DixonPrice",
+          "DropWave",
+          "Easom",
+          "EggCrate",
+          "EggHolder",
+          "GoldsteinPrice",
+          "Griewank",
+          "HappyCat",
+          "Himmelblau",
+          "HolderTable",
+          "Keane",
+          "Langermann",
+          "Leon",
+          "Levy",
+          "LevyN13",
+          "Matyas",
+          "McCormick",
+          "Michalewicz",
+          "Periodic",
+          "PermDBeta",
+          "PermZeroDBeta",
+          "Powell",
+          "Qing",
+          "Quartic",
+          "Rastrigin",
+          "Ridge",
+          "Rosenbrock",
+          "RotatedHyperEllipsoid",
+          "Salomon",
+          "SchaffelN1",
+          "SchaffelN2",
+          "SchaffelN3",
+          "SchaffelN4",
+          "Schwefel",
+          "Schwefel2_20",
+          "Schwefel2_21",
+          "Schwefel2_23",
+          "Shubert",
+          "ShubertN3",
+          "ShubertN4",
+          "Sphere",
+          "StyblinskiTang",
+          "SumSquares",
+          "Thevenot",
+          "ThreeHump",
+          "Trid",
+          "XinSheYang",
+          "XinSheYangN2",
+          "XinSheYangN3",
+          "XinSheYangN4",
+          "Zakharov",
+        ]
+    - name: dimensionality
+      class: CategoricalParameter
+      categories: ["2", "3", "5", "10", "20"]
+    - name: noise
+      class: CategoricalParameter
+      categories: ["0.0", "0.1"]
+    - name: seed
+      class: DiscreteParameter
+      lower_bound: 0
+      upper_bound: 1000000
+
+  output_space:
+    - name: status
+      class: ConstantParameter
+      value: ""
+
+experimentdata:
   name: "benchmarkfunctions"
-  functions: "all"
-  dimensionality_list: ["2", "3", "5", "10", "20"]
-  noise_list: ["0.0", "0.1"]
   sampler: RandomUniform
   seed: 798
-  number_of_samples: 200
+  number_of_samples: 10
 
 optimization:
   optimizers_names: [Adam, PSO, CMAES, RandomSearch]
@@ -17,7 +107,7 @@ optimization:
   sampler_name: LatinHypercube
   number_of_samples: 30
   iterations: 1000
-  realizations: 20
+  realizations: 3
   parallelization: True
 
 files:

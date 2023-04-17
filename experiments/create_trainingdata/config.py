@@ -1,13 +1,15 @@
 from dataclasses import dataclass
-from typing import List
+from typing import Dict, List
 
 
 @dataclass
 class DesignConfig:
-    name: str
-    functions: List[str]
-    dimensionality_list: List[str]
-    noise_list: List[str]
+    input_space: List[Dict]
+    output_space: List[Dict]
+
+
+@dataclass
+class ExperimentConfig:
     sampler: str
     seed: int
     number_of_samples: int
@@ -30,6 +32,7 @@ class HPCConfig:
     jobid: int
     jobqueue_filename: str
 
+
 @dataclass
 class FilesConfig:
     dirname_raw: str
@@ -37,9 +40,11 @@ class FilesConfig:
     dirname_features: str
     dirname_recommender: str
 
+
 @dataclass
 class Config:
     design: DesignConfig
+    experimentdata: ExperimentConfig
     optimization: OptimizationConfig
     hpc: HPCConfig
     files: FilesConfig
