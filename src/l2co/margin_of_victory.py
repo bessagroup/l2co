@@ -1,5 +1,8 @@
+#                                                                       Modules
+# =============================================================================
+
 # Standard
-from typing import Union, List
+from typing import List, Union
 
 # Third-party
 import numpy as np
@@ -7,6 +10,13 @@ import pandas as pd
 import xarray as xr
 from f3dasm.run_optimization import OptimizationResult, calculate_mean_std
 from sklearn import preprocessing
+
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Stable'
+# =============================================================================
 
 
 def calculate_mean_std_xarray(xd: xr.Dataset) -> xr.Dataset:

@@ -1,12 +1,27 @@
+"""Functions that save and load data"""
+
+#                                                                       Modules
+# =============================================================================
+
+# Standard
 from typing import List
 
+# Third-party
 import numpy as np
 import pandas as pd
 import xarray as xr
 from f3dasm.run_optimization import OptimizationResult
 
-from l2co.create_recommender_dataset import \
+# Local
+from .create_recommender_dataset import \
     create_recommender_data_features_functions
+
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Stable'
+# =============================================================================
 
 
 def save_as_cdf(name: str, results: List[OptimizationResult]):
@@ -71,13 +86,3 @@ def from_xarray_to_dataframe(xarr: xr.Dataset) -> List[List[pd.DataFrame]]:
             df_optimizer.append(df_realization)
         df_list.append(df_optimizer)
     return df_list
-
-
-# def load_results(filepath: str) -> List[OptimizationResult]:
-#     # Load results
-#     with open(filepath) as f:
-#         json_string = json.load(f)
-
-#     json_results = json.loads(json_string)
-#     results = [create_optimizationresult_from_json(r) for r in json_results]
-#     return results

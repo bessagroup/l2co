@@ -1,6 +1,8 @@
+#                                                                       Modules
+# =============================================================================
+
 # Standard
 import datetime
-import glob
 import logging
 from typing import List
 
@@ -10,101 +12,106 @@ import pandas as pd
 from f3dasm.run_optimization import OptimizationResult
 from recommenders.utils.constants import DEFAULT_HEADER
 
-from l2co.margin_of_victory import margin_of_victory
+# Local
+from .margin_of_victory import margin_of_victory
+
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Stable'
+# =============================================================================
 
 
-def create_recommender_data_features_optimizers_csv(results: List[OptimizationResult]) -> pd.DataFrame:
-    data = []
+class RecommenderDatasetCreator:
+    def __init__(self, results: List[OptimizationResult]):
+        self.results = results
 
-    for index, result in enumerate(results):
-        f = ",".join(result.optimizer.get_info())
-        data.append([index+1, f])
+    def create_recommender_data_features_optimizers_csv(self) -> pd.DataFrame:
+        data = []
 
-    df = pd.DataFrame(data, columns=['userID', 'information'])
-    return df
+        for index, result in enumerate(self.results):
+            f = ",".join(result.optimizer.get_info())
+            data.append([index+1, f])
 
+        df = pd.DataFrame(data, columns=['userID', 'information'])
+        return df
 
-def create_recommender_data_features_functions(results: List[OptimizationResult]) -> List[str]:
-    f = results[0].function
+    def _create_recommender_data_features_functions(self) -> List[str]:
+        f = self.results[0].function
 
-    categories_list = []
+        categories_list = []
 
-    # Append features
-    if f.noise == 0.0:
-        categories_list.append('noiseless')
-    if f.noise > 0.0:
-        categories_list.append('noisy')
-    if (f.dimensionality <= 5):
-        categories_list.append('low_dimensional')
-    if (5 < f.dimensionality <= 10):
-        categories_list.append('medium_dimensional')
-    if (f.dimensionality >= 10):
-        categories_list.append('high_dimensional')
-    if f.convex:
-        categories_list.append('convex')
-    if f.separable:
-        categories_list.append('seperable')
-    if f.differentiable:
-        categories_list.append('differentiable')
-    if f.multimodal:
-        categories_list.append('multimodal')
-    if f.randomized_term:
-        categories_list.append('randomized_term')
-    if f.parametric:
-        categories_list.append('parametric')
+        # Append features
+        if f.noise == 0.0:
+            categories_list.append('noiseless')
+        if f.noise > 0.0:
+            categories_list.append('noisy')
+        if (f.dimensionality <= 5):
+            categories_list.append('low_dimensional')
+        if (5 < f.dimensionality <= 10):
+            categories_list.append('medium_dimensional')
+        if (f.dimensionality >= 10):
+            categories_list.append('high_dimensional')
+        if f.convex:
+            categories_list.append('convex')
+        if f.separable:
+            categories_list.append('seperable')
+        if f.differentiable:
+            categories_list.append('differentiable')
+        if f.multimodal:
+            categories_list.append('multimodal')
+        if f.randomized_term:
+            categories_list.append('randomized_term')
+        if f.parametric:
+            categories_list.append('parametric')
 
-    categories = ",".join(categories_list)
-    return categories
+        categories = ",".join(categories_list)
+        return categories
 
+    def create_recommender_data_features_functions_csv(self) -> pd.DataFrame:
+        f = self.results[0].function
+        hash: int = f.seed
+        categories = self._create_recommender_data_features_functions()
+        data = [[hash, categories]]
+        df = pd.DataFrame(data, columns=['itemID', 'genres'])
 
-def create_recommender_data_features_functions_csv(results: List[OptimizationResult]) -> pd.DataFrame:
-    f = results[0].function
-    hash: int = f.seed
-    categories = create_recommender_data_features_functions(results)
-    data = [[hash, categories]]
-    df = pd.DataFrame(data, columns=['itemID', 'genres'])
+        return df
 
-    return df
+    def create_recommender_data_interactions_csv(self) -> pd.DataFrame:
 
+        df_mov = margin_of_victory(self.results)
 
-def create_recommender_data_interactions_csv(results: List[OptimizationResult]) -> pd.DataFrame:
+        hash: int = self.results[0].function.seed
+        ts: float = datetime.datetime.now().timestamp()
 
-    df_mov = margin_of_victory(results)
+        # Take last margin of victory values
+        scores = df_mov.iloc[-1].values
 
-    # hash: int = random.getrandbits(32)
-    hash: int = results[0].function.seed
-    ts: float = datetime.datetime.now().timestamp()
+        min_scores = np.min(scores)
+        max_scores = np.max(scores)
 
-    # df = pd.read_csv ('./filename.csv', index_col=0)
+        L = (scores - min_scores)/(max_scores - min_scores)
 
-    # Take last margin of victory values
-    scores = df_mov.iloc[-1].values
+        # Make range from 0 to 5 'stars'
+        rating_array = (4*L)+1
 
-    min_scores = np.min(scores)
-    max_scores = np.max(scores)
+        data = [[i+1, hash, f"{rating:.5f}", f"{ts:.0f}"] for i, rating in enumerate(rating_array)]
 
-    L = (scores - min_scores)/(max_scores - min_scores)
+        df_stars = pd.DataFrame(data, columns=DEFAULT_HEADER)
 
-    # Make range from 0 to 5 'stars'
-    rating_array = (4*L)+1
+        logging.info("Created ratings matrix from margin of victory!")
 
-    data = [[i+1, hash, f"{rating:.5f}", f"{ts:.0f}"] for i, rating in enumerate(rating_array)]
-
-    df_stars = pd.DataFrame(data, columns=DEFAULT_HEADER)
-
-    logging.info("Created ratings matrix from margin of victory!")
-
-    return df_stars
-    df_mov.to_csv('g.csv', index=False)
+        return df_stars
 
 
-def combine_all_ratings(query: str) -> pd.DataFrame:
-    for index, file in enumerate(glob.glob(query)):
-        f = pd.read_csv(file)
-        if index == 0:
-            total = f
+# def combine_all_ratings(query: str) -> pd.DataFrame:
+#     for index, file in enumerate(glob.glob(query)):
+#         f = pd.read_csv(file)
+#         if index == 0:
+#             total = f
 
-        else:
-            total = pd.concat([total, f], ignore_index=True)
+#         else:
+#             total = pd.concat([total, f], ignore_index=True)
 
-    return total
+#     return total

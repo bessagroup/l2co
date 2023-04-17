@@ -13,10 +13,7 @@ import numpy as np
 from config import Config
 
 # Local
-from l2co.create_recommender_dataset import (
-    create_recommender_data_features_functions_csv,
-    create_recommender_data_features_optimizers_csv,
-    create_recommender_data_interactions_csv)
+from l2co.create_recommender_dataset import RecommenderDatasetCreator
 from l2co.saving import save_as_cdf
 
 #                                                          Authorship & Credits
@@ -125,18 +122,20 @@ def execute(config: Config, function_name: str, dimensionality: str, noise: str,
     Path(f"./{config.files.dirname_interactions}").mkdir(parents=True, exist_ok=True)
     Path(f"./{config.files.dirname_features}").mkdir(parents=True, exist_ok=True)
 
+    # Create Datasetcreator for recommender systems
+    datasetcreator = RecommenderDatasetCreator(results)
+
     # Create features functions matrix
-    features_functions = create_recommender_data_features_functions_csv(results)
+    features_functions = datasetcreator.create_recommender_data_features_functions_csv()
     features_functions.to_csv(f"./{config.files.dirname_features}/{filename}.csv", index=False)
 
     # Create features optimizers matrix
-
     if not path.exists(f"./{config.files.dirname_recommender}/totalfeatures_optimizers.csv"):  # done only once
-        features_optimizer = create_recommender_data_features_optimizers_csv(results)
+        features_optimizer = datasetcreator.create_recommender_data_features_optimizers_csv()
         features_optimizer.to_csv(f"./{config.files.dirname_recommender}/totalfeatures_optimizers.csv")
 
     # Create interactions matrix
-    rating = create_recommender_data_interactions_csv(results)
+    rating = datasetcreator.create_recommender_data_interactions_csv()
     rating.to_csv(f"./{config.files.dirname_interactions}/{filename}.csv", index=False)
 
     # Save raw data cdf

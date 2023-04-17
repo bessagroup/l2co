@@ -8,7 +8,7 @@ from f3dasm.optimization.adam import Adam
 from f3dasm.optimization.cmaes import CMAES
 
 # Locals
-from .metaoptimizer import EqualParts_Strategy, MetaOptimizer
+from ...metaoptimizer import EqualParts_Strategy, MetaOptimizer
 
 #                                                          Authorship & Credits
 # =============================================================================

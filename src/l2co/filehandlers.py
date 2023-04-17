@@ -9,8 +9,6 @@ from typing import List, Union
 # Third-party
 import pandas as pd
 
-# Locals
-
 #                                                          Authorship & Credits
 # =============================================================================
 __author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
@@ -43,7 +41,6 @@ class FileHandler:
         self.processed_files = []
         self.error_files = []
 
-
     def _set_exceptions(self, exceptions: Union[None, List[str]]) -> List[str]:
         """Convert exception filenames to full paths
 
@@ -62,7 +59,7 @@ class FileHandler:
         return [
             os.path.join(os.path.curdir, self.dir_name, f'{exception}.{self.extension}')
             for exception in exceptions
-            ]
+        ]
 
     def retrieve_all_files(self) -> List[str]:
         """Retrieve all files in the directory that pass the extension criteria
@@ -124,6 +121,7 @@ class FileHandler:
             errorcode after completion. 0 for success and 1 for fail
         """
         return 0
+
 
 class CombineFeaturesFileHandler(FileHandler):
     def __init__(self, dir_name: str, master_file: str, exceptions: List[str] = None):

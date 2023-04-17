@@ -1,24 +1,49 @@
-import glob
-from os import path
-from typing import Dict, List, Union
+"""Functions that"""
+#                                                                       Modules
+# =============================================================================
 
-import numpy as np
+# Standard
 
-from l2co.saving import load_results
+import random
+from typing import Callable
+
+# Third-party core
+import pandas as pd
+import xarray as xr
+from f3dasm.design import ExperimentData
+
+# Local
+from .margin_of_victory import margin_of_victory
+from .rollout import determine_loser, determine_winner
+
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Stable'
+# =============================================================================
 
 
-def create_random_strategy(path_of_files: str, selection: Union[None, List[str]] = None) -> Dict[int, int]:
-    strategy_dict = {}
+def create_strategy(files_path: str, experimentdata: ExperimentData,
+                    strategy_determiner: Callable[[xr.Dataset], str], label: str) -> pd.Series:
+    recommender = []
+    for index, (data_input, data_output) in enumerate(experimentdata):
+        data = xr.load_dataset(f"{files_path}/raw/{data_output['status']}.cd")
+        recommender.append(strategy_determiner(data))
 
-    if selection is None:
-        filelist: List[str] = glob.glob(path.join(path_of_files, '*.json'))
+    strategy_series = pd.Series(recommender, index=experimentdata.data.index, name=label)
+    return strategy_series
 
-    else:
-        filelist: List[str] = [glob.glob(path.join(path_of_files, f'*{_id}*.json'))[0] for _id in selection]
 
-    for file in filelist:
-        results = load_results(file)
-        optimizer_number: dict = {index: r.optimizer.get_name() for index, r in enumerate(results)}
-        function_id = results[0].seeds[0]
-        strategy_dict[function_id] = np.random.choice(list(optimizer_number.keys()))
-    return strategy_dict
+def best_mov_strategy(data: xr.Dataset):
+    mov = margin_of_victory(data)
+    return determine_winner(mov)
+
+
+def worst_mov_strategy(data: xr.Dataset):
+    mov = margin_of_victory(data)
+    return determine_loser(mov)
+
+
+def random_strategy(data: xr.Dataset):
+    return random.choice(list(data.optimizer.values))
