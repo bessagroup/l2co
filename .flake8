@@ -13,8 +13,10 @@ extend-exclude =
     dist,
 	*.egg,
 	docs/source,
-	tests
-	.git
+	tests,
+	.git,
+	experiments,
+	notebooks,
 
 # <<< UPDATE ACCORDING WITH YOUR PYTHON PROJECT
 
