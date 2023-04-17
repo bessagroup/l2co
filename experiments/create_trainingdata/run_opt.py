@@ -87,7 +87,7 @@ def convert_config_to_input(config: Config, function_name: str, dimensionality: 
 
 
 def execute(config: Config, function_name: str, dimensionality: str, noise: str, seed: int) -> str:
-    """Main program to create optimization training results and create the recommender matrices  
+    """Main program to create optimization training results and create the recommender matrices
 
     Parameters
     ----------
