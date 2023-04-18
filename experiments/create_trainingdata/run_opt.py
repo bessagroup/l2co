@@ -50,15 +50,11 @@ def convert_config_to_input(config: Config, function_name: str, dimensionality: 
 
     dimensionality = int(dimensionality)
 
-    function_class = f3dasm.find_class(module=f3dasm.functions, query=function_name)
+    function_class = f3dasm.functions.find_function(query=function_name)
 
     function_noise = float(noise)
 
-    optimizers_class: List[f3dasm.Optimizer] = [
-        f3dasm.find_class(f3dasm.optimization, optimizer_name)
-        for optimizer_name in config.optimization.optimizers_names
-    ]
-    sampler_class: f3dasm.Sampler = f3dasm.find_class(f3dasm.sampling, config.optimization.sampler_name)
+    sampler_class: f3dasm.Sampler = f3dasm.sampling.find_sampler(config.optimization.sampler_name)
 
     bounds = np.tile([config.optimization.lower_bound, config.optimization.upper_bound], (dimensionality, 1))
 
@@ -68,7 +64,12 @@ def convert_config_to_input(config: Config, function_name: str, dimensionality: 
     )
     data = f3dasm.ExperimentData(design=design)
 
-    optimizers = [optimizer(data=data, seed=seed) for optimizer in optimizers_class]
+    optimizers: List[f3dasm.Optimizer] = []
+    for opt_config in config.optimization.optimizers:
+        hyperparameters = opt_config['hyperparameters'] if 'hyperparameters' in opt_config else {}
+        optimizers.append(f3dasm.optimization.find_optimizer(opt_config['class'])(
+            data=data, seed=seed, hyperparameters=hyperparameters, name=opt_config['name']))
+
     sampler = sampler_class(design=data.design, seed=seed)
 
     return [
@@ -86,13 +87,15 @@ def convert_config_to_input(config: Config, function_name: str, dimensionality: 
     ]
 
 
-def execute(config: Config, function_name: str, dimensionality: str, noise: str, seed: int) -> str:
+def execute(config: Config, jobnumber: int, function_name: str, dimensionality: str, noise: str, seed: int) -> str:
     """Main program to create optimization training results and create the recommender matrices
 
     Parameters
     ----------
     config
         full configuration parameters from Hydra YAML file
+    jobnumber
+        number of the row in the experimentdata frame
     function_name
         design parameter: classname of the benchmark function
     dimensionality
@@ -123,7 +126,7 @@ def execute(config: Config, function_name: str, dimensionality: str, noise: str,
     Path(f"./{config.files.dirname_features}").mkdir(parents=True, exist_ok=True)
 
     # Create Datasetcreator for recommender systems
-    datasetcreator = RecommenderDatasetCreator(results)
+    datasetcreator = RecommenderDatasetCreator(results, jobnumber)
 
     # Create features functions matrix
     features_functions = datasetcreator.create_recommender_data_features_functions_csv()
