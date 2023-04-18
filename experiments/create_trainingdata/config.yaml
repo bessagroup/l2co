@@ -108,6 +108,22 @@ optimization:
   iterations: 1000
   realizations: 3
   parallelization: True
+  optimizers:
+    - name: Adam
+      class: Adam
+    - name: CMAES
+      class: CMAES
+    - name: PSO_default
+      class: PSO
+    - name: PSO_altered
+      class: PSO
+      hyperparameters:
+        population: 30
+        eta1: 1.95
+    - name: RMSprop
+      class: RMSprop
+    - name: SGA
+      class: SGA
 
 files:
   dirname_raw: raw

@@ -17,7 +17,6 @@ class ExperimentConfig:
 
 @dataclass
 class OptimizationConfig:
-    optimizers_names: List[str]
     lower_bound: float
     upper_bound: float
     sampler_name: str
@@ -25,6 +24,7 @@ class OptimizationConfig:
     iterations: int
     realizations: int
     parallelization: bool
+    optimizers: List[Dict]
 
 
 @dataclass
