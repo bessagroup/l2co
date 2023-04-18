@@ -5,8 +5,7 @@ design:
   input_space:
     - name: function_name
       class: CategoricalParameter
-      categories:
-        [
+      categories: [
           "Ackley",
           "AckleyN2",
           "AckleyN3",
@@ -45,8 +44,8 @@ design:
           "McCormick",
           "Michalewicz",
           "Periodic",
-          "PermDBeta",
-          "PermZeroDBeta",
+          # "PermDBeta",
+          # "PermZeroDBeta",
           "Powell",
           "Qing",
           "Quartic",
