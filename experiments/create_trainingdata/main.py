@@ -142,7 +142,7 @@ def job(config: Config, execute_callable: Callable):
         designparameters = data.get_inputdata_by_index(jobnumber)
 
         try:
-            returnvalue = execute_callable(config, **designparameters)
+            returnvalue = execute_callable(config, jobnumber, **designparameters)
             job_queue.mark_finished(jobnumber)
         except Exception as e:
             logging.exception(f"An exception of type {type(e).__name__} occurred: {e}")

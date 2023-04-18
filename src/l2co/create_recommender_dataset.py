@@ -24,8 +24,9 @@ __status__ = 'Stable'
 
 
 class RecommenderDatasetCreator:
-    def __init__(self, results: List[OptimizationResult]):
+    def __init__(self, results: List[OptimizationResult], jobnumber: int):
         self.results = results
+        self.jobnumber = jobnumber
 
     def create_recommender_data_features_optimizers_csv(self) -> pd.DataFrame:
         data = []
@@ -70,10 +71,8 @@ class RecommenderDatasetCreator:
         return categories
 
     def create_recommender_data_features_functions_csv(self) -> pd.DataFrame:
-        f = self.results[0].function
-        hash: int = f.seed
         categories = self._create_recommender_data_features_functions()
-        data = [[hash, categories]]
+        data = [[self.jobnumber, categories]]
         df = pd.DataFrame(data, columns=['itemID', 'genres'])
 
         return df
@@ -82,7 +81,6 @@ class RecommenderDatasetCreator:
 
         df_mov = margin_of_victory(self.results)
 
-        hash: int = self.results[0].function.seed
         ts: float = datetime.datetime.now().timestamp()
 
         # Take last margin of victory values
@@ -96,7 +94,7 @@ class RecommenderDatasetCreator:
         # Make range from 0 to 5 'stars'
         rating_array = (4*L)+1
 
-        data = [[i+1, hash, f"{rating:.5f}", f"{ts:.0f}"] for i, rating in enumerate(rating_array)]
+        data = [[i+1, self.jobnumber, f"{rating:.5f}", f"{ts:.0f}"] for i, rating in enumerate(rating_array)]
 
         df_stars = pd.DataFrame(data, columns=DEFAULT_HEADER)
 
