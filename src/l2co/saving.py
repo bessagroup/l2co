@@ -13,8 +13,7 @@ import xarray as xr
 from f3dasm.run_optimization import OptimizationResult
 
 # Local
-from .create_recommender_dataset import \
-    create_recommender_data_features_functions
+from .create_recommender_dataset import RecommenderDatasetCreator
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -58,7 +57,9 @@ def save_as_cdf(name: str, results: List[OptimizationResult]):
     xarr.attrs['function_name']: str = results[0].function.get_name()
     xarr.attrs['function_noise']: str = results[0].function.noise
     xarr.attrs['function_dimensionality']: int = results[0].function.dimensionality
-    xarr.attrs['function_features']: str = create_recommender_data_features_functions(results)
+
+    datasetcreator = RecommenderDatasetCreator(results, jobnumber=None)
+    xarr.attrs['function_features']: str = datasetcreator._create_recommender_data_features_functions()
 
     # Global minimum function
     _, g = results[0].function.get_global_minimum(d=results[0].function.dimensionality)
