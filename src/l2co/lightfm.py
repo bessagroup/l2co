@@ -44,6 +44,80 @@ USER_ALPHA = 1e-6
 SEED = 42
 
 
+def create_predictions_df_with_lightfm_reverse(folder_to_files: str) -> pd.DataFrame:
+    # Read datasets
+    data_interactions = pd.read_csv(f'{folder_to_files}/totalinteractions_r.csv', index_col=0)
+    data_userfeatures = pd.read_csv(f'{folder_to_files}/totalfeatures_functions_r.csv', index_col=0)
+    data_itemfeatures = pd.read_csv(f'{folder_to_files}/totalfeatures_optimizers_r.csv', index_col=0)
+
+    # Combine to one dataframe 'data':
+    # Note the [0] index is because duplicates exists in seeds, fix this!
+    features = pd.DataFrame([data_itemfeatures[data_itemfeatures['itemID'] == d]
+                            ['genres'].values[0] for d in data_interactions['itemID']], columns=['genres'])
+    occupation = pd.DataFrame([data_userfeatures[data_userfeatures['userID'] == d]
+                              ['information'].values for d in data_interactions['userID']], columns=['information'])
+
+    data_interactions['genres'] = features['genres']
+    data_interactions['information'] = occupation['information']
+
+    # retrieve the all the unique categories in the data
+    movie_genre = [x.split(',') for x in data_itemfeatures['genres']]
+    occupations = [x.split(',') for x in data_interactions['information']]
+    all_movie_genre = sorted(list(set(chain.from_iterable(movie_genre))))
+    all_occupations = sorted(list(set(chain.from_iterable(occupations))))
+
+    # Create Dataset object
+    dataset2 = Dataset()
+    dataset2.fit(users=data_interactions['userID'],
+                 items=data_interactions['itemID'],
+                 item_features=all_movie_genre,
+                 user_features=all_occupations)
+
+    item_features = dataset2.build_item_features((x, y) for x, y in zip(data_interactions.itemID, movie_genre))
+    user_features = dataset2.build_user_features((x, y) for x, y in zip(data_interactions.userID, occupations))
+
+    interactions2, weights2 = dataset2.build_interactions(data_interactions.iloc[:, 0:3].values)
+
+    train_interactions2, test_interactions2 = no_shuffle_train_test_split(
+        interactions2,
+        test_percentage=TEST_PERCENTAGE,
+        random_state=np.random.RandomState(SEED)
+    )
+
+    model2 = LightFM(loss='warp', no_components=NO_COMPONENTS,
+                     learning_rate=LEARNING_RATE,
+                     item_alpha=ITEM_ALPHA,
+                     user_alpha=USER_ALPHA,
+                     random_state=np.random.RandomState(SEED)
+                     )
+
+    model2.fit(interactions=train_interactions2,
+               user_features=user_features,
+               item_features=item_features,
+               epochs=NO_EPOCHS
+               )
+
+    uids, iids, interaction_data = cross_validation._shuffle(
+        interactions2.row,
+        interactions2.col,
+        interactions2.data,
+        random_state=np.random.RandomState(SEED)
+    )
+
+    # cutoff = int((1.0 - TEST_PERCENTAGE) * len(uids))
+    # test_idx = slice(cutoff, None)
+
+    uid_map, ufeature_map, iid_map, ifeature_map = dataset2.mapping()
+
+    all_predictions2 = prepare_all_predictions(data_interactions, uid_map, iid_map,
+                                               interactions=train_interactions2,
+                                               user_features=user_features,
+                                               item_features=item_features,
+                                               model=model2,
+                                               num_threads=NO_THREADS)
+    return all_predictions2
+
+
 def create_predictions_df_with_lightfm(folder_to_files: str) -> pd.DataFrame:
     # Read datasets
     data_interactions = pd.read_csv(f'{folder_to_files}/totalinteractions.csv', index_col=0)
