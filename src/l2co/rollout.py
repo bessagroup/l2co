@@ -2,7 +2,7 @@
 # =============================================================================
 
 # Standard
-from typing import Union
+from typing import List, Union
 
 # Third-party core
 import pandas as pd
@@ -31,14 +31,15 @@ def determine_loser(df: pd.DataFrame) -> str:
 
 
 def create_recommendation_results(files_path: str, experimentdata: ExperimentData,
-                                  strategy: Union[pd.Series, None] = None) -> pd.DataFrame:
+                                  strategies: Union[List[pd.Series], None] = None) -> pd.DataFrame:
     total_mov = 0
     for index, (value_input, value_output) in enumerate(experimentdata):
         data: xr.Dataset = xr.load_dataset(f"{files_path}/raw/{value_output['status']}.cd")
         mov: pd.DataFrame = margin_of_victory(data)
 
-        if strategy is not None:
-            mov[strategy.name] = mov[strategy.iloc[index]]
+        if strategies is not None:
+            for strategy in strategies:
+                mov[strategy.name] = mov[strategy.iloc[index]]
 
         total_mov += mov
     return total_mov
