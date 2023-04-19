@@ -96,7 +96,7 @@ design:
 experimentdata:
   name: "benchmarkfunctions"
   sampler: RandomUniform
-  seed: 798
+  seed: 1
   number_of_samples: 10
 
 optimization:
