@@ -19,7 +19,10 @@ design:
       upper_bound: 32
 
   output_space:
-    - name: status
+    - name: raw
+      class: ConstantParameter
+      value: ""
+    - name: result
       class: ConstantParameter
       value: ""
 
@@ -34,9 +37,9 @@ experimentdata:
   number_of_samples: 10
 
 files:
-  train_dirname_raw: '/media/martin/MARTIN USB/data/520508.hpc06.hpc'
-  test_dirname_raw: '/media/martin/MARTIN USB/data/520412.hpc06.hpc'
-  dirname_mov: 'mov'
+  train_dirname_raw: "/media/martin/MARTIN USB/data/520508.hpc06.hpc"
+  test_dirname_raw: "/media/martin/MARTIN USB/data/520412.hpc06.hpc"
+  dirname_mov: "mov"
 
   # dirname_raw: raw
   # dirname_interactions: interactions

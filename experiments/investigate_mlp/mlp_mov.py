@@ -38,9 +38,9 @@ def execute(config: Config, jobnumber: int, solver: str, activation: str, layers
     folder_test = config.files.test_dirname_raw  # '/media/martin/MARTIN USB/data/520412.hpc06.hpc'
 
     # recommender = pd.read_csv('/home/martin/Documents/functions_optimizer_map.csv', delimiter='\t')
-    data_train = f3dasm.ExperimentData.from_csv(filename=f"{folder_train}/benchmarkfunctions")
+    # data_train = f3dasm.ExperimentData.from_csv(filename=f"{folder_train}/benchmarkfunctions")
     data_test = f3dasm.ExperimentData.from_csv(filename=f"{folder_test}/benchmarkfunctions")
-    features_functions_train = pd.read_csv(f"{folder_train}/recommender/totalfeatures_functions.csv", index_col=0)
+    # features_functions_train = pd.read_csv(f"{folder_train}/recommender/totalfeatures_functions.csv", index_col=0)
     features_functions_test = pd.read_csv(f"{folder_test}/recommender/totalfeatures_functions.csv", index_col=0)
 
     unique_features = {'convex': 0,
@@ -79,6 +79,8 @@ def execute(config: Config, jobnumber: int, solver: str, activation: str, layers
 
     df_mov.to_csv(f"./{config.files.dirname_mov}/{filename}.csv")
 
+    result: float = df_mov[filename].iloc[-1] / len(ds_mov_best)
+
     logging.info(f"Finished job and saved filename {filename}")
 
     # Plotting
@@ -87,4 +89,4 @@ def execute(config: Config, jobnumber: int, solver: str, activation: str, layers
     fig.legend(loc='upper left')
     fig.savefig(f'./{config.files.dirname_mov}/{filename}.png', dpi=300)
 
-    return filename
+    return filename, result

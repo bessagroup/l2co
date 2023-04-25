@@ -81,7 +81,8 @@ def manual_strategy(data: xr.Dataset, index: int, features_functions: pd.DataFra
     return max(set(f_opt), key=f_opt.count)
 
 
-def mlp_strategy(data: xr.Dataset, index: int, features_functions: pd.DataFrame, unique_features: dict, classifier: MLPClassifier) -> str:
+def mlp_strategy(data: xr.Dataset, index: int, features_functions: pd.DataFrame,
+                 unique_features: dict, classifier: MLPClassifier) -> str:
 
     # # Reverse map
     # reverse_mapping = {value: key for key, value in output_map.items()}
