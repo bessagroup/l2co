@@ -137,3 +137,5 @@ outputs/
 *.json
 
 *.ipynb
+
+notebooks/plots/*.png
