@@ -3,12 +3,14 @@
 
 # Standard
 import logging
+import os
 
 # Third-party
 import f3dasm
 import matplotlib.pyplot as plt
 import pandas as pd
 from config import Config
+from hydra.utils import get_original_cwd
 from sklearn.neural_network import MLPClassifier
 
 # Local
@@ -34,8 +36,10 @@ def execute(config: Config, jobnumber: int, solver: str, activation: str, layers
 
     filename = f"s-{solver}a-{activation}l-{layers}n-{neurons}"
 
-    folder_train = config.files.train_dirname_raw  # '/media/martin/MARTIN USB/data/520508.hpc06.hpc'
-    folder_test = config.files.test_dirname_raw  # '/media/martin/MARTIN USB/data/520412.hpc06.hpc'
+    # '/media/martin/MARTIN USB/data/520508.hpc06.hpc'
+    folder_train = os.path.join(get_original_cwd(), config.files.train_dirname_raw)
+    # '/media/martin/MARTIN USB/data/520412.hpc06.hpc'
+    folder_test = os.path.join(get_original_cwd(), config.files.test_dirname_raw)
 
     # recommender = pd.read_csv('/home/martin/Documents/functions_optimizer_map.csv', delimiter='\t')
     # data_train = f3dasm.ExperimentData.from_csv(filename=f"{folder_train}/benchmarkfunctions")
