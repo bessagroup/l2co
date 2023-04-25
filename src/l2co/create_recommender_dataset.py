@@ -50,7 +50,7 @@ class RecommenderDatasetCreator:
             categories_list.append('noisy')
         if (f.dimensionality <= 5):
             categories_list.append('low_dimensional')
-        if (5 < f.dimensionality <= 10):
+        if (5 < f.dimensionality < 10):
             categories_list.append('medium_dimensional')
         if (f.dimensionality >= 10):
             categories_list.append('high_dimensional')

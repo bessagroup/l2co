@@ -5,12 +5,15 @@
 # Standard
 
 import random
+from copy import copy
+from itertools import combinations
 from typing import Callable
 
 # Third-party core
 import pandas as pd
 import xarray as xr
 from f3dasm.design import ExperimentData
+from sklearn.neural_network import MLPClassifier
 
 # Local
 from .margin_of_victory import margin_of_victory
@@ -25,11 +28,16 @@ __status__ = 'Stable'
 
 
 def create_strategy(files_path: str, experimentdata: ExperimentData,
-                    strategy_determiner: Callable[[xr.Dataset], str], label: str, *args, **kwargs) -> pd.Series:
+                    strategy_determiner: Callable[[xr.Dataset], str], label: str,
+                    load_dataset: bool = True, *args, **kwargs) -> pd.Series:
     recommender = []
     for i, (data_input, data_output) in enumerate(experimentdata):
         index = experimentdata.data.index[i]
-        data = xr.load_dataset(f"{files_path}/raw/{data_output['status']}.cd")
+        if load_dataset:
+            data = xr.load_dataset(f"{files_path}/raw/{data_output['status']}.cd")
+        else:
+            data = 0
+        # print(f"{index}")
         recommender.append(strategy_determiner(data, index, *args, **kwargs))
 
     strategy_series = pd.Series(recommender, index=experimentdata.data.index, name=label)
@@ -62,3 +70,29 @@ def lightfm_strategy_reverse(data: xr.Dataset, index: int, df_predictions: pd.Da
     optimizer_number = df_predictions[df_predictions['userID'] == index].sort_values(
         by=['prediction'], ascending=True).iloc[0]['itemID']
     return optimizer_mapping[int(optimizer_number)]
+
+
+def manual_strategy(data: xr.Dataset, index: int, features_functions: pd.DataFrame, recommender_dict: dict) -> str:
+    features = features_functions[features_functions['itemID'] == index]['genres'].values[0].split(',')
+    f_combinations = list(combinations(features, 1))
+    f_combinations.extend(list(combinations(features, 2)))
+    f = [",".join(f_combinations[ii]) for ii in range(len(f_combinations))]
+    f_opt = [recommender_dict[feature] for feature in f]
+    return max(set(f_opt), key=f_opt.count)
+
+
+def mlp_strategy(data: xr.Dataset, index: int, features_functions: pd.DataFrame, unique_features: dict, classifier: MLPClassifier) -> str:
+
+    # # Reverse map
+    # reverse_mapping = {value: key for key, value in output_map.items()}
+
+    features = features_functions[features_functions['itemID'] == index]['genres'].values[0].split(',')
+
+    features_dict = copy(unique_features)
+    for value in features:
+        features_dict[value] = 1
+
+    mlp_input = pd.DataFrame([features_dict]).to_numpy()
+
+    mlp_output = classifier.predict(mlp_input)
+    return mlp_output  # reverse_mapping[mlp_output.item()]
