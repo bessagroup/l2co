@@ -7,7 +7,7 @@
 import random
 from copy import copy
 from itertools import combinations
-from typing import Callable
+from typing import Any, Protocol
 
 # Third-party core
 import pandas as pd
@@ -16,7 +16,7 @@ from f3dasm.design import ExperimentData
 from sklearn.neural_network import MLPClassifier
 
 # Local
-from .margin_of_victory import margin_of_victory
+from .performance import area_under_curve, margin_of_victory
 from .rollout import determine_loser, determine_winner
 
 #                                                          Authorship & Credits
@@ -27,8 +27,24 @@ __status__ = 'Stable'
 # =============================================================================
 
 
+class Strategy(Protocol):
+    def __call__(self, data: xr.Dataset, *args: Any, **kwargs: Any) -> str:
+        """Strategy protocol function that determines the strategy for each problem
+
+        Parameters
+        ----------
+        data
+            raw data in the form of an xarray dataset
+
+        Returns
+        -------
+            label of optimizer that is chosen for each problem
+        """
+        ...
+
+
 def create_strategy(files_path: str, experimentdata: ExperimentData,
-                    strategy_determiner: Callable[[xr.Dataset], str], label: str,
+                    strategy_determiner: Strategy, label: str,
                     load_dataset: bool = True, *args, **kwargs) -> pd.Series:
     recommender = []
     for i, (data_input, data_output) in enumerate(experimentdata):
@@ -51,6 +67,16 @@ def best_mov_strategy(data: xr.Dataset, *args, **kwargs) -> str:
 
 def worst_mov_strategy(data: xr.Dataset, *args, **kwargs) -> str:
     mov = margin_of_victory(data)
+    return determine_loser(mov)
+
+
+def best_area_under_curve_strategy(data: xr.Dataset, *args, **kwargs) -> str:
+    mov = area_under_curve(data)
+    return determine_winner(mov)
+
+
+def worst_area_under_curve_strategy(data: xr.Dataset, *args, **kwargs) -> str:
+    mov = area_under_curve(data)
     return determine_loser(mov)
 
 
