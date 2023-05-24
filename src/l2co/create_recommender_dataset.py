@@ -13,7 +13,7 @@ from f3dasm.run_optimization import OptimizationResult
 from recommenders.utils.constants import DEFAULT_HEADER
 
 # Local
-from .margin_of_victory import margin_of_victory
+from .performance import Performance, margin_of_victory
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -77,9 +77,10 @@ class RecommenderDatasetCreator:
 
         return df
 
-    def create_recommender_data_interactions_csv(self) -> pd.DataFrame:
+    def create_recommender_data_interactions_csv(self,
+                                                 performance_metric: Performance = margin_of_victory) -> pd.DataFrame:
 
-        df_mov = margin_of_victory(self.results)
+        df_mov = performance_metric(self.results)
 
         ts: float = datetime.datetime.now().timestamp()
 
