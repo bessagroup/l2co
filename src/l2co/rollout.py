@@ -10,7 +10,7 @@ import xarray as xr
 from f3dasm.design import ExperimentData
 
 # Local
-from .margin_of_victory import margin_of_victory
+from .performance import Performance, margin_of_victory
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -21,21 +21,22 @@ __status__ = 'Stable'
 
 
 def determine_winner(df: pd.DataFrame) -> str:
-    # return the highest margin-of-victory of the last index!
+    # return the highest performance of the last index!
     return df.iloc[-1].idxmax()
 
 
 def determine_loser(df: pd.DataFrame) -> str:
-    # return the highest margin-of-victory of the last index!
+    # return the highest performance of the last index!
     return df.iloc[-1].idxmin()
 
 
 def create_recommendation_results(files_path: str, experimentdata: ExperimentData,
-                                  strategies: Union[List[pd.Series], None] = None) -> pd.DataFrame:
+                                  strategies: Union[List[pd.Series], None] = None,
+                                  performance_metric: Performance = margin_of_victory) -> pd.DataFrame:
     total_mov = 0
     for index, (value_input, value_output) in enumerate(experimentdata):
         data: xr.Dataset = xr.load_dataset(f"{files_path}/raw/{value_output['status']}.cd")
-        mov: pd.DataFrame = margin_of_victory(data)
+        mov: pd.DataFrame = performance_metric(data)
 
         if strategies is not None:
             for strategy in strategies:
@@ -43,14 +44,3 @@ def create_recommendation_results(files_path: str, experimentdata: ExperimentDat
 
         total_mov += mov
     return total_mov
-
-
-# def create_individual_optimizers_results(files_path: str, experimentdata: ExperimentData) -> pd.DataFrame:
-
-#     total_mov = 0
-#     for value_input, value_output in experimentdata:
-#         data: xr.Dataset = xr.load_dataset(f"{files_path}/raw/{value_output['status']}.cd")
-#         mov: pd.DataFrame = margin_of_victory(data)
-
-#         total_mov += mov
-#     return total_mov
