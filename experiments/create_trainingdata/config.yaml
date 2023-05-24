@@ -100,7 +100,7 @@ experimentdata:
   number_of_samples: 10
 
 optimization:
-  optimizers_names: [Adam, PSO, CMAES, RandomSearch]
+  # optimizers_names: [Adam, PSO, CMAES, RandomSearch]
   lower_bound: -1.0
   upper_bound: 1.0
   sampler_name: LatinHypercube
@@ -113,13 +113,8 @@ optimization:
       class: Adam
     - name: CMAES
       class: CMAES
-    - name: PSO_default
+    - name: PSO
       class: PSO
-    - name: PSO_altered
-      class: PSO
-      hyperparameters:
-        population: 30
-        eta1: 1.95
     - name: RMSprop
       class: RMSprop
     - name: SGA

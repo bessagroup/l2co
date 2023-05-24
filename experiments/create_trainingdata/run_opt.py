@@ -14,6 +14,7 @@ from config import Config
 
 # Local
 from l2co.create_recommender_dataset import RecommenderDatasetCreator
+from l2co.performance import area_under_curve
 from l2co.saving import save_as_cdf
 
 #                                                          Authorship & Credits
@@ -138,7 +139,7 @@ def execute(config: Config, jobnumber: int, function_name: str, dimensionality: 
         features_optimizer.to_csv(f"./{config.files.dirname_recommender}/totalfeatures_optimizers.csv")
 
     # Create interactions matrix
-    rating = datasetcreator.create_recommender_data_interactions_csv()
+    rating = datasetcreator.create_recommender_data_interactions_csv(performance_metric=area_under_curve)
     rating.to_csv(f"./{config.files.dirname_interactions}/{filename}.csv", index=False)
 
     # Save raw data cdf
