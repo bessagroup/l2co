@@ -30,47 +30,66 @@ __status__ = 'Stable'
 
 
 def initial_script(config: Config):
+    # Check if we use an existing dataset
+    if config.experimentdata.existing_data_path is not False:
+        data = f3dasm.ExperimentData.from_csv(
+            filename=f"{config.experimentdata.existing_data_path}/{config.experimentdata.name}")
+        job_queue = f3dasm.experiment.JobQueue.from_json(
+            json_filename=config.hpc.jobqueue_filename, path=config.experimentdata.existing_data_path)
 
-    # Create the designspace from the hydra yaml file
-    design = f3dasm.DesignSpace.from_yaml(config.design)
+    # Else, create the dataset
+    else:
+        # Create the designspace from the hydra yaml file
+        design = f3dasm.DesignSpace.from_yaml(config.design)
 
-    # Create the sampler from the hydra yaml file
-    sampler_name = f3dasm.sampling.find_sampler(config.experimentdata.sampler)
-    sampler: f3dasm.Sampler = sampler_name(design=design, seed=config.experimentdata.seed)
+        # Create the sampler from the hydra yaml file
+        sampler_name = f3dasm.sampling.find_sampler(config.experimentdata.sampler)
+        sampler: f3dasm.Sampler = sampler_name(design=design, seed=config.experimentdata.seed)
 
-    # Create samples and ExperimentData object
-    data = sampler.get_samples(numsamples=config.experimentdata.number_of_samples)
+        # Create samples and ExperimentData object
+        data = sampler.get_samples(numsamples=config.experimentdata.number_of_samples)
 
-    # Dirty hack for TypeError: Cannot setitem on a Categorical with a new category (), set the categories first
-    data.data[('input', 'function_name')] = data.data[('input', 'function_name')].astype('object')
+        # Dirty hack for TypeError: Cannot setitem on a Categorical with a new category (), set the categories first
+        data.data[('input', 'function_name')] = data.data[('input', 'function_name')].astype('object')
 
-    function_class_list = [f3dasm.functions.find_function(query=f) for f in list(design.input_space[0].categories)]
-    for index in range(data.get_number_of_datapoints()):
-        i = data.get_inputdata_by_index(index)
-        function_class: f3dasm.functions.PyBenchFunction = f3dasm.find_class(
-            module=f3dasm.functions, query=i['function_name'])
-        if not function_class.is_dim_compatible(int(i['dimensionality'])):
-            filtered_class_list = [ff.__name__ for ff in filter(lambda f: f.is_dim_compatible(
-                int(i['dimensionality'])), function_class_list)]
-            i['function_name'] = np.random.choice(filtered_class_list)
+        function_class_list = [f3dasm.functions.find_function(query=f) for f in list(design.input_space[0].categories)]
+        for index in range(data.get_number_of_datapoints()):
+            i = data.get_inputdata_by_index(index)
+            function_class: f3dasm.functions.PyBenchFunction = f3dasm.find_class(
+                module=f3dasm.functions, query=i['function_name'])
+            if not function_class.is_dim_compatible(int(i['dimensionality'])):
+                filtered_class_list = [ff.__name__ for ff in filter(lambda f: f.is_dim_compatible(
+                    int(i['dimensionality'])), function_class_list)]
+                i['function_name'] = np.random.choice(filtered_class_list)
 
-            data.set_inputdata_by_index(index, i['function_name'], column=('input', 'function_name'))
+                data.set_inputdata_by_index(index, i['function_name'], column=('input', 'function_name'))
 
-    # Dirty hack for TypeError: Cannot setitem on a Categorical with a new category (), set the categories first
-    data.data[('input', 'function_name')] = data.data[('input', 'function_name')].astype('category')
+        # Dirty hack for TypeError: Cannot setitem on a Categorical with a new category (), set the categories first
+        data.data[('input', 'function_name')] = data.data[('input', 'function_name')].astype('category')
+
+        # Create the JobQueue object
+        job_queue = f3dasm.experiment.JobQueue.from_experimentdata(
+            filename=config.hpc.jobqueue_filename, experimentdata=data)
 
     # Store the ExperimentData to a csv file
     data.store(config.experimentdata.name)
-
-    # Create the JobQueue object
-    job_queue = f3dasm.experiment.JobQueue.from_experimentdata(
-        filename=config.hpc.jobqueue_filename, experimentdata=data)
 
     # Write the JobQueue object to a file
     job_queue.write_new_jobfile()
 
     # Make directory for recommender results
     Path(f"./{config.files.dirname_recommender}").mkdir(parents=True, exist_ok=True)
+
+    if config.experimentdata.existing_data_path is not False:
+        copyfile(f'{config.experimentdata.existing_data_path}/'
+                 f'{config.files.dirname_recommender}/totalfeatures_functions.csv',
+                 f'./{config.files.dirname_recommender}/totalfeatures_functions.csv')
+        copyfile(f'{config.experimentdata.existing_data_path}/'
+                 f'{config.files.dirname_recommender}/totalfeatures_optimizers.csv',
+                 f'./{config.files.dirname_recommender}/totalfeatures_optimizers.csv')
+        copyfile(f'{config.experimentdata.existing_data_path}/'
+                 f'{config.files.dirname_recommender}/totalinteractions.csv',
+                 f'./{config.files.dirname_recommender}/totalinteractions.csv')
 
     # Initialize filehandler
     features_filehandler = CombineFeaturesFileHandler(dir_name='features', master_file='totalfeatures_functions')

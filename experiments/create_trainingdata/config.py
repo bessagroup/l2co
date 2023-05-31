@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Union
 
 
 @dataclass
@@ -10,6 +10,8 @@ class DesignConfig:
 
 @dataclass
 class ExperimentConfig:
+    existing_data_path: Union[bool, str]
+    name: str
     sampler: str
     seed: int
     number_of_samples: int

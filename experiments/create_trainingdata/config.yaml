@@ -94,6 +94,7 @@ design:
       value: ""
 
 experimentdata:
+  existing_data_path: /home/martin/Documents/test_design
   name: "benchmarkfunctions"
   sampler: RandomUniform
   seed: 1
