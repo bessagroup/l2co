@@ -1,7 +1,14 @@
 files:
-  recommender: "../../notebooks/datafiles"
-  raw: "../../notebooks/optimizerresults"
-  outputfilename: "margin_of_victory_recommender"
+  dirname:
+  dirname_raw: raw
+  dirname_interactions: interactions
+  dirname_features: features
+  dirname_recommender: recommender
+  output_filename: performance.csv
+
+experimentdata:
+  existing_data_path: /home/martin/Documents/test_design
+  name: benchmarkfunctions
 
 hpc:
   jobid: 1

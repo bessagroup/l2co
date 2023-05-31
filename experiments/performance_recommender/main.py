@@ -1,29 +1,35 @@
-import os
+from pathlib import Path
+from typing import List
 
+import f3dasm
 import hydra
+import pandas as pd
 from config import Config
 from hydra.core.config_store import ConfigStore
-from hydra.utils import get_original_cwd
 
-from l2co.lightfm import create_predictions_df_with_lightfm
-from l2co.margin_of_victory import create_recommendation_results
-
+from l2co.performance import area_under_curve
+from l2co.rollout import create_recommendation_results
+from l2co.strategy import best_mov_strategy, create_strategy
 
 @hydra.main(config_path=".", config_name="config")
-def main(cfg: Config):
-    PATH_OF_FILES = os.path.join(get_original_cwd(), cfg.files.raw)
-    FOLDER_TO_CSV = os.path.join(get_original_cwd(), cfg.files.recommender)
+def main(config: Config):
 
-    df = create_predictions_df_with_lightfm(folder_to_files=FOLDER_TO_CSV)
+    # Load experiment data
+    experimentdata_path = Path(config.files.dirname) / Path(config.experiment.name)
+    experimentdata = f3dasm.ExperimentData.from_csv(experimentdata_path)
 
-    unique_itemids = list(set(df['itemID'].values))
-    recommendations = {_id: int(df[df['itemID'] == _id].sort_values(
-        by=['prediction'], ascending=False).iloc[0]['userID']) for _id in unique_itemids}
+    # Create strategies
+    strategies: List[pd.DataFrame] = []
+    strategies.append(create_strategy(files_path=Path(config.files.dirname),
+                      experimentdata=experimentdata, strategy_determiner=best_mov_strategy, label="best_mov_strategy"))
 
-    df = create_recommendation_results(
-        path_of_files=PATH_OF_FILES, recommendations=recommendations, selection=unique_itemids)
+    # Create resulting datafram
+    df = create_recommendation_results(files_path=Path(config.files.dirname), experimentdata=experimentdata,
+                                       strategies=strategies,
+                                       performance_metric=area_under_curve)
 
-    df.to_csv(f'{cfg.files.outputfilename}.csv')
+    # Save results
+    df.to_csv(config.files.output_filename)
 
 
 cs = ConfigStore.instance()
