@@ -5,7 +5,7 @@
 
 # Standard
 from pathlib import Path
-from typing import List
+from typing import List, Union
 
 # Third-party
 import numpy as np
@@ -90,21 +90,21 @@ def from_xarray_to_dataframe(xarr: xr.Dataset) -> List[List[pd.DataFrame]]:
     return df_list
 
 
-def load_netcdf(path: str) -> xr.Dataset:
+def load_netcdf(file_path: Union[str, Path]) -> xr.Dataset:
     # if path is a string, convert to Path object
-    if isinstance(path, str):
-        path = Path(path)
+    if isinstance(file_path, str):
+        file_path = Path(file_path)
 
     # check if path exists
-    if not path.exists():
-        raise FileNotFoundError(f'File {path} does not exist')
+    if not file_path.exists():
+        raise FileNotFoundError(f'File {file_path} does not exist')
 
     # check if path is a file
-    if not path.is_file():
-        raise FileNotFoundError(f'Path {path} is not a file')
+    if not file_path.is_file():
+        raise FileNotFoundError(f'Path {file_path} is not a file')
 
     # check if path is a .cd file
-    if path.suffix != '.cd':
-        raise ValueError(f'File {path} is not a .cd file')
+    if file_path.suffix != '.cd':
+        raise ValueError(f'File {file_path} is not a .cd file')
 
-    return xr.load_dataset(path)
+    return xr.load_dataset(file_path)
