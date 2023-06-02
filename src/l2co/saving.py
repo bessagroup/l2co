@@ -4,6 +4,7 @@
 # =============================================================================
 
 # Standard
+from pathlib import Path
 from typing import List
 
 # Third-party
@@ -87,3 +88,23 @@ def from_xarray_to_dataframe(xarr: xr.Dataset) -> List[List[pd.DataFrame]]:
             df_optimizer.append(df_realization)
         df_list.append(df_optimizer)
     return df_list
+
+
+def load_netcdf(path: str) -> xr.Dataset:
+    # if path is a string, convert to Path object
+    if isinstance(path, str):
+        path = Path(path)
+
+    # check if path exists
+    if not path.exists():
+        raise FileNotFoundError(f'File {path} does not exist')
+
+    # check if path is a file
+    if not path.is_file():
+        raise FileNotFoundError(f'Path {path} is not a file')
+
+    # check if path is a .cd file
+    if path.suffix != '.cd':
+        raise ValueError(f'File {path} is not a .cd file')
+
+    return xr.load_dataset(path)

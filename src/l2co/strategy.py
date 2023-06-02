@@ -20,6 +20,7 @@ from sklearn.neural_network import MLPClassifier
 # Local
 from .performance import area_under_curve, margin_of_victory
 from .rollout import determine_loser, determine_winner
+from .saving import load_netcdf
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -75,7 +76,7 @@ def _create_one_strategy(index: int, value_input: dict,
     options.update({'index': i})
 
     if load_dataset:
-        experimentdata: xr.Dataset = xr.load_dataset(f"{files_path}/raw/{value_output['status']}.cd")
+        experimentdata: xr.Dataset = load_netcdf(f"{files_path}/raw/{value_output['status']}.cd")
     else:
         experimentdata = 0
 

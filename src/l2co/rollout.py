@@ -13,6 +13,7 @@ from f3dasm.design import ExperimentData
 
 # Local
 from .performance import Performance, margin_of_victory
+from .saving import load_netcdf
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -73,7 +74,7 @@ def create_recommendation_results(files_path: str, experimentdata: ExperimentDat
 def _create_one_recommendation_result(index: int, value_input: dict, value_output: dict, files_path: str,
                                       strategies: List[pd.Series], performance_metric: Performance) -> pd.DataFrame:
 
-    data: xr.Dataset = xr.load_dataset(f"{files_path}/raw/{value_output['status']}.cd")
+    data: xr.Dataset = load_netcdf(f"{files_path}/raw/{value_output['status']}.cd")
     mov: pd.DataFrame = performance_metric(data)
 
     for strategy in strategies:
