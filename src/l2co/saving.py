@@ -91,6 +91,19 @@ def from_xarray_to_dataframe(xarr: xr.Dataset) -> List[List[pd.DataFrame]]:
 
 
 def load_netcdf(file_path: Union[str, Path]) -> xr.Dataset:
+    """Load a .cd file as a xarray Dataset
+
+    Parameters
+    ----------
+    file_path : Union[str, Path]
+        Path to the .cd file
+
+    Returns
+    -------
+    xr.Dataset
+        The loaded .cd file as a xarray Dataset
+    """
+
     # if path is a string, convert to Path object
     if isinstance(file_path, str):
         file_path = Path(file_path)
