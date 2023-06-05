@@ -26,7 +26,7 @@ def create_logger(name: str, level: int = logging.INFO, filename: str = None) ->
     logger.setLevel(level)
 
     # Create a file handler
-    if filename is not None:
+    if filename is None:
         filename = f"{name}.log"
 
     # Check if file ends with .log
