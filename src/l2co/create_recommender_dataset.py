@@ -102,15 +102,3 @@ class RecommenderDatasetCreator:
         logging.info("Created ratings matrix from margin of victory!")
 
         return df_stars
-
-
-# def combine_all_ratings(query: str) -> pd.DataFrame:
-#     for index, file in enumerate(glob.glob(query)):
-#         f = pd.read_csv(file)
-#         if index == 0:
-#             total = f
-
-#         else:
-#             total = pd.concat([total, f], ignore_index=True)
-
-#     return total
