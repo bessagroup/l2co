@@ -33,12 +33,12 @@ def main(config: Config):
     logger.info(f"Loaded experiment data from {experimentdata_path}")
 
     # split experimentdata in test and train
-    train, test = train_test_split(range(0, experimentdata.get_number_of_datapoints()), test_size=0.8, random_state=42)
-    _, test_data = experimentdata.select(train), experimentdata.select(test)
+    # train, test = train_test_split(range(0, experimentdata.get_number_of_datapoints()), test_size=0.8, random_state=42)
+    # _, test_data = experimentdata.select(train), experimentdata.select(test)
 
     # Create strategies
     strategies: List[pd.DataFrame] = []
-    default_strategy_options: dict = {"files_path": dirname, "experimentdata": test_data,
+    default_strategy_options: dict = {"files_path": dirname, "experimentdata": experimentdata,
                                       "strategy_determiner": None,
                                       "label": None,
                                       "parallelization": config.recommender.parallelization, }
