@@ -46,27 +46,8 @@ def create_recommendation_results(files_path: str, experimentdata: ExperimentDat
     for mov in results:
         total_mov += mov
 
-    # if parallelization:
-    #     args = [
-    #         (index, value_input, value_output,
-    #          files_path, strategies, performance_metric)
-    #         for index, (value_input, value_output) in enumerate(experimentdata)
-    #     ]
-
-    #     with mp.Pool() as pool:
-    #         # maybe implement pool.starmap_async ?
-    #         results = pool.starmap(_create_one_recommendation_result, args)
-
-    #     for mov in results:
-    #         total_mov += mov
-
-    # else:
-
-    #     for index, (value_input, value_output) in enumerate(experimentdata):
-    #         mov = _create_one_recommendation_result(index, value_input, value_output,
-    #                                                 files_path, strategies, performance_metric)
-
-    #         total_mov += mov
+    # divide total_mov by the number of experiments
+    total_mov = total_mov / experimentdata.get_number_of_datapoints()
 
     return total_mov
 
