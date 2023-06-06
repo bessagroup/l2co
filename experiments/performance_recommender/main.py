@@ -10,7 +10,6 @@ import pandas as pd
 from config import Config
 from hydra.core.config_store import ConfigStore
 from hydra.utils import get_original_cwd
-from sklearn.model_selection import train_test_split
 
 from l2co._logging import logger
 from l2co.performance import margin_of_victory
