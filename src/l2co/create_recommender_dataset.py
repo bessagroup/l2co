@@ -3,7 +3,6 @@
 
 # Standard
 import datetime
-import logging
 from typing import List
 
 # Third-party
@@ -11,7 +10,9 @@ import numpy as np
 import pandas as pd
 from f3dasm.run_optimization import OptimizationResult
 from recommenders.utils.constants import DEFAULT_HEADER
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
+from ._logging import logger
 # Local
 from .performance import Performance, margin_of_victory
 
@@ -78,7 +79,7 @@ class RecommenderDatasetCreator:
         return df
 
     def create_recommender_data_interactions_csv(self,
-                                                 performance_metric: Performance = margin_of_victory) -> pd.DataFrame:
+                                                 performance_metric: Performance = margin_of_victory, scaler: str = 'MinMax') -> pd.DataFrame:
 
         df_mov = performance_metric(self.results)
 
@@ -87,18 +88,30 @@ class RecommenderDatasetCreator:
         # Take last margin of victory values
         scores = df_mov.iloc[-1].values
 
-        min_scores = np.min(scores)
-        max_scores = np.max(scores)
+        # # Minmax scale
+        if scaler == 'MinMax':
+            scaler = MinMaxScaler(feature_range=(1, 5))
 
-        L = (scores - min_scores)/(max_scores - min_scores)
+        elif scaler == 'Standard':
+            scaler = StandardScaler()
+        # scaler = MinMaxScaler(feature_range=(1, 5))
+        # scaler = StandardScaler()
 
-        # Make range from 0 to 5 'stars'
-        rating_array = (4*L)+1
+        scaler.fit(scores.reshape(-1, 1))
+
+        rating_array = scaler.transform(scores.reshape(-1, 1)).reshape(-1)
+        # min_scores = np.min(scores)
+        # max_scores = np.max(scores)
+
+        # L = (scores - min_scores)/(max_scores - min_scores)
+
+        # # Make range from 0 to 5 'stars'
+        # rating_array = (4*L)+1
 
         data = [[i+1, self.jobnumber, f"{rating:.5f}", f"{ts:.0f}"] for i, rating in enumerate(rating_array)]
 
         df_stars = pd.DataFrame(data, columns=DEFAULT_HEADER)
 
-        logging.info("Created ratings matrix from margin of victory!")
+        logger.info("Created ratings matrix from margin of victory!")
 
         return df_stars
