@@ -10,7 +10,6 @@ import pandas as pd
 from config import Config
 from hydra.core.config_store import ConfigStore
 from hydra.utils import get_original_cwd
-
 from l2co._logging import logger
 from l2co.performance import margin_of_victory
 from l2co.rollout import create_recommendation_results
@@ -26,7 +25,7 @@ def main(config: Config):
     orig_cwd = Path(get_original_cwd())
 
     # Load experiment data
-    experimentdata_path = orig_cwd / Path(config.files.dirname) / Path(config.experiment.name)
+    experimentdata_path = orig_cwd / Path(config.experiment.existing_data_path) / Path(config.experiment.name)
     dirname = orig_cwd / Path(config.files.dirname)
     experimentdata = f3dasm.ExperimentData.from_csv(experimentdata_path)
     logger.info(f"Loaded experiment data from {experimentdata_path}")
