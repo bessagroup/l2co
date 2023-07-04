@@ -13,6 +13,7 @@ import f3dasm
 import hydra
 import numpy as np
 from config import Config
+from f3dasm._logging import logger
 from hydra.core.config_store import ConfigStore
 from run_opt import execute
 
@@ -34,25 +35,26 @@ def initial_script(config: Config):
     if config.experimentdata.existing_data_path is not False:
         data = f3dasm.ExperimentData.from_csv(
             filename=f"{config.experimentdata.existing_data_path}/{config.experimentdata.name}")
-        job_queue = f3dasm.experiment.JobQueue.from_json(
-            json_filename=config.hpc.jobqueue_filename, path=config.experimentdata.existing_data_path)
 
     # Else, create the dataset
     else:
         # Create the designspace from the hydra yaml file
         design = f3dasm.DesignSpace.from_yaml(config.design)
 
+        logger.info("Created designspace")
         # Create the sampler from the hydra yaml file
         sampler_name = f3dasm.sampling.find_sampler(config.experimentdata.sampler)
         sampler: f3dasm.Sampler = sampler_name(design=design, seed=config.experimentdata.seed)
 
         # Create samples and ExperimentData object
         data = sampler.get_samples(numsamples=config.experimentdata.number_of_samples)
+        logger.info("Sampled from designspace")
 
         # Dirty hack for TypeError: Cannot setitem on a Categorical with a new category (), set the categories first
-        data.data[('input', 'function_name')] = data.data[('input', 'function_name')].astype('object')
+        data.data.data[('input', 'function_name')] = data.data.data[('input', 'function_name')].astype('object')
 
-        function_class_list = [f3dasm.functions.find_function(query=f) for f in list(design.input_space[0].categories)]
+        function_class_list = [f3dasm.functions.find_function(
+            query=f) for f in list(design.input_space['function_name'].categories)]
         for index in range(data.get_number_of_datapoints()):
             i = data.get_inputdata_by_index(index)
             function_class: f3dasm.functions.PyBenchFunction = f3dasm.find_class(
@@ -65,18 +67,11 @@ def initial_script(config: Config):
                 data.set_inputdata_by_index(index, i['function_name'], column=('input', 'function_name'))
 
         # Dirty hack for TypeError: Cannot setitem on a Categorical with a new category (), set the categories first
-        data.data[('input', 'function_name')] = data.data[('input', 'function_name')].astype('category')
-
-        # Create the JobQueue object
-        job_queue = f3dasm.experiment.JobQueue.from_experimentdata(
-            filename=config.hpc.jobqueue_filename, experimentdata=data)
+        data.data.data[('input', 'function_name')] = data.data.data[('input', 'function_name')].astype('category')
 
     # Store the ExperimentData to a csv file
-    data.store(config.experimentdata.name)
-
-    # Write the JobQueue object to a file
-    job_queue.write_new_jobfile()
-
+    data.store(filename=config.experimentdata.name)
+    logger.info("Stored experimentdata")
     # Make directory for recommender results
     Path(f"./{config.files.dirname_recommender}").mkdir(parents=True, exist_ok=True)
 
@@ -99,6 +94,7 @@ def initial_script(config: Config):
     # Continuous check on newly created datafiles
 
     if config.hpc.jobid == -1:  # Pass if on local machine
+        logger.info("Running on local machine, skipping filehandler loop")
         return
 
     while True:
@@ -113,7 +109,7 @@ def initial_script(config: Config):
             copyfile(f'./{config.files.dirname_interactions}/totalinteractions.csv',
                      f'./{config.files.dirname_recommender}/totalinteractions.csv')
 
-        if job_queue.is_all_finished():
+        if data.jobs.is_all_finished():
             logging.info("All jobs are finished. Exiting filehandler loop!")
             break
 
@@ -153,29 +149,28 @@ def job(config: Config, execute_callable: Callable):
         function to execute a job. Requires to arguments; the config and any **kwargs from the design
     """
 
-    # Retrieve the queue
-    job_queue = f3dasm.experiment.JobQueue(filename=config.hpc.jobqueue_filename)
+    # Retrieve the ExperimentData object
+    data = f3dasm.ExperimentData.from_csv(filename=config.experimentdata.name)
+    logger.debug("Loaded experimentdata")
 
     # Let the node repeat the execution of jobs
     while True:
         try:
-            jobnumber = job_queue.get()
-        except f3dasm.experiment.NoOpenJobsError:
-            logging.info("There are no open jobs left!")
+            jobnumber, input_value, _ = data.get_open_job_data()
+        except Exception:
+            logger.info("There are no open jobs left!")
             break
 
-        data = f3dasm.ExperimentData.from_csv(filename=config.experimentdata.name)
-        designparameters = data.get_inputdata_by_index(jobnumber)
+        logger.info(f"Retrieved job {jobnumber}")
 
         try:
-            returnvalue = execute_callable(config, jobnumber, **designparameters)
-            job_queue.mark_finished(jobnumber)
+            returnvalue = execute_callable(config, jobnumber, **input_value)
+            data.write_outputdata_by_index(index=jobnumber, value=returnvalue)
+            logger.info(f"Wrote outputdata for job {jobnumber}")
         except Exception as e:
             logging.exception(f"An exception of type {type(e).__name__} occurred: {e}")
             returnvalue = 'ERROR'
-            job_queue.mark_error(jobnumber)
-
-        data.write_outputdata_by_index(filename=config.experimentdata.name, index=jobnumber, value=returnvalue)
+            data.write_error(index=jobnumber)
 
 
 cs = ConfigStore.instance()

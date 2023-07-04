@@ -3,8 +3,8 @@ defaults:
 
 design:
   input_space:
-    - name: function_name
-      class: CategoricalParameter
+    function_name:
+      _target_: f3dasm.CategoricalParameter
       categories: [
           "Ackley",
           "AckleyN2",
@@ -77,24 +77,24 @@ design:
           "XinSheYangN4",
           "Zakharov",
         ]
-    - name: dimensionality
-      class: CategoricalParameter
+    dimensionality:
+      _target_: f3dasm.CategoricalParameter
       categories: ["2", "3", "5", "10", "20"]
-    - name: noise
-      class: CategoricalParameter
+    noise:
+      _target_: f3dasm.CategoricalParameter
       categories: ["0.0", "0.1"]
-    - name: seed
-      class: DiscreteParameter
+    seed:
+      _target_: f3dasm.DiscreteParameter
       lower_bound: 0
       upper_bound: 1000000
 
   output_space:
-    - name: status
-      class: ConstantParameter
+    status:
+      _target_: f3dasm.ConstantParameter
       value: ""
 
 experimentdata:
-  existing_data_path: /home/martin/Documents/test_design
+  existing_data_path: False
   name: "benchmarkfunctions"
   sampler: RandomUniform
   seed: 1

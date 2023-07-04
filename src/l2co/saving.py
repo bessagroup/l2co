@@ -40,9 +40,9 @@ def save_as_cdf(name: str, results: List[OptimizationResult]):
     df_list = [[d.data for d in results[i].data] for i, _ in enumerate(results)]
     for i, _ in enumerate(df_list):
         for j, _ in enumerate(df_list[i]):
-            df_list[i][j].columns = df_list[i][j].columns.droplevel()
+            df_list[i][j].data.columns = df_list[i][j].data.columns.droplevel()
 
-    data_arrays = [[df.to_xarray() for jj, df in enumerate(df_list[ii])] for ii, _ in enumerate(df_list)]
+    data_arrays = [[df.data.to_xarray() for jj, df in enumerate(df_list[ii])] for ii, _ in enumerate(df_list)]
 
     optimizer_names = [res.optimizer.get_name() for res in results]  # Get optimizer names
 

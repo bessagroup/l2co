@@ -2,7 +2,6 @@
 # =============================================================================
 
 # Standard
-import logging
 import os
 
 # Third-party
@@ -13,6 +12,7 @@ from config import Config
 from hydra.utils import get_original_cwd
 from sklearn.neural_network import MLPClassifier
 
+from l2co._logging import logger
 # Local
 from l2co.rollout import create_recommendation_results
 from l2co.strategy import create_strategy, mlp_strategy
@@ -85,7 +85,7 @@ def execute(config: Config, jobnumber: int, solver: str, activation: str, layers
 
     result: float = df_mov[filename].iloc[-1] / len(ds_mov_best)
 
-    logging.info(f"Finished job and saved filename {filename}")
+    logger.info(f"Finished job and saved filename {filename}")
 
     # Plotting
     fig, ax = plt.figure(figsize=[10, 8]), plt.axes()

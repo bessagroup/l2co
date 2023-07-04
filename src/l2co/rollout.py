@@ -3,6 +3,7 @@
 
 # Standard
 import logging
+from pathlib import Path
 from typing import List, Union
 
 import f3dasm
@@ -55,7 +56,11 @@ def create_recommendation_results(files_path: str, experimentdata: ExperimentDat
 def _create_one_recommendation_result(index: int, value_input: dict, value_output: dict, files_path: str,
                                       strategies: List[pd.Series], performance_metric: Performance) -> pd.DataFrame:
 
-    data: xr.Dataset = load_netcdf(f"{files_path}/raw/{value_output['status']}.cd")
+    # load_netcdf but convert str to Paths
+
+    data: xr.DataSet = load_netcdf(Path(files_path) / Path('raw') / Path(value_output['status'] + '.cd'))
+
+    # data: xr.Dataset = load_netcdf(f"{files_path}/raw/{value_output['status']}.cd")
     mov: pd.DataFrame = performance_metric(data)
 
     for strategy in strategies:

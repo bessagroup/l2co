@@ -18,6 +18,7 @@ from f3dasm.design import ExperimentData
 from sklearn.neural_network import MLPClassifier
 
 # Local
+from ._logging import logger
 from .performance import area_under_curve, margin_of_victory
 from .rollout import determine_loser, determine_winner
 from .saving import load_netcdf
@@ -58,7 +59,7 @@ def create_strategy(files_path: str, experimentdata: ExperimentData,
 
     strategy_series = pd.Series(recommender, index=experimentdata.data.index, name=label)
 
-    logging.info(f"Created strategy series for {label}")
+    logger.info(f"Created strategy series for {label}")
     return strategy_series
 
 

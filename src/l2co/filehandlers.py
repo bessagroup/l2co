@@ -21,7 +21,8 @@ __status__ = 'Stable'
 
 class FileHandler:
     def __init__(self, dir_name: str, extension: str, exceptions: List[str] = None):
-        """Filehandler class that tracks newly created files and manages post-processing actions
+        """Filehandler class that tracks newly created files
+        and manages post-processing actions
 
         Parameters
         ----------
@@ -61,7 +62,7 @@ class FileHandler:
             for exception in exceptions
         ]
 
-    def retrieve_all_files(self) -> List[str]:
+    def retrieve_tracked_files(self) -> List[str]:
         """Retrieve all files in the directory that pass the extension criteria
 
         Returns
@@ -78,7 +79,7 @@ class FileHandler:
         -------
             list of filenames that need to be processed
         """
-        all_files = self.retrieve_all_files()
+        all_files = self.retrieve_tracked_files()
         return list(filter(lambda file: file not in self.processed_files, all_files))
 
     def tick_processed(self, processed_file: str, errorcode: int):
@@ -96,15 +97,15 @@ class FileHandler:
             self.error_files.append(processed_file)
 
     def run(self):
-        """Main script to call. Runs one sweep down the directory
-        to check for files to process and processes them sequentially
+        """Main script to call. Runs one sweep down the directory to check for files
+        to process and processes them sequentially
         """
         # Retrieve list of files to process
         to_process = self.retrieve_files_to_process()
 
         # Execute the action for every file in the list
         # Tick the processed files as processed
-        for filename in to_process:
+        for filename in (f for f in to_process):
             errorcode = self.execute(filename)
             self.tick_processed(filename, errorcode)
 
@@ -121,6 +122,7 @@ class FileHandler:
             errorcode after completion. 0 for success and 1 for fail
         """
         return 0
+
 
 
 class CombineFeaturesFileHandler(FileHandler):

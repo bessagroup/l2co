@@ -4,8 +4,8 @@ from typing import Dict, List, Union
 
 @dataclass
 class DesignConfig:
-    input_space: List[Dict]
-    output_space: List[Dict]
+    input_space: Dict
+    output_space: Dict
 
 
 @dataclass
