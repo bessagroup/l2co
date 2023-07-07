@@ -12,7 +12,7 @@ from l2co.create_recommender_dataset import RecommenderDatasetCreator
 from l2co.performance import (_calculate_mean_std, _normalize,
                               area_under_curve, margin_of_victory)
 
-plt.style.use('science')
+plt.style.use(['science', 'no-latex'])
 
 
 def select_data_from_features(query: List[str], features_functions: pd.DataFrame,

@@ -9,7 +9,7 @@ handlers:
     formatter: simple
     stream: ext://sys.stdout
   file:
-    class: f3dasm.experiment.logging.DistributedFileHandler
+    class: f3dasm.DistributedFileHandler
     formatter: simple
     # absolute file path
     filename: ${hydra.runtime.output_dir}/${hydra.job.name}.log

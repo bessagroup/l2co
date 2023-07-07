@@ -13,7 +13,7 @@ import f3dasm
 import hydra
 import numpy as np
 from config import Config
-from f3dasm._logging import logger
+from f3dasm.logger import logger
 from hydra.core.config_store import ConfigStore
 from run_opt import execute
 
@@ -33,32 +33,30 @@ __status__ = 'Stable'
 def initial_script(config: Config):
     # Check if we use an existing dataset
     if config.experimentdata.existing_data_path is not False:
-        data = f3dasm.ExperimentData.from_csv(
+        data = f3dasm.ExperimentData.from_file(
             filename=f"{config.experimentdata.existing_data_path}/{config.experimentdata.name}")
 
     # Else, create the dataset
     else:
-        # Create the designspace from the hydra yaml file
-        design = f3dasm.DesignSpace.from_yaml(config.design)
+        # Create the Domain from the hydra yaml file
+        design = f3dasm.Domain.from_yaml(config.design)
 
         logger.info("Created designspace")
-        # Create the sampler from the hydra yaml file
-        sampler_name = f3dasm.sampling.find_sampler(config.experimentdata.sampler)
-        sampler: f3dasm.Sampler = sampler_name(design=design, seed=config.experimentdata.seed)
 
-        # Create samples and ExperimentData object
-        data = sampler.get_samples(numsamples=config.experimentdata.number_of_samples)
-        logger.info("Sampled from designspace")
+        # Step 2: Filling the design space
+        sampler = f3dasm.sampling.Sampler.from_yaml(config)
+        data = f3dasm.ExperimentData.from_sampling(sampler)
+        logger.info("Sampled from Domain")
 
         # Dirty hack for TypeError: Cannot setitem on a Categorical with a new category (), set the categories first
         data.data.data[('input', 'function_name')] = data.data.data[('input', 'function_name')].astype('object')
 
-        function_class_list = [f3dasm.functions.find_function(
+        function_class_list = [f3dasm.datageneration.functions.find_function(
             query=f) for f in list(design.input_space['function_name'].categories)]
         for index in range(data.get_number_of_datapoints()):
             i = data.get_inputdata_by_index(index)
-            function_class: f3dasm.functions.PyBenchFunction = f3dasm.find_class(
-                module=f3dasm.functions, query=i['function_name'])
+            function_class = f3dasm.datageneration.functions.find_function(
+                query=i['function_name'])
             if not function_class.is_dim_compatible(int(i['dimensionality'])):
                 filtered_class_list = [ff.__name__ for ff in filter(lambda f: f.is_dim_compatible(
                     int(i['dimensionality'])), function_class_list)]
@@ -109,7 +107,7 @@ def initial_script(config: Config):
             copyfile(f'./{config.files.dirname_interactions}/totalinteractions.csv',
                      f'./{config.files.dirname_recommender}/totalinteractions.csv')
 
-        if data.jobs.is_all_finished():
+        if data.is_all_finished():
             logging.info("All jobs are finished. Exiting filehandler loop!")
             break
 
@@ -150,27 +148,29 @@ def job(config: Config, execute_callable: Callable):
     """
 
     # Retrieve the ExperimentData object
-    data = f3dasm.ExperimentData.from_csv(filename=config.experimentdata.name)
+    data = f3dasm.ExperimentData.from_file(filename=config.experimentdata.name)
     logger.debug("Loaded experimentdata")
 
-    # Let the node repeat the execution of jobs
-    while True:
-        try:
-            jobnumber, input_value, _ = data.get_open_job_data()
-        except Exception:
-            logger.info("There are no open jobs left!")
-            break
+    data.run(execute, mode='cluster', kwargs={'config': config})
 
-        logger.info(f"Retrieved job {jobnumber}")
+    # # Let the node repeat the execution of jobs
+    # while True:
+    #     try:
+    #         jobnumber, input_value, _ = data.get_open_job_data()
+    #     except Exception:
+    #         logger.info("There are no open jobs left!")
+    #         break
 
-        try:
-            returnvalue = execute_callable(config, jobnumber, **input_value)
-            data.write_outputdata_by_index(index=jobnumber, value=returnvalue)
-            logger.info(f"Wrote outputdata for job {jobnumber}")
-        except Exception as e:
-            logging.exception(f"An exception of type {type(e).__name__} occurred: {e}")
-            returnvalue = 'ERROR'
-            data.write_error(index=jobnumber)
+    #     logger.info(f"Retrieved job {jobnumber}")
+
+    #     try:
+    #         returnvalue = execute_callable(config, jobnumber, **input_value)
+    #         data.write_outputdata_by_index(index=jobnumber, value=returnvalue)
+    #         logger.info(f"Wrote outputdata for job {jobnumber}")
+    #     except Exception as e:
+    #         logging.exception(f"An exception of type {type(e).__name__} occurred: {e}")
+    #         returnvalue = 'ERROR'
+    #         data.write_error(index=jobnumber)
 
 
 cs = ConfigStore.instance()

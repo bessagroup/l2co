@@ -11,6 +11,7 @@ from typing import List
 import f3dasm
 import numpy as np
 from config import Config
+from f3dasm import Design
 
 # Local
 from l2co.create_recommender_dataset import RecommenderDatasetCreator
@@ -51,7 +52,7 @@ def convert_config_to_input(config: Config, function_name: str, dimensionality: 
 
     dimensionality = int(dimensionality)
 
-    function_class = f3dasm.functions.find_function(query=function_name)
+    function_class = f3dasm.datageneration.functions.find_function(query=function_name)
 
     function_noise = float(noise)
 
@@ -59,7 +60,7 @@ def convert_config_to_input(config: Config, function_name: str, dimensionality: 
 
     bounds = np.tile([config.optimization.lower_bound, config.optimization.upper_bound], (dimensionality, 1))
 
-    design = f3dasm.make_nd_continuous_design(bounds=bounds, dimensionality=dimensionality)
+    design = f3dasm.make_nd_continuous_domain(bounds=bounds, dimensionality=dimensionality)
     function = function_class(
         dimensionality=dimensionality, noise=function_noise, scale_bounds=design.get_bounds(), seed=seed
     )
@@ -88,28 +89,12 @@ def convert_config_to_input(config: Config, function_name: str, dimensionality: 
     ]
 
 
-def execute(config: Config, jobnumber: int, function_name: str, dimensionality: str, noise: str, seed: int) -> str:
-    """Main program to create optimization training results and create the recommender matrices
-
-    Parameters
-    ----------
-    config
-        full configuration parameters from Hydra YAML file
-    jobnumber
-        number of the row in the experimentdata frame
-    function_name
-        design parameter: classname of the benchmark function
-    dimensionality
-        design parameter: dimensionality of the benchmark function
-    noise
-        design parameter: standard deviation of Gaussian noise on benchmark function
-    seed
-        design parameter: seed of the benchmark function
-
-    Returns
-    -------
-        filename of the raw results file
-    """
+# def execute(config: Config, jobnumber: int, function_name: str, dimensionality: str, noise: str, seed: int) -> str:
+def execute(design: Design, config: Config) -> Design:
+    function_name = design.get('function_name')
+    dimensionality = design.get('dimensionality')
+    noise = design.get('noise')
+    seed = design.get('seed')
 
     results: List[f3dasm.OptimizationResult] = []
 
@@ -127,7 +112,7 @@ def execute(config: Config, jobnumber: int, function_name: str, dimensionality: 
     Path(f"./{config.files.dirname_features}").mkdir(parents=True, exist_ok=True)
 
     # Create Datasetcreator for recommender systems
-    datasetcreator = RecommenderDatasetCreator(results, jobnumber)
+    datasetcreator = RecommenderDatasetCreator(results, design.job_number)
 
     # Create features functions matrix
     features_functions = datasetcreator.create_recommender_data_features_functions_csv()
@@ -145,5 +130,7 @@ def execute(config: Config, jobnumber: int, function_name: str, dimensionality: 
     # Save raw data cdf
     save_as_cdf(name=f"./{config.files.dirname_raw}/{filename}", results=copy(results))
 
-    # Return the raw data filename
-    return filename
+    design.set('filename', filename)
+
+    # Return the altered design object
+    return design

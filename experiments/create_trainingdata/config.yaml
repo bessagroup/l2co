@@ -93,6 +93,11 @@ design:
       _target_: f3dasm.ConstantParameter
       value: ""
 
+sampler:
+  _target_: f3dasm.sampling.RandomUniform
+  seed: 1
+  number_of_samples: 3
+
 experimentdata:
   existing_data_path: False
   name: "benchmarkfunctions"
@@ -101,7 +106,6 @@ experimentdata:
   number_of_samples: 10
 
 optimization:
-  # optimizers_names: [Adam, PSO, CMAES, RandomSearch]
   lower_bound: -1.0
   upper_bound: 1.0
   sampler_name: LatinHypercube
@@ -110,14 +114,14 @@ optimization:
   realizations: 3
   parallelization: True
   optimizers:
-    - name: Adam
-      class: Adam
     - name: CMAES
       class: CMAES
+    - name: Adam
+      class: Adam
     - name: PSO
       class: PSO
-    - name: RMSprop
-      class: RMSprop
+    - name: RandomSearch
+      class: RandomSearch
     - name: SGA
       class: SGA
 
