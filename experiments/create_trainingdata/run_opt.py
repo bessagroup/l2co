@@ -3,7 +3,6 @@
 
 # Standard
 from copy import copy
-from os import path
 from pathlib import Path
 from typing import List
 
@@ -14,8 +13,6 @@ from config import Config
 from f3dasm import Design
 
 # Local
-from l2co.create_recommender_dataset import RecommenderDatasetCreator
-from l2co.performance import area_under_curve
 from l2co.saving import save_as_cdf
 
 #                                                          Authorship & Credits
@@ -29,7 +26,7 @@ __status__ = 'Stable'
 
 
 def convert_config_to_input(config: Config, function_name: str, dimensionality: str,
-                            noise: str, seed: int) -> List[dict]:
+                            noise: str, seed: int, budget: int) -> List[dict]:
     """Convert the hydra configuration and design parameters to classes and objects
 
     Parameters
@@ -44,6 +41,8 @@ def convert_config_to_input(config: Config, function_name: str, dimensionality: 
         design parameter: standard deviation of Gaussian noise on benchmark function
     seed
         design parameter: seed of the benchmark function
+    budget
+        design parameter: number of iterations of the benchmark function
 
     Returns
     -------
@@ -51,13 +50,10 @@ def convert_config_to_input(config: Config, function_name: str, dimensionality: 
     """
 
     dimensionality = int(dimensionality)
-
+    budget = int(budget)
     function_class = f3dasm.datageneration.functions.find_function(query=function_name)
-
     function_noise = float(noise)
-
     sampler_class: f3dasm.Sampler = f3dasm.sampling.find_sampler(config.optimization.sampler_name)
-
     bounds = np.tile([config.optimization.lower_bound, config.optimization.upper_bound], (dimensionality, 1))
 
     design = f3dasm.make_nd_continuous_domain(bounds=bounds, dimensionality=dimensionality)
@@ -80,7 +76,7 @@ def convert_config_to_input(config: Config, function_name: str, dimensionality: 
             "function": function,
             "sampler": sampler,
             "number_of_samples": config.optimization.number_of_samples,
-            "iterations": config.optimization.iterations,
+            "iterations": budget,
             "realizations": config.optimization.realizations,
             "parallelization": config.optimization.parallelization,
             "seed": seed,
@@ -89,48 +85,25 @@ def convert_config_to_input(config: Config, function_name: str, dimensionality: 
     ]
 
 
-# def execute(config: Config, jobnumber: int, function_name: str, dimensionality: str, noise: str, seed: int) -> str:
 def execute(design: Design, config: Config) -> Design:
     function_name = design.get('function_name')
     dimensionality = design.get('dimensionality')
+    budget = design.get('budget')
     noise = design.get('noise')
     seed = design.get('seed')
 
     results: List[f3dasm.OptimizationResult] = []
 
     options_list = convert_config_to_input(config=config, function_name=function_name,
-                                           dimensionality=dimensionality, noise=noise, seed=seed)
+                                           dimensionality=dimensionality, noise=noise, seed=seed, budget=budget)
 
     filename: str = f"{function_name}_seed{seed}_dim{dimensionality}"
 
     for options in options_list:
         results.append(f3dasm.run_multiple_realizations(**options))
 
-    # Create dirs
-    Path(f"./{config.files.dirname_raw}").mkdir(parents=True, exist_ok=True)
-    Path(f"./{config.files.dirname_interactions}").mkdir(parents=True, exist_ok=True)
-    Path(f"./{config.files.dirname_features}").mkdir(parents=True, exist_ok=True)
-
-    # Create Datasetcreator for recommender systems
-    datasetcreator = RecommenderDatasetCreator(results, design.job_number)
-
-    # Create features functions matrix
-    features_functions = datasetcreator.create_recommender_data_features_functions_csv()
-    features_functions.to_csv(f"./{config.files.dirname_features}/{filename}.csv", index=False)
-
-    # Create features optimizers matrix
-    if not path.exists(f"./{config.files.dirname_recommender}/totalfeatures_optimizers.csv"):  # done only once
-        features_optimizer = datasetcreator.create_recommender_data_features_optimizers_csv()
-        features_optimizer.to_csv(f"./{config.files.dirname_recommender}/totalfeatures_optimizers.csv")
-
-    # Create interactions matrix
-    rating = datasetcreator.create_recommender_data_interactions_csv(performance_metric=area_under_curve)
-    rating.to_csv(f"./{config.files.dirname_interactions}/{filename}.csv", index=False)
-
-    # Save raw data cdf
-    save_as_cdf(name=f"./{config.files.dirname_raw}/{filename}", results=copy(results))
+    save_as_cdf(name=Path().cwd() / Path(config.files.dirname_raw) / Path(filename), results=copy(results))
 
     design.set('filename', filename)
 
-    # Return the altered design object
     return design

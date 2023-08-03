@@ -87,9 +87,12 @@ design:
       _target_: f3dasm.DiscreteParameter
       lower_bound: 0
       upper_bound: 1000000
+    budget:
+      _target_: f3dasm.ConstantParameter
+      value: 1000
 
   output_space:
-    status:
+    filename:
       _target_: f3dasm.ConstantParameter
       value: ""
 
@@ -100,17 +103,14 @@ sampler:
 
 experimentdata:
   existing_data_path: False
-  name: "benchmarkfunctions"
-  sampler: RandomUniform
-  seed: 1
-  number_of_samples: 10
+  name: benchmarkfunctions
+  mode: cluster
 
 optimization:
   lower_bound: -1.0
   upper_bound: 1.0
   sampler_name: LatinHypercube
   number_of_samples: 30
-  iterations: 1000
   realizations: 3
   parallelization: True
   optimizers:
@@ -127,10 +127,6 @@ optimization:
 
 files:
   dirname_raw: raw
-  dirname_interactions: interactions
-  dirname_features: features
-  dirname_recommender: recommender
 
 hpc:
   jobid: -1
-  jobqueue_filename: "jobqueue"
