@@ -11,8 +11,5 @@ files:
 experiment:
   mode: "cluster"
 
-recommender:
-  parallelization: True
-
 hpc:
   jobid: -1

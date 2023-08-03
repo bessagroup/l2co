@@ -19,11 +19,6 @@ class ExperimentConfig:
 
 
 @dataclass
-class RecommenderConfig:
-    parallelization: bool
-
-
-@dataclass
 class HPCConfig:
     jobid: int
 
@@ -33,4 +28,3 @@ class Config:
     files: FileConfig
     hpc: HPCConfig
     experiment: ExperimentConfig
-    recommender: RecommenderConfig
