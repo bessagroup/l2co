@@ -3,18 +3,19 @@ from dataclasses import dataclass
 
 @dataclass
 class FileConfig:
-    dirname: str
-    dirname_raw: str
-    dirname_interactions: str
-    dirname_features: str
-    dirname_recommender: str
+    raw_data: str
+    experimentdata_file: str
+    interactions_file: str
+    training_features_file: str
     output_filename: str
+    output_dir: str
+    output_experimentdata_file: str
+    output_master_file: str
 
 
 @dataclass
 class ExperimentConfig:
-    existing_data_path: str
-    name: str
+    mode: str
 
 
 @dataclass

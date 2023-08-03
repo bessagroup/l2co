@@ -1,78 +1,112 @@
-
-import time
+import random
 from pathlib import Path
-from typing import List
+from time import perf_counter, sleep
 
 import f3dasm
 import hydra
-import matplotlib.pyplot as plt
 import pandas as pd
 from config import Config
 from hydra.core.config_store import ConfigStore
-from hydra.utils import get_original_cwd
+
 from l2co._logging import logger
-from l2co.performance import margin_of_victory
-from l2co.rollout import create_recommendation_results
-from l2co.strategy import (best_area_under_curve_strategy, best_mov_strategy,
-                           create_strategy, random_strategy)
+from l2co.filehandlers2 import CombineMarginOfVictoryFileHandler
+from l2co.strategy2 import (BestMoVStrategy, ContentBasedRecommenderStategy,
+                            RandomStrategy, StrategyManager)
+
+
+def post_processing(config: Config):
+    logger.info("== POST-PROCESSING ==")
+    experimentdata = f3dasm.ExperimentData.from_file(filename=config.files.output_experimentdata_file)
+
+    dir_name = Path.cwd() / Path(config.files.output_dir)
+    master_file = Path(config.files.output_master_file)
+
+    logger.info(f"dir_name: {dir_name}")
+    logger.info(f"master_file: {master_file}")
+
+    fh = CombineMarginOfVictoryFileHandler(
+        dir_name=dir_name, master_file=master_file, remove_files=True)
+
+    while True:
+        fh.run()
+        if experimentdata.is_all_finished():
+            logger.info("All jobs are finished. Exiting filehandler loop!")
+            break
+
+        sleep(5)
+
+
+def job(config: Config):
+    logger.info("== JOB ==")
+
+    start_time = perf_counter()
+
+    # Read files
+    raw_data = Path(config.files.raw_data)
+    if not raw_data.exists():
+        raise FileNotFoundError(f"Folder {raw_data} not found!")
+
+    logger.info(f"raw_data: {raw_data}")
+
+    e = f3dasm.ExperimentData.from_file(filename=Path(config.files.experimentdata_file))
+    logger.info(f"Loaded experimentdata from {config.files.experimentdata_file}")
+
+    features = pd.read_csv(Path(config.files.training_features_file), index_col=0)
+    logger.info(f"Loaded features from {config.files.training_features_file}")
+
+    interactions = pd.read_csv(Path(config.files.interactions_file), index_col=0)
+    logger.info(f"Loaded interactions from {config.files.interactions_file}")
+
+    # TEMP
+    # Select 100 random indices from experimentdata.data.data.index
+    random_indices = random.sample(list(e.data.data.index), 10)
+
+    experimentdata = e.select(random_indices)
+
+    # Create strategies
+    recommender_strategy = ContentBasedRecommenderStategy(features=features, interactions=interactions)
+    random_strategy = RandomStrategy()
+    best_mov_strategy = BestMoVStrategy()
+
+    strategy_manager = StrategyManager(raw_data_path=raw_data, strategy_list=[
+                                       recommender_strategy, random_strategy, best_mov_strategy],
+                                       output_directory=Path(config.files.output_dir), mode=config.experiment.mode)
+
+    experimentdata.jobs.mark_all_open()
+    for strategy in [recommender_strategy, random_strategy, best_mov_strategy]:
+        experimentdata.add_new_output_column(strategy.label, f3dasm.ConstantParameter(''))
+    experimentdata.store(filename=config.files.output_experimentdata_file)
+    experimentdata = f3dasm.ExperimentData.from_file(filename=config.files.output_experimentdata_file)
+
+    # Run
+    experimentdata.run(strategy_manager, mode='cluster',
+                       kwargs={'save_mov': config.files.output_filename})
+
+    # Store results
+    experimentdata = f3dasm.ExperimentData.from_file(filename=config.files.output_experimentdata_file)
+    experimentdata.store(filename=config.files.output_experimentdata_file)
+
+    # log the number of tasks:
+    logger.info(f"Finished in {perf_counter() - start_time:0.4f} seconds")
+
+
+cs = ConfigStore.instance()
+cs.store(name="f3dasm_config", node=Config)
 
 
 @hydra.main(config_path=".", config_name="config")
 def main(config: Config):
 
-    start_time = time.perf_counter()
+    if config.hpc.jobid == 0:
+        post_processing(config)
 
-    orig_cwd = Path(get_original_cwd())
+    if config.hpc.jobid == -1:
+        job(config)
+        post_processing(config)
 
-    # Load experiment data
-    experimentdata_path = orig_cwd / Path(config.experiment.existing_data_path) / Path(config.experiment.name)
-    dirname = orig_cwd / Path(config.files.dirname)
-    experimentdata = f3dasm.ExperimentData.from_csv(experimentdata_path)
-    logger.info(f"Loaded experiment data from {experimentdata_path}")
+    else:
+        job(config)
 
-    # split experimentdata in test and train
-    # train, test = train_test_split(range(0, experimentdata.get_number_of_datapoints()), test_size=0.8, random_state=42)
-    # _, test_data = experimentdata.select(train), experimentdata.select(test)
-
-    # Create strategies
-    strategies: List[pd.DataFrame] = []
-    default_strategy_options: dict = {"files_path": dirname, "experimentdata": experimentdata,
-                                      "strategy_determiner": None,
-                                      "label": None,
-                                      "parallelization": config.recommender.parallelization, }
-
-    strategies.append(create_strategy(
-        **{**default_strategy_options, **{"strategy_determiner": best_mov_strategy, "label": "best_mov_strategy"}}))
-
-    strategies.append(create_strategy(
-        **{**default_strategy_options, **{"strategy_determiner": best_area_under_curve_strategy,
-                                          "label": "best_auc_strategy"}}))
-
-    strategies.append(create_strategy(
-        **{**default_strategy_options, **{"strategy_determiner": random_strategy, "label": "random_strategy"}}))
-
-    # Create resulting dataframe
-    df = create_recommendation_results(files_path=dirname, experimentdata=experimentdata,
-                                       strategies=strategies,
-                                       performance_metric=margin_of_victory,
-                                       parallelization=config.recommender.parallelization)
-    logger.info("Created recommendation results")
-
-    # Save results
-    df.to_csv(config.files.output_filename)
-    logger.info(f"Saved recommendation results to {config.files.output_filename}")
-
-    # Plot the dataframe and save to disk
-    df.plot()
-    logger.info("Plotted recommendation results")
-    plt.savefig(config.files.output_filename.replace(".csv", ".png"))
-
-    end_time = time.perf_counter()
-    logger.info(f"Finished in {end_time - start_time:0.4f} seconds")
-
-
-cs = ConfigStore.instance()
-cs.store(name="f3dasm_config", node=Config)
 
 if __name__ == "__main__":
     main()

@@ -1,17 +1,18 @@
 files:
-  dirname: /home/martin/Downloads/520314.hpc06.hpc
-  dirname_raw: raw
-  dirname_interactions: interactions
-  dirname_features: features
-  dirname_recommender: recommender
-  output_filename: performance.csv
+  raw_data: /media/martin/MARTIN USB/l2co_data/522435.hpc06.hpc/raw
+  experimentdata_file: /media/martin/MARTIN USB/l2co_data/522435.hpc06.hpc/trainingset
+  interactions_file: /media/martin/MARTIN USB/l2co_data/522435.hpc06.hpc/interactions.csv
+  training_features_file: /media/martin/MARTIN USB/l2co_data/522435.hpc06.hpc/features.csv
+  output_filename: margin_of_victory
+  output_dir: margin_of_victory
+  output_experimentdata_file: recommender_strategies
+  output_master_file: mean_margin_of_victory
 
 experiment:
-  existing_data_path: /home/martin/Downloads/520314.hpc06.hpc
-  name: benchmarkfunctions
+  mode: "cluster"
 
 recommender:
   parallelization: True
 
 hpc:
-  jobid: 1
+  jobid: -1
