@@ -13,6 +13,8 @@ import pandas as pd
 import xarray as xr
 from f3dasm.run_optimization import OptimizationResult
 
+from l2co._logging import logger
+
 # Local
 from .create_recommender_dataset import RecommenderDatasetCreator
 
@@ -75,6 +77,8 @@ def save_as_cdf(name: str, results: List[OptimizationResult]):
 
     # Save to disc
     xarr.to_netcdf(f'{name}.cd')
+
+    logger.info(f"Saved {Path(name).stem}.cd")
 
 
 def from_xarray_to_dataframe(xarr: xr.Dataset) -> List[List[pd.DataFrame]]:
