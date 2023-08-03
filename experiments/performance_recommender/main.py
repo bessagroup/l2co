@@ -9,9 +9,9 @@ from config import Config
 from hydra.core.config_store import ConfigStore
 
 from l2co._logging import logger
-from l2co.filehandlers2 import CombineMarginOfVictoryFileHandler
-from l2co.strategy2 import (BestMoVStrategy, ContentBasedRecommenderStategy,
-                            RandomStrategy, StrategyManager)
+from l2co.filehandlers import CombineMarginOfVictoryFileHandler
+from l2co.strategy import (BestMoVStrategy, ContentBasedRecommenderStategy,
+                           RandomStrategy, StrategyManager)
 
 
 def post_processing(config: Config):

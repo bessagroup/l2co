@@ -18,7 +18,7 @@ from hydra.core.config_store import ConfigStore
 from run_opt import execute
 
 # Local
-from l2co.filehandlers import CombineFeaturesFileHandler
+from l2co._legacy.filehandlers import CombineFeaturesFileHandler
 
 #                                                          Authorship & Credits
 # =============================================================================

@@ -16,7 +16,7 @@ from l2co.create_recommender_dataset import (
     create_recommender_data_features_functions_csv,
     create_recommender_data_features_optimizers_csv,
     create_recommender_data_interactions_csv)
-from l2co.filehandlers import CombineFeaturesFileHandler
+from l2co._legacy.filehandlers import CombineFeaturesFileHandler
 
 
 def convert_config_to_input(config: Config) -> List[dict]:

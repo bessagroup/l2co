@@ -15,7 +15,7 @@ from sklearn.neural_network import MLPClassifier
 from l2co._logging import logger
 # Local
 from l2co.rollout import create_recommendation_results
-from l2co.strategy import create_strategy, mlp_strategy
+from l2co._legacy.strategy import create_strategy, mlp_strategy
 
 #                                                          Authorship & Credits
 # =============================================================================

@@ -3,7 +3,7 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
-from l2co.filehandlers import FileHandler
+from l2co._legacy.filehandlers import FileHandler
 
 pytestmark = pytest.mark.smoke
 
