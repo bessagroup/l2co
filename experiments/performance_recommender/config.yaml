@@ -1,3 +1,6 @@
+defaults:
+  - override hydra/job_logging: custom
+
 files:
   raw_data: /media/martin/MARTIN USB/l2co_data/522435.hpc06.hpc/raw
   experimentdata_file: /media/martin/MARTIN USB/l2co_data/522435.hpc06.hpc/trainingset
