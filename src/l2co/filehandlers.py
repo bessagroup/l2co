@@ -41,6 +41,9 @@ class FileHandler:
         self.exceptions = self._set_exceptions(exceptions)
         self._create_empty_error_and_processed_list()
 
+        # Create directory if it does not exist
+        self.dir_name.mkdir(parents=True, exist_ok=True)
+
     def _create_empty_error_and_processed_list(self):
         self.processed_files: List[Path] = []
         self.error_files: List[Path] = []
@@ -184,40 +187,78 @@ class CombineMarginOfVictoryFileHandler(FileHandler):
             return 1
 
 
-class CombineFeaturesFileHandler(FileHandler):
-    def __init__(self, dir_name: Path, master_file: Path, exceptions: List[Path] = None):
+class ConcatDataFrameFilehandler(FileHandler):
+    def __init__(self, dir_name: Path, master_file: Path, exceptions: List[Path] = None, remove_files: bool = True):
+        self.remove_files = remove_files
+        self.master_file = master_file.with_suffix('.csv')
+
         if exceptions is None:
             exceptions = []
-        exceptions.append(master_file.with_suffix('.csv'))
+        exceptions.append(self.master_file)
 
-        self.master_file = master_file.with_suffix('.csv')
-        super().__init__(dir_name=dir_name, extension='.csv', exceptions=exceptions)
+        self.n_tasks = 0
+        super().__init__(dir_name=dir_name, extension=".csv", exceptions=exceptions)
 
-    def master_file_full_path(self) -> Path:
-        return self.dir_name / self.master_file
-        # return os.path.join(os.path.curdir, self.dir_name, f"{self.master_file}.{self.extension}")
-
-    def does_master_file_exist(self) -> bool:
-        return self.master_file_full_path().exists()
-        # return os.path.exists(self.master_file_full_path())
-
-    def execute(self, filename: Path) -> int:
+    def execute(self, filename: Path, verbal: bool = False) -> int:
         try:
-            csv_file = pd.read_csv(filename)
+            df_csv_file = pd.read_csv(filename, index_col=0)
 
-            if not self.does_master_file_exist():
-                updated_master_file = csv_file
+            if not self.master_file.exists():
+                updated_master_file = df_csv_file
             else:
-                master_file = pd.read_csv(self.master_file_full_path(), index_col=0)
-                updated_master_file = pd.concat([master_file, csv_file], ignore_index=True)
+                df_master_file = pd.read_csv(self.master_file, index_col=0)
 
-            # Overwrite masterfile to disc
-            updated_master_file.to_csv(self.master_file_full_path())
+                updated_master_file = pd.concat([df_master_file, df_csv_file], ignore_index=True)
+
+            # Overwrite masterfile to disk
+            updated_master_file.to_csv(self.master_file)
 
             # Remove file from disk
-            filename.unlink()
+            if self.remove_files:
+                filename.unlink()
+
+            logger.info(f"Added {filename.stem} to {self.master_file.stem} !")
             return 0
 
         except Exception:
             logger.error(f"ERROR with handeling {filename.stem}")
             return 1
+
+
+# class CombineFeaturesFileHandler(FileHandler):
+#     def __init__(self, dir_name: Path, master_file: Path, exceptions: List[Path] = None):
+#         if exceptions is None:
+#             exceptions = []
+#         exceptions.append(master_file.with_suffix('.csv'))
+
+#         self.master_file = master_file.with_suffix('.csv')
+#         super().__init__(dir_name=dir_name, extension='.csv', exceptions=exceptions)
+
+#     def master_file_full_path(self) -> Path:
+#         return self.dir_name / self.master_file
+#         # return os.path.join(os.path.curdir, self.dir_name, f"{self.master_file}.{self.extension}")
+
+#     def does_master_file_exist(self) -> bool:
+#         return self.master_file_full_path().exists()
+#         # return os.path.exists(self.master_file_full_path())
+
+#     def execute(self, filename: Path) -> int:
+#         try:
+#             csv_file = pd.read_csv(filename)
+
+#             if not self.does_master_file_exist():
+#                 updated_master_file = csv_file
+#             else:
+#                 master_file = pd.read_csv(self.master_file_full_path(), index_col=0)
+#                 updated_master_file = pd.concat([master_file, csv_file], ignore_index=True)
+
+#             # Overwrite masterfile to disc
+#             updated_master_file.to_csv(self.master_file_full_path())
+
+#             # Remove file from disk
+#             filename.unlink()
+#             return 0
+
+#         except Exception:
+#             logger.error(f"ERROR with handeling {filename.stem}")
+#             return 1

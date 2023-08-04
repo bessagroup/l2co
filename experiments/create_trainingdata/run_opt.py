@@ -1,18 +1,23 @@
 #                                                                       Modules
 # =============================================================================
 
+
 # Standard
-from copy import copy
+from copy import copy, deepcopy
 from pathlib import Path
 from typing import List
 
 # Third-party
 import f3dasm
 import numpy as np
+import pandas as pd
+import xarray as xr
 from config import Config
 from f3dasm import Design
+from SALib.sample import latin
 
 # Local
+from l2co.create_recommender_dataset import RecommenderDatasetCreator
 from l2co.saving import save_as_cdf
 
 #                                                          Authorship & Credits
@@ -88,7 +93,7 @@ def convert_config_to_input(config: Config, function_name: str, dimensionality: 
 def execute(design: Design, config: Config) -> Design:
     function_name = design.get('function_name')
     dimensionality = design.get('dimensionality')
-    budget = design.get('budget')
+    budget = int(design.get('budget'))
     noise = design.get('noise')
     seed = design.get('seed')
 
@@ -102,8 +107,90 @@ def execute(design: Design, config: Config) -> Design:
     for options in options_list:
         results.append(f3dasm.run_multiple_realizations(**options))
 
-    save_as_cdf(name=Path().cwd() / Path(config.files.dirname_raw) / Path(filename), results=copy(results))
+    results_xarray: xr.Dataset = save_as_cdf(
+        name=Path().cwd() / Path(config.files.dirname_raw) / Path(filename), results=copy(results), return_xarray=True)
 
     design.set('filename', filename)
 
+    if not config.recommender.create_recommender_dataset:
+        return design
+
+    # Augment the designs
+    dataset_augmenter = DatasetAugmenter(n_samples=config.recommender.n_augmented_samples,
+                                         upper_bound_budget=budget,
+                                         lower_bound_budget=config.recommender.lower_bound_budget)
+
+    _ = dataset_augmenter(design)
+    augmented_designs = dataset_augmenter.designs
+
+    # Path('interactions').mkdir(parents=True, exist_ok=True)
+
+    # Create the recommender dataset
+    interaction_matrix_list: List[pd.DataFrame] = []
+    features_matrix_list: List[pd.DataFrame] = []
+
+    for index, augmented_design in enumerate(augmented_designs):
+        task_number: int = int(design.job_number * (config.recommender.n_augmented_samples + 1) + index)
+        recommender_dataset_creator = RecommenderDatasetCreator(results=results_xarray, jobnumber=task_number)
+        interaction_matrix_list.append(recommender_dataset_creator.create_recommender_data_interactions_csv(
+            scaler=config.recommender.scaler, budget=int(augmented_design.get('budget'))))
+
+        features_matrix_list.append(
+            recommender_dataset_creator.create_recommender_data_features_functions_csv(
+                budget=int(augmented_design.get('budget'))))
+
+    df_interaction_matrix = pd.concat(interaction_matrix_list, ignore_index=True)
+    df_features_matrix = pd.concat(features_matrix_list, ignore_index=True)
+
+    # Create the directories if not existing yet
+    Path(Path().cwd() / Path(config.files.dirname_recommender_interactions)).mkdir(parents=True, exist_ok=True)
+    Path(Path().cwd() / Path(config.files.dirname_recommender_features)).mkdir(parents=True, exist_ok=True)
+
+    df_interaction_matrix.to_csv(Path().cwd() / Path(config.files.dirname_recommender_interactions) /  # NOQA
+                                 Path(filename).with_suffix('.csv'))
+
+    df_features_matrix.to_csv(Path().cwd() / Path(config.files.dirname_recommender_features) /  # NOQA
+                              Path(filename).with_suffix('.csv'))
+
     return design
+
+
+class DatasetAugmenter:
+    def __init__(self, n_samples: int, upper_bound_budget: int, lower_bound_budget: int = 0):
+        self.designs: List[f3dasm.Design] = []
+        self.n_samples = n_samples
+        self.upper_bound_budget = upper_bound_budget
+        self.lower_bound_budget = lower_bound_budget
+
+        self.salib_problem = self.create_salib_problem()
+
+    def create_salib_problem(self):
+        return {
+            'num_vars': 1,
+            'names': ['budget'],  # Replace 'parameter1' with the actual parameter name
+            # Replace with the desired lower and upper bounds
+            'bounds': [[self.lower_bound_budget, self.upper_bound_budget]],
+        }
+
+    def get_experimentdata(self, domain: f3dasm.Domain) -> f3dasm.ExperimentData:
+        exp_data = f3dasm.ExperimentData(domain)
+        designs_dataframe_dict = [design_.to_dataframe_dict() for design_ in self.designs]
+        df = pd.DataFrame(designs_dataframe_dict, columns=exp_data.data.data.columns)
+        exp_data.add(df)
+        return exp_data
+
+    def get_samples(self) -> np.ndarray:
+        return latin.sample(self.salib_problem, self.n_samples).flatten()
+
+    def __call__(self, design: f3dasm.Design):
+
+        # add the original design
+        self.designs.append(design)
+
+        for sample in self.get_samples():
+            design_ = deepcopy(design)
+            design_._dict_input['budget'] = int(sample)
+            self.designs.append(design_)
+        # print(f"Augmenting {design.job_number}...")
+
+        return design

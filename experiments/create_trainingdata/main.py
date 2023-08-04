@@ -15,6 +15,7 @@ from run_opt import execute
 
 # Local
 from l2co._logging import logger
+from l2co.filehandlers import ConcatDataFrameFilehandler
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -75,6 +76,35 @@ def pre_processing(config: Config):
     logger.info("Stored experimentdata")
 
 
+def post_processing(config: Config):
+    logger.info("== POST-PROCESSING ==")
+    experimentdata = f3dasm.ExperimentData.from_file(filename=config.experimentdata.name)
+
+    dirname_recommender_interactions = Path.cwd() / Path(config.files.dirname_recommender_interactions)
+    dirname_recommender_features = Path.cwd() / Path(config.files.dirname_recommender_features)
+
+    master_file_features = Path('features_master_file')
+    master_file_interactions = Path('interactions_master_file')
+
+    logger.info(f"dir_name: {dirname_recommender_interactions}")
+    logger.info(f"master_file: {master_file_interactions}")
+
+    fh_interactions = ConcatDataFrameFilehandler(
+        dir_name=dirname_recommender_interactions, master_file=master_file_interactions, remove_files=True)
+
+    fh_features = ConcatDataFrameFilehandler(
+        dir_name=dirname_recommender_features, master_file=master_file_features, remove_files=True)
+
+    while True:
+        fh_interactions.run()
+        fh_features.run()
+        if experimentdata.is_all_finished():
+            logger.info("All jobs are finished. Exiting filehandler loop!")
+            break
+
+        sleep(5)
+
+
 @hydra.main(config_path=".", config_name="config")
 def main(config: Config):
     """Main script to call
@@ -87,10 +117,12 @@ def main(config: Config):
     # Execute the initial_script for the first job
     if config.hpc.jobid == 0:
         pre_processing(config)
+        post_processing(config)
 
     elif config.hpc.jobid == -1:  # Sequential
         pre_processing(config)
         process(config)
+        post_processing(config)
 
     else:
         sleep(3*config.hpc.jobid)  # Just to asynchronize the jobs

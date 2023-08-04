@@ -27,6 +27,14 @@ class OptimizationConfig:
 
 
 @dataclass
+class RecommenderConfig:
+    create_recommender_dataset: bool
+    lower_bound_budget: int
+    n_augmented_samples: int
+    scaler: str
+
+
+@dataclass
 class HPCConfig:
     jobid: int
 
@@ -34,6 +42,8 @@ class HPCConfig:
 @dataclass
 class FilesConfig:
     dirname_raw: str
+    dirname_recommender_interactions: str
+    dirname_recommender_features: str
 
 
 @dataclass
@@ -43,3 +53,4 @@ class Config:
     optimization: OptimizationConfig
     hpc: HPCConfig
     files: FilesConfig
+    recommender: RecommenderConfig

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Torque directives (#PBS) must always be at the start of a job script!
 #PBS -N PerformanceRecommender
-#PBS -q guest
+#PBS -q mse
 #PBS -l nodes=1:ppn=12,walltime=12:00:00
 # Set the name of the job
 #

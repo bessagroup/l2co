@@ -125,8 +125,16 @@ optimization:
     - name: SGA
       class: SGA
 
+recommender:
+  create_recommender_dataset: True
+  lower_bound_budget: 30
+  n_augmented_samples: 10
+  scaler: Standard
+
 files:
   dirname_raw: raw
+  dirname_recommender_interactions: interactions
+  dirname_recommender_features: features
 
 hpc:
   jobid: -1

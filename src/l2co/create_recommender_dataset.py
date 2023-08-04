@@ -7,6 +7,7 @@ from typing import List
 
 # Third-party
 import pandas as pd
+from f3dasm.datageneration.functions import find_function
 from f3dasm.run_optimization import OptimizationResult
 from recommenders.utils.constants import DEFAULT_HEADER
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
@@ -70,7 +71,28 @@ class RecommenderDatasetCreator:
         categories = ",".join(categories_list)
         return categories
 
-    def create_recommender_data_features_functions_csv(self) -> pd.DataFrame:
+    def create_recommender_data_features_functions_csv(self, budget: int) -> pd.DataFrame:
+        columns = ('itemID', 'dim', 'budget', 'noise', 'convex', 'separable',
+                   'differentiable', 'multimodal', 'randomized_term', 'parametric')
+
+        f = find_function(self.results.function_name)
+
+        if self.results.function_noise == 0.0:
+            noise = 0
+        else:
+            noise = 1
+
+        # create a new row of dg
+        features = [[self.jobnumber, self.results.function_dimensionality, budget, noise, f.convex,
+                    f.separable, f.differentiable, f.multimodal, f.randomized_term, f.parametric]]
+
+        df_features = pd.DataFrame(features, columns=columns)
+        # cast all booleans in dg to ints
+        df_features = df_features.astype(int)
+
+        return df_features
+
+    def legacy_create_recommender_data_features_functions_csv(self, budget: int) -> pd.DataFrame:
         categories = self._create_recommender_data_features_functions()
         data = [[self.jobnumber, categories]]
         df = pd.DataFrame(data, columns=['itemID', 'genres'])
@@ -78,14 +100,15 @@ class RecommenderDatasetCreator:
         return df
 
     def create_recommender_data_interactions_csv(self,
-                                                 performance_metric: Performance = margin_of_victory, scaler: str = 'MinMax') -> pd.DataFrame:
+                                                 performance_metric: Performance = margin_of_victory,
+                                                 scaler: str = 'MinMax', budget: int = -1) -> pd.DataFrame:
 
         df_mov = performance_metric(self.results)
 
         ts: float = datetime.datetime.now().timestamp()
 
         # Take last margin of victory values
-        scores = df_mov.iloc[-1].values
+        scores = df_mov.iloc[budget].values
 
         # # Minmax scale
         if scaler == 'MinMax':
