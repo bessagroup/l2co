@@ -125,6 +125,6 @@ class RecommenderDatasetCreator:
 
         df_stars = pd.DataFrame(data, columns=DEFAULT_HEADER)
 
-        logger.info("Created ratings matrix from margin of victory!")
+        logger.debug("Created ratings matrix from margin of victory!")
 
         return df_stars
