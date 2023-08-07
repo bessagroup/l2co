@@ -1,6 +1,7 @@
 #                                                                       Modulesset
 # =============================================================================
 
+from abc import ABC, abstractmethod
 from copy import deepcopy
 # Standard
 from pathlib import Path
@@ -22,8 +23,9 @@ __status__ = 'Stable'
 # =============================================================================
 
 
-class FileHandler:
-    def __init__(self, dir_name: Path, extension: str, exceptions: List[Path] = None):
+class FileHandler(ABC):
+    def __init__(self, dir_name: Path, extension: str,
+                 exceptions: List[Path] = None):
         """Filehandler class that tracks newly created files
         and manages post-processing actions
 
@@ -39,14 +41,13 @@ class FileHandler:
         self.dir_name = dir_name
         self.extension = extension
         self.exceptions = self._set_exceptions(exceptions)
-        self._create_empty_error_and_processed_list()
+
+        # Initialize process_files and error_files lists
+        self.processed_files: List[Path] = []
+        self.error_files: List[Path] = []
 
         # Create directory if it does not exist
         self.dir_name.mkdir(parents=True, exist_ok=True)
-
-    def _create_empty_error_and_processed_list(self):
-        self.processed_files: List[Path] = []
-        self.error_files: List[Path] = []
 
     def _set_exceptions(self, exceptions: Union[None, List[Path]]) -> List[Path]:
         """Convert exception filenames to full paths
@@ -113,6 +114,7 @@ class FileHandler:
             errorcode = self.execute(filename)
             self.tick_processed(filename, errorcode)
 
+    @abstractmethod
     def execute(self, filename: Path) -> int:
         """Script the needs to be executed for newly created files
 
@@ -127,6 +129,9 @@ class FileHandler:
         """
         return 0
 
+#                                                               Implementations
+# =============================================================================
+
 
 class CombineMarginOfVictoryFileHandler(FileHandler):
     def __init__(self, dir_name: Path, master_file: Path, exceptions: List[Path] = None, remove_files: bool = True):
@@ -139,6 +144,8 @@ class CombineMarginOfVictoryFileHandler(FileHandler):
 
         self.n_tasks = 0
         super().__init__(dir_name=dir_name, extension=".csv", exceptions=exceptions)
+        logger.info(
+            f"Created CombineMarginOfVictoryFileHandler, tracking {self.dir_name} with masterfile {self.master_file}")
 
     def execute(self, filename: Path, verbal: bool = False) -> int:
         try:
@@ -198,6 +205,8 @@ class ConcatDataFrameFilehandler(FileHandler):
 
         self.n_tasks = 0
         super().__init__(dir_name=dir_name, extension=".csv", exceptions=exceptions)
+        logger.info(
+            f"Created ConcatDataFrameFilehandler, tracking {self.dir_name} with masterfile {self.master_file}")
 
     def execute(self, filename: Path, verbal: bool = False) -> int:
         try:
@@ -223,42 +232,3 @@ class ConcatDataFrameFilehandler(FileHandler):
         except Exception:
             logger.error(f"ERROR with handeling {filename.stem}")
             return 1
-
-
-# class CombineFeaturesFileHandler(FileHandler):
-#     def __init__(self, dir_name: Path, master_file: Path, exceptions: List[Path] = None):
-#         if exceptions is None:
-#             exceptions = []
-#         exceptions.append(master_file.with_suffix('.csv'))
-
-#         self.master_file = master_file.with_suffix('.csv')
-#         super().__init__(dir_name=dir_name, extension='.csv', exceptions=exceptions)
-
-#     def master_file_full_path(self) -> Path:
-#         return self.dir_name / self.master_file
-#         # return os.path.join(os.path.curdir, self.dir_name, f"{self.master_file}.{self.extension}")
-
-#     def does_master_file_exist(self) -> bool:
-#         return self.master_file_full_path().exists()
-#         # return os.path.exists(self.master_file_full_path())
-
-#     def execute(self, filename: Path) -> int:
-#         try:
-#             csv_file = pd.read_csv(filename)
-
-#             if not self.does_master_file_exist():
-#                 updated_master_file = csv_file
-#             else:
-#                 master_file = pd.read_csv(self.master_file_full_path(), index_col=0)
-#                 updated_master_file = pd.concat([master_file, csv_file], ignore_index=True)
-
-#             # Overwrite masterfile to disc
-#             updated_master_file.to_csv(self.master_file_full_path())
-
-#             # Remove file from disk
-#             filename.unlink()
-#             return 0
-
-#         except Exception:
-#             logger.error(f"ERROR with handeling {filename.stem}")
-#             return 1
