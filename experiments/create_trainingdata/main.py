@@ -28,6 +28,9 @@ __status__ = 'Stable'
 
 
 def pre_processing(config: Config):
+
+    logger.info("== PRE-PROCESS ==")
+
     # Check if we use an existing dataset
     if config.experimentdata.existing_data_path is not False:
         data = f3dasm.ExperimentData.from_file(
@@ -86,9 +89,6 @@ def post_processing(config: Config):
     master_file_features = Path('features_master_file')
     master_file_interactions = Path('interactions_master_file')
 
-    logger.info(f"dir_name: {dirname_recommender_interactions}")
-    logger.info(f"master_file: {master_file_interactions}")
-
     fh_interactions = ConcatDataFrameFilehandler(
         dir_name=dirname_recommender_interactions, master_file=master_file_interactions, remove_files=True)
 
@@ -139,6 +139,8 @@ def process(config: Config):
     execute_callable
         function to execute a job. Requires to arguments; the config and any **kwargs from the design
     """
+
+    logger.info("== PROCESS ==")
 
     # Retrieve the ExperimentData object
     data = f3dasm.ExperimentData.from_file(filename=config.experimentdata.name)
