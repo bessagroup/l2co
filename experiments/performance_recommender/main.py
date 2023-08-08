@@ -44,7 +44,7 @@ def pre_process(config: Config):
 
     experimentdata.jobs.mark_all_open()
 
-    for strategy in [ContentBasedRecommenderStategy.label, RandomStrategy.label, BestMoVStrategy.label]:
+    for strategy in [ContentBasedRecommenderStategy, RandomStrategy, BestMoVStrategy]:
         experimentdata.add_new_output_column(strategy.label, f3dasm.ConstantParameter(''))
 
     experimentdata.store(filename=orig_cwd/Path(config.files.output_experimentdata_file))
