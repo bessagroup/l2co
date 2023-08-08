@@ -16,10 +16,10 @@ from config import Config
 from f3dasm import Design
 from SALib.sample import latin
 
-from l2co._logging import logger
 # Local
+from l2co._logging import logger
 from l2co.create_recommender_dataset import RecommenderDatasetCreator
-from l2co.saving import convert_to_xarray, save_as_cdf
+from l2co.saving import convert_to_xarray
 
 #                                                          Authorship & Credits
 # =============================================================================
