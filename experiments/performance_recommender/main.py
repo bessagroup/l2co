@@ -54,7 +54,6 @@ def process(config: Config):
     start_time = perf_counter()
 
     # Read files
-    experimentdata = f3dasm.ExperimentData.from_file(filename=Path().cwd()/config.files.output_experimentdata_file)
 
     raw_data = Path(config.files.raw_data)
     if not raw_data.exists():
@@ -62,7 +61,7 @@ def process(config: Config):
 
     logger.info(f"raw_data folder: {raw_data}")
 
-    experimentdata = f3dasm.ExperimentData.from_file(filename=Path(config.files.experimentdata_file))
+    experimentdata = f3dasm.ExperimentData.from_file(filename=Path().cwd()/config.files.output_experimentdata_file)
     logger.info(f"Loaded experimentdata from {config.files.experimentdata_file}")
 
     features = load_features(Path(config.files.training_features_file))
