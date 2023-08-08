@@ -37,8 +37,6 @@ __status__ = 'Stable'
 def pre_process(config: Config):
     logger.info("== PRE-PROCESSING ==")
 
-    orig_cwd = Path(get_original_cwd())
-
     experimentdata = f3dasm.ExperimentData.from_file(filename=Path(config.files.experimentdata_file))
     logger.info(f"Loaded experimentdata from {config.files.experimentdata_file}")
 
@@ -47,7 +45,7 @@ def pre_process(config: Config):
     for strategy in [ContentBasedRecommenderStategy, RandomStrategy, BestMoVStrategy]:
         experimentdata.add_new_output_column(strategy.label, f3dasm.ConstantParameter(''))
 
-    experimentdata.store(filename=orig_cwd/Path(config.files.output_experimentdata_file))
+    experimentdata.store(filename=Path().cwd()/Path(config.files.output_experimentdata_file))
 
 
 def process(config: Config):
@@ -55,10 +53,8 @@ def process(config: Config):
 
     start_time = perf_counter()
 
-    orig_cwd = Path(get_original_cwd())
-
     # Read files
-    experimentdata = f3dasm.ExperimentData.from_file(filename=orig_cwd/config.files.output_experimentdata_file)
+    experimentdata = f3dasm.ExperimentData.from_file(filename=Path().cwd()/config.files.output_experimentdata_file)
 
     raw_data = Path(config.files.raw_data)
     if not raw_data.exists():
