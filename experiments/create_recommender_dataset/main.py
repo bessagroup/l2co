@@ -12,7 +12,7 @@ from hydra.core.config_store import ConfigStore
 from hydra.utils import get_original_cwd
 from l2co._logging import logger
 from l2co.performance import margin_of_victory
-from l2co.rollout import create_recommendation_results
+from l2co._legacy.rollout import create_recommendation_results
 from l2co._legacy.strategy import (best_area_under_curve_strategy, best_mov_strategy,
                            create_strategy, random_strategy)
 from l2co.saving import load_netcdf

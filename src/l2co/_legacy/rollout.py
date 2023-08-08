@@ -13,8 +13,8 @@ import xarray as xr
 from f3dasm.design import ExperimentData
 
 # Local
-from .performance import Performance, margin_of_victory
-from .saving import load_netcdf
+from ..performance import Performance, margin_of_victory
+from ..saving import load_netcdf
 
 #                                                          Authorship & Credits
 # =============================================================================

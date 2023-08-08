@@ -20,7 +20,7 @@ from sklearn.neural_network import MLPClassifier
 # Local
 from .._logging import logger
 from ..performance import area_under_curve, margin_of_victory
-from ..rollout import determine_loser, determine_winner
+from .rollout import determine_loser, determine_winner
 from ..saving import load_netcdf
 
 #                                                          Authorship & Credits

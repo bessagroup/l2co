@@ -26,9 +26,19 @@ __status__ = 'Stable'
 # =============================================================================
 
 
-def save_as_cdf(name: str, results: List[OptimizationResult], return_xarray: bool = False) -> Union[None, xr.Dataset]:
+def convert_to_xarray(results: List[OptimizationResult]) -> xr.Dataset:
     """
     Save the optimization results as as cdf object
+
+    Parameters
+    ----------
+    results : List[OptimizationResult]
+        List of optimization results
+
+    Returns
+    -------
+    xr.Dataset
+        The optimization results as a xarray Dataset
 
     Note
     ----
@@ -74,14 +84,16 @@ def save_as_cdf(name: str, results: List[OptimizationResult], return_xarray: boo
         coords={'optimizer': [result.optimizer.get_name() for result in results]})
 
     xarr = xarr.assign_coords(optimizer_features=optimizer_features)
+    return xarr
+
+
+def save_as_cdf(name: str, results: List[OptimizationResult]) -> Union[None, xr.Dataset]:
+    xarr = convert_to_xarray(results)
 
     # Save to disc
     xarr.to_netcdf(f'{name}.cd')
 
     logger.info(f"Saved {Path(name).stem}.cd")
-
-    if return_xarray:
-        return xarr
 
 
 def from_xarray_to_dataframe(xarr: xr.Dataset) -> List[List[pd.DataFrame]]:

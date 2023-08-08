@@ -16,9 +16,10 @@ from config import Config
 from f3dasm import Design
 from SALib.sample import latin
 
+from l2co._logging import logger
 # Local
 from l2co.create_recommender_dataset import RecommenderDatasetCreator
-from l2co.saving import save_as_cdf
+from l2co.saving import convert_to_xarray, save_as_cdf
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -104,11 +105,19 @@ def execute(design: Design, config: Config) -> Design:
 
     filename: str = f"{function_name}_seed{seed}_dim{dimensionality}"
 
-    for options in options_list:
-        results.append(f3dasm.run_multiple_realizations(**options))
+    try:
+        for options in options_list:
+            results.append(f3dasm.run_multiple_realizations(**options))
+    except OSError:
+        # for every dict in the options list, change the key 'parallelization' to False
+        for options in options_list:
+            options['parallelization'] = False
+            results.append(f3dasm.run_multiple_realizations(**options))
 
-    results_xarray: xr.Dataset = save_as_cdf(
-        name=Path().cwd() / Path(config.files.dirname_raw) / Path(filename), results=copy(results), return_xarray=True)
+    results_xarray: xr.Dataset = convert_to_xarray(results=copy(results))
+    results_xarray.to_netcdf(Path().cwd() / Path(config.files.dirname_raw) / Path(filename).with_suffix('.cd'))
+
+    logger.info(f"Saved raw data {Path(filename).stem}")
 
     design.set('filename', filename)
 

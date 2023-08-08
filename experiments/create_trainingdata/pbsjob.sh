@@ -47,9 +47,9 @@ OMP_NUM_THREADS=12
 export OMP_NUM_THREADS=12
 
 
-# Check if PBS_ARRAYID exists, else set to 1
+# Check if PBS_ARRAYID exists, else set to -1
 if ! [ -n "${PBS_ARRAYID+1}" ]; then
-  PBS_ARRAYID=1
+  PBS_ARRAYID=-1
 fi
 
 #Executing my python program

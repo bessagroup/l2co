@@ -12,8 +12,8 @@ from f3dasm.run_optimization import OptimizationResult
 from recommenders.utils.constants import DEFAULT_HEADER
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
-from ._logging import logger
 # Local
+from ._logging import logger
 from .performance import Performance, margin_of_victory
 
 #                                                          Authorship & Credits

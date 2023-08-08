@@ -11,15 +11,16 @@ from time import perf_counter, sleep
 # Third-party
 import f3dasm
 import hydra
-import pandas as pd
+# import pandas as pd
 from config import Config
 from hydra.core.config_store import ConfigStore
 
 # Local
 from l2co._logging import logger
 from l2co.filehandlers import CombineMarginOfVictoryFileHandler
-from l2co.strategy import (BestMoVStrategy, ContentBasedRecommenderStategy,
-                           RandomStrategy, StrategyManager)
+from l2co.recommender import (ContentBasedRecommenderStategy, load_features,
+                              load_interactions)
+from l2co.strategy import BestMoVStrategy, RandomStrategy, StrategyManager
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -47,11 +48,8 @@ def process(config: Config):
     experimentdata = f3dasm.ExperimentData.from_file(filename=Path(config.files.experimentdata_file))
     logger.info(f"Loaded experimentdata from {config.files.experimentdata_file}")
 
-    features = pd.read_csv(Path(config.files.training_features_file), index_col=0)
-    logger.info(f"Loaded features from {config.files.training_features_file}")
-
-    interactions = pd.read_csv(Path(config.files.interactions_file), index_col=0)
-    logger.info(f"Loaded interactions from {config.files.interactions_file}")
+    features = load_features(Path(config.files.training_features_file))
+    interactions = load_interactions(Path(config.files.interactions_file))
 
     # Create strategies
     recommender_strategy = ContentBasedRecommenderStategy(features=features, interactions=interactions)
