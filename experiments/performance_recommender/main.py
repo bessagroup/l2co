@@ -55,8 +55,10 @@ def process(config: Config):
 
     start_time = perf_counter()
 
+    orig_cwd = Path(get_original_cwd())
+
     # Read files
-    experimentdata = f3dasm.ExperimentData.from_file(filename=config.files.output_experimentdata_file)
+    experimentdata = f3dasm.ExperimentData.from_file(filename=orig_cwd/config.files.output_experimentdata_file)
 
     raw_data = Path(config.files.raw_data)
     if not raw_data.exists():
