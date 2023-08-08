@@ -14,6 +14,7 @@ import hydra
 # import pandas as pd
 from config import Config
 from hydra.core.config_store import ConfigStore
+from hydra.utils import get_original_cwd
 
 # Local
 from l2co._logging import logger
@@ -33,12 +34,30 @@ __status__ = 'Stable'
 # =============================================================================
 
 
+def pre_process(config: Config):
+    logger.info("== PRE-PROCESSING ==")
+
+    orig_cwd = Path(get_original_cwd())
+
+    experimentdata = f3dasm.ExperimentData.from_file(filename=Path(config.files.experimentdata_file))
+    logger.info(f"Loaded experimentdata from {config.files.experimentdata_file}")
+
+    experimentdata.jobs.mark_all_open()
+
+    for strategy in [ContentBasedRecommenderStategy.label, RandomStrategy.label, BestMoVStrategy.label]:
+        experimentdata.add_new_output_column(strategy.label, f3dasm.ConstantParameter(''))
+
+    experimentdata.store(filename=orig_cwd/Path(config.files.output_experimentdata_file))
+
+
 def process(config: Config):
     logger.info("== JOB ==")
 
     start_time = perf_counter()
 
     # Read files
+    experimentdata = f3dasm.ExperimentData.from_file(filename=config.files.output_experimentdata_file)
+
     raw_data = Path(config.files.raw_data)
     if not raw_data.exists():
         raise FileNotFoundError(f"Folder {raw_data} not found!")
@@ -59,14 +78,6 @@ def process(config: Config):
     strategy_manager = StrategyManager(raw_data_path=raw_data, strategy_list=[
                                        recommender_strategy, random_strategy, best_mov_strategy],
                                        output_directory=Path(config.files.output_dir), mode=config.experiment.mode)
-
-    experimentdata.jobs.mark_all_open()
-
-    for strategy in [recommender_strategy, random_strategy, best_mov_strategy]:
-        experimentdata.add_new_output_column(strategy.label, f3dasm.ConstantParameter(''))
-    experimentdata.store(filename=config.files.output_experimentdata_file)
-
-    experimentdata = f3dasm.ExperimentData.from_file(filename=config.files.output_experimentdata_file)
 
     # Run
     experimentdata.run(strategy_manager, mode=config.experiment.mode,
@@ -115,10 +126,12 @@ cs.store(name="f3dasm_config", node=Config)
 def main(config: Config):
 
     if config.hpc.jobid == 0:
+        pre_process(config)
         post_processing(config)
 
     # If sequential
     if config.hpc.jobid == -1:
+        pre_process(config)
         process(config)
         post_processing(config)
 
