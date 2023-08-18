@@ -51,6 +51,29 @@ def _calculate_mean_std(data: Union[xr.Dataset, List[OptimizationResult]]) -> Tu
 
 
 def _calculate_mean_std_xarray(xd: xr.Dataset) -> pd.DataFrame:
+    xd = xd.assign(output_cummin=(['optimizer', 'realization', 'iterations',
+                   'output_dim'], np.nan*np.ones(xd['output'].shape)))
+
+    # loop over the optimizer and realization dimensions
+    for opt in xd.optimizer.values:
+        for r in xd.realization.values:
+
+            y_cummin = xd['output_cummin'].sel(optimizer=opt, realization=r)
+
+            y: np.ndarray = xd['output'].sel(optimizer=opt, realization=r).values
+            y_accumulate = np.minimum.accumulate(y)  # 1D numpy array
+
+            y_cummin[:] = y_accumulate
+
+    # WORKING: retrieve the mean of the dataset over the realizations
+    xd_mean = xd.mean(dim="realization")
+
+    df_xd = xd_mean.to_dataframe()
+    df = df_xd.pivot_table(values='output_cummin', index='iterations', columns='optimizer')
+    return df
+
+
+def _calculate_mean_std_xarray_old(xd: xr.Dataset) -> pd.DataFrame:
     # WORKING: get the cummin of the y values for each optimizer and realization
 
     xd = xd.assign(y_cummin=(['optimizer', 'realization', 'index'], np.nan*np.ones(xd['y'].shape)))

@@ -11,6 +11,7 @@ from typing import List, Union
 import numpy as np
 import pandas as pd
 import xarray as xr
+from f3dasm import ExperimentData
 from f3dasm.run_optimization import OptimizationResult
 
 from l2co._logging import logger
@@ -26,7 +27,32 @@ __status__ = 'Stable'
 # =============================================================================
 
 
+def experimentdata_to_dataset(experimentdata: ExperimentData) -> xr.Dataset:
+    x = experimentdata.data.get_inputdata().to_numpy()
+    y = experimentdata.data.get_outputdata().to_numpy().ravel()
+    xx = xr.DataArray(x, dims=['iteration', 'dim'], coords={
+                      'dim': [f'x{i}' for i in range(x.shape[1])], 'iteration': np.arange(x.shape[0])})
+    yy = xr.DataArray(y, dims=['iteration'], coords={'iteration': np.arange(y.shape[0])})
+
+    # Create a dataset
+    return xr.Dataset({'x': xx, 'y': yy})
+
+
+def optimizationresult_to_dataset(optimizationresult: OptimizationResult) -> xr.Dataset:
+    return xr.concat([experimentdata_to_dataset(r) for r in optimizationresult.data],
+                     dim=xr.DataArray(np.arange(len(optimizationresult.data)), dims='realization'))
+
+
 def convert_to_xarray(results: List[OptimizationResult]) -> xr.Dataset:
+    xarr = xr.concat([result.to_xarray() for result in results], dim=xr.DataArray(
+        [res.optimizer.get_name() for res in results], dims='optimizer'))
+
+    datasetcreator = RecommenderDatasetCreator(results, jobnumber=None)
+    xarr.attrs['function_features']: str = datasetcreator._create_recommender_data_features_functions()
+    return xarr
+
+
+def convert_to_xarray_old(results: List[OptimizationResult]) -> xr.Dataset:
     """
     Save the optimization results as as cdf object
 

@@ -1,17 +1,18 @@
 from dataclasses import dataclass
-from typing import Dict, List, Union
+from typing import Dict, List
 
 
 @dataclass
-class DesignConfig:
+class DomainConfig:
     input_space: Dict
-    output_space: Dict
+    # output_space: Dict
 
 
 @dataclass
 class ExperimentConfig:
-    existing_data_path: Union[bool, str]
     name: str
+    from_sampling: dict
+    # existing_data_path: Union[bool, str]
     mode: str
 
 
@@ -48,9 +49,10 @@ class FilesConfig:
 
 @dataclass
 class Config:
-    design: DesignConfig
+    domain: DomainConfig
     experimentdata: ExperimentConfig
     optimization: OptimizationConfig
     hpc: HPCConfig
     files: FilesConfig
     recommender: RecommenderConfig
+    log_level: int

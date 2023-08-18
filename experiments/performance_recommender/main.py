@@ -133,6 +133,7 @@ def main(config: Config):
         post_processing(config)
 
     else:
+        sleep(config.hpc.jobid)  # Asynchronize jobs
         process(config)
 
 

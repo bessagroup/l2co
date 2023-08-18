@@ -4,7 +4,6 @@
 
 # Standard
 from copy import copy, deepcopy
-from pathlib import Path
 from typing import List
 
 # Third-party
@@ -17,7 +16,6 @@ from f3dasm import Design
 from SALib.sample import latin
 
 # Local
-from l2co._logging import logger
 from l2co.create_recommender_dataset import RecommenderDatasetCreator
 from l2co.saving import convert_to_xarray
 
@@ -62,11 +60,11 @@ def convert_config_to_input(config: Config, function_name: str, dimensionality: 
     sampler_class: f3dasm.Sampler = f3dasm.sampling.find_sampler(config.optimization.sampler_name)
     bounds = np.tile([config.optimization.lower_bound, config.optimization.upper_bound], (dimensionality, 1))
 
-    design = f3dasm.make_nd_continuous_domain(bounds=bounds, dimensionality=dimensionality)
+    domain = f3dasm.make_nd_continuous_domain(bounds=bounds, dimensionality=dimensionality)
     function = function_class(
-        dimensionality=dimensionality, noise=function_noise, scale_bounds=design.get_bounds(), seed=seed
+        dimensionality=dimensionality, noise=function_noise, scale_bounds=domain.get_bounds(), seed=seed
     )
-    data = f3dasm.ExperimentData(design=design)
+    data = f3dasm.ExperimentData(domain=domain)
 
     optimizers: List[f3dasm.Optimizer] = []
     for opt_config in config.optimization.optimizers:
@@ -74,7 +72,7 @@ def convert_config_to_input(config: Config, function_name: str, dimensionality: 
         optimizers.append(f3dasm.optimization.find_optimizer(opt_config['class'])(
             data=data, seed=seed, hyperparameters=hyperparameters, name=opt_config['name']))
 
-    sampler = sampler_class(design=data.design, seed=seed)
+    sampler = sampler_class(design=domain, seed=seed)
 
     return [
         {
@@ -92,18 +90,16 @@ def convert_config_to_input(config: Config, function_name: str, dimensionality: 
 
 
 def execute(design: Design, config: Config) -> Design:
-    function_name = design.get('function_name')
-    dimensionality = design.get('dimensionality')
-    budget = int(design.get('budget'))
-    noise = design.get('noise')
-    seed = design.get('seed')
+    function_name = design['function_name']
+    dimensionality = design['dimensionality']
+    budget = int(design['budget'])
+    noise = design['noise']
+    seed = design['seed']
 
     results: List[f3dasm.OptimizationResult] = []
 
     options_list = convert_config_to_input(config=config, function_name=function_name,
                                            dimensionality=dimensionality, noise=noise, seed=seed, budget=budget)
-
-    filename: str = f"{function_name}_seed{seed}_dim{dimensionality}"
 
     try:
         for options in options_list:
@@ -115,11 +111,8 @@ def execute(design: Design, config: Config) -> Design:
             results.append(f3dasm.run_multiple_realizations(**options))
 
     results_xarray: xr.Dataset = convert_to_xarray(results=copy(results))
-    results_xarray.to_netcdf(Path().cwd() / Path(config.files.dirname_raw) / Path(filename).with_suffix('.cd'))
 
-    logger.info(f"Saved raw data {Path(filename).stem}")
-
-    design.set('filename', filename)
+    design.store(object=results_xarray, name=config.files.dirname_raw)
 
     if not config.recommender.create_recommender_dataset:
         return design
@@ -132,8 +125,6 @@ def execute(design: Design, config: Config) -> Design:
     _ = dataset_augmenter(design)
     augmented_designs = dataset_augmenter.designs
 
-    # Path('interactions').mkdir(parents=True, exist_ok=True)
-
     # Create the recommender dataset
     interaction_matrix_list: List[pd.DataFrame] = []
     features_matrix_list: List[pd.DataFrame] = []
@@ -142,24 +133,17 @@ def execute(design: Design, config: Config) -> Design:
         task_number: int = int(design.job_number * (config.recommender.n_augmented_samples + 1) + index)
         recommender_dataset_creator = RecommenderDatasetCreator(results=results_xarray, jobnumber=task_number)
         interaction_matrix_list.append(recommender_dataset_creator.create_recommender_data_interactions_csv(
-            scaler=config.recommender.scaler, budget=int(augmented_design.get('budget'))))
+            scaler=config.recommender.scaler, budget=int(augmented_design['budget'])))
 
         features_matrix_list.append(
             recommender_dataset_creator.create_recommender_data_features_functions_csv(
-                budget=int(augmented_design.get('budget'))))
+                budget=int(augmented_design['budget'])))
 
     df_interaction_matrix = pd.concat(interaction_matrix_list, ignore_index=True)
     df_features_matrix = pd.concat(features_matrix_list, ignore_index=True)
 
-    # Create the directories if not existing yet
-    Path(Path().cwd() / Path(config.files.dirname_recommender_interactions)).mkdir(parents=True, exist_ok=True)
-    Path(Path().cwd() / Path(config.files.dirname_recommender_features)).mkdir(parents=True, exist_ok=True)
-
-    df_interaction_matrix.to_csv(Path().cwd() / Path(config.files.dirname_recommender_interactions) /  # NOQA
-                                 Path(filename).with_suffix('.csv'))
-
-    df_features_matrix.to_csv(Path().cwd() / Path(config.files.dirname_recommender_features) /  # NOQA
-                              Path(filename).with_suffix('.csv'))
+    design.store(df_interaction_matrix, name=config.files.dirname_recommender_interactions)
+    design.store(df_features_matrix, name=config.files.dirname_recommender_features)
 
     return design
 

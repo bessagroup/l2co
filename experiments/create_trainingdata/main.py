@@ -10,6 +10,7 @@ import f3dasm
 import hydra
 import numpy as np
 from config import Config
+from f3dasm.logger import logger as f3dasm_logger
 from hydra.core.config_store import ConfigStore
 from run_opt import execute
 
@@ -30,52 +31,29 @@ __status__ = 'Stable'
 def pre_processing(config: Config):
 
     logger.info("== PRE-PROCESS ==")
+    data = f3dasm.ExperimentData.from_yaml(config)
 
-    # Check if we use an existing dataset
-    if config.experimentdata.existing_data_path is not False:
-        data = f3dasm.ExperimentData.from_file(
-            filename=Path(config.experimentdata.existing_data_path) / Path(config.experimentdata.name))
+    # Dirty hack for TypeError: Cannot setitem on a Categorical with a new category (), set the categories first
+    data.input_data.data['function_name'] = data.input_data.data['function_name'].astype('object')
 
-        logger.info(f"Loaded experimentdata from {config.experimentdata.name}")
+    function_class_list = [f3dasm.datageneration.functions.find_function(
+        query=f) for f in list(data.domain.input_space['function_name'].categories)]
+    for index in range(len(data)):
+        i = data.input_data.data.iloc[index]
+        function_class = f3dasm.datageneration.functions.find_function(
+            query=i['function_name'])
+        if not function_class.is_dim_compatible(int(i['dimensionality'])):
+            filtered_class_list = [ff.__name__ for ff in filter(lambda f: f.is_dim_compatible(
+                int(i['dimensionality'])), function_class_list)]
+            i['function_name'] = np.random.choice(filtered_class_list)
 
-    # Else, create the dataset
-    else:
-        # Create the Domain from the hydra yaml file
-        design = f3dasm.Domain.from_yaml(config.design)
+            data.input_data.set_data(index, value=i['function_name'], column='function_name')
 
-        logger.info("Created designspace")
-
-        # Step 2: Filling the design space
-        sampler = f3dasm.sampling.Sampler.from_yaml(config)
-        data = f3dasm.ExperimentData.from_sampling(sampler)
-        logger.info("Sampled from domain")
-
-        # Dirty hack for TypeError: Cannot setitem on a Categorical with a new category (), set the categories first
-        data.data.data[('input', 'function_name')] = data.data.data[('input', 'function_name')].astype('object')
-
-        function_class_list = [f3dasm.datageneration.functions.find_function(
-            query=f) for f in list(design.input_space['function_name'].categories)]
-        for index in range(data.get_number_of_datapoints()):
-            i = data.get_inputdata_by_index(index)
-            function_class = f3dasm.datageneration.functions.find_function(
-                query=i['function_name'])
-            if not function_class.is_dim_compatible(int(i['dimensionality'])):
-                filtered_class_list = [ff.__name__ for ff in filter(lambda f: f.is_dim_compatible(
-                    int(i['dimensionality'])), function_class_list)]
-                i['function_name'] = np.random.choice(filtered_class_list)
-
-                data.set_inputdata_by_index(index, i['function_name'], column=('input', 'function_name'))
-
-        # Dirty hack for TypeError: Cannot setitem on a Categorical with a new category (), set the categories first
-        data.data.data[('input', 'function_name')] = data.data.data[('input', 'function_name')].astype('category')
+    # Dirty hack for TypeError: Cannot setitem on a Categorical with a new category (), set the categories first
+    data.input_data.data['function_name'] = data.input_data.data['function_name'].astype('category')
 
     # Store the ExperimentData to a csv file
     data.store(filename=config.experimentdata.name)
-
-    # Create folder for raw data
-    Path(Path().cwd() / Path(config.files.dirname_raw)).mkdir(parents=True, exist_ok=True)
-    logger.info(f"Created folder {Path(Path().cwd() / Path(config.files.dirname_raw))}")
-
     logger.info("Stored experimentdata")
 
 
@@ -114,6 +92,9 @@ def main(config: Config):
     config
         Configuration parameters defined in config.yaml
     """
+
+    logger.setLevel(config.log_level)
+    f3dasm_logger.setLevel(config.log_level)
     # Execute the initial_script for the first job
     if config.hpc.jobid == 0:
         pre_processing(config)

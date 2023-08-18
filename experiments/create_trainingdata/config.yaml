@@ -1,7 +1,7 @@
 defaults:
   - override hydra/job_logging: custom
 
-design:
+domain:
   input_space:
     function_name:
       _target_: f3dasm.CategoricalParameter
@@ -91,20 +91,13 @@ design:
       _target_: f3dasm.ConstantParameter
       value: 1000
 
-  output_space:
-    filename:
-      _target_: f3dasm.ConstantParameter
-      value: ""
-
-sampler:
-  _target_: f3dasm.sampling.RandomUniform
-  seed: 1
-  number_of_samples: 3
-
 experimentdata:
-  existing_data_path: False
-  name: benchmarkfunctions
+  name: benchmarkdata
   mode: cluster
+  from_sampling:
+    _target_: f3dasm.sampling.RandomUniform
+    seed: 1
+    number_of_samples: 5
 
 optimization:
   lower_bound: -1.0
@@ -138,3 +131,5 @@ files:
 
 hpc:
   jobid: -1
+
+log_level: 20
