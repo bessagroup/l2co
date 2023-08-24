@@ -119,8 +119,6 @@ def execute(design: Design, config: Config) -> Design:
 
     design.store(object=results_xarray, name=config.files.dirname_raw)
 
-    design.store(object=margin_of_victory(results_xarray), name=config.files.dirname_mov)
-
     if not config.recommender.create_recommender_dataset:
         return design
 
@@ -133,24 +131,38 @@ def execute(design: Design, config: Config) -> Design:
     augmented_designs = dataset_augmenter.designs
 
     # Create the recommender dataset
-    interaction_matrix_list: List[pd.DataFrame] = []
     features_matrix_list: List[pd.DataFrame] = []
-
+    mov_list: List[pd.DataFrame] = []
+    task_numbers: List[int] = []
     for index, augmented_design in enumerate(augmented_designs):
         task_number: int = int(design.job_number * (config.recommender.n_augmented_samples + 1) + index)
+        task_numbers.append(task_number)
         recommender_dataset_creator = RecommenderDatasetCreator(results=results_xarray, jobnumber=task_number)
-        interaction_matrix_list.append(recommender_dataset_creator.create_recommender_data_interactions_csv(
-            scaler=config.recommender.scaler, budget=int(augmented_design['budget'])))
 
         features_matrix_list.append(
             recommender_dataset_creator.create_recommender_data_features_functions_csv(
                 budget=int(augmented_design['budget'])))
 
-    df_interaction_matrix = pd.concat(interaction_matrix_list, ignore_index=True)
+        mov_list.append(margin_of_victory(
+            results_xarray, budget=int(augmented_design['budget'])))
+
     df_features_matrix = pd.concat(features_matrix_list, ignore_index=True)
 
-    design.store(df_interaction_matrix, name=config.files.dirname_recommender_interactions)
-    design.store(df_features_matrix, name=config.files.dirname_recommender_features)
+    # Create the xarray dataset
+    df_features_matrix.set_index('itemID', inplace=True)
+    xarr_all = xr.Dataset(df_features_matrix)
+    df_list = []
+    for df in mov_list:
+        df.index.name = 'fractional_budget'
+        xr_ = xr.DataArray(df, dims=['fractional_budget', 'optimizer'], coords={
+                           'fractional_budget': np.linspace(0., 1., len(df)), 'optimizer': df.columns})
+
+        df_list.append(xr_)
+
+    c = xr.concat(df_list, dim=xr.DataArray(task_numbers, dims='itemID'))
+    xarr_all['mov'] = c
+
+    design.store(xarr_all, name=config.files.dirname_movxarr)
 
     return design
 
@@ -167,8 +179,7 @@ class DatasetAugmenter:
     def create_salib_problem(self):
         return {
             'num_vars': 1,
-            'names': ['budget'],  # Replace 'parameter1' with the actual parameter name
-            # Replace with the desired lower and upper bounds
+            'names': ['budget'],
             'bounds': [[self.lower_bound_budget, self.upper_bound_budget]],
         }
 
@@ -185,12 +196,14 @@ class DatasetAugmenter:
     def __call__(self, design: f3dasm.Design):
 
         # add the original design
-        self.designs.append(design)
+        design_0 = deepcopy(design)
+        design_0._jobnumber = design_0.job_number * (self.n_samples + 1)
+        self.designs.append(design_0)
 
-        for sample in self.get_samples():
-            design_ = deepcopy(design)
+        for index, sample in enumerate(self.get_samples()):
+            design_ = deepcopy(design_0)
+            design_._jobnumber = design_0.job_number + index + 1
             design_._dict_input['budget'] = int(sample)
             self.designs.append(design_)
-        # print(f"Augmenting {design.job_number}...")
 
         return design

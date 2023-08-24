@@ -79,7 +79,7 @@ domain:
         ]
     dimensionality:
       _target_: f3dasm.CategoricalParameter
-      categories: [2, 10, 50, 500]
+      categories: [2, 10, 20]
     noise:
       _target_: f3dasm.CategoricalParameter
       categories: [0.0, 0.1]
@@ -89,7 +89,7 @@ domain:
       upper_bound: 1000000
     budget:
       _target_: f3dasm.ConstantParameter
-      value: 5000
+      value: 1000
 
 experimentdata:
   name: benchmarkdata
@@ -97,14 +97,14 @@ experimentdata:
   from_sampling:
     _target_: f3dasm.sampling.RandomUniform
     seed: 101
-    number_of_samples: 30
+    number_of_samples: 50
 
 optimization:
   lower_bound: -1.0
   upper_bound: 1.0
   sampler_name: LatinHypercube
   number_of_samples: 30
-  realizations: 10
+  realizations: 3
   parallelization: True
   optimizers:
     - name: CMAES
@@ -124,9 +124,7 @@ recommender:
 
 files:
   dirname_raw: raw
-  dirname_recommender_interactions: interactions
-  dirname_recommender_features: features
-  dirname_mov: mov
+  dirname_movxarr: movxarr
 
 hpc:
   jobid: -1

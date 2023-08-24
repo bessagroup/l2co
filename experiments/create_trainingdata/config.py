@@ -43,9 +43,7 @@ class HPCConfig:
 @dataclass
 class FilesConfig:
     dirname_raw: str
-    dirname_recommender_interactions: str
-    dirname_recommender_features: str
-    dirname_mov: str
+    dirname_movxarr: str
 
 
 @dataclass

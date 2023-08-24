@@ -194,3 +194,39 @@ class ContentBasedRecommenderStategy(Strategy):
 
         optimizer_number = self._calculate_majority_vote(new_entry=features.loc[0])
         return optimizer_mapping[int(optimizer_number)]
+
+
+def load_mf_dataset(raw_data_path: Path) -> xr.Dataset:
+    return xr.open_mfdataset(raw_data_path.glob('*.nc'))
+
+
+def create_interactions_csv(mf_dataset: xr.Dataset) -> pd.DataFrame:
+    # select only the last value from fractional_budget, for every itemID and optimizer
+    r = mf_dataset['mov'].sel(fractional_budget=1., method='nearest')
+
+    # for every itemID, standard scale the values
+    rr = r.groupby('itemID').apply(lambda x: (x - x.mean()) / x.std())
+
+    # change the optimizer coordinates to range(len(optimizers))
+    rr.coords['optimizer'] = range(1, len(rr.optimizer)+1)
+
+    # change name of mov to rating and change optimizer to userID
+    rr = rr.rename({'optimizer': 'userID'})
+
+    # change name of dataarray to rating
+    rr.name = 'rating'
+
+    # drop fractional budget
+    rr = rr.drop('fractional_budget')
+
+    return rr.to_dataframe()
+
+
+def create_features_csv(mf_dataset: xr.Dataset) -> pd.DataFrame:
+    # drop the mov variable
+    ff = mf_dataset.drop('mov')
+
+    # drop the fractional_budget and optimizers coords
+    ff = ff.drop(['fractional_budget', 'optimizer'])
+
+    return ff.to_dataframe()
