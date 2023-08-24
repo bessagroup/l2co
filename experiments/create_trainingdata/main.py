@@ -16,7 +16,8 @@ from run_opt import execute
 
 # Local
 from l2co._logging import logger
-from l2co.filehandlers import ConcatDataFrameFilehandler
+from l2co.filehandlers import (CombineMarginOfVictoryFileHandler,
+                               ConcatDataFrameFilehandler)
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -63,9 +64,11 @@ def post_processing(config: Config):
 
     dirname_recommender_interactions = Path.cwd() / Path(config.files.dirname_recommender_interactions)
     dirname_recommender_features = Path.cwd() / Path(config.files.dirname_recommender_features)
+    dirname_mov = Path.cwd() / Path(config.files.dirname_mov)
 
     master_file_features = Path('features_master_file')
     master_file_interactions = Path('interactions_master_file')
+    master_file_mov = Path('mov_master_file')
 
     fh_interactions = ConcatDataFrameFilehandler(
         dir_name=dirname_recommender_interactions, master_file=master_file_interactions, remove_files=True)
@@ -73,9 +76,13 @@ def post_processing(config: Config):
     fh_features = ConcatDataFrameFilehandler(
         dir_name=dirname_recommender_features, master_file=master_file_features, remove_files=True)
 
+    fh_mov = CombineMarginOfVictoryFileHandler(
+        dir_name=dirname_mov, master_file=master_file_mov, remove_files=False)
+
     while True:
         fh_interactions.run()
         fh_features.run()
+        fh_mov.run()
         if experimentdata.is_all_finished():
             logger.info("All jobs are finished. Exiting filehandler loop!")
             break

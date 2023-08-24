@@ -80,14 +80,14 @@ class StrategyManager:
     def __call__(self, design: f3dasm.Design, save_mov: Union[None, str] = 'margin_of_victory') -> f3dasm.Design:
         t_start = perf_counter()
 
-        filename = Path(design._dict_output['status'])
-        raw_data: xr.Dataset = load_netcdf(self.raw_data_path / filename.with_suffix('.cd'))
+        filename = Path(design._dict_output['raw_path'])
+        raw_data: xr.Dataset = load_netcdf(filename)
 
-        df_mov = margin_of_victory(raw_data)
+        df_mov = margin_of_victory(raw_data, budget=int(design['budget']))
 
         for strategy in self.strategy_list:
-            recommendation: str = strategy(raw_data)
-            design.set(strategy.label, recommendation)
+            recommendation: str = strategy(raw_data, int(design['budget']))
+            design[strategy.label] = recommendation
 
             # Copy column of recommendation to new column named strategy.label
             df_mov[strategy.label] = df_mov[recommendation]

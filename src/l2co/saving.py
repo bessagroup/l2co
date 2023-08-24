@@ -161,8 +161,4 @@ def load_netcdf(file_path: Union[str, Path]) -> xr.Dataset:
     if not file_path.is_file():
         raise FileNotFoundError(f'Path {file_path} is not a file')
 
-    # check if path is a .cd file
-    if file_path.suffix != '.cd':
-        raise ValueError(f'File {file_path} is not a .cd file')
-
-    return xr.load_dataset(file_path)
+    return xr.load_dataset(file_path.with_suffix('.nc'))

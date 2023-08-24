@@ -125,7 +125,7 @@ def _normalize(df: pd.DataFrame, optimizer_names: List[str]) -> pd.DataFrame:
     return df
 
 
-def margin_of_victory(results: Union[List[OptimizationResult], xr.Dataset]) -> pd.DataFrame:
+def margin_of_victory(results: Union[List[OptimizationResult], xr.Dataset], budget: int = -1) -> pd.DataFrame:
     """Calculate the margin of victory of optimizationresults
 
     Parameters
@@ -153,7 +153,23 @@ def margin_of_victory(results: Union[List[OptimizationResult], xr.Dataset]) -> p
     # Change columnnames
     df_margin_of_victory.columns = optimizer_names
 
-    return df_margin_of_victory
+    if budget == -1:
+        return df_margin_of_victory
+
+    original_len = len(df_margin_of_victory)
+    # use only the first 100 rows
+    df_margin_of_victory = df_margin_of_victory[:budget]
+
+    # Create a new DataFrame with original_len rows
+    new_df = pd.DataFrame(index=range(original_len))
+
+    # Interpolate between rows
+    for column in df_margin_of_victory.columns:
+        new_df[column] = new_df.index.map(
+            lambda idx: df_margin_of_victory[column][idx * len(df_margin_of_victory) // original_len]
+        )
+
+    return new_df
 
 
 def area_under_curve(results: Union[List[OptimizationResult], xr.Dataset]) -> pd.DataFrame:

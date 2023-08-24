@@ -17,6 +17,7 @@ from SALib.sample import latin
 
 # Local
 from l2co.create_recommender_dataset import RecommenderDatasetCreator
+from l2co.performance import margin_of_victory
 from l2co.saving import convert_to_xarray
 
 #                                                          Authorship & Credits
@@ -103,6 +104,10 @@ def execute(design: Design, config: Config) -> Design:
 
     try:
         for options in options_list:
+
+            if options['optimizer'].get_name() in ['EvoSaxCMAES', 'EvoSaxSimAnneal', 'EvoSaxPSO', 'EvoSaxDE']:
+                options['parallelization'] = False
+
             results.append(f3dasm.run_multiple_realizations(**options))
     except OSError:
         # for every dict in the options list, change the key 'parallelization' to False
@@ -113,6 +118,8 @@ def execute(design: Design, config: Config) -> Design:
     results_xarray: xr.Dataset = convert_to_xarray(results=copy(results))
 
     design.store(object=results_xarray, name=config.files.dirname_raw)
+
+    design.store(object=margin_of_victory(results_xarray), name=config.files.dirname_mov)
 
     if not config.recommender.create_recommender_dataset:
         return design

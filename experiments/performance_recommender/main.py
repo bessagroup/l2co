@@ -19,7 +19,8 @@ from hydra.utils import get_original_cwd
 # Local
 from l2co._logging import logger
 from l2co.filehandlers import CombineMarginOfVictoryFileHandler
-from l2co.recommender import (ContentBasedRecommenderStategy, load_features,
+from l2co.recommender import (ContentBasedRecommenderStategy,
+                              LearnedRecommenderStrategy, load_features,
                               load_interactions)
 from l2co.strategy import BestMoVStrategy, RandomStrategy, StrategyManager
 
@@ -42,7 +43,7 @@ def pre_process(config: Config):
 
     experimentdata.jobs.mark_all_open()
 
-    for strategy in [ContentBasedRecommenderStategy, RandomStrategy, BestMoVStrategy]:
+    for strategy in [ContentBasedRecommenderStategy, LearnedRecommenderStrategy, RandomStrategy, BestMoVStrategy]:
         experimentdata.add_new_output_column(strategy.label, f3dasm.ConstantParameter(''))
 
     experimentdata.store(filename=Path().cwd()/Path(config.files.output_experimentdata_file))
@@ -69,11 +70,12 @@ def process(config: Config):
 
     # Create strategies
     recommender_strategy = ContentBasedRecommenderStategy(features=features, interactions=interactions)
+    learned_strategy = LearnedRecommenderStrategy(features=features, interactions=interactions)
     random_strategy = RandomStrategy()
     best_mov_strategy = BestMoVStrategy()
 
     strategy_manager = StrategyManager(raw_data_path=raw_data, strategy_list=[
-                                       recommender_strategy, random_strategy, best_mov_strategy],
+                                       recommender_strategy, random_strategy, best_mov_strategy, learned_strategy],
                                        output_directory=Path(config.files.output_dir), mode=config.experiment.mode)
 
     # Run

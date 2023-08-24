@@ -79,44 +79,42 @@ domain:
         ]
     dimensionality:
       _target_: f3dasm.CategoricalParameter
-      categories: ["2", "3", "5", "10", "20"]
+      categories: [2, 10, 50, 500]
     noise:
       _target_: f3dasm.CategoricalParameter
-      categories: ["0.0", "0.1"]
+      categories: [0.0, 0.1]
     seed:
       _target_: f3dasm.DiscreteParameter
       lower_bound: 0
       upper_bound: 1000000
     budget:
       _target_: f3dasm.ConstantParameter
-      value: 1000
+      value: 5000
 
 experimentdata:
   name: benchmarkdata
   mode: cluster
   from_sampling:
     _target_: f3dasm.sampling.RandomUniform
-    seed: 1
-    number_of_samples: 5
+    seed: 101
+    number_of_samples: 30
 
 optimization:
   lower_bound: -1.0
   upper_bound: 1.0
   sampler_name: LatinHypercube
   number_of_samples: 30
-  realizations: 3
+  realizations: 10
   parallelization: True
   optimizers:
     - name: CMAES
       class: CMAES
+    - name: DifferentialEvolution
+      class: EvoSaxDE
     - name: Adam
       class: Adam
-    - name: PSO
-      class: PSO
-    - name: RandomSearch
-      class: RandomSearch
-    - name: SGA
-      class: SGA
+    - name: L-BFGS-B
+      class: LBFGSB
 
 recommender:
   create_recommender_dataset: True
@@ -128,6 +126,7 @@ files:
   dirname_raw: raw
   dirname_recommender_interactions: interactions
   dirname_recommender_features: features
+  dirname_mov: mov
 
 hpc:
   jobid: -1
