@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 import xarray as xr
+from f3dasm._src.datageneration.functions.function_factory import \
+    datagenerator_factory
 from tensorflow.keras.layers import Dense
 from tensorflow.keras.models import Sequential
 
@@ -87,7 +89,11 @@ class LearnedRecommenderStrategy(Strategy):
         features = pd.DataFrame(columns=['dim', 'budget', 'noise', 'convex', 'separable',
                                 'differentiable', 'multimodal', 'randomized_term', 'parametric'])
 
-        f = f3dasm.datageneration.functions.find_function(data.function_name)
+        # f = f3dasm.datageneration.functions.find_function(data.function_name)
+        f = datagenerator_factory(data.function_name, data.function_dimensionality)
+
+        if data.function_noise is None:
+            data.function_noise = 0.0
 
         if data.function_noise == 0.0:
             noise = 0
@@ -195,9 +201,7 @@ class ContentBasedRecommenderStategy(Strategy):
         optimizer_number = self._calculate_majority_vote(new_entry=features.loc[0])
         return optimizer_mapping[int(optimizer_number)]
 
-
-def load_mf_dataset(raw_data_path: Path) -> xr.Dataset:
-    return xr.open_mfdataset(raw_data_path.glob('*.nc'))
+# ======================================================================================
 
 
 def create_interactions_csv(mf_dataset: xr.Dataset) -> pd.DataFrame:
@@ -230,3 +234,57 @@ def create_features_csv(mf_dataset: xr.Dataset) -> pd.DataFrame:
     ff = ff.drop(['fractional_budget', 'optimizer'])
 
     return ff.to_dataframe()
+
+# ======================================================================================
+
+
+class LearnedRecommenderStrategy2(Strategy):
+    def __init__(self, combined_data: xr.Dataset, n_layers: int = 3, n_units: int = 16,
+                 optimizer: str = 'adam', activation: str = 'relu'):
+        self.n_layers = n_layers
+        self.n_units = n_units
+        self.optimizer = optimizer
+        self.activation = activation
+
+        self.X = self._create_X(combined_data)
+        self.y = self._create_Y(combined_data)
+        self.n_features = self.X.shape[1]
+        self.n_optimizers = self.y.shape[1]
+        self.optimizer_mapping = {i: optimizer for i, optimizer in enumerate(combined_data.optimizer.values)}
+
+        self.model = self._build_model()
+        self._train_model()
+
+    def _create_X(self, xarr: xr.Dataset) -> np.ndarray:
+        return create_features_csv(xarr).to_numpy()
+
+    def _create_Y(self, xarr: xr.Dataset) -> np.ndarray:
+        return create_interactions_csv(xarr)['rating'].to_numpy().reshape(-1, len(xarr.optimizer))
+
+    def _build_model(self) -> tf.keras.models.Sequential:
+        model = Sequential()
+        # Add the input layer
+        model.add(Dense(units=self.n_units, activation=self.activation, input_dim=self.n_features))
+
+        for _ in range(self.n_layers-1):
+            model.add(Dense(units=self.n_units, activation=self.activation))
+
+        # Add the output layer with for regression
+        model.add(Dense(units=self.n_optimizers, activation='linear'))
+
+        # Compile the model
+        model.compile(optimizer=self.optimizer, loss='mean_squared_error', metrics=['mae'])
+
+        return model
+
+    def _train_model(self):
+        self.model.fit(self.X, self.y, epochs=100, batch_size=64, validation_split=0.2, verbose=0)
+
+    def predict(self, xarr: xr.Dataset) -> xr.DataArray:
+        X = self._create_X(xarr)
+        y_pred = self.model.predict(X, verbose=0).argmax(axis=1)
+        decoded_values = [self.optimizer_mapping[value] for value in y_pred]
+        return xr.DataArray(decoded_values, dims=['itemID'], coords={'itemID': xarr['itemID']})
+
+    def __call__(self, xarr: xr.Dataset) -> xr.DataArray:
+        return self.predict(xarr)

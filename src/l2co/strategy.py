@@ -1,16 +1,34 @@
-import random
-from copy import deepcopy
-from pathlib import Path
-from time import perf_counter
-from typing import List, Union
+from __future__ import annotations
 
-import f3dasm
-import pandas as pd
+from typing import Any, Dict, List, Type
+
+import numpy as np
 import xarray as xr
+from f3dasm import ExperimentData
 
-from l2co._logging import logger
-from l2co.performance import margin_of_victory
-from l2co.saving import load_netcdf
+#                                                                         Types
+# =============================================================================
+
+PERFORMANCE_DATASET_LABEL = 'movxarr_path'
+RAW_DATASET_LABEL = 'raw_path'
+PerformanceDataset = Type[xr.Dataset]
+StrategyDataArray = Type[xr.DataArray]
+StrategyDataset = Type[xr.Dataset]
+
+#                                                                          Load
+# =============================================================================
+
+
+def open_combined_dataset(experimentdata: ExperimentData, column: str) -> PerformanceDataset:
+    return xr.open_mfdataset(experimentdata.output_data.to_dataframe()[PERFORMANCE_DATASET_LABEL])
+
+
+def open_one_dataset(experimentdata: ExperimentData, column: str, index: int) -> PerformanceDataset:
+    if column == 'raw':
+        return xr.open_dataset(experimentdata.output_data.to_dataframe()[RAW_DATASET_LABEL].loc[index])
+
+    elif column == 'movxarr':
+        return xr.open_dataset(experimentdata.output_data.to_dataframe()[PERFORMANCE_DATASET_LABEL].loc[index])
 
 #                                                                Protocol class
 # =============================================================================
@@ -19,99 +37,133 @@ from l2co.saving import load_netcdf
 class Strategy:
     label: str = "strategy"
 
-    def __init__(self):
+    def __call__(self, xarr: PerformanceDataset) -> StrategyDataArray:
+        """Create a prediction of the optimizer to use given a combine dataset
+
+        Parameters
+        ----------
+        data
+            xr.Dataset, combined_data
+
+        Returns
+        -------
+
+        StrategyDataArray
+            xr.DataArray with value 'optimizer' and coordinate 'itemID'
+        """
         ...
 
-    def __call__(self, data: xr.Dataset) -> str:
+
+class CustomStrategy(Strategy):
+    label: str = "custom_strategy"
+
+    @staticmethod
+    def predict(dim: int, budget: int, noise: int, convex: int,
+                separable: int, differentiable: int, multimodal: int,
+                randomized_term: int, parametric: int) -> str:
         ...
 
-#                                                                 Stategy Manager
-# ===============================================================================
+    def __call__(self, xarr: PerformanceDataset) -> StrategyDataArray:
+        predictions = [self.predict(**create_features_dict(xarr, id)) for id in xarr.itemID]
+        return xr.DataArray(predictions, dims=['itemID'], coords={'itemID': xarr['itemID']})
 
-
-class StrategyManager:
-    def __init__(self, raw_data_path: Path, strategy_list: List[Strategy],
-                 output_directory: Path, mode: str = 'sequential'):
-        self.strategy_list = strategy_list
-        self.raw_data_path = raw_data_path
-        self.mode = mode
-        self.df_rollout = 0
-        self.n_tasks = 0
-        self.output_directory = output_directory
-
-        # If output_directory does not exists, create it
-        self.output_directory.mkdir(parents=True, exist_ok=True)
-
-    @property
-    def mean_margin_of_victory(self):
-        return self.df_rollout / self.n_tasks
-
-    def _add_margin_of_victory(self, df_mov: pd.DataFrame, filename: Path):
-        df_rollout_temp = deepcopy(self.df_rollout)
-        df_rollout_temp += df_mov
-
-        # Some checks
-        # Check if NaN values are present
-        if df_rollout_temp.isnull().values.any():
-            logger.debug(f"NaN values are present in df_mov from {filename.stem}")
-            return
-
-        # Overwrite df_rollout with temporary and increment n_tasks
-        self.df_rollout = df_rollout_temp
-        self.n_tasks += 1
-
-    def save_mean_margin_of_victory(self, filename: Path):
-        self.mean_margin_of_victory.to_csv(self.output_directory / filename.with_suffix('.csv'))
-
-    def save_margin_of_victory(self, df_mov: pd.DataFrame, filename: Path):
-        df_mov.to_csv(self.output_directory / filename.with_suffix('.csv'))
-
-    def post_processing(self, save_mov: Union[None, str], df_mov: pd.DataFrame, filename: Path) -> None:
-        if self.mode == 'sequential':
-            self._add_margin_of_victory(df_mov, filename)
-
-            # if save_move is not None, save the margin of victory
-            if save_mov is not None:
-                self.save_mean_margin_of_victory(save_mov)
-
-        if self.mode == 'cluster':
-            self.save_margin_of_victory(df_mov, filename)
-
-    def __call__(self, design: f3dasm.Design, save_mov: Union[None, str] = 'margin_of_victory') -> f3dasm.Design:
-        t_start = perf_counter()
-
-        filename = Path(design._dict_output['raw_path'])
-        raw_data: xr.Dataset = load_netcdf(filename)
-
-        df_mov = margin_of_victory(raw_data, budget=int(design['budget']))
-
-        for strategy in self.strategy_list:
-            recommendation: str = strategy(raw_data, int(design['budget']))
-            design[strategy.label] = recommendation
-
-            # Copy column of recommendation to new column named strategy.label
-            df_mov[strategy.label] = df_mov[recommendation]
-
-        self.post_processing(save_mov, df_mov, filename)
-
-        logger.info(f"Roll-out {filename.stem} ({perf_counter() - t_start:0.4f} s)")
-
-        return design
 
 #                                                              Strategy classes
 # =============================================================================
 
 
-class BestMoVStrategy(Strategy):
-    label: str = 'best_mov_strategy'
-
-    def __call__(self, data: xr.Dataset) -> str:
-        mov = margin_of_victory(data)
-        return mov.iloc[-1].idxmax()
-
-
 class RandomStrategy(Strategy):
     label: str = 'random_strategy'
 
-    def __call__(self, data: xr.Dataset) -> str:
-        return random.choice(list(data.optimizer.values))
+    def __call__(self, xarr: PerformanceDataset) -> StrategyDataArray:
+        return xr.DataArray(np.random.choice(xarr['optimizer'],
+                                             size=xarr['itemID'].shape),
+                            dims=['itemID'], coords={'itemID': xarr['itemID']})
+
+
+# class BestMoVStrategy(Strategy):
+#     label: str = 'best_mov_strategy'
+
+#     def __call__(self, xarr: PerformanceDataset) -> StrategyDataArray:
+#         return xarr['mov'].sel(fractional_budget=1., method='nearest').idxmax('optimizer').drop('fractional_budget')
+
+
+# class WorstMovStrategy(Strategy):
+#     label: str = 'worst_mov_strategy'
+
+#     def __call__(self, xarr: PerformanceDataset) -> StrategyDataArray:
+#         return xarr['mov'].sel(fractional_budget=1., method='nearest').idxmin('optimizer').drop('fractional_budget')
+
+
+class WorstPerfProfile(Strategy):
+    label: str = 'worst_perf_profile'
+
+    def __call__(self, xarr: PerformanceDataset) -> StrategyDataArray:
+        return xarr['perf_profile'].mean('realization').idxmax('optimizer').sel(output_dim='y').drop('output_dim')
+
+
+class BestPerfProfile(Strategy):
+    label: str = 'best_perf_profile'
+
+    def __call__(self, xarr: PerformanceDataset) -> StrategyDataArray:
+        return xarr['perf_profile'].mean('realization').idxmin('optimizer').sel(output_dim='y').drop('output_dim')
+
+# =============================================================================
+
+
+def create_strategy_xarr(combined_data: PerformanceDataset) -> StrategyDataset:
+    return xr.Dataset({strategy.name: strategy for strategy in [
+        xr.DataArray(opt, dims=['itemID'],
+                     coords={'itemID': combined_data['itemID']},
+                     name=opt) for opt in combined_data['optimizer'].values]})
+
+
+def create_features_dict(combined_data: PerformanceDataset, itemID: int) -> Dict[str, Any]:
+    ds = combined_data.drop_vars(['mov', 'perf_profile'])
+
+    features = {var: ds.sel(itemID=itemID)[var].values for var in ds.data_vars}
+
+    for feature, value in features.items():
+        if isinstance(value, np.ndarray):
+            if value.shape == ():
+                features[feature] = value.item()
+
+    return features
+
+# =============================================================================
+
+
+class StrategyManager:
+    def __init__(self, experimentdata: ExperimentData, strategy_list: List[Strategy] = None):
+        # Configure the strategies
+        self.combined_data = open_combined_dataset(experimentdata)
+        self.strategies = create_strategy_xarr(self.combined_data)
+
+        if strategy_list is None:
+            strategy_list = []
+
+        strategy_list.extend([RandomStrategy(), BestPerfProfile(), WorstPerfProfile()])
+        self._add_strategies(strategy_list)
+
+    def _add_strategies(self, strategy_list):
+        for strategy in strategy_list:
+            self.strategies[strategy.label] = strategy(self.combined_data)
+
+    def plot_performance_profile(self):
+        perf_profile = xr.concat([self.combined_data.sel(itemID=self.strategies['itemID'],
+                                                         optimizer=self.strategies[s])
+                                  for s in self.strategies.data_vars],
+                                 dim=xr.DataArray(self.strategies.data_vars, dims='strategy'))
+
+        pp = perf_profile.stack({'problem': ['itemID', 'realization']})['perf_profile']
+
+        # fraction of runs that are within a factor f of the best run
+        f_values = np.linspace(1, 5, 300)
+
+        fractions = []
+        for f in f_values:
+            fractions.append((pp <= f).mean(dim='problem'))
+
+        fractions_xr = xr.DataArray(fractions, dims=('f', 'strategy', 'output_dim'), coords={
+                                    'f': f_values, 'strategy': pp.strategy, 'output_dim': pp.output_dim})
+        fractions_xr.plot(hue='strategy')

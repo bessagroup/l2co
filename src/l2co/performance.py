@@ -8,7 +8,7 @@ from typing import List, Protocol, Tuple, Union
 import numpy as np
 import pandas as pd
 import xarray as xr
-from f3dasm.run_optimization import OptimizationResult, calculate_mean_std
+from f3dasm import OptimizationResult, calculate_mean_std
 from sklearn import preprocessing
 
 #                                                          Authorship & Credits

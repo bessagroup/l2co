@@ -2,129 +2,126 @@ defaults:
   - override hydra/job_logging: custom
 
 domain:
-  input_space:
-    function_name:
-      _target_: f3dasm.CategoricalParameter
-      categories: [
-          "Ackley",
-          "AckleyN2",
-          "AckleyN3",
-          "AckleyN4",
-          "Adjiman",
-          "Bartels",
-          "Beale",
-          "Bird",
-          "BohachevskyN1",
-          "BohachevskyN2",
-          "BohachevskyN3",
-          "Booth",
-          "Branin",
-          "Brent",
-          "Brown",
-          "BukinN6",
-          "CrossInTray",
-          "DeJongN5",
-          "DeckkersAarts",
-          "DixonPrice",
-          "DropWave",
-          "Easom",
-          "EggCrate",
-          "EggHolder",
-          "GoldsteinPrice",
-          "Griewank",
-          "HappyCat",
-          "Himmelblau",
-          "HolderTable",
-          "Keane",
-          "Langermann",
-          "Leon",
-          "Levy",
-          "LevyN13",
-          "Matyas",
-          "McCormick",
-          "Michalewicz",
-          "Periodic",
-          # "PermDBeta",
-          # "PermZeroDBeta",
-          "Powell",
-          "Qing",
-          "Quartic",
-          "Rastrigin",
-          "Ridge",
-          "Rosenbrock",
-          "RotatedHyperEllipsoid",
-          "Salomon",
-          "SchaffelN1",
-          "SchaffelN2",
-          "SchaffelN3",
-          "SchaffelN4",
-          "Schwefel",
-          "Schwefel2_20",
-          "Schwefel2_21",
-          "Schwefel2_23",
-          "Shubert",
-          "ShubertN3",
-          "ShubertN4",
-          "Sphere",
-          "StyblinskiTang",
-          "SumSquares",
-          "Thevenot",
-          "ThreeHump",
-          "Trid",
-          "XinSheYang",
-          "XinSheYangN2",
-          "XinSheYangN3",
-          "XinSheYangN4",
-          "Zakharov",
-        ]
-    dimensionality:
-      _target_: f3dasm.CategoricalParameter
-      categories: [2, 10, 20]
-    noise:
-      _target_: f3dasm.CategoricalParameter
-      categories: [0.0, 0.1]
-    seed:
-      _target_: f3dasm.DiscreteParameter
-      lower_bound: 0
-      upper_bound: 1000000
-    budget:
-      _target_: f3dasm.ConstantParameter
-      value: 1000
+  function_name:
+    _target_: f3dasm.CategoricalParameter
+    categories: [
+        "Ackley",
+        "AckleyN2",
+        "AckleyN3",
+        "AckleyN4",
+        "Adjiman",
+        "Bartels",
+        "Beale",
+        "Bird",
+        "BohachevskyN1",
+        "BohachevskyN2",
+        "BohachevskyN3",
+        "Booth",
+        "Branin",
+        "Brent",
+        "Brown",
+        "BukinN6",
+        "CrossInTray",
+        "DeJongN5",
+        "DeckkersAarts",
+        "DixonPrice",
+        "DropWave",
+        "Easom",
+        "EggCrate",
+        "EggHolder",
+        "GoldsteinPrice",
+        "Griewank",
+        "HappyCat",
+        "Himmelblau",
+        "HolderTable",
+        "Keane",
+        "Langermann",
+        "Leon",
+        "Levy",
+        "LevyN13",
+        "Matyas",
+        "McCormick",
+        "Michalewicz",
+        "Periodic",
+        # "PermDBeta",
+        # "PermZeroDBeta",
+        "Powell",
+        "Qing",
+        "Quartic",
+        "Rastrigin",
+        "Ridge",
+        "Rosenbrock",
+        "RotatedHyperEllipsoid",
+        "Salomon",
+        "SchaffelN1",
+        "SchaffelN2",
+        "SchaffelN3",
+        "SchaffelN4",
+        "Schwefel",
+        "Schwefel2_20",
+        "Schwefel2_21",
+        "Schwefel2_23",
+        "Shubert",
+        "ShubertN3",
+        "ShubertN4",
+        "Sphere",
+        "StyblinskiTang",
+        "SumSquares",
+        "Thevenot",
+        "ThreeHump",
+        "Trid",
+        "XinSheYang",
+        "XinSheYangN2",
+        "XinSheYangN3",
+        "XinSheYangN4",
+        "Zakharov",
+      ]
+  dimensionality:
+    _target_: f3dasm.CategoricalParameter
+    categories: [2, 10, 25, 100]
+  noise:
+    _target_: f3dasm.CategoricalParameter
+    categories: [0.0, 0.1]
+  seed:
+    _target_: f3dasm.DiscreteParameter
+    lower_bound: 0
+    upper_bound: 1000000
+  budget:
+    _target_: f3dasm.ConstantParameter
+    value: 2000
 
 experimentdata:
   name: benchmarkdata
   mode: cluster
   from_sampling:
-    _target_: f3dasm.sampling.RandomUniform
-    seed: 101
-    number_of_samples: 50
+    sampler: "random"
+    seed: 2019
+    n_samples: 50
+    domain: ${domain}
 
 optimization:
   lower_bound: -1.0
   upper_bound: 1.0
-  sampler_name: LatinHypercube
+  sampler_name: "latin"
   number_of_samples: 30
-  realizations: 3
+  realizations: 10
   parallelization: True
   optimizers:
     - name: CMAES
-      class: CMAES
-    - name: DifferentialEvolution
-      class: EvoSaxDE
+    - name: SimulatedAnnealing
     - name: Adam
-      class: Adam
     - name: L-BFGS-B
-      class: LBFGSB
+    - name: RandomSearch
 
 recommender:
   create_recommender_dataset: True
   lower_bound_budget: 30
-  n_augmented_samples: 10
+  n_augmented_samples: 9
   scaler: Standard
 
 files:
   dirname_raw: raw
-  dirname_movxarr: movxarr
+  dirname_movxarr: perf_profile
 
 hpc:
   jobid: -1

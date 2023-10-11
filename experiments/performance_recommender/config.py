@@ -1,21 +1,22 @@
 from dataclasses import dataclass
+from typing import Dict
+
+
+@dataclass
+class DomainConfig:
+    domain: Dict
 
 
 @dataclass
 class FileConfig:
     raw_data: str
     experimentdata_file: str
-    interactions_file: str
-    training_features_file: str
-    output_filename: str
-    output_dir: str
-    output_experimentdata_file: str
-    output_master_file: str
 
 
 @dataclass
 class ExperimentConfig:
     mode: str
+    from_sampling: Dict
 
 
 @dataclass
@@ -25,6 +26,7 @@ class HPCConfig:
 
 @dataclass
 class Config:
+    domain: DomainConfig
     files: FileConfig
     hpc: HPCConfig
-    experiment: ExperimentConfig
+    experimentdata: ExperimentConfig

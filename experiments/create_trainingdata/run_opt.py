@@ -12,7 +12,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 from config import Config
-from f3dasm import Design
+from f3dasm import ExperimentSample
+from f3dasm.datageneration import DataGenerator
 from SALib.sample import latin
 
 # Local
@@ -56,154 +57,159 @@ def convert_config_to_input(config: Config, function_name: str, dimensionality: 
 
     dimensionality = int(dimensionality)
     budget = int(budget)
-    function_class = f3dasm.datageneration.functions.find_function(query=function_name)
     function_noise = float(noise)
-    sampler_class: f3dasm.Sampler = f3dasm.sampling.find_sampler(config.optimization.sampler_name)
+    seed = int(seed)
+
     bounds = np.tile([config.optimization.lower_bound, config.optimization.upper_bound], (dimensionality, 1))
-
     domain = f3dasm.make_nd_continuous_domain(bounds=bounds, dimensionality=dimensionality)
-    function = function_class(
-        dimensionality=dimensionality, noise=function_noise, scale_bounds=domain.get_bounds(), seed=seed
-    )
-    data = f3dasm.ExperimentData(domain=domain)
+    kwargs = {'noise': function_noise, 'scale_bounds': domain.get_bounds(), 'seed': seed}
 
-    optimizers: List[f3dasm.Optimizer] = []
+    hyperparameters_list, optimizers_list = [], []
     for opt_config in config.optimization.optimizers:
-        hyperparameters = opt_config['hyperparameters'] if 'hyperparameters' in opt_config else {}
-        optimizers.append(f3dasm.optimization.find_optimizer(opt_config['class'])(
-            data=data, seed=seed, hyperparameters=hyperparameters, name=opt_config['name']))
-
-    sampler = sampler_class(design=domain, seed=seed)
+        h = opt_config['hyperparameters'] if 'hyperparameters' in opt_config else {}
+        h.update({'seed': seed})
+        hyperparameters_list.append(h)
+        optimizers_list.append(opt_config['name'])
 
     return [
         {
             "optimizer": optimizer,
-            "function": function,
-            "sampler": sampler,
+            "data_generator": function_name,
+            "sampler": config.optimization.sampler_name,
             "number_of_samples": config.optimization.number_of_samples,
             "iterations": budget,
+            "domain": domain,
+            "kwargs": kwargs,
+            "hyperparameters": hyperparameters,
             "realizations": config.optimization.realizations,
             "parallelization": config.optimization.parallelization,
             "seed": seed,
         }
-        for optimizer in optimizers
+        for optimizer, hyperparameters in zip(optimizers_list, hyperparameters_list)
     ]
 
 
-def execute(design: Design, config: Config) -> Design:
-    function_name = design['function_name']
-    dimensionality = design['dimensionality']
-    budget = int(design['budget'])
-    noise = design['noise']
-    seed = design['seed']
+class BenchmarkOptimizationRoutine(DataGenerator):
+    def __init__(self, config: Config):
+        self.config = config
 
-    results: List[f3dasm.OptimizationResult] = []
+    def execute(self) -> ExperimentSample:
+        function_name = self.experiment_sample.get('function_name')
+        dimensionality = self.experiment_sample.get('dimensionality')
+        budget = int(self.experiment_sample.get('budget'))
+        noise = self.experiment_sample.get('noise')
+        seed = self.experiment_sample.get('seed')
 
-    options_list = convert_config_to_input(config=config, function_name=function_name,
-                                           dimensionality=dimensionality, noise=noise, seed=seed, budget=budget)
+        results: List[f3dasm.OptimizationResult] = []
 
-    try:
-        for options in options_list:
+        options_list = convert_config_to_input(config=self.config, function_name=function_name,
+                                               dimensionality=dimensionality, noise=noise, seed=seed, budget=budget)
 
-            if options['optimizer'].get_name() in ['EvoSaxCMAES', 'EvoSaxSimAnneal', 'EvoSaxPSO', 'EvoSaxDE']:
+        try:
+            for options in options_list:
+
+                if options['optimizer'] in ['EvoSaxCMAES', 'EvoSaxSimAnneal', 'EvoSaxPSO', 'EvoSaxDE']:
+                    options['parallelization'] = False
+
+                results.append(f3dasm.run_multiple_realizations(**options))
+        except OSError:
+            # for every dict in the options list, change the key 'parallelization' to False
+            for options in options_list:
                 options['parallelization'] = False
+                results.append(f3dasm.run_multiple_realizations(**options))
 
-            results.append(f3dasm.run_multiple_realizations(**options))
-    except OSError:
-        # for every dict in the options list, change the key 'parallelization' to False
-        for options in options_list:
-            options['parallelization'] = False
-            results.append(f3dasm.run_multiple_realizations(**options))
+        results_xarray: xr.Dataset = convert_to_xarray(results=copy(results))
 
-    results_xarray: xr.Dataset = convert_to_xarray(results=copy(results))
+        self.experiment_sample.store(object=results_xarray, name=self.config.files.dirname_raw, to_disk=True)
 
-    design.store(object=results_xarray, name=config.files.dirname_raw)
+        if not self.config.recommender.create_recommender_dataset:
+            return
 
-    if not config.recommender.create_recommender_dataset:
-        return design
+        # Augment the designs
+        augmented_designs = augment_designs(experiment_sample=self.experiment_sample,
+                                            n_samples=self.config.recommender.n_augmented_samples,
+                                            upper_bound_budget=budget,
+                                            lower_bound_budget=self.config.recommender.lower_bound_budget)
 
-    # Augment the designs
-    dataset_augmenter = DatasetAugmenter(n_samples=config.recommender.n_augmented_samples,
-                                         upper_bound_budget=budget,
-                                         lower_bound_budget=config.recommender.lower_bound_budget)
+        # Create the recommender dataset
+        features_matrix_list: List[pd.DataFrame] = []
+        mov_list: List[pd.DataFrame] = []
+        perf_profile_list: List[xr.DataArray] = []
+        task_numbers: List[int] = []
 
-    _ = dataset_augmenter(design)
-    augmented_designs = dataset_augmenter.designs
+        for index, augmented_design in enumerate(augmented_designs):
+            budget: int = int(augmented_design.get('budget'))
+            task_number: int = int(self.experiment_sample.job_number *  # NOQA
+                                   (self.config.recommender.n_augmented_samples + 1) + index)
+            task_numbers.append(task_number)
+            recommender_dataset_creator = RecommenderDatasetCreator(results=results_xarray, jobnumber=task_number)
 
-    # Create the recommender dataset
-    features_matrix_list: List[pd.DataFrame] = []
-    mov_list: List[pd.DataFrame] = []
-    task_numbers: List[int] = []
-    for index, augmented_design in enumerate(augmented_designs):
-        task_number: int = int(design.job_number * (config.recommender.n_augmented_samples + 1) + index)
-        task_numbers.append(task_number)
-        recommender_dataset_creator = RecommenderDatasetCreator(results=results_xarray, jobnumber=task_number)
+            features_matrix_list.append(
+                recommender_dataset_creator.create_recommender_data_features_functions_csv(
+                    budget=int(augmented_design.get('budget'))))
 
-        features_matrix_list.append(
-            recommender_dataset_creator.create_recommender_data_features_functions_csv(
-                budget=int(augmented_design['budget'])))
+            mov_list.append(margin_of_victory(
+                results_xarray, budget=budget))
 
-        mov_list.append(margin_of_victory(
-            results_xarray, budget=int(augmented_design['budget'])))
+            perf_profile_list.append(perf_profile(results_xarray, budget=budget, itemID=task_number))
 
-    df_features_matrix = pd.concat(features_matrix_list, ignore_index=True)
+        df_features_matrix = pd.concat(features_matrix_list, ignore_index=True)
 
-    # Create the xarray dataset
-    df_features_matrix.set_index('itemID', inplace=True)
-    xarr_all = xr.Dataset(df_features_matrix)
-    df_list = []
-    for df in mov_list:
-        df.index.name = 'fractional_budget'
-        xr_ = xr.DataArray(df, dims=['fractional_budget', 'optimizer'], coords={
-                           'fractional_budget': np.linspace(0., 1., len(df)), 'optimizer': df.columns})
+        # Create the xarray dataset
+        df_features_matrix.set_index('itemID', inplace=True)
+        xarr_all = xr.Dataset(df_features_matrix)
+        df_list = []
+        for df in mov_list:
+            df.index.name = 'fractional_budget'
+            xr_ = xr.DataArray(df, dims=['fractional_budget', 'optimizer'], coords={
+                'fractional_budget': np.linspace(0., 1., len(df)), 'optimizer': df.columns})
 
-        df_list.append(xr_)
+            df_list.append(xr_)
 
-    c = xr.concat(df_list, dim=xr.DataArray(task_numbers, dims='itemID'))
-    xarr_all['mov'] = c
+        c = xr.concat(df_list, dim=xr.DataArray(task_numbers, dims='itemID'))
+        xarr_all['mov'] = c
+        xarr_all['perf_profile'] = xr.concat(perf_profile_list, dim='itemID')
 
-    design.store(xarr_all, name=config.files.dirname_movxarr)
+        self.experiment_sample.store(xarr_all, name=self.config.files.dirname_movxarr, to_disk=True)
 
-    return design
+        return
 
 
-class DatasetAugmenter:
-    def __init__(self, n_samples: int, upper_bound_budget: int, lower_bound_budget: int = 0):
-        self.designs: List[f3dasm.Design] = []
-        self.n_samples = n_samples
-        self.upper_bound_budget = upper_bound_budget
-        self.lower_bound_budget = lower_bound_budget
+def augment_designs(experiment_sample: f3dasm.ExperimentSample, n_samples: int,
+                    lower_bound_budget: int, upper_bound_budget: int) -> List[ExperimentSample]:
 
-        self.salib_problem = self.create_salib_problem()
+    experiment_samples = []
 
-    def create_salib_problem(self):
-        return {
-            'num_vars': 1,
-            'names': ['budget'],
-            'bounds': [[self.lower_bound_budget, self.upper_bound_budget]],
-        }
+    salib_problem = {
+        'num_vars': 1,
+        'names': ['budget'],
+        'bounds': [[lower_bound_budget, upper_bound_budget]],
+    }
 
-    def get_experimentdata(self, domain: f3dasm.Domain) -> f3dasm.ExperimentData:
-        exp_data = f3dasm.ExperimentData(domain)
-        designs_dataframe_dict = [design_.to_dataframe_dict() for design_ in self.designs]
-        df = pd.DataFrame(designs_dataframe_dict, columns=exp_data.data.data.columns)
-        exp_data.add(df)
-        return exp_data
+    # add the original design
+    design_0 = deepcopy(experiment_sample)
+    design_0._jobnumber = design_0.job_number * (n_samples + 1)
+    experiment_samples.append(design_0)
 
-    def get_samples(self) -> np.ndarray:
-        return latin.sample(self.salib_problem, self.n_samples).flatten()
+    samples = latin.sample(salib_problem, n_samples).flatten()
 
-    def __call__(self, design: f3dasm.Design):
+    for index, sample in enumerate(samples):
+        design_ = deepcopy(design_0)
+        design_._jobnumber = design_0.job_number + index + 1
+        design_._dict_input['budget'] = int(sample)
+        experiment_samples.append(design_)
 
-        # add the original design
-        design_0 = deepcopy(design)
-        design_0._jobnumber = design_0.job_number * (self.n_samples + 1)
-        self.designs.append(design_0)
+    return experiment_samples
 
-        for index, sample in enumerate(self.get_samples()):
-            design_ = deepcopy(design_0)
-            design_._jobnumber = design_0.job_number + index + 1
-            design_._dict_input['budget'] = int(sample)
-            self.designs.append(design_)
 
-        return design
+def perf_profile(data, budget: int, itemID: int) -> xr.DataArray:
+    x: xr.DataArray = data['output'].sel(iterations=range(0, budget)).min(dim='iterations')
+
+    # standard scale x
+    x = (x - x.mean()) / x.std()
+    x = x - x.min() + 1.0
+
+    # add a new dimension named itemID and set to value itemID
+    x = x.expand_dims({'itemID': [itemID]})
+
+    return x

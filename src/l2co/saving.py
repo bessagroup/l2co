@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 from f3dasm import ExperimentData
-from f3dasm.run_optimization import OptimizationResult
+from f3dasm import OptimizationResult
 
 from l2co._logging import logger
 
@@ -162,3 +162,7 @@ def load_netcdf(file_path: Union[str, Path]) -> xr.Dataset:
         raise FileNotFoundError(f'Path {file_path} is not a file')
 
     return xr.load_dataset(file_path.with_suffix('.nc'))
+
+
+def load_mf_dataset(raw_data_path: Path) -> xr.Dataset:
+    return xr.open_mfdataset(raw_data_path.glob('*.nc'))

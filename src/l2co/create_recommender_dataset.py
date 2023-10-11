@@ -7,8 +7,10 @@ from typing import List
 
 # Third-party
 import pandas as pd
-from f3dasm.datageneration.functions import find_function
-from f3dasm.run_optimization import OptimizationResult
+import xarray as xr
+from f3dasm import OptimizationResult
+from f3dasm._src.datageneration.functions.function_factory import \
+    datagenerator_factory
 from recommenders.utils.constants import DEFAULT_HEADER
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
@@ -40,9 +42,11 @@ class RecommenderDatasetCreator:
         return df
 
     def _create_recommender_data_features_functions(self) -> List[str]:
-        f = self.results[0].function
-
+        f = datagenerator_factory(self.results[0].data_generator, self.results[0].data[0].domain)
         categories_list = []
+
+        if f.noise is None:
+            f.noise = 0.0
 
         # Append features
         if f.noise == 0.0:
@@ -75,7 +79,10 @@ class RecommenderDatasetCreator:
         columns = ('itemID', 'dim', 'budget', 'noise', 'convex', 'separable',
                    'differentiable', 'multimodal', 'randomized_term', 'parametric')
 
-        f = find_function(self.results.function_name)
+        if isinstance(self.results, list):
+            f = datagenerator_factory(self.results[0].data_generator, self.results[0].data[0].domain)
+        elif isinstance(self.results, xr.Dataset):
+            f = datagenerator_factory(self.results.function_name, self.results.function_dimensionality)
 
         if self.results.function_noise == 0.0:
             noise = 0
