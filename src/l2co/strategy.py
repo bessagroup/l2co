@@ -10,7 +10,7 @@ from f3dasm import ExperimentData
 # =============================================================================
 
 PERFORMANCE_DATASET_LABEL = 'movxarr_path'
-RAW_DATASET_LABEL = 'raw_path'
+RAW_DATASET_LABEL = 'path_raw'  # 'raw_path'
 PerformanceDataset = Type[xr.Dataset]
 StrategyDataArray = Type[xr.DataArray]
 StrategyDataset = Type[xr.Dataset]
@@ -20,7 +20,12 @@ StrategyDataset = Type[xr.Dataset]
 
 
 def open_combined_dataset(experimentdata: ExperimentData, column: str) -> PerformanceDataset:
-    return xr.open_mfdataset(experimentdata.output_data.to_dataframe()[PERFORMANCE_DATASET_LABEL])
+    if column == 'movxarr':
+
+        return xr.open_mfdataset(experimentdata.output_data.to_dataframe()[PERFORMANCE_DATASET_LABEL])
+
+    elif column == 'raw':
+        return xr.open_mfdataset(experimentdata.output_data.to_dataframe()[RAW_DATASET_LABEL])
 
 
 def open_one_dataset(experimentdata: ExperimentData, column: str, index: int) -> PerformanceDataset:

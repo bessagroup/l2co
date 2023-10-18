@@ -96,7 +96,7 @@ experimentdata:
   from_sampling:
     sampler: "random"
     seed: 2019
-    n_samples: 50
+    n_samples: 5
     domain: ${domain}
 
 optimization:
@@ -104,11 +104,11 @@ optimization:
   upper_bound: 1.0
   sampler_name: "latin"
   number_of_samples: 30
-  realizations: 10
+  realizations: 3
   parallelization: True
   optimizers:
     - name: CMAES
-    - name: SimulatedAnnealing
+    # - name: SimulatedAnnealing
     - name: Adam
     - name: L-BFGS-B
     - name: RandomSearch
@@ -121,7 +121,7 @@ recommender:
 
 files:
   dirname_raw: raw
-  dirname_movxarr: perf_profile
+  dirname_movxarr: post
 
 hpc:
   jobid: -1

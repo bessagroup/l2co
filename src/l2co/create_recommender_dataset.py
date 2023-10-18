@@ -76,8 +76,7 @@ class RecommenderDatasetCreator:
         return categories
 
     def create_recommender_data_features_functions_csv(self, budget: int) -> pd.DataFrame:
-        columns = ('itemID', 'dim', 'budget', 'noise', 'convex', 'separable',
-                   'differentiable', 'multimodal', 'randomized_term', 'parametric')
+        columns = ('itemID', 'dim', 'budget', 'noise', 'convex', 'separable', 'multimodal')
 
         if isinstance(self.results, list):
             f = datagenerator_factory(self.results[0].data_generator, self.results[0].data[0].domain)
@@ -91,7 +90,7 @@ class RecommenderDatasetCreator:
 
         # create a new row of dg
         features = [[self.jobnumber, self.results.function_dimensionality, budget, noise, f.convex,
-                    f.separable, f.differentiable, f.multimodal, f.randomized_term, f.parametric]]
+                    f.separable, f.multimodal]]
 
         df_features = pd.DataFrame(features, columns=columns)
         # cast all booleans in dg to ints
