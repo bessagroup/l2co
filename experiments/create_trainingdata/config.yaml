@@ -95,20 +95,25 @@ experimentdata:
   mode: cluster
   from_sampling:
     sampler: "random"
-    seed: 2019
-    n_samples: 5
+    seed: 2023
+    n_samples: 5000
     domain: ${domain}
 
+# experimentdata:
+#   name: benchmarkdata
+#   mode: cluster
+#   from_file: "/home/martin/Documents/GitHub/L2CO/experiments/create_trainingdata/outputs/2023-10-19/09-41-41/benchmarkdata"
+
 optimization:
-  lower_bound: -1.0
+  lower_bound: 0.0
   upper_bound: 1.0
   sampler_name: "latin"
   number_of_samples: 30
-  realizations: 3
+  realizations: 10
   parallelization: True
   optimizers:
     - name: CMAES
-    # - name: SimulatedAnnealing
+    - name: PSO
     - name: Adam
     - name: L-BFGS-B
     - name: RandomSearch
