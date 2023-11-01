@@ -140,3 +140,4 @@ outputs/
 *.ipynb
 
 notebooks/plots/*.png
+data/
