@@ -110,7 +110,12 @@ def process(config: Config):
     logger.info("== PROCESS ==")
 
     # Retrieve the ExperimentData object
-    data = f3dasm.ExperimentData.from_file(filename=config.experimentdata.name)
+    try:
+        data = f3dasm.ExperimentData.from_file(filename=config.experimentdata.name)
+    except FileNotFoundError:
+        sleep(60)
+        data = f3dasm.ExperimentData.from_file(filename=config.experimentdata.name)
+
     logger.debug("Loaded experimentdata")
 
     benchmark_optimization_routine = BenchmarkOptimizationRoutine(config)
