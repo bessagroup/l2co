@@ -7,7 +7,7 @@ SPHINXOPTS    ?=
 SPHINXBUILD   ?= sphinx-build
 SOURCEDIR     = source
 BUILDDIR      = build
-APIDOCDIR     = apisource
+APIDOCDIR     = _autosummary
 PACKAGENAME   = l2co
 
 # Put it first so that "make" without argument is like "make help".
@@ -36,3 +36,7 @@ apidoc:
 	@echo
 	@echo "Created API documentation using sphinx-apidoc. The source files are in $(APIDOCDIR)."
 
+clean-autosummary:
+	-rm -rf ./$(SOURCEDIR)/$(APIDOCDIR)/*.rst
+	@echo
+	@echo "Removed all autosummary files in ./$(SOURCEDIR)/$(APIDOCDIR)/"

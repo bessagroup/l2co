@@ -141,3 +141,8 @@ outputs/
 
 notebooks/plots/*.png
 data/
+
+# Ignore _autosummary generated files
+docs/source/_autosummary/
+!docs/source/_autosummary/.gitkeep
+_autosummary/

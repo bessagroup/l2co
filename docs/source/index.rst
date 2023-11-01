@@ -1,21 +1,20 @@
-.. l2co's documentation master file, created by
-   sphinx-quickstart on Mon Dec 12 11:22:31 2022.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
-
-Welcome to L2CO's documentation!
-============================================
+L2CO
+====
 
 .. toctree::
-   :maxdepth: 2
-   :caption: Contents:
+   :maxdepth: 3
+   :caption: General
+   :hidden:
+   :glob:
+       
+   rst_doc_files/general/gettingstarted
+   rst_doc_files/general/overview
+.. toctree::
+   :name: apitoc
+   :caption: API
+   :hidden:
 
+   rst_doc_files/reference/index.rst
+   Code <_autosummary/l2co>
 
-This is just to show if the documenation builds!!
-
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
+.. include:: readme.rst
