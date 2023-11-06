@@ -78,7 +78,7 @@ domain:
       ]
   dimensionality:
     _target_: f3dasm.CategoricalParameter
-    categories: [2, 10, 25, 100]
+    categories: [2, 10, 25]
   noise:
     _target_: f3dasm.CategoricalParameter
     categories: [0.0, 0.1]
@@ -88,7 +88,7 @@ domain:
     upper_bound: 1000000
   budget:
     _target_: f3dasm.ConstantParameter
-    value: 2000
+    value: 200
 
 experimentdata:
   name: benchmarkdata
@@ -109,7 +109,7 @@ optimization:
   upper_bound: 1.0
   sampler_name: "latin"
   number_of_samples: 30
-  realizations: 10
+  realizations: 3
   parallelization: True
   optimizers:
     - name: CMAES

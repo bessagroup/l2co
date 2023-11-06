@@ -1,0 +1,134 @@
+defaults:
+  - override hydra/job_logging: custom
+
+domain:
+  function_name:
+    _target_: f3dasm.CategoricalParameter
+    categories: [
+        "Ackley",
+        "AckleyN2",
+        "AckleyN3",
+        "AckleyN4",
+        "Adjiman",
+        "Bartels",
+        "Beale",
+        "Bird",
+        "BohachevskyN1",
+        "BohachevskyN2",
+        "BohachevskyN3",
+        "Booth",
+        "Branin",
+        "Brent",
+        "Brown",
+        "BukinN6",
+        "CrossInTray",
+        "DeJongN5",
+        "DeckkersAarts",
+        "DixonPrice",
+        "DropWave",
+        "Easom",
+        "EggCrate",
+        "EggHolder",
+        "GoldsteinPrice",
+        "Griewank",
+        "HappyCat",
+        "Himmelblau",
+        "HolderTable",
+        "Keane",
+        "Langermann",
+        "Leon",
+        "Levy",
+        "LevyN13",
+        "Matyas",
+        "McCormick",
+        "Michalewicz",
+        "Periodic",
+        # "PermDBeta",
+        # "PermZeroDBeta",
+        "Powell",
+        "Qing",
+        "Quartic",
+        "Rastrigin",
+        "Ridge",
+        "Rosenbrock",
+        "RotatedHyperEllipsoid",
+        "Salomon",
+        "SchaffelN1",
+        "SchaffelN2",
+        "SchaffelN3",
+        "SchaffelN4",
+        "Schwefel",
+        "Schwefel2_20",
+        "Schwefel2_21",
+        "Schwefel2_23",
+        "Shubert",
+        "ShubertN3",
+        "ShubertN4",
+        "Sphere",
+        "StyblinskiTang",
+        "SumSquares",
+        "Thevenot",
+        "ThreeHump",
+        "Trid",
+        "XinSheYang",
+        "XinSheYangN2",
+        "XinSheYangN3",
+        "XinSheYangN4",
+        "Zakharov",
+      ]
+  dimensionality:
+    _target_: f3dasm.CategoricalParameter
+    categories: [2, 10, 25]
+  noise:
+    _target_: f3dasm.CategoricalParameter
+    categories: [0.0, 0.1]
+  seed:
+    _target_: f3dasm.DiscreteParameter
+    lower_bound: 0
+    upper_bound: 1000000
+  budget:
+    _target_: f3dasm.ConstantParameter
+    value: 200
+
+experimentdata:
+  name: benchmarkdata
+  mode: cluster
+  from_sampling:
+    sampler: "random"
+    seed: 2023
+    n_samples: 100
+    domain: ${domain}
+
+# experimentdata:
+#   name: benchmarkdata
+#   mode: cluster
+#   from_file: "/home/martin/Documents/GitHub/L2CO/experiments/create_trainingdata/outputs/2023-10-19/09-41-41/benchmarkdata"
+
+optimization:
+  lower_bound: 0.0
+  upper_bound: 1.0
+  sampler_name: "latin"
+  number_of_samples: 30
+  realizations: 3
+  parallelization: True
+  optimizers:
+    - name: CMAES
+    - name: PSO
+    - name: Adam
+    - name: LBFGSB
+    - name: RandomSearch
+
+recommender:
+  create_recommender_dataset: True
+  lower_bound_budget: 30
+  n_augmented_samples: 9
+  scaler: Standard
+
+files:
+  dirname_raw: raw
+  dirname_movxarr: post
+
+hpc:
+  jobid: -1
+
+log_level: 20

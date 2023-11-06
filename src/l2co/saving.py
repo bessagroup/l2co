@@ -11,8 +11,7 @@ from typing import List, Union
 import numpy as np
 import pandas as pd
 import xarray as xr
-from f3dasm import ExperimentData
-from f3dasm import OptimizationResult
+from f3dasm import ExperimentData, OptimizationResult
 
 from l2co._logging import logger
 
@@ -32,15 +31,27 @@ def experimentdata_to_dataset(experimentdata: ExperimentData) -> xr.Dataset:
     y = experimentdata.data.get_outputdata().to_numpy().ravel()
     xx = xr.DataArray(x, dims=['iteration', 'dim'], coords={
                       'dim': [f'x{i}' for i in range(x.shape[1])], 'iteration': np.arange(x.shape[0])})
-    yy = xr.DataArray(y, dims=['iteration'], coords={'iteration': np.arange(y.shape[0])})
+    yy = xr.DataArray(y, dims=['iteration'], coords={
+                      'iteration': np.arange(y.shape[0])})
 
     # Create a dataset
     return xr.Dataset({'x': xx, 'y': yy})
 
 
-def optimizationresult_to_dataset(optimizationresult: OptimizationResult) -> xr.Dataset:
+def optimizationresult_to_dataset(
+        optimizationresult: OptimizationResult) -> xr.Dataset:
     return xr.concat([experimentdata_to_dataset(r) for r in optimizationresult.data],
                      dim=xr.DataArray(np.arange(len(optimizationresult.data)), dims='realization'))
+
+
+def listexperimentdata_to_dataset(
+        results: List[ExperimentData]) -> xr.Dataset:
+    return xr.concat([r.to_xarray() for r in results],
+                     dim=xr.DataArray(np.arange(len(results)),
+                                      dims='realization'))
+
+
+
 
 
 def convert_to_xarray(results: List[OptimizationResult]) -> xr.Dataset:
@@ -75,14 +86,17 @@ def convert_to_xarray_old(results: List[OptimizationResult]) -> xr.Dataset:
 
     """
 
-    df_list = [[d.data for d in results[i].data] for i, _ in enumerate(results)]
+    df_list = [[d.data for d in results[i].data]
+               for i, _ in enumerate(results)]
     for i, _ in enumerate(df_list):
         for j, _ in enumerate(df_list[i]):
             df_list[i][j].data.columns = df_list[i][j].data.columns.droplevel()
 
-    data_arrays = [[df.data.to_xarray() for jj, df in enumerate(df_list[ii])] for ii, _ in enumerate(df_list)]
+    data_arrays = [[df.data.to_xarray() for jj, df in enumerate(df_list[ii])]
+                   for ii, _ in enumerate(df_list)]
 
-    optimizer_names = [res.optimizer.get_name() for res in results]  # Get optimizer names
+    optimizer_names = [res.optimizer.get_name()
+                       for res in results]  # Get optimizer names
 
     f = [xr.concat(data_arrays[index], dim='realization').assign_coords(optimizer=optimizer_names[index])
          for index, _ in enumerate(data_arrays)]  # Add optimizer name as a coordinate
@@ -101,8 +115,10 @@ def convert_to_xarray_old(results: List[OptimizationResult]) -> xr.Dataset:
     xarr.attrs['function_features']: str = datasetcreator._create_recommender_data_features_functions()
 
     # Global minimum function
-    _, g = results[0].function.get_global_minimum(d=results[0].function.dimensionality)
-    xarr.attrs['function_global_minimum']: float = float(np.array(g if not isinstance(g, list) else g[0])[0, 0])
+    _, g = results[0].function.get_global_minimum(
+        d=results[0].function.dimensionality)
+    xarr.attrs['function_global_minimum']: float = float(
+        np.array(g if not isinstance(g, list) else g[0])[0, 0])
 
     # Add optimizer features
     optimizer_features = xr.DataArray([",".join(
@@ -127,7 +143,8 @@ def from_xarray_to_dataframe(xarr: xr.Dataset) -> List[List[pd.DataFrame]]:
     for optimizer in xarr.optimizer:
         df_optimizer = []
         for realization in xarr.realization:
-            df_realization = xarr.sel(optimizer=optimizer, realization=realization).to_dataframe()
+            df_realization = xarr.sel(
+                optimizer=optimizer, realization=realization).to_dataframe()
             df_realization.columns = pd.MultiIndex.from_tuples(
                 [tuple(col.split('_')) for col in df_realization.columns])
             df_optimizer.append(df_realization)

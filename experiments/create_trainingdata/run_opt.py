@@ -66,9 +66,12 @@ def convert_config_to_input(config: Config, function_name: str, dimensionality: 
     function_noise = float(noise)
     seed = int(seed)
 
-    bounds = np.tile([config.optimization.lower_bound, config.optimization.upper_bound], (dimensionality, 1))
-    domain = f3dasm.make_nd_continuous_domain(bounds=bounds, dimensionality=dimensionality)
-    kwargs = {'noise': function_noise, 'scale_bounds': domain.get_bounds(), 'seed': seed}
+    bounds = np.tile([config.optimization.lower_bound,
+                     config.optimization.upper_bound], (dimensionality, 1))
+    domain = f3dasm.make_nd_continuous_domain(
+        bounds=bounds, dimensionality=dimensionality)
+    kwargs = {'noise': function_noise,
+              'scale_bounds': domain.get_bounds(), 'seed': seed}
 
     hyperparameters_list, optimizers_list = [], []
     for opt_config in config.optimization.optimizers:
@@ -126,7 +129,8 @@ class BenchmarkOptimizationRoutine(DataGenerator):
 
         results_xarray: xr.Dataset = convert_to_xarray(results=copy(results))
 
-        self.experiment_sample.store(object=results_xarray, name=self.config.files.dirname_raw, to_disk=True)
+        self.experiment_sample.store(
+            object=results_xarray, name=self.config.files.dirname_raw, to_disk=True)
 
         if not self.config.recommender.create_recommender_dataset:
             return
@@ -152,7 +156,8 @@ class BenchmarkOptimizationRoutine(DataGenerator):
             task_numbers.append(task_number)
             samples_y.append(results_xarray['output'].isel(iterations=slice(
                 0, results_xarray.attrs['number_of_samples']), optimizer=0))
-            recommender_dataset_creator = RecommenderDatasetCreator(results=results_xarray, jobnumber=task_number)
+            recommender_dataset_creator = RecommenderDatasetCreator(
+                results=results_xarray, jobnumber=task_number)
 
             features_matrix_list.append(
                 recommender_dataset_creator.create_recommender_data_features_functions_csv(
@@ -161,8 +166,10 @@ class BenchmarkOptimizationRoutine(DataGenerator):
             # mov_list.append(margin_of_victory(
             #     results_xarray, budget=budget))
 
-            perf_profile_list.append(perf_profile(results_xarray, budget=budget, itemID=task_number))
-            perf_per_optimizer_list.append(create_performance_metric(results_xarray, budget=budget))
+            perf_profile_list.append(perf_profile(
+                results_xarray, budget=budget, itemID=task_number))
+            perf_per_optimizer_list.append(
+                create_performance_metric(results_xarray, budget=budget))
 
         df_features_matrix = pd.concat(features_matrix_list, ignore_index=True)
 
@@ -178,14 +185,17 @@ class BenchmarkOptimizationRoutine(DataGenerator):
         #     df_list.append(xr_)
 
         # c = xr.concat(df_list, dim=xr.DataArray(task_numbers, dims='itemID'))
-        xr_samples_y = xr.concat(samples_y, dim=xr.DataArray(task_numbers, dims='itemID'))
-        xr_perf_per_optimizer = xr.concat(perf_per_optimizer_list, dim=xr.DataArray(task_numbers, dims='itemID'))
+        xr_samples_y = xr.concat(
+            samples_y, dim=xr.DataArray(task_numbers, dims='itemID'))
+        xr_perf_per_optimizer = xr.concat(
+            perf_per_optimizer_list, dim=xr.DataArray(task_numbers, dims='itemID'))
         # xarr_all['mov'] = c
         xarr_all['samples_output'] = xr_samples_y
         xarr_all['ranking'] = xr_perf_per_optimizer
         xarr_all['perf_profile'] = xr.concat(perf_profile_list, dim='itemID')
 
-        self.experiment_sample.store(xarr_all, name=self.config.files.dirname_movxarr, to_disk=True)
+        self.experiment_sample.store(
+            object=xarr_all, name=self.config.files.dirname_movxarr, to_disk=True)
 
         return
 
@@ -218,7 +228,8 @@ def augment_designs(experiment_sample: f3dasm.ExperimentSample, n_samples: int,
 
 
 def perf_profile(data, budget: int, itemID: int) -> xr.DataArray:
-    x: xr.DataArray = data['output'].sel(iterations=range(0, budget)).min(dim='iterations')
+    x: xr.DataArray = data['output'].sel(
+        iterations=range(0, budget)).min(dim='iterations')
 
     # standard scale x
     x = (x - x.mean()) / x.std()
