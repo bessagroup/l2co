@@ -25,6 +25,7 @@ class OptimizationConfig:
     realizations: int
     parallelization: bool
     optimizers: List[Dict]
+    fraction_of_all_combinations: float
 
 
 @dataclass

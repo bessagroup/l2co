@@ -8,6 +8,7 @@ from typing import List
 
 # Third-party
 import f3dasm
+import numpy as np
 import pandas as pd
 import xarray as xr
 from config import Config
@@ -17,7 +18,10 @@ from SALib.sample import latin
 
 # Local
 from l2co.create_recommender_dataset import RecommenderDatasetCreator
-from l2co.run_optimization import experiment_two_optimizers
+from l2co.run_optimization import (_get_all_combinations,
+                                   _get_name_from_scheduler,
+                                   run_multiple_realizations)
+from l2co.run_sampling import run_sampling
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -27,6 +31,15 @@ __status__ = 'Stable'
 # =============================================================================
 #
 # =============================================================================
+
+
+def create_performance_metric(
+        dataset: xr.Dataset, budget: int) -> xr.DataArray:
+    data = dataset['output']
+    d = (data - data.min()) / (data.max() - data.min())
+    return d.sel(
+        iterations=slice(0, budget)).min(
+            dim='iterations').median('realization')
 
 
 class BenchmarkOptimizationRoutine(DataGenerator):
@@ -43,19 +56,57 @@ class BenchmarkOptimizationRoutine(DataGenerator):
         optimizers = [opt_config['name'] for
                       opt_config in self.config.optimization.optimizers]
 
-        results_xarray = experiment_two_optimizers(
-            optimizers=optimizers,
+        optimizer_schedulers = _get_all_combinations(optimizers, budget)
+
+        # Sample from the optimizer_schedulers:
+        n = int(len(optimizer_schedulers) * self.config.
+                optimization.fraction_of_all_combinations)
+
+        # Make sure we have minimally one sample
+        if n == 0:
+            n = 1
+        idx = np.random.choice(len(optimizer_schedulers), n, replace=False)
+        optimizer_schedulers_sample = [optimizer_schedulers[i] for i in idx]
+
+        results = []
+        for optimizer_scheduler in optimizer_schedulers_sample:
+            result = run_multiple_realizations(
+                optimizer_scheduler=optimizer_scheduler,
+                data_generator=function_name,
+                sampler=self.config.optimization.sampler_name,
+                realizations=self.config.optimization.realizations,
+                dimensionality=dimensionality,
+                noise=noise,
+                offset=True,
+                n_samples=self.config.optimization.number_of_samples,
+                parallelization=self.config.optimization.parallelization,
+                seed=seed)
+
+            self.experiment_sample.store(
+                _get_name_from_scheduler(optimizer_scheduler),
+                object=result, to_disk=True)
+
+            results.append(result)
+
+        results_xarray = xr.concat(results, dim='optimizer')
+
+        # Now sample with random search
+        results_samples = run_sampling(
             data_generator=function_name,
-            sampler=self.config.optimization.sampler_name,
-            realizations=self.config.optimization.realizations,
-            n_samples=self.config.optimization.number_of_samples,
+            sampler='random',
+            dimensionality=dimensionality,
+            noise=noise,
+            offset=True,
+            n_samples=budget,
             parallelization=self.config.optimization.parallelization,
-            seed=seed, iterations=budget, dimensionality=dimensionality,
-            noise=noise)
+            seed=seed)
 
         self.experiment_sample.store(
-            object=results_xarray,
-            name=self.config.files.dirname_raw, to_disk=True)
+            'random_samples', results_samples, to_disk=True)
+
+        # self.experiment_sample.store(
+        #     object=results_xarray,
+        #     name=self.config.files.dirname_raw, to_disk=True)
 
         if not self.config.recommender.create_recommender_dataset:
             return

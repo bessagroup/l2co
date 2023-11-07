@@ -41,7 +41,7 @@ def run_optimization(optimizer_scheduler: OptimizerScheduler,
                      data_generator: str, sampler: str, domain: Domain,
                      seed: int,
                      kwargs: Optional[Dict[str, Any]] = None,
-                     number_of_samples: int = 30) -> ExperimentData:
+                     n_samples: int = 30) -> ExperimentData:
     """
     Run a single optimization experiment by running the optimizer scheduler
     sequentially over the data generator problem.
@@ -63,7 +63,7 @@ def run_optimization(optimizer_scheduler: OptimizerScheduler,
         Seed for the pseudo-random number generator
     kwargs : Optional[Dict[str, Any]], optional
         Key-word arguments passed to the datagenerator, by default None
-    number_of_samples : int, optional
+    n_samples : int, optional
         number of initial samples, by default 30
 
     Returns
@@ -74,7 +74,7 @@ def run_optimization(optimizer_scheduler: OptimizerScheduler,
 
     kwargs = {} if kwargs is None else kwargs
     data = ExperimentData.from_sampling(
-        sampler=sampler, domain=domain, n_samples=number_of_samples, seed=seed)
+        sampler=sampler, domain=domain, n_samples=n_samples, seed=seed)
 
     # Evaluate the initial samplers
     data.evaluate(data_generator=data_generator,
@@ -94,12 +94,13 @@ def run_multiple_realizations(
     optimizer_scheduler: OptimizerScheduler,
     data_generator: str,
     sampler: str,
-    domain: Domain,
     realizations: int,
-    kwargs: Optional[Dict[str, Any]] = None,
-    number_of_samples: int = 30,
-    parallelization: bool = True,
-    seed: Optional[int] = None,
+    dimensionality: int,
+    noise: float,
+    offset: bool,
+    n_samples: int,
+    parallelization: bool,
+    seed: int,
 ) -> xr.Dataset:
     """
     Run multiple realizations of the same optimization experiment.
@@ -114,19 +115,21 @@ def run_multiple_realizations(
         Name of the benchmark function to use
     sampler : str
         Sampling technique to use
-    domain : Domain
-        Search-space of the benchmark function
     realizations : int
         number of realizations to run
-    kwargs : Optional[Dict[str, Any]], optional
-        Key-word arguments passed to the datagenerator, by default None
-    number_of_samples : int, optional
-        number of initial samples, by default 30
+    dimensionality : int
+        dimensionality of the benchmark function
+    noise : float
+        noise added to the benchmark function
+    offset : bool, optional
+        if the benchmark function is offset
+    n_samples : int
+        number of initial samples
     parallelization : bool, optional
         if the optimizations are run in parallel on multiple cores\
         , by default True
-    seed : Optional[int], optional
-        seed for the pseudo-random number generator, by default None
+    seed : int
+        seed for the pseudo-random number generator
 
     Returns
     -------
@@ -140,8 +143,16 @@ def run_multiple_realizations(
     """
 
     start_timer = perf_counter()
-    kwargs = {} if kwargs is None else kwargs
-    seed = seed if seed is not None else np.random.randint(0, 1e5)
+
+    domain = make_nd_continuous_domain(bounds=np.tile(
+        [0., 1.], (dimensionality, 1)), dimensionality=dimensionality)
+
+    name = _get_name_from_scheduler(optimizer_scheduler)
+
+    kwargs = {'seed': seed,
+              'scale_bounds': domain.get_bounds(),
+              'noise': noise,
+              'offset': offset}
 
     # Some optimizers are buggy when used in parallel
     buggy_optimizers = ['EvoSaxCMAES',
@@ -152,17 +163,39 @@ def run_multiple_realizations(
     if parallelization:
         results = _run_multiple_realizations_parallel(
             optimizer_scheduler, data_generator, sampler,
-            domain, realizations, kwargs, number_of_samples, seed)
+            domain, realizations, kwargs, n_samples, seed)
     else:
         results = _run_multiple_realizations_sequential(
             optimizer_scheduler, data_generator, sampler,
-            domain, realizations, kwargs, number_of_samples, seed)
+            domain, realizations, kwargs, n_samples, seed)
 
-    logger.info(f"Optimized {len(domain)}D {data_generator} function with "
-                f"{_get_name_from_scheduler(optimizer_scheduler)}: "
+    logger.info(f"Optimized {dimensionality}D {data_generator} function with "
+                f"{name}: "
                 f"({perf_counter() - start_timer:.2f} s)")
 
-    return _listexperimentdata_to_dataset(results)
+    xarr = _listexperimentdata_to_dataset(results)
+
+    # Add attributes
+    xarr.attrs['number_of_samples']: int = n_samples
+    xarr.attrs['realization_seeds']: List[int] = [
+        seed + index for index in range(realizations)]
+
+    # Benchmark functions
+    xarr.attrs['function_seed']: int = seed
+    xarr.attrs['function_name']: str = data_generator
+    xarr.attrs['function_noise']: str = noise
+    xarr.attrs['function_dimensionality']: int = dimensionality
+
+    # Global minimum function
+    func = datagenerator_factory(data_generator, domain=domain, kwargs=kwargs)
+    _, g = func.get_global_minimum(d=dimensionality)
+    xarr.attrs['function_global_minimum']: float = float(
+        np.array(g if not isinstance(g, list) else g[0])[0, 0])
+
+    # Add another dimension with coordinate to xarr
+    xarr = xarr.assign_coords({'optimizer': [name]})
+
+    return xarr
 
 
 def _run_multiple_realizations_parallel(
@@ -172,7 +205,7 @@ def _run_multiple_realizations_parallel(
     domain: Domain,
     realizations: int,
     kwargs: Optional[Dict[str, Any]],
-    number_of_samples: int,
+    n_samples: int,
     seed: int
 ) -> List[ExperimentData]:
     """
@@ -194,7 +227,7 @@ def _run_multiple_realizations_parallel(
         number of realizations to run
     kwargs : Optional[Dict[str, Any]], optional
         Key-word arguments passed to the datagenerator, by default None
-    number_of_samples : int, optional
+    n_samples : int, optional
         number of initial samples, by default 30
     seed : Optional[int], optional
         seed for the pseudo-random number generator, by default None
@@ -211,7 +244,7 @@ def _run_multiple_realizations_parallel(
     """
 
     args = [(optimizer_scheduler, data_generator, sampler,
-            domain, seed + index, kwargs, number_of_samples)
+            domain, seed + index, kwargs, n_samples)
             for index in range(realizations)]
 
     with mp.Pool() as pool:
@@ -227,7 +260,7 @@ def _run_multiple_realizations_sequential(
     domain: Domain,
     realizations: int,
     kwargs: Optional[Dict[str, Any]],
-    number_of_samples: int,
+    n_samples: int,
     seed: int
 ) -> List[ExperimentData]:
     """
@@ -249,7 +282,7 @@ def _run_multiple_realizations_sequential(
         number of realizations to run
     kwargs : Optional[Dict[str, Any]], optional
         Key-word arguments passed to the datagenerator, by default None
-    number_of_samples : int, optional
+    n_samples : int, optional
         number of initial samples, by default 30
     seed : Optional[int], optional
         seed for the pseudo-random number generator, by default None
@@ -261,7 +294,7 @@ def _run_multiple_realizations_sequential(
     """
 
     return [run_optimization(optimizer_scheduler, data_generator, sampler,
-                             domain, seed + index, kwargs, number_of_samples)
+                             domain, seed + index, kwargs, n_samples)
             for index in range(realizations)]
 
 
@@ -270,11 +303,11 @@ def experiment_two_optimizers(
     data_generator: str,
     sampler: str,
     realizations: int,
-    n_samples: int,
-    parallelization: bool,
-    seed: int,
     iterations: int,
     dimensionality: int,
+    n_samples: int = 30,
+    parallelization: bool = True,
+    seed: Optional[int] = None,
     noise: float = 0.0,
     offset: bool = True,
 ) -> xr.Dataset:
@@ -292,16 +325,16 @@ def experiment_two_optimizers(
         name of the sampling technique
     realizations : int
         number of realizations
-    n_samples : int
-        number of initial samples
-    parallelization : bool
-        if True, run the realizations in parallel
-    seed : int
-        seed for the pseudo-random number generator
     iterations : int
         total number of iterations
     dimensionality : int
         number of input dimensions of the problem
+    n_samples : int, optional
+        number of initial samples, by default 30
+    parallelization : bool, optional
+        if True, run the realizations in parallel, by default True
+    seed : int, optional
+        seed for the pseudo-random number generator, by default None
     noise : float, optional
         standard deviation of Gaussian noise on the objective, by default 0.0
     offset : bool, optional
@@ -316,51 +349,27 @@ def experiment_two_optimizers(
     -----
     Additional arguments of the benchmark function are stored in the xarray\
     Dataset as attributes.
+
+    If no seed is given, a seed is randomly generator and stored between\
+    0 and 1e5.
     """
 
-    domain = make_nd_continuous_domain(bounds=np.tile(
-        [0., 1.], (dimensionality, 1)), dimensionality=dimensionality)
+    seed = seed if seed is not None else np.random.randint(0, 1e5)
+
     optimizer_schedulers = _get_all_combinations(optimizers, iterations)
-    names = [_get_name_from_scheduler(instance)
-             for instance in optimizer_schedulers]
 
-    kwargs = {'seed': seed,
-              'scale_bounds': domain.get_bounds(),
-              'noise': noise,
-              'offset': offset}
-
-    results = [run_multiple_realizations(
+    return xr.concat([run_multiple_realizations(
         optimizer_scheduler=optimizer_schedulers,
         data_generator=data_generator,
         sampler=sampler,
-        domain=domain,
         realizations=realizations,
-        kwargs=kwargs,
-        number_of_samples=n_samples,
+        dimensionality=dimensionality,
+        noise=noise,
+        offset=offset,
+        n_samples=n_samples,
         parallelization=parallelization,
         seed=seed)
-        for optimizer_schedulers in optimizer_schedulers]
-
-    xarr = xr.concat(results, dim=xr.DataArray(names, dims='optimizer'))
-
-    # Add attributes
-    xarr.attrs['number_of_samples']: int = n_samples
-    xarr.attrs['realization_seeds']: List[int] = [
-        seed + index for index in range(realizations)]
-
-    # Benchmark functions
-    xarr.attrs['function_seed']: int = seed
-    xarr.attrs['function_name']: str = data_generator
-    xarr.attrs['function_noise']: str = noise
-    xarr.attrs['function_dimensionality']: int = dimensionality
-
-    # Global minimum function
-    func = datagenerator_factory(data_generator, domain=domain, kwargs=kwargs)
-    _, g = func.get_global_minimum(d=dimensionality)
-    xarr.attrs['function_global_minimum']: float = float(
-        np.array(g if not isinstance(g, list) else g[0])[0, 0])
-
-    return xarr
+        for optimizer_schedulers in optimizer_schedulers], dim='optimizer')
 
 
 # =============================================================================

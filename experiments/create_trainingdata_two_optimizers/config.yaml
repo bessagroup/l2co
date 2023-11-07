@@ -116,10 +116,10 @@ optimization:
     - name: PSO
     - name: Adam
     - name: LBFGSB
-    - name: RandomSearch
+  fraction_of_all_combinations: 0.5
 
 recommender:
-  create_recommender_dataset: True
+  create_recommender_dataset: False
   lower_bound_budget: 30
   n_augmented_samples: 9
   scaler: Standard
