@@ -91,14 +91,13 @@ domain:
     value: 200
 
 experimentdata:
-  name: benchmarkdata
-  mode: cluster
   from_sampling:
     sampler: "random"
     seed: 2023
     n_samples: 5000
     domain: ${domain}
 
+mode: cluster
 # experimentdata:
 #   name: benchmarkdata
 #   mode: cluster

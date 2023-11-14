@@ -5,15 +5,11 @@ from typing import Dict, List
 @dataclass
 class DomainConfig:
     input_space: Dict
-    # output_space: Dict
 
 
 @dataclass
 class ExperimentConfig:
-    name: str
     from_sampling: dict
-    # existing_data_path: Union[bool, str]
-    mode: str
 
 
 @dataclass
@@ -55,3 +51,4 @@ class Config:
     files: FilesConfig
     recommender: RecommenderConfig
     log_level: int
+    mode: str

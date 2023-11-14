@@ -56,3 +56,4 @@ class Config:
     files: FilesConfig
     recommender: RecommenderConfig
     log_level: int
+    mode: str

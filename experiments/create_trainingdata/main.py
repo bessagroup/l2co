@@ -2,6 +2,7 @@
 # =============================================================================
 
 # Standard
+from pathlib import Path
 from time import sleep
 
 # Third-party
@@ -31,37 +32,36 @@ __status__ = 'Stable'
 def pre_processing(config: Config):
 
     logger.info("== PRE-PROCESS ==")
-    data = f3dasm.ExperimentData.from_yaml(config)
+    data = f3dasm.ExperimentData.from_yaml(config.experimentdata)
 
     # Dirty hack for TypeError: Cannot setitem on a Categorical with a new category (), set the categories first
-    function_name_column = data.input_data.columns.iloc('function_name')
-    data.input_data.data[function_name_column] = data.input_data.data[function_name_column].astype(
+    function_name_column = data._input_data.columns.iloc('function_name')
+    data._input_data.data[function_name_column] = data._input_data.data[function_name_column].astype(
         'object')
 
     for index, input_data in enumerate(data):
-        i = data.input_data.data.iloc[index]
+        i = data._input_data.data.iloc[index]
 
         if not is_dim_compatible(i[function_name_column].values[0], data.domain):
             filtered_class_list = [ff for ff in filter(lambda f: is_dim_compatible(f, data.domain),
                                    list(data.domain.space['function_name'].categories))]
             new_function_name = np.random.choice(filtered_class_list)
 
-            data.input_data.set_data(
+            data._input_data.set_data(
                 index, value=new_function_name, column='function_name')
 
     # Dirty hack for TypeError: Cannot setitem on a Categorical with a new category (), set the categories first
-    data.input_data.data[function_name_column] = data.input_data.data[function_name_column].astype(
+    data._input_data.data[function_name_column] = data._input_data.data[function_name_column].astype(
         'category')
 
     # Store the ExperimentData to a csv file
-    data.store(filename=config.experimentdata.name)
+    data.store()
     logger.info("Stored experimentdata")
 
 
 def post_processing(config: Config):
     logger.info("== POST-PROCESSING ==")
-    experimentdata = f3dasm.ExperimentData.from_file(
-        filename=config.experimentdata.name)
+    experimentdata = f3dasm.ExperimentData.from_file(Path().cwd())
 
     while True:
         if experimentdata.is_all_finished():
@@ -113,23 +113,21 @@ def process(config: Config):
 
     # Retrieve the ExperimentData object
     try:
-        data = f3dasm.ExperimentData.from_file(
-            filename=config.experimentdata.name)
+        data = f3dasm.ExperimentData.from_file(Path().cwd())
     except FileNotFoundError:
         sleep(60)
-        data = f3dasm.ExperimentData.from_file(
-            filename=config.experimentdata.name)
+        data = f3dasm.ExperimentData.from_file(Path().cwd())
 
     logger.debug("Loaded experimentdata")
 
     benchmark_optimization_routine = BenchmarkOptimizationRoutine(config)
 
     data.evaluate(benchmark_optimization_routine,
-                  mode=config.experimentdata.mode)
+                  mode=config.mode)
 
     if config.experimentdata.mode == 'sequential':
         # Store the ExperimentData to a csv file
-        data.store(filename=config.experimentdata.name)
+        data.store()
 
 
 cs = ConfigStore.instance()

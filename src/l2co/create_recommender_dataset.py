@@ -10,7 +10,7 @@ import pandas as pd
 import xarray as xr
 from f3dasm import OptimizationResult
 from f3dasm._src.datageneration.functions.function_factory import \
-    datagenerator_factory
+    _datagenerator_factory
 from recommenders.utils.constants import DEFAULT_HEADER
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
@@ -42,7 +42,8 @@ class RecommenderDatasetCreator:
         return df
 
     def _create_recommender_data_features_functions(self) -> List[str]:
-        f = datagenerator_factory(self.results[0].data_generator, self.results[0].data[0].domain)
+        f = _datagenerator_factory(
+            self.results[0].data_generator, self.results[0].data[0].domain)
         categories_list = []
 
         if f.noise is None:
@@ -76,12 +77,15 @@ class RecommenderDatasetCreator:
         return categories
 
     def create_recommender_data_features_functions_csv(self, budget: int) -> pd.DataFrame:
-        columns = ('itemID', 'dim', 'budget', 'noise', 'convex', 'separable', 'multimodal')
+        columns = ('itemID', 'dim', 'budget', 'noise',
+                   'convex', 'separable', 'multimodal')
 
         if isinstance(self.results, list):
-            f = datagenerator_factory(self.results[0].data_generator, self.results[0].data[0].domain)
+            f = _datagenerator_factory(
+                self.results[0].data_generator, self.results[0].data[0].domain)
         elif isinstance(self.results, xr.Dataset):
-            f = datagenerator_factory(self.results.function_name, self.results.function_dimensionality)
+            f = _datagenerator_factory(
+                self.results.function_name, self.results.function_dimensionality)
 
         if self.results.function_noise == 0.0:
             noise = 0
@@ -127,7 +131,8 @@ class RecommenderDatasetCreator:
 
         rating_array = scaler_.transform(scores.reshape(-1, 1)).reshape(-1)
 
-        data = [[i+1, self.jobnumber, f"{rating:.5f}", f"{ts:.0f}"] for i, rating in enumerate(rating_array)]
+        data = [[i+1, self.jobnumber, f"{rating:.5f}", f"{ts:.0f}"]
+                for i, rating in enumerate(rating_array)]
 
         df_stars = pd.DataFrame(data, columns=DEFAULT_HEADER)
 

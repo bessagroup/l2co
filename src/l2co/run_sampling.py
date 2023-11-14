@@ -1,11 +1,29 @@
+"""
+Module containing functions that can be used to sample from the search-space
+of a benchmark function using random sampling
+"""
+
+#                                                                       Modules
+# =============================================================================
+
+# Standard
 from time import perf_counter
 
+# Third-party
 import numpy as np
 import xarray as xr
 from f3dasm import ExperimentData
 from f3dasm.design import make_nd_continuous_domain
 
+# Local
 from ._logging import logger
+
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Stable'
+# =============================================================================
 
 
 def run_sampling(data_generator: str, sampler: str, dimensionality: int,
