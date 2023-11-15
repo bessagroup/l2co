@@ -75,7 +75,7 @@ domain:
       ]
   dimensionality:
     type: category
-    categories: [2, 10, 25]
+    categories: [2, 10, 25, 100]
   noise:
     type: category
     categories: [0.0, 0.1]
@@ -85,4 +85,4 @@ domain:
     high: 1000000
   budget:
     type: constant
-    value: 200
+    value: 2000
