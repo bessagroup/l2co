@@ -15,7 +15,7 @@ from recommenders.utils.constants import DEFAULT_HEADER
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 # Local
-from ._logging import logger
+from ..._logging import logger
 from .performance import Performance, margin_of_victory
 
 #                                                          Authorship & Credits

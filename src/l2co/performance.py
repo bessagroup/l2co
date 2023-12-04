@@ -1,202 +1,211 @@
-#                                                                       Modules
-# =============================================================================
 
-# Standard
-from typing import List, Protocol, Tuple, Union
+from __future__ import annotations
 
-# Third-party
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
+import surprise
 import xarray as xr
-from f3dasm import OptimizationResult, calculate_mean_std
-from sklearn import preprocessing
-
-#                                                          Authorship & Credits
-# =============================================================================
-__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
-__credits__ = ['Martin van der Schelling']
-__status__ = 'Stable'
-# =============================================================================
+from f3dasm import ExperimentData
+from recommenders.models.surprise.surprise_utils import \
+    compute_ranking_predictions
 
 
-class Performance(Protocol):
-    def __call__(self, data: xr.Dataset) -> pd.DataFrame:
-        """Protocol function that calculates the performance of a dataset
-
-        Parameters
-        ----------
-        data
-            raw optimization data
-
-        Returns
-        -------
-            performance of the dataset in dataframe format
-        """
-        ...
+def _output_cummin(ds: xr.Dataset) -> xr.DataArray:
+    return xr.DataArray(
+        np.minimum.accumulate(ds.output.values, axis=ds.output.get_axis_num(
+            'iterations')), coords=ds.output.coords, dims=ds.output.dims)
 
 
-def _calculate_mean_std(data: Union[xr.Dataset, List[OptimizationResult]]) -> Tuple[pd.DataFrame, List[str]]:
-    if isinstance(data, xr.Dataset):
-        df = _calculate_mean_std_xarray(data)
-        optimizer_names = list(data.optimizer.values)
+def _randomsearch_baseline(
+        rs: xr.Dataset, size: int, shuffles: int = 99) -> np.ndarray:
 
-    elif isinstance(data, List):
-        df = _calculate_mean_std_listoptimizationresult(data)
-        optimizer_names = [data[i].optimizer.get_name() for i, _ in enumerate(data)]
+    rs_data = np.random.choice(rs['output'].values.ravel(), size=size)
+    shuffled_arrays = np.minimum.accumulate(rs_data).reshape(1, -1)
 
-    else:
-        raise TypeError(f"results should be of type List[OptimizationResult] or xr.Dataset, not {type(data)}")
+    for _ in range(shuffles):
+        np.random.shuffle(rs_data)
+        shuffled_arrays = np.concatenate(
+            [shuffled_arrays, np.minimum.accumulate(rs_data).reshape(1, -1)])
 
-    return df, optimizer_names
+    # take the median over shuffled_arrays first dimension;
 
-
-def _calculate_mean_std_xarray(xd: xr.Dataset) -> pd.DataFrame:
-    xd = xd.assign(output_cummin=(['optimizer', 'realization', 'iterations',
-                   'output_dim'], np.nan*np.ones(xd['output'].shape)))
-
-    # loop over the optimizer and realization dimensions
-    for opt in xd.optimizer.values:
-        for r in xd.realization.values:
-
-            y_cummin = xd['output_cummin'].sel(optimizer=opt, realization=r)
-
-            y: np.ndarray = xd['output'].sel(optimizer=opt, realization=r).values
-            y_accumulate = np.minimum.accumulate(y)  # 1D numpy array
-
-            y_cummin[:] = y_accumulate
-
-    # WORKING: retrieve the mean of the dataset over the realizations
-    xd_mean = xd.mean(dim="realization")
-
-    df_xd = xd_mean.to_dataframe()
-    df = df_xd.pivot_table(values='output_cummin', index='iterations', columns='optimizer')
-    return df
+    return np.median(shuffled_arrays, axis=0)
 
 
-def _calculate_mean_std_xarray_old(xd: xr.Dataset) -> pd.DataFrame:
-    # WORKING: get the cummin of the y values for each optimizer and realization
+def _calculate_metric(
+        ds: xr.Dataset, baseline: np.ndarray) -> xr.DataArray:
+    ds['output_cummin'] = _output_cummin(ds)
+    y_min = ds.output.min()
 
-    xd = xd.assign(y_cummin=(['optimizer', 'realization', 'index'], np.nan*np.ones(xd['y'].shape)))
+    a = ds.output_cummin.sel(
+        output_dim='y').median('realization') - y_min + 1.0
+    b = baseline - y_min.values + 1.0
 
-    # loop over the optimizer and realization dimensions
-    for opt in xd.optimizer.values:
-        for r in xd.realization.values:
-
-            y_cummin = xd['y_cummin'].sel(optimizer=opt, realization=r)
-
-            y: np.ndarray = xd['y'].sel(optimizer=opt, realization=r).values
-            y_accumulate = np.minimum.accumulate(y)  # 1D numpy array
-
-            y_cummin[:] = y_accumulate
-
-    # WORKING: retrieve the mean of the dataset over the realizations
-    xd_mean = xd.mean(dim="realization")
-
-    df_xd = xd_mean.to_dataframe()
-    df = df_xd.pivot_table(values='y_cummin', index='index', columns='optimizer')
-
-    return df
+    return np.log(a/b)
 
 
-def _calculate_mean_std_listoptimizationresult(results: List[OptimizationResult]) -> pd.DataFrame:
-    # Create df with all results
-    df = pd.concat([calculate_mean_std(results[i])[0] for i, _ in enumerate(results)], axis=1)
+def _validate_path(path: str | float, project_dir: Path) -> bool:
+    if isinstance(path, str):
+        return Path(project_dir / path).exists()
 
-    # Change columnnames
-    df.columns = [results[i].optimizer.get_name() for i, _ in enumerate(results)]
-
-    return df
+    return False
 
 
-def _normalize(df: pd.DataFrame, optimizer_names: List[str]) -> pd.DataFrame:
-    # Normalize
-    min_max_scaler = preprocessing.MinMaxScaler()
+def _get_metric(
+        data: ExperimentData, index: int):
 
-    # Reshape to 1D array
-    df_numpy = df.values  # returns a numpy array
-    df_numpy_reshaped = df_numpy.reshape(-1, 1)
+    experiment_sample = data.get_experiment_sample(index)
 
-    x_scaled = min_max_scaler.fit_transform(df_numpy_reshaped)
+    ds = xr.open_mfdataset(
+        [data.project_dir / path for key, path in
+         experiment_sample.output_data_with_references.items()
+         if _validate_path(
+             path, data.project_dir) and key != 'random_samples'])
 
-    # Transform back
-    x_scaled = x_scaled.reshape(df_numpy.shape)
-    df = pd.DataFrame(x_scaled, columns=optimizer_names)
-    # df.columns = optimizer_names
-    return df
+    rs = xr.open_dataset(
+        data.project_dir / experiment_sample.
+        output_data_with_references['random_samples'])
+
+    baseline = _randomsearch_baseline(rs, size=len(ds.iterations))
+
+    return _calculate_metric(ds, baseline)
 
 
-def margin_of_victory(results: Union[List[OptimizationResult], xr.Dataset], budget: int = -1) -> pd.DataFrame:
-    """Calculate the margin of victory of optimizationresults
+def get_performance(experimentdata: ExperimentData) -> xr.Dataset:
+    """
+    Generate a dataset that captures the performance of an optimizer
+    on a benchmark function as function of the number of function evaluations.
 
     Parameters
     ----------
-    results
-        List of OptimizationResults objects or a xr.Dataset
+    experimentdata : ExperimentData
+        ExperimentData object containing the parameterization of
+        the benchmark functions and the results of the optimization
+        process for a selection of optimizers.
 
     Returns
     -------
-        DataFrame containing the algorithms and the margin of victory
+    xr.Dataset
+        xarray Dataset object containing a floating point value for
+        the performance of the optimizers on benchmark functions as a function
+        of the number of function evaluations.
+
+    Note
+    ----
+    The experimentdata object must contain the following attributes:
+        - an 'random_samples' output parameter that contains a reference to
+        a xarray Dataset object containing random samples. This needs to be
+        specified for all the experiments.
+
+    The dataset has three coordinates:
+        - optimizer: the name of the first and second optimizer (str)
+        - itemID: an identifier for the benchmark function (int)
+        - iterations: the number of function evaluations (int)
     """
-    df, optimizer_names = _calculate_mean_std(results)
+    combined = xr.concat(
+        [_get_metric(experimentdata, i) for i in experimentdata.index],
+        dim=xr.DataArray(experimentdata.index, dims='itemID'))
 
-    df = _normalize(df, optimizer_names)
+    combined = combined.drop('output_dim')
 
-    # Calculate margin of victory
-    mov = []
-    for name in optimizer_names:
-        df_dropped = df.drop(name, axis=1)
-        mov.append(df_dropped.min(axis=1) - df[name])
-
-    # Create df with all MoV
-    df_margin_of_victory = pd.concat(mov, axis=1)
-
-    # Change columnnames
-    df_margin_of_victory.columns = optimizer_names
-
-    if budget == -1:
-        return df_margin_of_victory
-
-    original_len = len(df_margin_of_victory)
-    # use only the first 100 rows
-    df_margin_of_victory = df_margin_of_victory[:budget]
-
-    # Create a new DataFrame with original_len rows
-    new_df = pd.DataFrame(index=range(original_len))
-
-    # Interpolate between rows
-    for column in df_margin_of_victory.columns:
-        new_df[column] = new_df.index.map(
-            lambda idx: df_margin_of_victory[column][idx * len(df_margin_of_victory) // original_len]
-        )
-
-    return new_df
+    return combined.rename('performance')
 
 
-def area_under_curve(results: Union[List[OptimizationResult], xr.Dataset]) -> pd.DataFrame:
-    """Calculate the area under the curve of optimizationresults
+def query_t(performance_dataset: xr.Dataset, t: int) -> xr.DataArray:
+    """
+    Query the performance dataset for the performance of the optimizers
+    after a given number of function evaluations.
 
     Parameters
     ----------
-    results
-        List of OptimizationResults objects or a xr.Dataset
+
+    performance_dataset : xr.Dataset
+        xarray Dataset object containing a floating point value for
+        the performance of the optimizers on benchmark functions as a function
+        of the number of function evaluations.
+    t : int
+        number of function evaluations
 
     Returns
     -------
-        DataFrame containing the algorithms and the area under the curve
+    xr.DataArray
+        xarray DataArray containing the performance of the optimizers
+        after a given number of function evaluations.
     """
-    df, optimizer_names = _calculate_mean_std(results)
+    if t > performance_dataset.iterations.max():
+        raise ValueError(
+            f'Number of iterations {t} is larger than the maximum number of '
+            f'iterations in the performance dataset '
+            f'{performance_dataset.iterations.max()}')
 
-    df = _normalize(df, optimizer_names)
+    ds_performance: xr.DataArray = performance_dataset.sel(
+        iterations=t, drop=True)
+    # ds_performance.reset_index(inplace=True)
+    # df_performance = df_performance.pivot(
+    #     index='itemID', columns='optimizer', values='performance')
 
-    # Calculate area under curve
+    return ds_performance
 
-    # calculate the cumulative sum along the columns (area under the curve)
-    df_cumsum = df.cumsum(axis=0)
 
-    # divide df_cumsum by the number of rows
-    df_cumsum = df_cumsum.div(df_cumsum.index + 1, axis=0)
+def is_sparse(ds: xr.DataArray) -> bool:
+    """
+    Check if the performance DataArray is sparse.
 
-    # reverse the sign in order to make good algorithms have a higher value
-    df_cumsum = -df_cumsum
+    Parameters
+    ----------
+    ds : ds.DataArray
+        The performance DataArray
 
-    return df_cumsum
+    Returns
+    -------
+    bool
+        True if there are missing values (NaN), False otherwise.
+    """
+    return ds.isnull().values.any()
+
+
+def collaborative_filtering(sparse_ds: xr.DataArray) -> xr.DataArray:
+    """
+    Fill in missing values in the performance DataFrame using
+    collaborative filtering.
+
+    Parameters
+    ----------
+    sparse_ds : xr.DataArray
+        The performance DataArray with missing values
+
+    Returns
+    -------
+    xr.DataArray
+        The performance DataFrame without missing values
+    """
+    # Check if there is anything to matrix complete
+    if not is_sparse(sparse_ds):
+        return sparse_ds
+
+    df_performance = sparse_ds.to_dataframe().reset_index().dropna()
+
+    reader = surprise.Reader(rating_scale=(
+        df_performance['performance'].min(),
+        df_performance['performance'].max()))
+
+    train_set = surprise.Dataset.load_from_df(
+        df_performance, reader=reader).build_full_trainset()
+
+    svd = surprise.SVD(random_state=0, n_factors=200,
+                       n_epochs=30, verbose=False)
+    svd.fit(train_set)
+
+    df_predictions = compute_ranking_predictions(
+        svd, df_performance, usercol='itemID',
+        itemcol='optimizer', remove_seen=True)
+    df_predictions.columns = df_performance.columns
+
+    complete_df = pd.concat(
+        [df_performance, df_predictions], ignore_index=True)
+
+    # cast to xr.DataArray
+    return complete_df.set_index(
+        ['itemID', 'optimizer']).to_xarray()['performance']

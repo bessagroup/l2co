@@ -17,7 +17,7 @@ from f3dasm.datageneration import DataGenerator
 from SALib.sample import latin
 
 # Local
-from l2co.create_recommender_dataset import RecommenderDatasetCreator
+# from l2co._legacy.create_recommender_dataset import RecommenderDatasetCreator
 from l2co.run_optimization import (_get_all_combinations,
                                    _get_name_from_scheduler,
                                    run_multiple_realizations)
@@ -111,66 +111,66 @@ class BenchmarkOptimizationRoutine(DataGenerator):
         if not self.config.recommender.create_recommender_dataset:
             return
 
-        # Augment the designs
-        augmented_designs = augment_designs(
-            experiment_sample=self.experiment_sample,
-            n_samples=self.config.recommender.n_augmented_samples,
-            upper_bound_budget=budget,
-            lower_bound_budget=self.config.recommender.lower_bound_budget)
+        # # Augment the designs
+        # augmented_designs = augment_designs(
+        #     experiment_sample=self.experiment_sample,
+        #     n_samples=self.config.recommender.n_augmented_samples,
+        #     upper_bound_budget=budget,
+        #     lower_bound_budget=self.config.recommender.lower_bound_budget)
 
-        # Create the recommender dataset
-        features_matrix_list: List[pd.DataFrame] = []
-        # mov_list: List[pd.DataFrame] = []
-        perf_profile_list: List[xr.DataArray] = []
-        task_numbers: List[int] = []
-        samples_y: List[xr.DataArray] = []
-        perf_per_optimizer_list: List[xr.DataArray] = []
+        # # Create the recommender dataset
+        # features_matrix_list: List[pd.DataFrame] = []
+        # # mov_list: List[pd.DataFrame] = []
+        # perf_profile_list: List[xr.DataArray] = []
+        # task_numbers: List[int] = []
+        # samples_y: List[xr.DataArray] = []
+        # perf_per_optimizer_list: List[xr.DataArray] = []
 
-        for index, augmented_design in enumerate(augmented_designs):
-            budget: int = int(augmented_design.get('budget'))
-            task_number: int = int(
-                self.experiment_sample.
-                job_number * (
-                    self.config.recommender.n_augmented_samples + 1
-                                   ) + index)  # NOQA
-            task_numbers.append(task_number)
-            samples_y.append(results_xarray['output'].isel(iterations=slice(
-                0, results_xarray.attrs['number_of_samples']), optimizer=0))
-            recommender_dataset_creator = RecommenderDatasetCreator(
-                results=results_xarray, jobnumber=task_number)
+        # for index, augmented_design in enumerate(augmented_designs):
+        #     budget: int = int(augmented_design.get('budget'))
+        #     task_number: int = int(
+        #         self.experiment_sample.
+        #         job_number * (
+        #             self.config.recommender.n_augmented_samples + 1
+        #                            ) + index)  # NOQA
+        #     task_numbers.append(task_number)
+        #     samples_y.append(results_xarray['output'].isel(iterations=slice(
+        #         0, results_xarray.attrs['number_of_samples']), optimizer=0))
+        #     recommender_dataset_creator = RecommenderDatasetCreator(
+        #         results=results_xarray, jobnumber=task_number)
 
-            features_matrix_list.append(
-                recommender_dataset_creator.
-                create_recommender_data_features_functions_csv(
-                    budget=int(augmented_design.get('budget'))))
+        #     features_matrix_list.append(
+        #         recommender_dataset_creator.
+        #         create_recommender_data_features_functions_csv(
+        #             budget=int(augmented_design.get('budget'))))
 
-            # mov_list.append(margin_of_victory(
-            #     results_xarray, budget=budget))
+        #     # mov_list.append(margin_of_victory(
+        #     #     results_xarray, budget=budget))
 
-            perf_profile_list.append(perf_profile(
-                results_xarray, budget=budget, itemID=task_number))
-            perf_per_optimizer_list.append(
-                create_performance_metric(results_xarray, budget=budget))
+        #     perf_profile_list.append(perf_profile(
+        #         results_xarray, budget=budget, itemID=task_number))
+        #     perf_per_optimizer_list.append(
+        #         create_performance_metric(results_xarray, budget=budget))
 
-        df_features_matrix = pd.concat(features_matrix_list, ignore_index=True)
+        # df_features_matrix = pd.concat(features_matrix_list, ignore_index=True)
 
-        # Create the xarray dataset
-        df_features_matrix.set_index('itemID', inplace=True)
-        xarr_all = xr.Dataset(df_features_matrix)
+        # # Create the xarray dataset
+        # df_features_matrix.set_index('itemID', inplace=True)
+        # xarr_all = xr.Dataset(df_features_matrix)
 
-        xr_samples_y = xr.concat(
-            samples_y, dim=xr.DataArray(task_numbers, dims='itemID'))
-        xr_perf_per_optimizer = xr.concat(
-            perf_per_optimizer_list, dim=xr.DataArray(
-                task_numbers, dims='itemID'))
-        # xarr_all['mov'] = c
-        xarr_all['samples_output'] = xr_samples_y
-        xarr_all['ranking'] = xr_perf_per_optimizer
-        xarr_all['perf_profile'] = xr.concat(perf_profile_list, dim='itemID')
+        # xr_samples_y = xr.concat(
+        #     samples_y, dim=xr.DataArray(task_numbers, dims='itemID'))
+        # xr_perf_per_optimizer = xr.concat(
+        #     perf_per_optimizer_list, dim=xr.DataArray(
+        #         task_numbers, dims='itemID'))
+        # # xarr_all['mov'] = c
+        # xarr_all['samples_output'] = xr_samples_y
+        # xarr_all['ranking'] = xr_perf_per_optimizer
+        # xarr_all['perf_profile'] = xr.concat(perf_profile_list, dim='itemID')
 
-        self.experiment_sample.store(
-            object=xarr_all, name=self.config.files.dirname_movxarr,
-            to_disk=True)
+        # self.experiment_sample.store(
+        #     object=xarr_all, name=self.config.files.dirname_movxarr,
+        #     to_disk=True)
 
         return
 

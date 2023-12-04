@@ -1,7 +1,53 @@
-# L2CO
+L2CO
+------
+*Learning to Choose Optimizers*
 
 ***
 
-This repository contains the code for my paper on 'Learning to Choose Optimizers' (L2CO)
+## Summary
 
-This package relies heavily on the [f3dasm](https://github.com/bessagroup/F3DASM) package.
+Welcome to `l2co`, a Python package for learning to choose optimizers.
+In this study, we investigate the use of machine learning to select the best optimizer for a given optimization problem problem.
+
+## Statement of need
+
+When solving a new optimization problem, we do not know what is the best optimization algorithm and its parameters that would quickly get us to the optimum. Unfortunately, the "one optimizer to rule them all" does not exist. According to the famous paper of Wolpert et al, algorithms tend to exploit certain problem-specific characteristics, and if this particular feature is not present in the optimization problem then the performance of the optimizer will be worse than random search, i.e. random sampling (random trial-and-error!).
+
+However, what if we could train a machine learning model on many different optimization problems considering many different optimizers? The machine learning algorithm would start to learn when an optimizer should be used or not. If it is trained properly, then the next time we consider a new problem this algorithm could make an informed decision on which optimizer to use at a given iteration! This is the field of research called "learning to optimize".
+
+In this study, we will consider a discrete number of diverse and well-known optimization algorithms, and we will train a machine learning model to select the best optimizer for a given optimization problem. We will consider a wide range of optimization problems, including convex and non-convex problems, and we will consider a wide range of optimizers, including gradient-based, gradient-free, and meta-heuristic algorithms. Before and during the optimization, the model will choose an optimizer before the optimization starts and is able to switch during optimization.
+
+## Authorship
+
+* Current created and developer: [M.P. van der Schelling](https://github.com/mpvanderschelling/) (M.P.vanderSchelling@tudelft.nl)
+
+## Getting started
+
+The package is currently not available on PyPI. To install the package, follow the steps below:
+
+1. Create a new virtual environment (optional) with Python 3.8+
+
+
+2. Clone the repository:
+
+```bash
+git clone https://github.com/bessagroup/L2CO.git
+```
+
+3. Navigate to the repository and install the package using `pip`:
+
+```bash
+pip install -e .
+```
+
+## Community Support
+
+If you find any **issues, bugs or problems** with this template, please use the [GitHub issue tracker](https://github.com/bessagroup/l2co/issues) to report them.
+
+## License
+
+Copyright 2023, Martin van der Schelling
+
+All rights reserved.
+
+This project is licensed under the BSD 3-Clause License. See [LICENSE](https://github.com/bessagroup/l2co/blob/main/LICENSE) for the full license text.

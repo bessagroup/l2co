@@ -88,13 +88,13 @@ domain:
     high: 1000000
   budget:
     type: constant
-    value: 200
+    value: 500
 
 experimentdata:
   from_sampling:
     sampler: "random"
     seed: 2023
-    n_samples: 100
+    n_samples: 20
     domain: ${domain}
 
 mode: cluster
@@ -111,7 +111,7 @@ optimization:
     - name: PSO
     - name: Adam
     - name: LBFGSB
-  fraction_of_all_combinations: 1.0
+  fraction_of_all_combinations: 0.3
 
 recommender:
   create_recommender_dataset: False

@@ -22,8 +22,8 @@ Installing the latest release
 
 :mod:`l2co` is purely Python code and compatible with: 
 
-1. Python 3.7 or higher.
-2. the three major operations system (Linux, MacOS, Ubuntu). 
+1. Python 3.8 or higher.
+2. Linux operating system. 
 3. the `pip <https://pypi.org/>`_ package manager system.
 
 ----
@@ -98,7 +98,7 @@ Building from source is required to work on a contribution (bug fix, new feature
 .. _git_repo:
 
 1. Use `Git <https://git-scm.com/>`_ to check out the latest source from the
-   `f3dasm repository <https://github.com/bessagroup/l2co>`_ on
+   `l2co repository <https://github.com/bessagroup/l2co>`_ on
    Github.:
 
    .. code-block:: console
