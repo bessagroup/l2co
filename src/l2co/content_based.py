@@ -6,6 +6,7 @@ features.
 #                                                                       Modules
 # =============================================================================
 
+import numpy as np
 # Third-party
 import pandas as pd
 import xarray as xr
@@ -29,7 +30,7 @@ def _get_labels(experimentdata: ExperimentData, index: int) -> str:
 
     Parameters
     ----------
-    experimentdata : ExperimentData
+    experimentdata : f3dasm.ExperimentData
         ExperimentData object.
     index : int
         index of the experiment sample.
@@ -73,12 +74,12 @@ def get_labels(experimentdata: ExperimentData) -> xr.DataArray:
 
     Parameters
     ----------
-    experimentdata : ExperimentData
+    experimentdata : f3dasm.ExperimentData
         The experimentdata object.
 
     Returns
     -------
-    xr.DataArray
+    xarray.DataArray
         A dataframe with the labels for each itemID.
     """
     df = pd.DataFrame([_get_labels(experimentdata, i)
@@ -100,13 +101,42 @@ def get_labels(experimentdata: ExperimentData) -> xr.DataArray:
         dims=['itemID', 'features'], name='labels')
 
 
-def cosine_sim(single_vec, training_set):
+def cosine_sim(single_vec, training_set) -> np.ndarray:
+    """
+    Compute the cosine similarity between a single vector and a training set.
+
+    Parameters
+    ----------
+    single_vec : numpy.ndarray
+        A single vector.
+    training_set : numpy.ndarray
+        A training set.
+
+    Returns
+    -------
+    numpy.ndarray
+        The cosine similarity between the single vector and the training set.
+    """
     return cosine_similarity(single_vec.reshape(1, -1), training_set.T).ravel()
 
 
 def calculate_similarity_features(
         ds_single: xr.DataArray, ds_features: xr.DataArray) -> xr.DataArray:
+    """
+    Calculate the cosine similarity between a single vector and a training set.
 
+    Parameters
+    ----------
+    ds_single : xarray.DataArray
+        A single vector.
+    ds_features : xarray.DataArray
+        A training set.
+
+    Returns
+    -------
+    xarray.DataArray
+        The cosine similarity between the single vector and the training set.
+    """
     cosine_similarities: xr.DataArray = xr.apply_ufunc(
         cosine_sim,
         ds_single,
@@ -123,7 +153,27 @@ def calculate_similarity_features(
     return cosine_similarities.rename('features')
 
 
-def predict_zero(ds_performance, ds_features) -> str:
+def predict_zero(
+        ds_performance: xr.DataArray, ds_features: xr.DataArray) -> str:
+    """
+    Predict the optimizer before considering evaluating the function. This
+    is done by calculating the cosine similarity between the features of the
+    function to be evaluated and the features of the problems in the
+    training set.
+
+    Parameters
+    ----------
+    ds_performance : xarray.DataArray
+        The performance of the optimizers on the training set.
+    ds_features : xarray.DataArray
+        The features of the training set.
+
+    Returns
+    -------
+    str
+        The name of the optimizer that is predicted to perform best.
+    """
+
     ds_comb = xr.merge([ds_performance, ds_features])
 
     # only display the itemIDs where features > 0.6

@@ -10,12 +10,8 @@ techniques to fill in the missing values for the performance of optimizers.
 import pandas as pd
 import surprise
 import xarray as xr
-from f3dasm import ExperimentData
 from recommenders.models.surprise.surprise_utils import \
     compute_ranking_predictions
-
-# Local
-from .baselines import get_metric
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -27,27 +23,29 @@ __status__ = 'Under development'
 
 def create_interaction_matrix_from_full_data(
         combined: xr.Dataset, budget: int) -> pd.DataFrame:
+    """
+    Create a sparse matrix of the performances of optimizers on benchmark
+    functions.
 
-    combined = combined.drop('output_dim')
+    Parameters
+    ----------
+    combined : xarray.Dataset
+        xarray Dataset object containing the raw data files for which the
+        optimizer given is the first window
+    budget : int
+        number of function evaluations
 
-    # change itemID column to problem
-    combined = combined.rename({'itemID': 'problem'})
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame containing a sparse matrix of the performances of optimizers
+        on benchmark functions.
 
-    df = combined.sel(iterations=budget-1,
-                      drop=True).to_dataframe(name='rating')
-    # remove missing values in df
-    df = df.dropna()
-    df = df.reset_index()
-    return df
-
-
-def create_interaction_matrix(
-        data: ExperimentData, budget: int,
-        baseline: str = 'randomsearch') -> pd.DataFrame:
-
-    combined = xr.concat(
-        [get_metric(data, i, budget, baseline) for i in data.index],
-        dim=xr.DataArray(data.index, dims='itemID'))
+    Notes
+    -----
+    The sparse matrix is created by selecting the last iteration of the
+    optimization process for each optimizer and optimization problem.
+    """
 
     combined = combined.drop('output_dim')
 

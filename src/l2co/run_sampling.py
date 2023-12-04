@@ -31,7 +31,7 @@ def run_sampling(data_generator: str, sampler: str, dimensionality: int,
                  seed: int, n_samples: int,
                  parallelization: bool) -> xr.Dataset:
     """
-    Sample from the search-space of a benchmark function using a given\
+    Sample from the search-space of a benchmark function using a given
     sampling technique.
 
 
@@ -56,7 +56,7 @@ def run_sampling(data_generator: str, sampler: str, dimensionality: int,
 
     Returns
     -------
-    xr.Dataset
+    xarray.Dataset
         xarray Dataset object containg the results of the sampling
     """
     start_timer = perf_counter()

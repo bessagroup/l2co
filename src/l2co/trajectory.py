@@ -33,7 +33,7 @@ def filter_dataset(experimentdata: ExperimentData,
 
     Parameters
     ----------
-    experimentdata : ExperimentData
+    experimentdata : f3dasm.ExperimentData
         ExperimentData object containing the parameterization of
         the benchmark functions and the results of the optimization
         process for a selection of optimizers.
@@ -42,7 +42,7 @@ def filter_dataset(experimentdata: ExperimentData,
 
     Returns
     -------
-    xr.Dataset
+    xarray.Dataset
         xarray Dataset object containing the raw data files for which the
         optimizer given is the first window
     """
@@ -84,7 +84,7 @@ def get_trajectory(experimentdata: ExperimentData,
 
     Parameters
     ----------
-    experimentdata : ExperimentData
+    experimentdata : f3dasm.ExperimentData
         ExperimentData object containing the parameterization of
         the benchmark functions and the results of the optimization
         process for a selection of optimizers.
@@ -99,7 +99,7 @@ def get_trajectory(experimentdata: ExperimentData,
 
     Returns
     -------
-    xr.Dataset
+    xarray.Dataset
         xarray Dataset object containing the similarity of the output of the
         optimizer
     """
@@ -153,14 +153,14 @@ def calculate_trajectory_similarity(
 
     Parameters
     ----------
-    ds_single : xr.DataArray
+    ds_single : xarray.DataArray
         xarray DataArray object containing the single vector
-    ds_similarity : xr.Dataset
+    ds_similarity : xarray.Dataset
         xarray Dataset object containing the training set of vectors
 
     Returns
     -------
-    xr.DataArray
+    xarray.DataArray
         xarray DataArray object containing the cosine similarity between the
         single vector and the training set of vectors.
     """
