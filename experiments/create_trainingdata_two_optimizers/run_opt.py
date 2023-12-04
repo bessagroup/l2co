@@ -9,7 +9,6 @@ from typing import List
 # Third-party
 import f3dasm
 import numpy as np
-import pandas as pd
 import xarray as xr
 from config import Config
 from f3dasm import ExperimentSample
@@ -17,7 +16,6 @@ from f3dasm.datageneration import DataGenerator
 from SALib.sample import latin
 
 # Local
-# from l2co._legacy.create_recommender_dataset import RecommenderDatasetCreator
 from l2co.run_optimization import (_get_all_combinations,
                                    _get_name_from_scheduler,
                                    run_multiple_realizations)
