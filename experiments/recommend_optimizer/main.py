@@ -1,3 +1,7 @@
+#                                                                       Modules
+# =============================================================================
+
+# Third-party
 import xarray as xr
 from f3dasm import ExperimentData
 from sklearn.model_selection import train_test_split
@@ -6,6 +10,15 @@ from l2co.content_based import (calculate_similarity_features, get_labels,
                                 predict_zero)
 from l2co.performance import collaborative_filtering, get_performance, query_t
 from l2co.trajectory import calculate_trajectory_similarity, get_trajectory
+
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Stable'
+# =============================================================================
+#
+# =============================================================================
 
 project_dir: str = "path/to/project"
 test_id = 1

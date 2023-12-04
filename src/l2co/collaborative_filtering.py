@@ -1,12 +1,28 @@
+"""
+Module containing function that use collaborative-filtering recommender system
+techniques to fill in the missing values for the performance of optimizers.
+"""
+
+#                                                                       Modules
+# =============================================================================
+
+# Third-party
 import pandas as pd
 import surprise
 import xarray as xr
 from f3dasm import ExperimentData
 from recommenders.models.surprise.surprise_utils import \
     compute_ranking_predictions
-from sklearn.model_selection import train_test_split
 
+# Local
 from .baselines import get_metric
+
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Under development'
+# =============================================================================
 
 
 def create_interaction_matrix_from_full_data(
@@ -46,32 +62,28 @@ def create_interaction_matrix(
     return df
 
 
-def pre_process_for_ncf(df_interactions: pd.DataFrame,
-                        seed: int = 230) -> pd.DataFrame:
-    # encode the column optimizer
-    df_interactions["optimizer"] = df_interactions["optimizer"].astype(
-        "category").cat.codes.values
-
-    train_own, test_own = train_test_split(
-        df_interactions, test_size=0.2, random_state=seed)
-
-    test_own = test_own[test_own["problem"].isin(
-        train_own["problem"].unique())]
-    test_own = test_own[test_own["optimizer"].isin(
-        train_own["optimizer"].unique())]
-
-    # sort train on timestamp column
-    train_own = train_own.sort_values(by=["problem"])
-    test_own = test_own.sort_values(by=["problem"])
-
-    # store to csv
-    train_own.to_csv("train_own.csv", index=False)
-    test_own.to_csv("test_own.csv", index=False)
-
-
-# svd
-
 def collaborative_filtering(df_interaction: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute the collaborative filtering predictions for the performance of
+    optimizers on benchmark functions.
+
+    Parameters
+    ----------
+    df_interaction : pandas.DataFrame
+        DataFrame containing the sparse matrix performances
+        between optimizers and optimization problems.
+
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame containing a full matrix of the predicted performance of
+        optimizers on benchmark functions.
+
+    Notes
+    -----
+    The collaborative filtering predictions are computed using the
+    `surprise.SVD` algorithm.
+    """
     reader = surprise.Reader(rating_scale=(
         df_interaction['rating'].min(), df_interaction['rating'].max()))
 
@@ -90,6 +102,22 @@ def collaborative_filtering(df_interaction: pd.DataFrame) -> pd.DataFrame:
 
 
 def for_the_first_window(df_interaction: pd.DataFrame) -> pd.DataFrame:
+    """
+    Combine the performances of optimizers that start with the same optimizer
+    in the first window.
+
+    Parameters
+    ----------
+    df_interaction : pandas.DataFrame
+        DataFrame containing the sparse matrix performances
+        between optimizers and optimization problems.
+
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame containing the performances of optimizers where the first
+        window is combined.
+    """
     startswith = []
     unique_optimizers = df_interaction['optimizer'].str.split(
         '+').str[0].unique()

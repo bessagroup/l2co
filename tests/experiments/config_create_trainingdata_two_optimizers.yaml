@@ -1,9 +1,6 @@
-defaults:
-  - override hydra/job_logging: custom
-
 domain:
   function_name:
-    _target_: f3dasm.CategoricalParameter
+    type: category
     categories: [
         "Ackley",
         "AckleyN2",
@@ -77,31 +74,27 @@ domain:
         "Zakharov",
       ]
   dimensionality:
-    _target_: f3dasm.CategoricalParameter
+    type: category
     categories: [2, 10, 25]
   noise:
-    _target_: f3dasm.CategoricalParameter
+    type: category
     categories: [0.0, 0.1]
   seed:
-    _target_: f3dasm.DiscreteParameter
-    lower_bound: 0
-    upper_bound: 1000000
+    type: int
+    low: 0
+    high: 1000000
   budget:
-    _target_: f3dasm.ConstantParameter
-    value: 200
+    type: constant
+    value: 500
 
 experimentdata:
   from_sampling:
     sampler: "random"
     seed: 2023
-    n_samples: 5000
+    n_samples: 20
     domain: ${domain}
 
 mode: cluster
-# experimentdata:
-#   name: benchmarkdata
-#   mode: cluster
-#   from_file: "/home/martin/Documents/GitHub/L2CO/experiments/create_trainingdata/outputs/2023-10-19/09-41-41/benchmarkdata"
 
 optimization:
   lower_bound: 0.0
@@ -114,18 +107,8 @@ optimization:
     - name: CMAES
     - name: PSO
     - name: Adam
-    - name: L-BFGS-B
-    - name: RandomSearch
-
-recommender:
-  create_recommender_dataset: True
-  lower_bound_budget: 30
-  n_augmented_samples: 9
-  scaler: Standard
-
-files:
-  dirname_raw: raw
-  dirname_movxarr: post
+    - name: LBFGSB
+  fraction_of_all_combinations: 0.3
 
 hpc:
   jobid: -1

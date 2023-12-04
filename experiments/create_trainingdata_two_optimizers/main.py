@@ -31,30 +31,36 @@ __status__ = 'Stable'
 
 
 def pre_processing(config: Config):
-
     logger.setLevel(logging.DEBUG)
 
     logger.info("== PRE-PROCESS ==")
     data = f3dasm.ExperimentData.from_yaml(config.experimentdata)
 
-    # Dirty hack for TypeError: Cannot setitem on a Categorical with a new category (), set the categories first
+    # Dirty hack for TypeError: Cannot setitem on a Categorical with a
+    # new category (), set the categories first
     function_name_column = data._input_data.columns.iloc('function_name')
-    data._input_data.data[function_name_column] = data._input_data.data[function_name_column].astype(
+    data._input_data.data[function_name_column] = data._input_data.data[
+        function_name_column].astype(
         'object')
 
     for index, input_data in enumerate(data):
         i = data._input_data.data.iloc[index]
 
-        if not is_dim_compatible(i[function_name_column].values[0], data.domain):
-            filtered_class_list = [ff for ff in filter(lambda f: is_dim_compatible(f, data.domain),
-                                   list(data.domain.space['function_name'].categories))]
+        if not is_dim_compatible(
+                i[function_name_column].values[0], data.domain):
+            filtered_class_list = [ff for ff in filter(
+                lambda f: is_dim_compatible(f, data.domain),
+                                   list(
+                    data.domain.space['function_name'].categories))]
             new_function_name = np.random.choice(filtered_class_list)
 
             data._input_data.set_data(
                 index, value=new_function_name, column='function_name')
 
-    # Dirty hack for TypeError: Cannot setitem on a Categorical with a new category (), set the categories first
-    data._input_data.data[function_name_column] = data._input_data.data[function_name_column].astype(
+    # Dirty hack for TypeError: Cannot setitem on a Categorical with
+    # a new category (), set the categories first
+    data._input_data.data[function_name_column] = data.\
+        _input_data.data[function_name_column].astype(
         'category')
 
     # Store the ExperimentData to a csv file
@@ -108,8 +114,6 @@ def process(config: Config):
     ----------
     config
         Hydra configuration file object
-    execute_callable
-        function to execute a job. Requires to arguments; the config and any **kwargs from the design
     """
 
     logger.info("== PROCESS ==")

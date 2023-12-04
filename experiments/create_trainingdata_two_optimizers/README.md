@@ -58,7 +58,7 @@ The following subdirectories are created:
 * `<opt_1>+<opt2>`: Contains a [NetCDF](https://docs.xarray.dev/en/stable/user-guide/io.html#netcdf) (`.nc`) files with the optimization results for each optimization problem. The folder name is the concatenation of the two optimization algorithms used.
 * `.hydra`: Contains the `config.yaml` file used to run the experiment.
 
-Lastly, a log file `main` is created.
+Lastly, a log file `main.log` is created.
 
 The folder structure is as follows:
 

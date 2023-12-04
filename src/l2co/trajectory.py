@@ -1,11 +1,28 @@
+"""
+Module containing functions that compute the trajectory similarity of
+optimizers roll-outs.
+"""
+
+#                                                                       Modules
+# =============================================================================
+
+# Standard
 from pathlib import Path
 
+# Third-party
 import numpy as np
 import pandas as pd
 import xarray as xr
 from f3dasm import ExperimentData
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import StandardScaler
+
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Under development'
+# =============================================================================
 
 
 def filter_dataset(experimentdata: ExperimentData,

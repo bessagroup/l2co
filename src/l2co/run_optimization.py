@@ -32,9 +32,15 @@ __credits__ = ['Martin van der Schelling']
 __status__ = 'Stable'
 # =============================================================================
 
+#                                                                     Constants
+# =============================================================================
+
+MAX_CACHE_SIZE = 20
+
+#                                                                  Type aliases
+# =============================================================================
 
 OptimizerScheduler = List[Tuple[str, int, str]]
-MAX_SIZE = 20
 
 #                                                       Run single optimization
 # =============================================================================
@@ -57,7 +63,7 @@ def run_multiple_realizations(
 
     Parameters
     ----------
-    optimizer_scheduler : OptimizerScheduler
+    optimizer_scheduler : List[Tuple[str, int, str]]
         List of tuples. For each tuple, determine the optimization\
         strategy used, the number of iterations\
         and the handshake method
@@ -83,7 +89,7 @@ def run_multiple_realizations(
 
     Returns
     -------
-    xr.Dataset
+    xarray.Dataset
         xarray Dataset containing the results of the optimizations
 
     Notes
@@ -194,7 +200,7 @@ def run_second_multiple_realizations(
 
     Parameters
     ----------
-    results : List[ExperimentData]
+    results : List[f3dasm.ExperimentData]
         List of ExperimentData objects from the first optimizer.
     optimizer : str
         Name of the second optimizer
@@ -211,7 +217,7 @@ def run_second_multiple_realizations(
 
     Returns
     -------
-    List[ExperimentData]
+    List[f3dasm.ExperimentData]
         List of ExperimentData objects with concatenated results from the
         second optimizer run.
     """
@@ -249,7 +255,7 @@ def _run_second_multiple_realizations_sequential(
 
     Parameters
     ----------
-    results : List[ExperimentData]
+    results : List[f3dasm.ExperimentData]
         List of ExperimentData objects from the first optimizer.
     optimizer : str
         Name of the second optimizer
@@ -264,7 +270,7 @@ def _run_second_multiple_realizations_sequential(
 
     Returns
     -------
-    List[ExperimentData]
+    List[f3dasm.ExperimentData]
         List of ExperimentData objects with concatenated results from the
         second optimizer run.
     """
@@ -292,7 +298,7 @@ def _run_second_multiple_realizations_parallel(
 
     Parameters
     ----------
-    results : List[ExperimentData]
+    results : List[f3dasm.ExperimentData]
         List of ExperimentData objects from the first optimizer.
     optimizer : str
         Name of the second optimizer
@@ -307,7 +313,7 @@ def _run_second_multiple_realizations_parallel(
 
     Returns
     -------
-    List[ExperimentData]
+    List[f3dasm.ExperimentData]
         List of ExperimentData objects with concatenated results from the
         second optimizer run.
     """
@@ -337,7 +343,7 @@ def _run_second_multiple_realizations_parallel(
 # =============================================================================
 
 
-@lru_cache(maxsize=MAX_SIZE)
+@lru_cache(maxsize=MAX_CACHE_SIZE)
 def run_first_multiple_realizations(
     optimizer: str,
     data_generator: str,
@@ -385,7 +391,7 @@ def run_first_multiple_realizations(
 
     Returns
     -------
-    List[ExperimentData]
+    List[f3dasm.ExperimentData]
         List of Experiment data object containing the results
         of the optimization for multiple realizations.
 
@@ -463,7 +469,7 @@ def _run_first_multiple_realizations_sequential(
 
     Returns
     -------
-    List[ExperimentData]
+    List[f3dasm.ExperimentData]
         List of Experiment data object containing the results
         of the optimization for multiple realizations.
     """
@@ -518,7 +524,7 @@ def _run_first_multiple_realizations_parallel(
 
     Returns
     -------
-    List[ExperimentData]
+    List[f3dasm.ExperimentData]
         List of Experiment data object containing the results
         of the optimization for multiple realizations.
     """
@@ -730,7 +736,7 @@ def _get_scheduler(
 
     Returns
     -------
-    OptimizerScheduler
+    List[Tuple[str, int, str]]
         List of schedulers for the two optimizers
     """
     i_0 = (iterations // 2)
@@ -770,7 +776,7 @@ def _get_name_from_scheduler(scheduler: OptimizerScheduler) -> str:
 
     Parameters
     ----------
-    scheduler : OptimizerScheduler
+    scheduler : List[Tuple[str, int, str]]
         optimizer scheduler
 
     Returns
@@ -788,7 +794,7 @@ def _listexperimentdata_to_dataset(
 
     Parameters
     ----------
-    results : List[ExperimentData]
+    results : List[f3dasm.ExperimentData]
         List of optimization results in ExperimentData format
 
     Returns

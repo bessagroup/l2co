@@ -1,8 +1,13 @@
+"""
+Module containing functions that compute the performance of optimizers
+"""
+
+#                                                                       Modules
+# =============================================================================
 
 from __future__ import annotations
 
-from pathlib import Path
-
+# Third-party
 import numpy as np
 import pandas as pd
 import surprise
@@ -11,8 +16,38 @@ from f3dasm import ExperimentData
 from recommenders.models.surprise.surprise_utils import \
     compute_ranking_predictions
 
+# Local
+from .io import _validate_path
+
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Under development'
+# =============================================================================
+
 
 def _output_cummin(ds: xr.Dataset) -> xr.DataArray:
+    """
+    Compute the cumulative minimum of the output values.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset
+        xarray Dataset object containing the output values of the
+        optimization process.
+
+    Returns
+    -------
+    xarray.DataArray
+        xarray DataArray object containing the cumulative minimum of the
+        output values.
+
+    Note
+    ----
+    The cumulative minimum is computed along the 'iterations' dimension
+    with the `numpy.minimum.accumulate` function.
+    """
     return xr.DataArray(
         np.minimum.accumulate(ds.output.values, axis=ds.output.get_axis_num(
             'iterations')), coords=ds.output.coords, dims=ds.output.dims)
@@ -20,6 +55,32 @@ def _output_cummin(ds: xr.Dataset) -> xr.DataArray:
 
 def _randomsearch_baseline(
         rs: xr.Dataset, size: int, shuffles: int = 99) -> np.ndarray:
+    """
+    Compute the random search baseline for the performance of an optimizer
+    on a benchmark function.
+
+    Parameters
+    ----------
+    rs : xarray.Dataset
+        xarray Dataset object containing the output values of the
+        random search process.
+    size : int
+        number of function evaluations of the dataset
+    shuffles : int
+        number of shuffles to compute the baseline
+
+    Returns
+    -------
+    numpy.ndarray
+        numpy ndarray object containing the baseline for the performance of
+        an optimizer on a benchmark function.
+
+    Note
+    ----
+    The baseline is computed by shuffling the output values of the random
+    search process and taking the median of the cumulative minimum of the
+    shuffled output values.
+    """
 
     rs_data = np.random.choice(rs['output'].values.ravel(), size=size)
     shuffled_arrays = np.minimum.accumulate(rs_data).reshape(1, -1)
@@ -30,12 +91,35 @@ def _randomsearch_baseline(
             [shuffled_arrays, np.minimum.accumulate(rs_data).reshape(1, -1)])
 
     # take the median over shuffled_arrays first dimension;
-
     return np.median(shuffled_arrays, axis=0)
 
 
 def _calculate_metric(
         ds: xr.Dataset, baseline: np.ndarray) -> xr.DataArray:
+    """
+    Compute the performance of an optimizer on a benchmark function.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset
+        xarray Dataset object containing the output values of the
+        optimization process.
+    baseline : numpy.ndarray
+        numpy ndarray object containing the baseline for the performance of
+        an optimizer on a benchmark function.
+
+    Returns
+    -------
+    xarray.DataArray
+        xarray DataArray object containing the performance of the optimizer
+        on a benchmark function.
+
+    Note
+    ----
+    The performance is computed by taking the logarithm of the ratio of the
+    cumulative minimum of the output values of the optimization process and
+    the baseline.
+    """
     ds['output_cummin'] = _output_cummin(ds)
     y_min = ds.output.min()
 
@@ -46,15 +130,26 @@ def _calculate_metric(
     return np.log(a/b)
 
 
-def _validate_path(path: str | float, project_dir: Path) -> bool:
-    if isinstance(path, str):
-        return Path(project_dir / path).exists()
-
-    return False
-
-
 def _get_metric(
         data: ExperimentData, index: int):
+    """
+    Compute the performance of an optimizer on a benchmark function.
+
+    Parameters
+    ----------
+    data : f3dasm.ExperimentData
+        ExperimentData object containing the parameterization of
+        the benchmark functions and the results of the optimization
+        process for a selection of optimizers.
+    index : int
+        index of the experiment sample
+
+    Returns
+    -------
+    xarray.DataArray
+        xarray DataArray object containing the performance of the optimizer
+        on a benchmark function.
+    """
 
     experiment_sample = data.get_experiment_sample(index)
 
@@ -80,14 +175,14 @@ def get_performance(experimentdata: ExperimentData) -> xr.Dataset:
 
     Parameters
     ----------
-    experimentdata : ExperimentData
+    experimentdata : f3dasm.ExperimentData
         ExperimentData object containing the parameterization of
         the benchmark functions and the results of the optimization
         process for a selection of optimizers.
 
     Returns
     -------
-    xr.Dataset
+    xarray.Dataset
         xarray Dataset object containing a floating point value for
         the performance of the optimizers on benchmark functions as a function
         of the number of function evaluations.
@@ -121,7 +216,7 @@ def query_t(performance_dataset: xr.Dataset, t: int) -> xr.DataArray:
     Parameters
     ----------
 
-    performance_dataset : xr.Dataset
+    performance_dataset : xarray.Dataset
         xarray Dataset object containing a floating point value for
         the performance of the optimizers on benchmark functions as a function
         of the number of function evaluations.
@@ -130,7 +225,7 @@ def query_t(performance_dataset: xr.Dataset, t: int) -> xr.DataArray:
 
     Returns
     -------
-    xr.DataArray
+    xarray.DataArray
         xarray DataArray containing the performance of the optimizers
         after a given number of function evaluations.
     """
@@ -142,9 +237,6 @@ def query_t(performance_dataset: xr.Dataset, t: int) -> xr.DataArray:
 
     ds_performance: xr.DataArray = performance_dataset.sel(
         iterations=t, drop=True)
-    # ds_performance.reset_index(inplace=True)
-    # df_performance = df_performance.pivot(
-    #     index='itemID', columns='optimizer', values='performance')
 
     return ds_performance
 
@@ -155,7 +247,7 @@ def is_sparse(ds: xr.DataArray) -> bool:
 
     Parameters
     ----------
-    ds : ds.DataArray
+    ds : xarray.DataArray
         The performance DataArray
 
     Returns
@@ -173,12 +265,12 @@ def collaborative_filtering(sparse_ds: xr.DataArray) -> xr.DataArray:
 
     Parameters
     ----------
-    sparse_ds : xr.DataArray
+    sparse_ds : xarray.DataArray
         The performance DataArray with missing values
 
     Returns
     -------
-    xr.DataArray
+    xarray.DataArray
         The performance DataFrame without missing values
     """
     # Check if there is anything to matrix complete

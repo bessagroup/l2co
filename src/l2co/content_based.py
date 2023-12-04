@@ -1,3 +1,12 @@
+"""
+Module containing functions that choose an optimizer based on content-based
+features.
+"""
+
+#                                                                       Modules
+# =============================================================================
+
+# Third-party
 import pandas as pd
 import xarray as xr
 from f3dasm import ExperimentData
@@ -5,6 +14,13 @@ from f3dasm._src.datageneration.functions.function_factory import \
     _datagenerator_factory
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import MinMaxScaler
+
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Under development'
+# =============================================================================
 
 
 def _get_labels(experimentdata: ExperimentData, index: int) -> str:

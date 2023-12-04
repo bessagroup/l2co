@@ -8,6 +8,7 @@ set.
 
 from __future__ import annotations
 
+# Standard
 from pathlib import Path
 
 # Third-party
@@ -71,7 +72,8 @@ def get_metric(
     ds = xr.open_mfdataset(
         [data.project_dir / path for key, path in
          experiment_sample.output_data_with_references.items()
-         if _validate_path(path, data.project_dir) and key != 'random_samples'])
+         if _validate_path(
+             path, data.project_dir) and key != 'random_samples'])
 
     if baseline == 'randomsearch':
         rs = xr.open_dataset(

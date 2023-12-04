@@ -113,16 +113,6 @@ optimization:
     - name: LBFGSB
   fraction_of_all_combinations: 0.3
 
-# recommender:
-#   create_recommender_dataset: False
-#   lower_bound_budget: 30
-#   n_augmented_samples: 9
-#   scaler: Standard
-
-# files:
-#   dirname_raw: raw
-#   dirname_movxarr: post
-
 hpc:
   jobid: -1
 

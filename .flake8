@@ -17,6 +17,7 @@ extend-exclude =
 	.git,
 	experiments,
 	notebooks,
+	tests,
 
 # <<< UPDATE ACCORDING WITH YOUR PYTHON PROJECT
 

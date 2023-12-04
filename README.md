@@ -40,6 +40,15 @@ git clone https://github.com/bessagroup/L2CO.git
 pip install -e .
 ```
 
+## Experiments
+
+The following experiments are currently implemented:
+
+| Experiment | Description | Status |
+| ---------- | ----------- | ------ |
+| [`create_training_data_two_optimizers`](https://github.com/bessagroup/L2CO/tree/main/experiments/create_trainingdata_two_optimizers) | Creates the training data for the two-optimizer experiments. | Stable |
+| [`recommend_optimizer`](https://github.com/bessagroup/L2CO/tree/main/experiments/recommend_optimizer) | Train and test the recommender system model to recommend optimizers. | Under development |
+
 ## Community Support
 
 If you find any **issues, bugs or problems** with this template, please use the [GitHub issue tracker](https://github.com/bessagroup/l2co/issues) to report them.
