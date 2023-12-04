@@ -28,12 +28,12 @@ class OptimizationConfig:
     fraction_of_all_combinations: float
 
 
-@dataclass
-class RecommenderConfig:
-    create_recommender_dataset: bool
-    lower_bound_budget: int
-    n_augmented_samples: int
-    scaler: str
+# @dataclass
+# class RecommenderConfig:
+#     create_recommender_dataset: bool
+#     lower_bound_budget: int
+#     n_augmented_samples: int
+#     scaler: str
 
 
 @dataclass
@@ -41,10 +41,10 @@ class HPCConfig:
     jobid: int
 
 
-@dataclass
-class FilesConfig:
-    dirname_raw: str
-    dirname_movxarr: str
+# @dataclass
+# class FilesConfig:
+#     dirname_raw: str
+#     dirname_movxarr: str
 
 
 @dataclass
@@ -53,7 +53,7 @@ class Config:
     experimentdata: ExperimentConfig
     optimization: OptimizationConfig
     hpc: HPCConfig
-    files: FilesConfig
-    recommender: RecommenderConfig
+    # files: FilesConfig
+    # recommender: RecommenderConfig
     log_level: int
     mode: str
