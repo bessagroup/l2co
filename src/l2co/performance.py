@@ -7,6 +7,9 @@ Module containing functions that compute the performance of optimizers
 
 from __future__ import annotations
 
+# Standard
+from time import perf_counter
+
 # Third-party
 import numpy as np
 import pandas as pd
@@ -17,6 +20,7 @@ from recommenders.models.surprise.surprise_utils import \
     compute_ranking_predictions
 
 # Local
+from ._logging import logger
 from .io import _validate_path
 
 #                                                          Authorship & Credits
@@ -198,14 +202,21 @@ def get_performance(experimentdata: ExperimentData) -> xr.Dataset:
         - optimizer: the name of the first and second optimizer (str)
         - itemID: an identifier for the benchmark function (int)
         - iterations: the number of function evaluations (int)
+
     """
+    t_start = perf_counter()
+
     combined = xr.concat(
         [_get_metric(experimentdata, i) for i in experimentdata.index],
         dim=xr.DataArray(experimentdata.index, dims='itemID'))
 
     combined = combined.drop('output_dim')
+    combined = combined.rename('performance')
 
-    return combined.rename('performance')
+    logger.info(
+        f"Performance dataset created of : {experimentdata.project_dir}! "
+        f"(Took {perf_counter() - t_start:.2f} s)")
+    return combined
 
 
 def query_t(performance_dataset: xr.Dataset, t: int) -> xr.DataArray:
@@ -233,10 +244,12 @@ def query_t(performance_dataset: xr.Dataset, t: int) -> xr.DataArray:
         raise ValueError(
             f'Number of iterations {t} is larger than the maximum number of '
             f'iterations in the performance dataset '
-            f'{performance_dataset.iterations.max()}')
+            f'{performance_dataset.iterations.max().values}')
 
     ds_performance: xr.DataArray = performance_dataset.sel(
         iterations=t, drop=True)
+
+    logger.info(f"Query t={t} from performance dataset")
 
     return ds_performance
 

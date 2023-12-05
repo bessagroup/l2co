@@ -6,8 +6,11 @@ features.
 #                                                                       Modules
 # =============================================================================
 
-import numpy as np
+# Standard
+from time import perf_counter
+
 # Third-party
+import numpy as np
 import pandas as pd
 import xarray as xr
 from f3dasm import ExperimentData
@@ -15,6 +18,8 @@ from f3dasm._src.datageneration.functions.function_factory import \
     _datagenerator_factory
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import MinMaxScaler
+
+from ._logging import logger
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -82,6 +87,7 @@ def get_labels(experimentdata: ExperimentData) -> xr.DataArray:
     xarray.DataArray
         A dataframe with the labels for each itemID.
     """
+    t_start = perf_counter()
     df = pd.DataFrame([_get_labels(experimentdata, i)
                        for i in experimentdata.index], columns=['labels'],
                       index=experimentdata.index)
@@ -95,10 +101,16 @@ def get_labels(experimentdata: ExperimentData) -> xr.DataArray:
         df[word] = df['labels'].apply(lambda x: 1 if word in x else 0)
 
     df.drop('labels', axis=1, inplace=True)
-    return xr.DataArray(
+
+    xarr = xr.DataArray(
         df.values,
         coords={'itemID': df.index, 'features': df.columns},
         dims=['itemID', 'features'], name='labels')
+
+    logger.info(
+        f"Labels dataset created of : {experimentdata.project_dir}! "
+        f"(Took {perf_counter() - t_start:.2f} s)")
+    return xarr
 
 
 def cosine_sim(single_vec, training_set) -> np.ndarray:
@@ -150,7 +162,10 @@ def calculate_similarity_features(
         output_dtypes=[float]  # dtype of the output
     )
 
-    return cosine_similarities.rename('features')
+    cosine_similarities = cosine_similarities.rename('features')
+    logger.info("Similarity features calculated!")
+
+    return cosine_similarities
 
 
 def predict_zero(
@@ -185,7 +200,10 @@ def predict_zero(
         scaler.fit_transform, ds_comb.performance,
         input_core_dims=[['optimizer', 'itemID']],
         output_core_dims=[['optimizer', 'itemID']],
-        vectorize=True, dask='parallelized')
+        vectorize=True, dask='parallelized',
+        dask_gufunc_kwargs={'allow_rechunk': True,
+                            },  # Use allow_rechunk to handle chunking
+    )
 
     prediction = ds_comb.optimizer[int(
         (ds_comb.features * scaled).sum(dim='itemID').argmin())].item()
