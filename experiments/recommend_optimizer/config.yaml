@@ -1,0 +1,8 @@
+data:
+  training_project_dir: /home/martin/Documents/GitHub/L2CO/experiments/create_trainingdata_two_optimizers/outputs/2023-12-05/13-59-31
+  test_project_dir: /home/martin/Documents/GitHub/L2CO/experiments/create_trainingdata_two_optimizers/outputs/2023-12-05/14-35-45
+
+seed: 42
+
+t_switch: 250
+t_start: 30

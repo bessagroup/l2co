@@ -13,7 +13,7 @@
 
 ## Summary
 
-
+> Note: This experiment is not yet fully implemented and remains a work-in-progress!.
 
 ## Usage
 
@@ -49,6 +49,18 @@ outputs/
 
 
 ## Explanation of `config.yaml` parameters
+
+| Name  | Type | Description  |
+|-------|------|--------------|
+| seed  | `int`  | Seed for the pseudo-random number generator |
+| t_switch  | `int`  | Iteration number of the switching point |
+| t_start  | `int`  | Iteration number of the start of the first optimizer |
+
+### Data
+| Name   | Type | Description  |
+|--------|------|--------------|
+| training_project_dir  | `str`  | Path to the `ExperimentData` project directory for the training data |
+| test_project_dir | `str`  | Path to the `ExperimentData` project directory for the testing data |
 
 ### HPC
 | Name   | Type | Description  |
