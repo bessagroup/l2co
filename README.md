@@ -23,6 +23,9 @@ In this study, we will consider a discrete number of diverse and well-known opti
 
 ## Getting started
 
+
+### Installation instructions for users
+
 The package is currently not available on PyPI. To install the package, follow the steps below:
 
 1. Create a new virtual environment (optional) with Python 3.8+
@@ -38,6 +41,14 @@ git clone https://github.com/bessagroup/L2CO.git
 
 ```bash
 pip install -e .
+```
+
+### Installation instructions for developers
+
+To install the package for development, install the development dependencies after normal installation:
+
+```bash
+pip install -r requirements_dev.txt
 ```
 
 ## Experiments

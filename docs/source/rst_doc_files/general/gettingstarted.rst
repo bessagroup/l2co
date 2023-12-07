@@ -132,7 +132,7 @@ Building from source is required to work on a contribution (bug fix, new feature
 
 
 
-5. Install the developement requirements:
+5. If you want to use :mod:`l2co` for development purposes, install the additional developement requirements:
 
    .. code-block:: console
 
