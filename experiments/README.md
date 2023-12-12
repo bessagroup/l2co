@@ -2,7 +2,7 @@
 
 This directory contains the experiments that were run for the paper.
 
-| Experiment | Description |
-| ---------- | ----------- |
-| `create_training_data_two_optimizers` | Creates the training data for the two-optimizer experiments. |
-| `recommend_optimizer` | Train and test the recommender system model to recommend optimizers. |
+| Experiment | Description | Status |
+| ---------- | ----------- | ------ |
+| [`create_training_data_two_optimizers`](https://github.com/bessagroup/L2CO/tree/main/experiments/create_trainingdata_two_optimizers) | Creates the training data for the two-optimizer experiments. | Stable |
+| [`recommend_optimizer`](https://github.com/bessagroup/L2CO/tree/main/experiments/recommend_optimizer) | Train and test the recommender system model to recommend optimizers. | Under development |
