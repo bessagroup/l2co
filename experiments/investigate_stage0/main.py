@@ -1,0 +1,95 @@
+#                                                                       Modules
+# =============================================================================
+
+# Standard
+from pathlib import Path
+from time import sleep
+
+# Third-party
+import f3dasm
+import hydra
+from f3dasm import logger as f3dasm_logger
+from train_classifier import ClassifierConstructer
+
+# Local
+from l2co._logging import logger as logger
+
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Planning'
+# =============================================================================
+#
+# =============================================================================
+
+def pre_processing(config):
+    """Pre-processing steps
+
+    Parameters
+    ----------
+    config
+        Configuration parameters defined in config.yaml
+    """
+    data = f3dasm.ExperimentData.from_yaml(config.experimentdata)
+    data.store()
+    logger.info("Stored experiment data")
+
+def process(config):
+    """Main process to execute
+
+    Parameters
+    ----------
+    config
+        Configuration parameters defined in config.yaml
+    """
+    # Retrieve the ExperimentData object
+    try:
+        data = f3dasm.ExperimentData.from_file(Path().cwd())
+    except FileNotFoundError:
+        sleep(60)
+        data = f3dasm.ExperimentData.from_file(Path().cwd())
+
+    # Retrieve the training and testing data
+    training_data = f3dasm.ExperimentData.from_file(config.data.training)
+    testing_data = f3dasm.ExperimentData.from_file(config.data.testing)
+
+    # Construct the classifier constructer
+    classifier = ClassifierConstructer(training_data=training_data,
+                                       testing_data=testing_data)
+
+    # Evaluate the different classifiers
+    data.evaluate(classifier,
+                  mode=config.mode,
+                  kwargs={'training_data': training_data,
+                          'testing_data': testing_data})
+
+    if config.mode == 'sequential':
+        # Store the ExperimentData to a csv file
+        data.store()
+
+
+@hydra.main(config_path=".", config_name="config")
+def main(config):
+    """Main script to call
+
+    Parameters
+    ----------
+    config
+        Configuration parameters defined in config.yaml
+    """
+
+    logger.setLevel(config.log_level)
+    f3dasm_logger.setLevel(config.log_level)
+    # Execute the initial_script for the first job
+    if config.hpc.jobid == 0:
+        pre_processing(config)
+        process(config)
+
+    elif config.hpc.jobid == -1:  # Sequential
+        pre_processing(config)
+        process(config)
+
+    else:
+        sleep(3*config.hpc.jobid)  # Just to asynchronize the jobs
+        process(config)

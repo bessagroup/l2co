@@ -1,4 +1,4 @@
-# Create trainingdata two optimizers
+# Investigate stage 0
 
 <center>
 <img src="./img/data-driven-process.png" alt="drawing" width=100%/>
@@ -12,7 +12,7 @@ After we have [created a training and testing benchmarkfunction set](https://git
 <img src="./img/stage0.png" alt="drawing" width=50%/>
 </center>
 
-In this experiment, we perform **hyper-parameter optimization** of **parametrized classification models**: 
+In this experiment, we evaluate **parametrized classification models** on a **previously acquired dataset of training dynamics**: 
 
 * We will use [available prior knowledge](#problem-specific-characteristics) about the loss-landscape characteristics as features of the classifier.
 * The labels will be determined by the optimizer that performans the best on a problem according to a [custom metric](#determining-performance)
@@ -20,11 +20,10 @@ In this experiment, we perform **hyper-parameter optimization** of **parametrize
 This experiment will be as follows:
 
 * Loading the training and testing datasets as `f3dasm.ExperimentData` objects.
-* Construct a parametrized classifier and sample one initial instance.
+* Construct a parametrized classifier and sample instances.
 * Train a classifier on the training dataset.
 * Evaluate the classifier on the testing dataset and report error metrics.
 * Roll-out the classifier on the testing dataset and report the performance of the '`stage_0`'-recommender system with the [performance profile metric](https://www.numerical.rl.ac.uk/people/j_scott/publications/2016/GouldScott.2016_TOMS.pdf)
-* Update the domain by optimizing for the classification metrics thus performing hyper-parameter optimization on the parametrized classifier.
 
 ### Determining performance
 
@@ -135,32 +134,21 @@ outputs/
 
 ## Explanation of `config.yaml` parameters
 
+### Dataset
+
+| Name  | Type   | Description |
+|-------|--------|-------------|
+| train | `str` | Project directory path to the training dataset |
+| test  | `str` | Project directory path to the testing dataset  |
+
 ### Domain
-#### Function Name
+#### Classifier model name
 | Name       | Type     | Description                |
 |------------|----------|----------------------------|
-| categories | `List[str]`     | List of benchmark functions ([reference](https://f3dasm.readthedocs.io/en/latest/rst_doc_files/classes/datageneration/functions.html)) |
+| value | `str`     | Name of classifier (implemented by `l2co`) |
 
-#### Dimensionality
-| Name       | Type     | Description                |
-|------------|----------|----------------------------|
-| categories | `List[int]`     | List of possible values of the function dimensionality |
+_arbitrary number of hyperparameters for the classifier can be added_
 
-#### Noise
-| Name       | Type     | Description                |
-|------------|----------|----------------------------|
-| categories | `List[float]`     | List of possible values of the function noise standard deviation    |
-
-#### Seed
-| Name | Type | Description         |
-|------|------|---------------------|
-| low  | `int`  | Lower bound value of random seeds    |
-| high | `int`  | Upper bound value of random seeds    |
-
-#### Budget
-| Name  | Type     | Description           |
-|-------|----------|-----------------------|
-| value | `int`      | Maximum number of iterations          |
 
 ### Experiment Data
 #### From Sampling
@@ -171,18 +159,6 @@ outputs/
 | n_samples    | `int`    | Number of samples       |
 | domain       | `f3dasm.Domain` | `f3dasm` Domain object ([reference](https://f3dasm.readthedocs.io/en/latest/rst_doc_files/classes/design/domain.html))            |
 
-### Mode
-| Name  | Type   | Description |
-|-------|--------|-------------|
-| mode  | string | Evaluation mode of `f3dasm` ([reference](https://f3dasm.readthedocs.io/en/latest/rst_doc_files/classes/datageneration/datagenerator.html#)) |
-
-
-### Dataset
-
-| Name  | Type   | Description |
-|-------|--------|-------------|
-| data_train | `str` | Project directory path to the training dataset |
-| data_test  | `str` | Project directory path to the testing dataset  |
 
 ### HPC
 | Name   | Type | Description  |
