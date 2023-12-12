@@ -146,6 +146,7 @@ def run_multiple_realizations(
             kwargs=kwargs, n_iterations=n_iterations,
             x0_selection=x0_selection,
             parallelization=parallelization,
+            sampler=sampler
         )
 
     logger.info(f"Optimized {dimensionality}D {data_generator} function with "
@@ -194,6 +195,7 @@ def run_second_multiple_realizations(
     n_iterations: int,
     x0_selection: str,
     parallelization: bool,
+    sampler: str = 'random',
 ) -> List[ExperimentData]:
     """
     Run multiple realizations of the second optimizer
@@ -227,14 +229,14 @@ def run_second_multiple_realizations(
             results=results, optimizer=optimizer,
             data_generator=data_generator,
             kwargs=kwargs, n_iterations=n_iterations,
-            x0_selection=x0_selection
+            x0_selection=x0_selection, sampler=sampler
         )
     else:
         results = _run_second_multiple_realizations_sequential(
             results=results, optimizer=optimizer,
             data_generator=data_generator,
             kwargs=kwargs, n_iterations=n_iterations,
-            x0_selection=x0_selection
+            x0_selection=x0_selection, sampler=sampler
         )
 
     return results
@@ -247,6 +249,7 @@ def _run_second_multiple_realizations_sequential(
     kwargs: Dict[str, Any],
     n_iterations: int,
     x0_selection: str,
+    sampler: str,
 ) -> ExperimentData:
     """
     Run multiple realizations of the second optimizer
@@ -267,6 +270,8 @@ def _run_second_multiple_realizations_sequential(
         number of iterations
     x0_selection : str
         x0 selection strategy
+    sampler: str
+        name of the sampler if x0_selection = 'new'
 
     Returns
     -------
@@ -275,11 +280,14 @@ def _run_second_multiple_realizations_sequential(
         second optimizer run.
     """
 
-    for experiment_data in results:
+    for index, experiment_data in enumerate(results):
+        hyperparameters = {'seed': kwargs['seed'] + index + 1}
         experiment_data.optimize(optimizer=optimizer,
                                  data_generator=data_generator,
                                  iterations=n_iterations, kwargs=kwargs,
-                                 x0_selection=x0_selection)
+                                 hyperparameters=hyperparameters,
+                                 x0_selection=x0_selection,
+                                 sampler=sampler)
     return results
 
 
@@ -290,6 +298,7 @@ def _run_second_multiple_realizations_parallel(
     kwargs: Dict[str, Any],
     n_iterations: int,
     x0_selection: str,
+    sampler: str
 ) -> List[ExperimentData]:
     """
     Run multiple realizations of the second optimizer
@@ -310,6 +319,8 @@ def _run_second_multiple_realizations_parallel(
         number of iterations
     x0_selection : str
         x0 selection strategy
+    sampler: str
+        name of the sampler if x0_selection = 'new'
 
     Returns
     -------
@@ -318,26 +329,22 @@ def _run_second_multiple_realizations_parallel(
         second optimizer run.
     """
 
-    def f(experiment_data: ExperimentData) -> ExperimentData:
+    def f(index: int, experiment_data: ExperimentData) -> ExperimentData:
+        hyperparameters = {'seed': kwargs['seed'] + index + 1}
         experiment_data.optimize(optimizer=optimizer,
                                  data_generator=data_generator,
                                  iterations=n_iterations, kwargs=kwargs,
-                                 x0_selection=x0_selection)
+                                 hyperparameters=hyperparameters,
+                                 x0_selection=x0_selection,
+                                 sampler=sampler)
         return experiment_data
 
-    args = [(experiment_data,)
-            for experiment_data in results]
+    args = [(index, experiment_data)
+            for index, experiment_data in enumerate(results)]
 
     with mp.Pool() as pool:
         results = pool.starmap(f, args)
 
-    return results
-
-    for experiment_data in results:
-        experiment_data.optimize(optimizer=optimizer,
-                                 data_generator=data_generator,
-                                 iterations=n_iterations, kwargs=kwargs,
-                                 x0_selection=x0_selection)
     return results
 
 # =============================================================================
@@ -584,17 +591,24 @@ def _run_single_optimizer(
               'noise': noise,
               'offset': offset}
 
-    data = ExperimentData.from_sampling(
-        sampler=sampler, domain=domain, n_samples=n_samples, seed=seed)
+    hyperparameters = {'seed': seed}
 
-    # Evaluate the initial samplers
-    data.evaluate(data_generator=data_generator,
-                  kwargs=kwargs, mode='sequential')
+    if n_samples == 0:
+        data = ExperimentData(domain=domain)
+    else:
+        data = ExperimentData.from_sampling(
+            sampler=sampler, domain=domain, n_samples=n_samples, seed=seed)
+
+        # Evaluate the initial samplers
+        data.evaluate(data_generator=data_generator,
+                      kwargs=kwargs, mode='sequential')
 
     data.optimize(
         optimizer=optimizer, data_generator=data_generator,
-        kwargs=kwargs, iterations=n_iterations,
-        x0_selection=x0_selection)
+        kwargs=kwargs, hyperparameters=hyperparameters,
+        iterations=n_iterations,
+        x0_selection=x0_selection,
+        sampler=sampler)
 
     logger.debug(f"Finished {optimizer} optimization for {n_iterations} "
                  f"iterations on {dimensionality}D {data_generator} function "
@@ -745,7 +759,7 @@ def _get_scheduler(
     if optimizer_1 == optimizer_2:
         return [(optimizer_1, iterations, 'best')]
 
-    return [(optimizer_1, i_0, 'best'),
+    return [(optimizer_1, i_0, 'new'),
             (optimizer_2, i_1, _get_handshake(optimizer_1, optimizer_2))]
 
 
