@@ -17,17 +17,32 @@
 
 ## Usage
 
+### Before running the experiment
+
 1. Install the `l2co` package. See [here](https://github.com/bessagroup/L2CO#getting-started) for instructions.
-2. Navigate to this folder and run `python main.py`
+2. Change the `config.yaml` file to your liking. See [here](#explanation-of-configyaml-parameters) for an explanation of the parameters.
+
+### Running the experiment on your local machine
+
+1. Navigate to this folder and run `python main.py`
+
+### Running the experiment on a TORQUE cluster
+
+1. Make sure you have an `conda` environment named `f3dasm_env` with the packages installed in the first step
+2. Navigate to this folder and submit the job: `qsub pbsjob.sh`.
 
 ## Results
 
 Results are stored in a newly created `outputs` folder, with a subdirectory
 indicating the current date (e.g. `2023-11-06`) and time (e.g. `13-50-14`).
 
+* When running on a local machine, the output will be saved in a directory indicating the current time (e.g. `13-50-14`).
+* When running on a cluster, the output will be saved in a directory indicating the current job ID (e.g. `538734.hpc06.hpc`).
+
+
 The following subdirectories are created:
 
-* `experiment_data`: Contains the input, output, domain and jobs to construct the `f3dasm.ExperimentData` object.
+* `experiment_data`: Contains the input, output, domain and jobs to construct the [`f3dasm.ExperimentData`](https://f3dasm.readthedocs.io/en/latest/rst_doc_files/classes/design/experimentdata.html) object.
 * `.hydra`: Contains the `config.yaml` file used to run the experiment.
 
 Lastly, a log file `main` is created.

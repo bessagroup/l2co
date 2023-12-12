@@ -1,5 +1,9 @@
 # Create trainingdata two optimizers
 
+<center>
+<img src="./img/data-driven-process.png" alt="drawing" width=100%/>
+</center>
+
 ## Summary
 
 In order to train the recommender system, we need to create a dataset with the performance of different optimization algorithms on different optimization problems.
@@ -72,7 +76,7 @@ indicating the current date (e.g. `2023-11-06`).
 
 The following subdirectories are created:
 
-* `experiment_data`: Contains the input, output, domain and jobs to construct the `f3dasm.ExperimentData` object.
+* `experiment_data`: Contains the input, output, domain and jobs to construct the [`f3dasm.ExperimentData`](https://f3dasm.readthedocs.io/en/latest/rst_doc_files/classes/design/experimentdata.html) object.
 * `random_samples`: Contains a [NetCDF](https://docs.xarray.dev/en/stable/user-guide/io.html#netcdf) (`.nc`) files with random samples for each optimization problem
 * `<opt_1>+<opt2>`: Contains a [NetCDF](https://docs.xarray.dev/en/stable/user-guide/io.html#netcdf) (`.nc`) files with the optimization results for each optimization problem. The folder name is the concatenation of the two optimization algorithms used.
 * `.hydra`: Contains the `config.yaml` file used to run the experiment.
