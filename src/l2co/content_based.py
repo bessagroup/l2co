@@ -1,6 +1,21 @@
 """
 Module containing functions that choose an optimizer based on content-based
 features.
+
+Functions
+---------
+
+get_labels
+    Get labels for each itemID in the experimentdata.
+cosine_sim
+    Compute the cosine similarity between a single vector and a training set.
+calculate_similarity_features
+    Calculate the cosine similarity between a single vector and a training set.
+predict_zero
+    Predict the optimizer before considering evaluating the function. This
+    is done by calculating the cosine similarity between the features of the
+    function to be evaluated and the features of the problems in the
+    training set.
 """
 
 #                                                                       Modules
@@ -25,7 +40,7 @@ from ._logging import logger
 # =============================================================================
 __author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
 __credits__ = ['Martin van der Schelling']
-__status__ = 'Under development'
+__status__ = 'Planning'
 # =============================================================================
 
 

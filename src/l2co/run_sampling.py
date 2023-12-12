@@ -1,6 +1,12 @@
 """
 Module containing functions that can be used to sample from the search-space
 of a benchmark function using random sampling
+
+Functions
+---------
+run_sampling
+    Sample from the search-space of a benchmark function using a given sampling
+    technique.
 """
 
 #                                                                       Modules

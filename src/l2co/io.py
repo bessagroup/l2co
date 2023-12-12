@@ -1,20 +1,26 @@
 """
 Module containing common IO operations
+
+Functions
+---------
+
+_validate_path
+    Validate the path to a file or directory.
 """
 
 #                                                                       Modules
 # =============================================================================
 
+# Standard
 from __future__ import annotations
 
-# Standard
 from pathlib import Path
 
 #                                                          Authorship & Credits
 # =============================================================================
 __author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
 __credits__ = ['Martin van der Schelling']
-__status__ = 'Under development'
+__status__ = 'Planning'
 # =============================================================================
 
 

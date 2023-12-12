@@ -1,6 +1,19 @@
 """
 Module containing functions that can be used to compare the performance of
 different optimizers.
+
+Functions
+---------
+
+run_multiple_realizations
+    Run multiple realizations of the same optimization experiment.
+run_second_multiple_realizations
+    Run multiple realizations of the second optimizer
+run_first_multiple_realizations
+    Run a single optimizer on a single function for multiple realizations.
+experiment_two_optimizers
+    Experiment where we find all combinations of two optimizers and run them
+    each for half of the total budget over many realizations.
 """
 
 #                                                                       Modules

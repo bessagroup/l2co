@@ -1,6 +1,20 @@
 """
 Module containing functions that compute the trajectory similarity of
 optimizers roll-outs.
+
+Functions
+---------
+filter_dataset
+    Filter the experimentdata object for a given optimizer and number of
+    function evaluations.
+get_trajectory
+    Calculate a trajectoy similarity measure for the output of the optimizer.
+compute_cosine_similarity
+    Function to calculate the cosine similarity between a single vector and a
+    training set of vectors.
+calculate_trajectory_similarity
+    Calculate the cosine similarity between a single vector and a training set
+    of vectors.
 """
 
 #                                                                       Modules
@@ -21,7 +35,7 @@ from sklearn.preprocessing import StandardScaler
 # =============================================================================
 __author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
 __credits__ = ['Martin van der Schelling']
-__status__ = 'Under development'
+__status__ = 'Planning'
 # =============================================================================
 
 

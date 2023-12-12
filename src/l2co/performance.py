@@ -1,13 +1,28 @@
 """
 Module containing functions that compute the performance of optimizers
+
+Functions
+---------
+
+get_performance
+    Generate a dataset that captures the performance of an optimizer
+    on a benchmark function as function of the number of function evaluations.
+query_t
+    Query the performance dataset for the performance of the optimizers
+    after a given number of function evaluations.
+is_sparse
+    Check if the performance DataArray is sparse.
+collaborative_filtering
+    Fill in missing values in the performance DataFrame using
+    collaborative filtering.
 """
 
 #                                                                       Modules
 # =============================================================================
 
+# Standard
 from __future__ import annotations
 
-# Standard
 from time import perf_counter
 
 # Third-party
@@ -27,7 +42,7 @@ from .io import _validate_path
 # =============================================================================
 __author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
 __credits__ = ['Martin van der Schelling']
-__status__ = 'Under development'
+__status__ = 'Planning'
 # =============================================================================
 
 

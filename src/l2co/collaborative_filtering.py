@@ -1,6 +1,18 @@
 """
-Module containing function that use collaborative-filtering recommender system
+Module containing functions that use collaborative-filtering recommender system
 techniques to fill in the missing values for the performance of optimizers.
+
+Functions
+---------
+create_interaction_matrix_from_full_data
+    Create a sparse matrix of the performances of optimizers
+    on benchmark functions.
+collaborative_filtering
+    Compute the collaborative filtering predictions for the
+    performance of optimizers on benchmark functions.
+for_the_first_window
+    Combine the performances of optimizers that start with
+    the same optimizer in the first window.
 """
 
 #                                                                       Modules
@@ -17,7 +29,7 @@ from recommenders.models.surprise.surprise_utils import \
 # =============================================================================
 __author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
 __credits__ = ['Martin van der Schelling']
-__status__ = 'Under development'
+__status__ = 'Planning'
 # =============================================================================
 
 

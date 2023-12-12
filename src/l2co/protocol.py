@@ -1,6 +1,17 @@
 """
 Module containing protocol classes for the data-driven process of the L2CO
 experiment.
+
+Classes
+-------
+CollaborativeFilteringAlgorithm
+    Protocol class for collaborative filtering algorithms.
+FeaturesSimilarity
+    Protocol class for finding similarity between features of optimization
+    problems.
+HistorySimilarity
+    Protocol class for finding similarity between history of optimization
+    problems.
 """
 
 #                                                                       Modules
@@ -16,7 +27,7 @@ import xarray as xr
 # =============================================================================
 __author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
 __credits__ = ['Martin van der Schelling']
-__status__ = 'Under development'
+__status__ = 'Planning'
 # =============================================================================
 
 
