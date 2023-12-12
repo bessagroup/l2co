@@ -65,7 +65,10 @@ The following experiments are currently implemented:
 
 ## Community Support
 
-If you find any **issues, bugs or problems** with this template, please use the [GitHub issue tracker](https://github.com/bessagroup/l2co/issues) to report them.
+* If you find any **issues, bugs or problems** within this repository, please use the [GitHub issue tracker](https://github.com/bessagroup/l2co/issues) to report them.
+* If you have **questions, feature requests or ideas** for this project, please use the [GitHub Discussions](https://github.com/bessagroup/L2CO/discussions)
+
+Please refer to L2CO's [Code of Conduct](https://github.com/bessagroup/L2CO/blob/main/CODE_OF_CONDUCT.md)
 
 ## License
 
