@@ -65,9 +65,9 @@ The following problem-specific characteristics are used as features for the clas
 
 ### Before running the experiment
 
+0. Make sure you have two datasets from the [`create_training_data_two_optimizers`](https://github.com/bessagroup/L2CO/tree/main/experiments/create_trainingdata_two_optimizers). The testing dataset should have `fraction_of_all_combinations` set to $1.0$ ! 
 1. Install the `l2co` package. See [here](https://github.com/bessagroup/L2CO#getting-started) for instructions.
-2. Install `f3dasm_optimize` in your environment. See [here](https://bessagroup.github.io/f3dasm_optimize/rst_doc_files/getting_started.html) for instructions.
-3. Change the `config.yaml` file to your liking. See [here](#explanation-of-configyaml-parameters) for an explanation of the parameters.
+2. Change the `config.yaml` file to your liking. See [here](#explanation-of-configyaml-parameters) for an explanation of the parameters.
 
 ### Running the experiment on your local machine
 
@@ -163,9 +163,9 @@ _arbitrary number of hyperparameters for the classifier can be added_
 ### HPC
 | Name   | Type | Description  |
 |--------|------|--------------|
-| jobid[^2]  | `int`  | Job ID of the array-job, automatically overwritten by scheduler bash script |
+| jobid[^3]  | `int`  | Job ID of the array-job, automatically overwritten by scheduler bash script |
 
-[^2]: When running on a local machine, this value will be left as the default: -1.
+[^3]: When running on a local machine, this value will be left as the default: -1.
 
 ### Log Level
 | Name      | Type | Description     |
