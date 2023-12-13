@@ -74,6 +74,7 @@ def _get_labels(experimentdata: ExperimentData, index: int) -> str:
 
     return ",".join(categories_list)
 
+
 def _get_not_encoded_labels(
         experimentdata: ExperimentData, index: int) -> Dict[str, Any]:
     experiment_sample = experimentdata.get_experiment_sample(index)
@@ -95,7 +96,7 @@ def _get_not_encoded_labels(
     return labels
 
 
-def get_labels(experimentdata: ExperimentData) -> xr.DataArray:
+def get_labels(experimentdata: ExperimentData, n_realizations: int) -> xr.DataArray:
     """
     Get labels for each itemID in the experimentdata.
 
@@ -103,6 +104,8 @@ def get_labels(experimentdata: ExperimentData) -> xr.DataArray:
     ----------
     experimentdata : f3dasm.ExperimentData
         The experimentdata object.
+    n_realizations: int
+        The number of realizations.
 
     Returns
     -------
@@ -110,7 +113,6 @@ def get_labels(experimentdata: ExperimentData) -> xr.DataArray:
         A dataframe with the labels for each itemID.
     """
     t_start = perf_counter()
-
 
     df = pd.DataFrame([_get_labels(experimentdata, i)
                        for i in experimentdata.index], columns=['labels'],
@@ -129,9 +131,9 @@ def get_labels(experimentdata: ExperimentData) -> xr.DataArray:
 
     df_non_encoded = pd.DataFrame(
         [_get_not_encoded_labels(experimentdata, i)
-                          for i in experimentdata.index],
-                          index=experimentdata.index)
-    
+         for i in experimentdata.index],
+        index=experimentdata.index)
+
     # combine df and df_non_encoded
     df = pd.concat([df, df_non_encoded], axis=1)
 
@@ -143,7 +145,10 @@ def get_labels(experimentdata: ExperimentData) -> xr.DataArray:
     logger.info(
         f"Labels dataset created of : {experimentdata.project_dir}! "
         f"(Took {perf_counter() - t_start:.2f} s)")
-    return xarr
+
+    return xarr.expand_dims(
+        dim={'realization': np.arange(n_realizations)}
+    ).stack(problem=['realization', 'itemID']).T
 
 
 def cosine_sim(single_vec, training_set) -> np.ndarray:
