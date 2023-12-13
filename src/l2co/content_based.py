@@ -23,6 +23,7 @@ predict_zero
 
 # Standard
 from time import perf_counter
+from typing import Any, Dict
 
 # Third-party
 import numpy as np
@@ -68,14 +69,14 @@ def _get_labels(experimentdata: ExperimentData, index: int) -> str:
 
     categories_list = []
 
-    if f.noise is None:
-        f.noise = 0.0
+    # if f.noise is None:
+    #     f.noise = 0.0
 
     # Append features
-    if f.noise == 0.0:
-        categories_list.append('noiseless')
-    if f.noise > 0.0:
-        categories_list.append('noisy')
+    # if f.noise == 0.0:
+    #     categories_list.append('noiseless')
+    # if f.noise > 0.0:
+    #     categories_list.append('noisy')
     if f.convex:
         categories_list.append('convex')
     if f.separable:
@@ -83,12 +84,34 @@ def _get_labels(experimentdata: ExperimentData, index: int) -> str:
     if f.multimodal:
         categories_list.append('multimodal')
 
-    categories_list.append(f"dim={dim}")
+    # categories_list.append(f"dim={dim}")
+    # check if categories_list is empty
 
     return ",".join(categories_list)
 
 
-def get_labels(experimentdata: ExperimentData) -> xr.DataArray:
+def _get_not_encoded_labels(
+        experimentdata: ExperimentData, index: int) -> Dict[str, Any]:
+    experiment_sample = experimentdata.get_experiment_sample(index)
+    function_name = experiment_sample.get('function_name')
+    dim = experiment_sample.get('dimensionality')
+
+    f = _datagenerator_factory(function_name, domain=dim)
+
+    labels = {}
+
+    if f.noise is None:
+        labels['noise'] = 0.0
+    else:
+        labels['noise'] = f.noise
+
+    labels['dim'] = dim
+    # labels['noise'] = f.noise
+
+    return labels
+
+
+def get_labels(experimentdata: ExperimentData, n_realizations: int) -> xr.DataArray:
     """
     Get labels for each itemID in the experimentdata.
 
@@ -96,6 +119,8 @@ def get_labels(experimentdata: ExperimentData) -> xr.DataArray:
     ----------
     experimentdata : f3dasm.ExperimentData
         The experimentdata object.
+    n_realizations: int
+        The number of realizations.
 
     Returns
     -------
@@ -103,6 +128,7 @@ def get_labels(experimentdata: ExperimentData) -> xr.DataArray:
         A dataframe with the labels for each itemID.
     """
     t_start = perf_counter()
+
     df = pd.DataFrame([_get_labels(experimentdata, i)
                        for i in experimentdata.index], columns=['labels'],
                       index=experimentdata.index)
@@ -111,11 +137,20 @@ def get_labels(experimentdata: ExperimentData) -> xr.DataArray:
 
     # Encode the unique words:
     unique_words = set(','.join(df['labels']).split(','))
+    unique_words.remove('')
 
     for word in unique_words:
         df[word] = df['labels'].apply(lambda x: 1 if word in x else 0)
 
     df.drop('labels', axis=1, inplace=True)
+
+    df_non_encoded = pd.DataFrame(
+        [_get_not_encoded_labels(experimentdata, i)
+         for i in experimentdata.index],
+        index=experimentdata.index)
+
+    # combine df and df_non_encoded
+    df = pd.concat([df, df_non_encoded], axis=1)
 
     xarr = xr.DataArray(
         df.values,
@@ -125,7 +160,10 @@ def get_labels(experimentdata: ExperimentData) -> xr.DataArray:
     logger.info(
         f"Labels dataset created of : {experimentdata.project_dir}! "
         f"(Took {perf_counter() - t_start:.2f} s)")
-    return xarr
+
+    return xarr.expand_dims(
+        dim={'realization': np.arange(n_realizations)}
+    ).stack(problem=['realization', 'itemID']).T
 
 
 def cosine_sim(single_vec, training_set) -> np.ndarray:
