@@ -1,4 +1,19 @@
-#                                                                       Modules
+"""
+Main entrypoint of the experiment
+
+Functions
+---------
+
+main
+    Main script to call
+pre_processing
+    Pre-processing steps
+process
+    Main process to execute
+"""
+
+#
+#                                                                        Modules
 # =============================================================================
 
 # Standard

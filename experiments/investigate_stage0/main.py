@@ -1,3 +1,17 @@
+"""
+Main entrypoint of the experiment
+
+Functions
+---------
+
+main
+    Main script to call
+pre_processing
+    Pre-processing steps
+process
+    Main process to execute
+"""
+
 #                                                                       Modules
 # =============================================================================
 
@@ -23,6 +37,7 @@ __status__ = 'Planning'
 #
 # =============================================================================
 
+
 def pre_processing(config):
     """Pre-processing steps
 
@@ -34,6 +49,7 @@ def pre_processing(config):
     data = f3dasm.ExperimentData.from_yaml(config.experimentdata)
     data.store()
     logger.info("Stored experiment data")
+
 
 def process(config):
     """Main process to execute
@@ -60,9 +76,7 @@ def process(config):
 
     # Evaluate the different classifiers
     data.evaluate(classifier,
-                  mode=config.mode,
-                  kwargs={'training_data': training_data,
-                          'testing_data': testing_data})
+                  mode=config.mode)
 
     if config.mode == 'sequential':
         # Store the ExperimentData to a csv file
@@ -81,6 +95,7 @@ def main(config):
 
     logger.setLevel(config.log_level)
     f3dasm_logger.setLevel(config.log_level)
+
     # Execute the initial_script for the first job
     if config.hpc.jobid == 0:
         pre_processing(config)

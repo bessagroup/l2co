@@ -179,15 +179,6 @@ def run_multiple_realizations(
     xarr.attrs['function_dimensionality']: int = dimensionality
 
     # Global minimum function
-
-    domain = make_nd_continuous_domain(bounds=np.tile(
-        [0., 1.], (dimensionality, 1)), dimensionality=dimensionality)
-
-    kwargs = {'seed': seed,
-              'scale_bounds': domain.get_bounds(),
-              'noise': noise,
-              'offset': offset}
-
     func = _datagenerator_factory(data_generator, domain=domain, kwargs=kwargs)
     _, g = func.get_global_minimum(d=dimensionality)
     xarr.attrs['function_global_minimum']: float = float(
