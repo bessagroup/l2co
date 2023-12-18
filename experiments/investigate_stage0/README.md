@@ -80,6 +80,8 @@ The following problem-specific characteristics are used as features for the clas
 1. Make sure you have an `conda` environment named `f3dasm_env` with the packages installed in the first step
 2. Navigate to this folder and submit the job with i.e. 2 nodes: `qsub pbsjob.sh -t 0-2`
 
+> The jobscript will run each of the different classifiers sequentially
+
 
 ## Results
 
