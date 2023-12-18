@@ -138,7 +138,10 @@ def get_labels(experimentdata: ExperimentData,
 
     # Encode the unique words:
     unique_words = set(','.join(df['labels']).split(','))
-    unique_words.remove('')
+
+    # check if empty string is in unique_words
+    if '' in unique_words:
+        unique_words.remove('')
 
     for word in unique_words:
         df[word] = df['labels'].apply(lambda x: 1 if word in x else 0)
