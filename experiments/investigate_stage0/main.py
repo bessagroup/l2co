@@ -47,6 +47,8 @@ def pre_processing(config):
         Configuration parameters defined in config.yaml
     """
     data = f3dasm.ExperimentData.from_yaml(config.experimentdata)
+    data.set_project_dir(Path().cwd() / config.project_dir)
+
     data.store()
     logger.info("Stored experiment data")
 
@@ -61,17 +63,29 @@ def process(config):
     """
     # Retrieve the ExperimentData object
     try:
-        data = f3dasm.ExperimentData.from_file(Path().cwd())
+        data = f3dasm.ExperimentData.from_file(
+            Path().cwd() / config.project_dir)
     except FileNotFoundError:
         sleep(60)
-        data = f3dasm.ExperimentData.from_file(Path().cwd())
+        data = f3dasm.ExperimentData.from_file(
+            Path().cwd() / config.project_dir)
 
     # Retrieve the training and testing data
     training_data = f3dasm.ExperimentData.from_file(config.data.training)
-    testing_data = f3dasm.ExperimentData.from_file(config.data.testing)
+
+    # FOR THIS EXPERIMENT ONLY!!
+    training_data = training_data.select(
+        range(30)).select_with_status('finished')
+
+    if config.data.testing is not None:
+        testing_data = f3dasm.ExperimentData.from_file(config.data.testing)
+
+    else:
+        testing_data = None
 
     # Construct the classifier constructer
-    classifier = ClassifierConstructer(training_data=training_data,
+    classifier = ClassifierConstructer(config=config,
+                                       training_data=training_data,
                                        testing_data=testing_data)
 
     # Evaluate the different classifiers
@@ -80,10 +94,10 @@ def process(config):
 
     if config.mode == 'sequential':
         # Store the ExperimentData to a csv file
-        data.store()
+        data.store(Path().cwd() / config.project_dir)
 
 
-@hydra.main(config_path=".", config_name="config")
+@hydra.main(config_path="configs", config_name="config")
 def main(config):
     """Main script to call
 
@@ -92,14 +106,14 @@ def main(config):
     config
         Configuration parameters defined in config.yaml
     """
-
     logger.setLevel(config.log_level)
     f3dasm_logger.setLevel(config.log_level)
+
+    logger.info("Starting experiment")
 
     # Execute the initial_script for the first job
     if config.hpc.jobid == 0:
         pre_processing(config)
-        process(config)
 
     elif config.hpc.jobid == -1:  # Sequential
         pre_processing(config)
@@ -108,3 +122,7 @@ def main(config):
     else:
         sleep(3*config.hpc.jobid)  # Just to asynchronize the jobs
         process(config)
+
+
+if __name__ == '__main__':
+    main()

@@ -53,7 +53,7 @@ The following problem-specific characteristics are used as features for the clas
 | File/Folder | Description |
 |-------------|-------------|
 | `main.py` | Main script to run the experiment |
-| `config.yaml` | Configuration file for the experiment |
+| `configs/` | Folder for configuration files for the experiment |
 | `README.md` | Explanation of this experiment |
 | `img/` | Folder with images used in this file |
 | `pbsjob.sh` | TORQUE job file to run the experiment in a cluster |
@@ -71,7 +71,9 @@ The following problem-specific characteristics are used as features for the clas
 
 ### Running the experiment on your local machine
 
-1. Navigate to this folder and run `python main.py`
+1. Navigate to this folder and run `python main.py --config-name <classifier>`
+
+> The `<classifier>` argument should be the name of the classifier you want to use. The available classifiers are the names of the `.yaml` files in the `configs/` folder.
 
 ### Running the experiment on a TORQUE cluster
 
@@ -95,7 +97,9 @@ The `.hydra` subdirectory contains the `config.yaml` file used to run the experi
 
 The following subdirectories are created:
 
-* `performance_profile`: Contains `.csv` files with the first columnname[^2] as the classifier used and the rows the performance profile for each value of $f$.
+* `performance_profile_csv`: Contains `.csv` files with the first columnname[^2] as the classifier used and the rows the performance profile for each value of $f$.
+* `performance_profile`: Contains `.png` images of the performance profile for each value of $f$.
+* `confusion matrix`: Contains the `.png` image files with the confusion matrix.
 
 
 [^2]: Other columns contain the static optimizers, the best and the worst strategy.
@@ -108,7 +112,6 @@ The `output` column of the `ExperimentData` object will contain columns for the 
 * `precision`
 * `recall`
 * `f1`
-* `confusion matrix`
 
 Lastly, a log file `main.log` is created.
 
@@ -119,10 +122,24 @@ outputs/
 └── 2023-11-06/
     └── 13-50-14/
         ├── .hydra/
-        ├── performance_profile/
+        ├── configs/
+        │   ├── config.yaml
+        │   ├── knn.yaml
+        │   ├── ...
+        │   └── tree.yaml
+        │   ...        
+        ├── performance_profile_csv/
         │   ├── 0.csv
         │   ├── 1.csv
         │   └── 2.csv
+        ├── performance_profile/
+        │   ├── 0.png
+        │   ├── 1.png
+        │   └── 2.png
+        ├── confusion_matrix/
+        │   ├── 0.png
+        │   ├── 1.png
+        │   └── 2.png
         ├── experiment_data/
         │   ├── domain.pkl
         │   ├── input.csv
@@ -142,12 +159,12 @@ outputs/
 | test  | `str` | Project directory path to the testing dataset  |
 
 ### Domain
-#### Classifier model name
+#### Classifier
 | Name       | Type     | Description                |
 |------------|----------|----------------------------|
 | value | `str`     | Name of classifier (implemented by `l2co`) |
 
-_arbitrary number of hyperparameters for the classifier can be added_
+_arbitrary number of discrete or categorical hyperparameters for the classifier can be added_
 
 
 ### Experiment Data
@@ -159,6 +176,11 @@ _arbitrary number of hyperparameters for the classifier can be added_
 | n_samples    | `int`    | Number of samples       |
 | domain       | `f3dasm.Domain` | `f3dasm` Domain object ([reference](https://f3dasm.readthedocs.io/en/latest/rst_doc_files/classes/design/domain.html))            |
 
+#### Project Directory
+
+| Name         | Type   | Description            |
+|--------------|--------|------------------------|
+| project_dir  | `str` | Name of the project directory path |
 
 ### HPC
 | Name   | Type | Description  |

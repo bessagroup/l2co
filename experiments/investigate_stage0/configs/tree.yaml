@@ -1,0 +1,13 @@
+defaults:
+  - config
+
+domain:
+  classifier:
+    type: category
+    categories: ["DecisionTree"]
+
+  criterion:
+    type: category
+    categories: ["gini", "entropy"]
+
+project_dir: tree

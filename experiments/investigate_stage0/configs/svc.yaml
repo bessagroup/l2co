@@ -1,0 +1,17 @@
+defaults:
+  - config
+
+domain:
+  classifier:
+    type: category
+    categories: ["SVC"]
+
+  multiclass_mode:
+    type: category
+    categories: ["one-vs-rest", "one-vs-one"]
+
+  kernel:
+    type: category
+    categories: ["linear", "poly", "rbf", "sigmoid"]
+
+project_dir: svc

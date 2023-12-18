@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 from f3dasm import ExperimentData
@@ -186,3 +187,33 @@ def create_performance_profile(
             )
 
     return pp_to_dataset
+
+
+def plot_performance_profile(performance_profile: xr.Dataset,
+                             strategy_names: Optional[List[str]] = None):
+
+    if strategy_names is None:
+        strategy_names = []
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+    ax.set_xscale('log')
+    # ax.set_yscale('log')
+    for optimizer in performance_profile.data_vars:
+        linewidth = 1
+        linestyle = '-'
+
+        if optimizer in strategy_names:
+            # make the line thicker
+            linewidth = 3
+
+        if optimizer not in ['CMAES', 'LBFGSB', 'Adam', 'PSO']:
+            # change line to dashed
+            linestyle = '--'
+
+        ax.plot(performance_profile.f,
+                performance_profile[optimizer],
+                label=optimizer, linewidth=linewidth,
+                linestyle=linestyle)
+
+    ax.legend()
+    return fig

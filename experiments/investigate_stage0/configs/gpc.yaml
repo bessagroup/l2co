@@ -1,0 +1,9 @@
+defaults:
+  - config
+
+domain:
+  classifier:
+    type: category
+    categories: ["GPC"]
+
+project_dir: gpc

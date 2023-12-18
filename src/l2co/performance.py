@@ -329,3 +329,16 @@ def collaborative_filtering(sparse_ds: xr.DataArray) -> xr.DataArray:
     # cast to xr.DataArray
     return complete_df.set_index(
         ['itemID', 'optimizer']).to_xarray()['performance']
+
+
+def constrain_on_first_optimizer(
+        performance: xr.DataArray, query: str = '') -> xr.DataArray:
+    return performance.sel(
+        optimizer=[o for o in performance.optimizer.values
+                   if o.startswith(query)])
+
+
+def select_optimizers_without_switch(performance: xr.DataArray):
+    return performance.sel(
+        optimizer=[o.values for
+                   o in performance.optimizer if '+' not in str(o.values)])

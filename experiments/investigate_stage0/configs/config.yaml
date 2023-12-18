@@ -1,0 +1,22 @@
+defaults:
+  - override hydra/job_logging: custom
+
+experimentdata:
+  from_sampling:
+    sampler: "grid"
+    seed: 2023
+    n_samples: 0
+    domain: ${domain}
+
+data:
+  training: /home/martin/Documents/538734.hpc06.hpc
+  testing:
+
+mode: cluster
+
+hpc:
+  jobid: -1
+
+log_level: 20
+
+test_size: 0.2

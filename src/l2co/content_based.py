@@ -111,7 +111,8 @@ def _get_not_encoded_labels(
     return labels
 
 
-def get_labels(experimentdata: ExperimentData, n_realizations: int) -> xr.DataArray:
+def get_labels(experimentdata: ExperimentData,
+               n_realizations: int) -> xr.DataArray:
     """
     Get labels for each itemID in the experimentdata.
 
@@ -261,3 +262,19 @@ def predict_zero(
     prediction = ds_comb.optimizer[int(
         (ds_comb.features * scaled).sum(dim='itemID').argmin())].item()
     return prediction
+
+
+def trim(arr, query):
+    # check if query is empty separator
+    if query == '':
+        trim_start = arr.values
+
+    else:
+        trim_start = [i.split(query)[1].lstrip('+')
+                      if i != query else i for i in arr.values]
+
+    trim_end = [i.split('+')[0] for i in trim_start]
+
+    return xr.DataArray(
+        np.array(trim_end),
+        dims=arr.dims, coords=arr.coords)
