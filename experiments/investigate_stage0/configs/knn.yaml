@@ -15,3 +15,5 @@ domain:
     categories: ["uniform", "distance"]
 
 project_dir: knn
+
+regression: False

@@ -1,6 +1,8 @@
 defaults:
   - override hydra/job_logging: custom
 
+regression: False
+
 experimentdata:
   from_sampling:
     sampler: "grid"

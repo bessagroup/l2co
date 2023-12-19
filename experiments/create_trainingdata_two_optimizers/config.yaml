@@ -111,7 +111,7 @@ optimization:
     - name: PSO
     - name: Adam
     - name: LBFGSB
-  fraction_of_all_combinations: 0.3
+  fraction_of_all_combinations: 1.0
 
 hpc:
   jobid: -1

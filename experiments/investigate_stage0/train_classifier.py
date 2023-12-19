@@ -99,7 +99,8 @@ class ClassifierConstructer(DataGenerator):
             f"Created features for {features.problem.size} problems")
         return features
 
-    def create_labels(self, performance: xr.DataArray) -> xr.DataArray:
+    def create_labels(self, performance: xr.DataArray,
+                      regression: bool = False) -> xr.DataArray:
         """
         Create labels for each itemID in the experimentdata.
 
@@ -107,45 +108,74 @@ class ClassifierConstructer(DataGenerator):
         ----------
         performance : xarray.DataArray
             The performance data.
+        regression : bool, optional
+            Whether to return regression labels instead
+            of classification labels, by default False
 
         Returns
         -------
         xarray.DataArray
             A dataframe with the labels for each itemID.
         """
-        labels = performance.idxmin(dim='optimizer').expand_dims(
-            dim={'realization': np.arange(self.n_realizations)}
-        ).stack(problem=['itemID', 'realization']).astype('U100')
+        if regression:
+            return performance.expand_dims(
+                dim={'realization': np.arange(self.n_realizations)}
+            ).stack(problem=['itemID', 'realization']).T
 
-        return labels
+        else:
+            return performance.idxmin(dim='optimizer').expand_dims(
+                dim={'realization': np.arange(self.n_realizations)}
+            ).stack(problem=['itemID', 'realization']).astype('U100')
 
     def train_classifier(
             self, clf, y_train: xr.DataArray) -> tree.DecisionTreeClassifier:
         clf.fit(self.X_train, y_train)
         return clf
 
-    def predict(self, clf) -> xr.DataArray:
+    def predict(self, clf, optimizers,
+                regression: bool = False) -> xr.DataArray:
         _data_test = self._data_test.stack(problem=['itemID', 'realization'])
 
         # Predict for testing data
         predictions = clf.predict(self.X_test)
-        return xr.DataArray(predictions, dims='problem', coords={
-            'problem': _data_test.problem}, name=self.create_classifier_name())
+
+        if regression:
+
+            xarr_predictions = xr.DataArray(
+                predictions, dims=['problem', 'optimizer'],
+                coords={'problem': _data_test.problem,
+                        'optimizer': optimizers},
+                name=self.create_classifier_name())
+
+            return xarr_predictions.idxmin(
+                dim='optimizer', keep_attrs=True).rename(
+                    self.create_classifier_name())
+
+        else:
+            return xr.DataArray(predictions, dims='problem', coords={
+                'problem': _data_test.problem},
+                name=self.create_classifier_name())
 
     def create_classifier_name(self) -> str:
-        return self.config.project_dir
+        name = '_'.join(str(v)
+                        for v in self.experiment_sample.input_data.values())
+        return name
 
     def execute(self):
         clf = create_classifier(self.experiment_sample)
 
         y_train = self.create_labels(
-            performance=self.performance_train)
+            performance=self.performance_train,
+            regression=self.config.regression)
         y_test = self.create_labels(
-            performance=self.performance_test)
+            performance=self.performance_test,
+        )
 
         clf = self.train_classifier(clf, y_train)
 
-        da_predictions = self.predict(clf)
+        da_predictions = self.predict(
+            clf, optimizers=self.performance_test.optimizer,
+            regression=self.config.regression)
 
         # CLASSIFIER METRICS
         self.calculate_classifier_metrics(y_pred=da_predictions,
@@ -158,6 +188,10 @@ class ClassifierConstructer(DataGenerator):
             strategies=[da_predictions])
 
         performance_profile.load()
+
+        self.experiment_sample.store(
+            object=performance_profile.to_pandas(),
+            name='performance_profile_csv', to_disk=True)
 
         # Plot the performance profile
         fig_perf_profile = plot_performance_profile(
@@ -191,11 +225,12 @@ class ClassifierConstructer(DataGenerator):
         fig_confusion_matrix, ax_confusion_matrix = plt.subplots(
             figsize=(16, 16))
 
-        ax_confusion_matrix = sns.heatmap(confusion_matrix_,
-                                          annot=True, fmt='d',
-                                          xticklabels=clf.classes_,
-                                          yticklabels=clf.classes_,
-                                          ax=ax_confusion_matrix)
+        ax_confusion_matrix = sns.heatmap(
+            confusion_matrix_,
+            annot=True, fmt='d',
+            xticklabels=self.performance_test.optimizer.values,
+            yticklabels=self.performance_test.optimizer.values,
+            ax=ax_confusion_matrix)
 
         self.experiment_sample.store(
             object=fig_confusion_matrix,

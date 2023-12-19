@@ -15,3 +15,5 @@ domain:
     categories: ["linear", "poly", "rbf", "sigmoid"]
 
 project_dir: svc
+
+regression: False

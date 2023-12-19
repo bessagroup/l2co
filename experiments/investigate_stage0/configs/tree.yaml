@@ -11,3 +11,5 @@ domain:
     categories: ["gini", "entropy"]
 
 project_dir: tree
+
+regression: False

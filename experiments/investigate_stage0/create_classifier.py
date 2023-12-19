@@ -1,6 +1,11 @@
 from f3dasm import ExperimentSample
-from sklearn.gaussian_process import GaussianProcessClassifier
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.gaussian_process import (GaussianProcessClassifier,
+                                      GaussianProcessRegressor)
+from sklearn.gaussian_process.kernels import (RBF, ConstantKernel,
+                                              ExpSineSquared, Matern)
 from sklearn.multiclass import OneVsOneClassifier, OneVsRestClassifier
+from sklearn.multioutput import MultiOutputRegressor
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
@@ -21,6 +26,40 @@ def create_classifier(es: ExperimentSample):
 
     elif classifier_name == 'GPC':
         return create_gpc(es)
+
+    elif classifier_name == 'GPR':
+        return create_gpr(es)
+
+    elif classifier_name == 'GradientBoostingRegressor':
+        return create_gradientboostingregressor(es)
+
+
+def create_gpr(es: ExperimentSample):
+    kernel = es.get('kernel')
+
+    if kernel == 'RBF':
+        kernel = ConstantKernel(1.0, constant_value_bounds="fixed") * \
+            RBF(1.0, length_scale_bounds="fixed")
+
+    elif kernel == 'ExpSineSquared':
+        kernel = ConstantKernel(1.0, constant_value_bounds="fixed") * \
+            ExpSineSquared(1.0, length_scale_bounds="fixed",
+                           periodicity_bounds="fixed")
+
+    elif kernel == 'Matern':
+        kernel = ConstantKernel(1.0, constant_value_bounds="fixed") * \
+            Matern(1.0, length_scale_bounds="fixed", nu=1.5)
+
+    return MultiOutputRegressor(GaussianProcessRegressor(kernel=kernel))
+
+
+def create_gradientboostingregressor(es: ExperimentSample):
+    learning_rate = es.get('learning_rate')
+    n_estimators = es.get('n_estimators')
+    return MultiOutputRegressor(
+        GradientBoostingRegressor(random_state=0,
+                                  n_estimators=n_estimators,
+                                  learning_rate=learning_rate))
 
 
 def create_decisiontree(es: ExperimentSample):
