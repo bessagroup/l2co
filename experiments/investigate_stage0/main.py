@@ -73,11 +73,12 @@ def process(config):
     # Retrieve the training and testing data
     training_data = f3dasm.ExperimentData.from_file(config.data.training)
 
-    # FOR THIS EXPERIMENT ONLY!!
-    # training_data = training_data.select(
-    #     range(30)).select_with_status('finished')
+    if config.portion is not None:
+        training_data = training_data.select(
+            range(config.portion)).select_with_status('finished')
 
-    training_data = training_data.select_with_status('finished')
+    else:
+        training_data = training_data.select_with_status('finished')
 
     if config.data.testing is not None:
         testing_data = f3dasm.ExperimentData.from_file(config.data.testing)

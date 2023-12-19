@@ -22,3 +22,7 @@ hpc:
 log_level: 20
 
 test_size: 0.2
+
+debug: True
+
+portion: 30

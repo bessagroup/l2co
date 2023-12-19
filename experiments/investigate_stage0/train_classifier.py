@@ -177,6 +177,11 @@ class ClassifierConstructer(DataGenerator):
             clf, optimizers=self.performance_test.optimizer,
             regression=self.config.regression)
 
+        if self.config.debug:
+            self.experiment_sample.store(
+                object=da_predictions.unstack('problem'),
+                name='da_predictions', to_disk=True)
+
         # CLASSIFIER METRICS
         self.calculate_classifier_metrics(y_pred=da_predictions,
                                           y_test=y_test,

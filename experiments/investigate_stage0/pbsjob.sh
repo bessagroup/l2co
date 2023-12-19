@@ -58,6 +58,8 @@ python main.py --config-name tree ++hpc.jobid=${PBS_ARRAYID} hydra.run.dir=outpu
 python main.py --config-name knn ++hpc.jobid=${PBS_ARRAYID} hydra.run.dir=outputs/${now:%Y-%m-%d}/${JOB_ID}
 python main.py --config-name svc ++hpc.jobid=${PBS_ARRAYID} hydra.run.dir=outputs/${now:%Y-%m-%d}/${JOB_ID}
 python main.py --config-name gpc ++hpc.jobid=${PBS_ARRAYID} hydra.run.dir=outputs/${now:%Y-%m-%d}/${JOB_ID}
+python main.py --config-name gpr ++hpc.jobid=${PBS_ARRAYID} hydra.run.dir=outputs/${now:%Y-%m-%d}/${JOB_ID}
+python main.py --config-name gradientboostingregressor ++hpc.jobid=${PBS_ARRAYID} hydra.run.dir=outputs/${now:%Y-%m-%d}/${JOB_ID}
 
 # job done, copy everything back
 # echo "Copying from ${TMP}/ to ${PBS_O_WORKDIR}/"
