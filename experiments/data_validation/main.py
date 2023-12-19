@@ -11,7 +11,7 @@ from f3dasm import ExperimentData
 from l2co._logging import logger as l2co_logger
 
 
-@hydra.main(config_path=".", config_name="data_validation")
+@hydra.main(config_path=".", config_name="config")
 def main(config):
 
     # Create child logger
