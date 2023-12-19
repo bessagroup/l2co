@@ -1,5 +1,7 @@
 import logging
 from pathlib import Path
+from time import perf_counter
+from typing import List
 
 import hydra
 import numpy as np
@@ -27,6 +29,10 @@ def main(config):
 
     logger.info(f"Loaded experiment data from {config.project_dir}")
 
+    # Select portion if applicable
+    if config.portion is not None:
+        experiment_data_all = experiment_data_all.select(range(config.portion))
+
     experiment_data = experiment_data_all.select_with_status('finished')
 
     logger.info(
@@ -37,21 +43,46 @@ def main(config):
     # preceed every entry of df_output with experimentdata.project_dir
     df_output = df_output.apply(lambda x: experiment_data.project_dir / x)
 
-    # don't in clude the column 'random_samples'
+    # don't include the column 'random_samples'
     df_output = df_output.drop(columns=['random_samples'])
 
-    files = df_output.values.tolist()
+    files: List[List[Path]] = df_output.values.tolist()
 
     # First file
-    xarr = xr.open_dataset(np.array(files).ravel()[0])
+    xarr_file = xr.open_dataset(np.array(files).ravel()[0])
+    xarr_experiment = xr.open_mfdataset(files[0])
 
-    for index, file in enumerate(np.array(files).ravel()):
-
+    for index, experiment in enumerate(files):
         logger.info(
-            f"({index+1} / {len(np.array(files).ravel())}) - validating {file}")
-        _x = xr.open_dataset(file)
+            f"({index+1} / {len(files)}) - Validating experiment {experiment[0].stem}")
+        for file in experiment:
+            logger.debug(
+                f"({index+1} / {len(np.array(files).ravel())}) - Validating file {file}")
+            _file = xr.open_dataset(file)
 
-        validation(xarr, _x, file, warning_logger)
+            validation(xarr_file, _file, file, warning_logger)
+
+        _exp = xr.open_mfdataset(experiment)
+        validate_experiment(xarr_experiment, _exp, experiment, warning_logger)
+
+    # Open the whole thing:
+    t_start = perf_counter()
+    logger.info("Opening the whole thing")
+    _ = xr.open_mfdataset(
+        files, concat_dim=['itemID', 'optimizer'], combine='nested')
+    logger.info(
+        f"Finished opening the whole thing (Took {perf_counter() - t_start} seconds)")
+
+
+def validate_experiment(expected_xarr: xr.Dataset, actual_xarr: xr.Dataset, filenames: List[Path], warning_logger):
+    if not all(expected_xarr.optimizer == actual_xarr.optimizer):
+        warning_logger.warning(f'{filenames} has different optimizers')
+
+    if not all(expected_xarr.output_dim == actual_xarr.output_dim):
+        warning_logger.warning(f'{filenames} has different output dimensions')
+    # for file in filenames:
+    #     _file = xr.open_dataset(file)
+    #     validation(expected_xarr, _file, file, warning_logger)
 
 
 def validation(
