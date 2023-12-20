@@ -94,7 +94,7 @@ experimentdata:
   from_sampling:
     sampler: "random"
     seed: 2023
-    n_samples: 20
+    n_samples: 2000
     domain: ${domain}
 
 mode: cluster
@@ -103,7 +103,7 @@ optimization:
   lower_bound: 0.0
   upper_bound: 1.0
   sampler_name: "latin"
-  number_of_samples: 30
+  number_of_samples: 0
   realizations: 3
   parallelization: True
   optimizers:

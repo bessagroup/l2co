@@ -1,3 +1,4 @@
 project_dir: '/home/martin/Documents/538734.hpc06.hpc'
 log_level: 20
 portion: 30
+select_output_and_combine: True

@@ -68,10 +68,14 @@ def main(config):
     # Open the whole thing:
     t_start = perf_counter()
     logger.info("Opening the whole thing")
-    _ = xr.open_mfdataset(
+    xarr_full = xr.open_mfdataset(
         files, concat_dim=['itemID', 'optimizer'], combine='nested')
     logger.info(
         f"Finished opening the whole thing (Took {perf_counter() - t_start} seconds)")
+
+    if config.select_output_and_combine:
+        xarr_only_output = xarr_full.drop('input')
+        xarr_only_output.load().to_netcdf('entire_dataset.nc')
 
 
 def validate_experiment(expected_xarr: xr.Dataset, actual_xarr: xr.Dataset, filenames: List[Path], warning_logger):
