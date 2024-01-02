@@ -187,7 +187,30 @@ def _get_metric(
     return _calculate_metric(ds, baseline)
 
 
-def get_performance(experimentdata: ExperimentData) -> xr.Dataset:
+def _get_metric_preprocessed(
+        ds: xr.Dataset, ds_samples: xr.Dataset, index: int):
+    return _calculate_metric(
+        ds.sel(itemID=index),
+        _randomsearch_baseline(ds_samples.sel(itemID=index),
+                               size=len(ds.iterations)))
+
+
+def get_performance_preprocessed(ds_all: xr.Dataset,
+                                 ds_random: xr.Dataset) -> xr.DataArray:
+    t_start = perf_counter()
+    combined = xr.concat([_get_metric_preprocessed(ds_all, ds_random, i)
+                         for i in ds_all.itemID], dim=ds_all.itemID)
+
+    combined = combined.drop('output_dim')
+    combined = combined.rename('performance')
+
+    logger.info(
+        f"Performance dataset preprocessed dataset! "
+        f"(Took {perf_counter() - t_start:.2f} s)")
+    return combined
+
+
+def get_performance(experimentdata: ExperimentData) -> xr.DataArray:
     """
     Generate a dataset that captures the performance of an optimizer
     on a benchmark function as function of the number of function evaluations.
@@ -201,8 +224,8 @@ def get_performance(experimentdata: ExperimentData) -> xr.Dataset:
 
     Returns
     -------
-    xarray.Dataset
-        xarray Dataset object containing a floating point value for
+    xarray.DataArray
+        xarray DataArray object containing a floating point value for
         the performance of the optimizers on benchmark functions as a function
         of the number of function evaluations.
 
@@ -213,7 +236,7 @@ def get_performance(experimentdata: ExperimentData) -> xr.Dataset:
         a xarray Dataset object containing random samples. This needs to be
         specified for all the experiments.
 
-    The dataset has three coordinates:
+    The dataarray has three coordinates:
         - optimizer: the name of the first and second optimizer (str)
         - itemID: an identifier for the benchmark function (int)
         - iterations: the number of function evaluations (int)

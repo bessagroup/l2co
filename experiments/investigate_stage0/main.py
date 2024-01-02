@@ -22,6 +22,7 @@ from time import sleep
 # Third-party
 import f3dasm
 import hydra
+import xarray as xr
 from f3dasm import logger as f3dasm_logger
 from train_classifier import ClassifierConstructer
 
@@ -70,26 +71,44 @@ def process(config):
         data = f3dasm.ExperimentData.from_file(
             Path().cwd() / config.project_dir)
 
-    # Retrieve the training and testing data
-    training_data = f3dasm.ExperimentData.from_file(config.data.training)
+    if 'from_experimentdata' in config.data:
+        # Retrieve the training and testing data
+        training_data = f3dasm.ExperimentData.from_file(
+            config.data.from_experimentdata.training)
 
-    if config.portion is not None:
-        training_data = training_data.select(
-            range(config.portion)).select_with_status('finished')
+        if config.portion is not None:
+            training_data = training_data.select(
+                range(config.portion)).select_with_status('finished')
 
-    else:
-        training_data = training_data.select_with_status('finished')
+        else:
+            training_data = training_data.select_with_status('finished')
 
-    if config.data.testing is not None:
-        testing_data = f3dasm.ExperimentData.from_file(config.data.testing)
+        if config.data.from_experimentdata.testing is not None:
+            testing_data = f3dasm.ExperimentData.from_file(
+                config.data.from_experimentdata.testing)
 
-    else:
-        testing_data = None
+        else:
+            testing_data = None
 
-    # Construct the classifier constructer
-    classifier = ClassifierConstructer(config=config,
-                                       training_data=training_data,
-                                       testing_data=testing_data)
+        # Construct the classifier constructer
+        classifier = ClassifierConstructer.from_experimentdata(
+            config=config,
+            training_data=training_data,
+            testing_data=testing_data)
+
+    elif 'from_preprocessed_files' in config.data:
+        experimentdata = f3dasm.ExperimentData.from_file(
+            config.data.from_preprocessed_files.experimentdata)
+
+        ds = xr.open_dataset(config.data.from_preprocessed_files.ds)
+        ds_samples = xr.open_dataset(
+            config.data.from_preprocessed_files.ds_samples)
+
+        classifier = ClassifierConstructer.from_preprocessed_files(
+            config=config,
+            experimentdata=experimentdata,
+            ds=ds,
+            ds_samples=ds_samples)
 
     # Evaluate the different classifiers
     data.evaluate(classifier,
