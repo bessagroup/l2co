@@ -24,10 +24,11 @@ import f3dasm
 import hydra
 import xarray as xr
 from f3dasm import logger as f3dasm_logger
-from train_classifier import ClassifierConstructer
 
 # Local
 from l2co._logging import logger as logger
+from l2co.data_loader import DataLoader
+from l2co.trainer import ClassifierConstructor
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -71,30 +72,21 @@ def process(config):
         data = f3dasm.ExperimentData.from_file(
             Path().cwd() / config.project_dir)
 
+    # Load the data to DataLoaders
     if 'from_experimentdata' in config.data:
-        # Retrieve the training and testing data
-        training_data = f3dasm.ExperimentData.from_file(
-            config.data.from_experimentdata.training)
-
-        if config.portion is not None:
-            training_data = training_data.select(
-                range(config.portion)).select_with_status('finished')
-
-        else:
-            training_data = training_data.select_with_status('finished')
+        data_full = DataLoader.from_experimentdata(
+            config=config,
+            experimentdata=config.data.from_experimentdata.training)
 
         if config.data.from_experimentdata.testing is not None:
-            testing_data = f3dasm.ExperimentData.from_file(
-                config.data.from_experimentdata.testing)
+            data_train, data_test = data_full.train_test_split(
+                test_size=config.test_size)
 
         else:
-            testing_data = None
-
-        # Construct the classifier constructer
-        classifier = ClassifierConstructer.from_experimentdata(
-            config=config,
-            training_data=training_data,
-            testing_data=testing_data)
+            data_train = data_full
+            data_test = DataLoader.from_experimentdata(
+                config=config,
+                experimentdata=config.data.from_experimentdata.testing)
 
     elif 'from_preprocessed_files' in config.data:
         experimentdata = f3dasm.ExperimentData.from_file(
@@ -104,14 +96,21 @@ def process(config):
         ds_samples = xr.open_dataset(
             config.data.from_preprocessed_files.ds_samples)
 
-        classifier = ClassifierConstructer.from_preprocessed_files(
+        data_full = DataLoader.from_preprocessed_files(
             config=config,
             experimentdata=experimentdata,
-            ds=ds,
-            ds_samples=ds_samples)
+            data=ds,
+            data_samples=ds_samples)
+
+        data_train, data_test = data_full.train_test_split(
+            test_size=config.test_size)
+
+    # Construct the classifier
+    classifier_constructor = ClassifierConstructor(
+        config=config, data_train=data_train, data_test=data_test)
 
     # Evaluate the different classifiers
-    data.evaluate(classifier,
+    data.evaluate(classifier_constructor,
                   mode=config.mode)
 
     if config.mode == 'sequential':

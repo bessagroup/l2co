@@ -16,9 +16,9 @@ data:
   #   testing:
 
   from_preprocessed_files:
-    experimentdata: /home/martin/Documents/543654.hpc06.hpc
-    ds: /home/martin/Documents/543654.hpc06.hpc/entire_dataset.nc
-    ds_samples: /home/martin/Documents/543654.hpc06.hpc/entire_dataset_samples.nc
+    experimentdata: /home/martin/Documents/543699.hpc06.hpc
+    ds: /home/martin/Documents/543699.hpc06.hpc/entire_dataset.nc
+    ds_samples: /home/martin/Documents/543699.hpc06.hpc/entire_dataset_samples.nc
 
 mode: cluster
 
