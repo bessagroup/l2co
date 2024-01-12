@@ -31,4 +31,4 @@ test_size: 0.2
 
 debug: True
 
-portion: 30
+portion:

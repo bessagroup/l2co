@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from itertools import cycle
 from typing import List, Optional
 
+import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
@@ -190,12 +192,19 @@ def create_performance_profile(
 
 
 def plot_performance_profile(performance_profile: xr.Dataset,
-                             strategy_names: Optional[List[str]] = None):
+                             strategy_names: Optional[List[str]] = None,
+                             ax=None, ax2=None):
 
     if strategy_names is None:
         strategy_names = []
 
-    fig, ax = plt.subplots(figsize=(10, 7))
+    legend_patches = []
+    color_cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    color_cycle_iter = cycle(color_cycle)
+
+    if ax is None:
+        fig, (ax, ax2) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [
+            4, 1]}, figsize=(10, 7))
     ax.set_xscale('log')
     # ax.set_yscale('log')
     for optimizer in performance_profile.data_vars:
@@ -210,10 +219,18 @@ def plot_performance_profile(performance_profile: xr.Dataset,
             # change line to dashed
             linestyle = '--'
 
+        legend_patches.append(mpatches.Patch(
+            color=next(color_cycle_iter),
+            label=optimizer, linestyle=linestyle))
+
         ax.plot(performance_profile.f,
                 performance_profile[optimizer],
                 label=optimizer, linewidth=linewidth,
                 linestyle=linestyle)
 
-    ax.legend()
-    return fig
+    ax2.legend(handles=legend_patches, loc='center',
+               ncol=len(legend_patches) // 3, fontsize='small')
+
+    ax2.axis('off')
+
+    return ax

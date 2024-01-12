@@ -8,11 +8,14 @@ Module containing a data loader class for stage0 of the L2CO framework.
 from __future__ import annotations
 
 # Standard
-from functools import cached_property
-from typing import Tuple
+from functools import cached_property, lru_cache
+from typing import Optional, Tuple
 
+import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
 # Third-party
 import numpy as np
+import pandas as pd
 import xarray as xr
 from f3dasm import ExperimentData
 from omegaconf import DictConfig
@@ -34,6 +37,11 @@ __status__ = 'Stable'
 
 # create a logger
 logger = l2co_logger.getChild(__name__)
+
+# make sure no plots are showing
+plt.ioff()
+
+# =============================================================================
 
 
 class DataLoader():
@@ -105,6 +113,10 @@ class DataLoader():
         ).stack(problem=['itemID', 'realization']).T
 
     @property
+    def features(self) -> xr.DataArray:
+        return self.X.features
+
+    @property
     def problem(self) -> xr.DataArray:
         """
         Property method to return the problem coordinate
@@ -134,7 +146,9 @@ class DataLoader():
                             name='optimizer')
 
     def train_test_split(
-            self, test_size: float = 0.2) -> Tuple[DataLoader, DataLoader]:
+            self,
+            test_size: float = 0.2, random_state: Optional[int] = None
+    ) -> Tuple[DataLoader, DataLoader]:
         """
         Split the data into train and test sets.
 
@@ -142,6 +156,8 @@ class DataLoader():
         ----------
         test_size : float, optional
             The size of the test set, by default 0.2
+        random_state : int, optional
+            The random state, by default None
 
         Returns
         -------
@@ -149,12 +165,13 @@ class DataLoader():
             The train and test data loaders.
         """
         _X_train_indices, _X_test_indices, = train_test_split(
-            self.X.unstack('problem').itemID, test_size=test_size)
+            self.X.unstack('problem').itemID, test_size=test_size,
+            random_state=random_state)
 
         X_train = self.X.unstack('problem').sel(
-            itemID=_X_train_indices).stack(problem=['realization', 'itemID'])
+            itemID=_X_train_indices).stack(problem=['itemID', 'realization'])
         X_test = self.X.unstack('problem').sel(
-            itemID=_X_test_indices).stack(problem=['realization', 'itemID'])
+            itemID=_X_test_indices).stack(problem=['itemID', 'realization'])
 
         _data_train = self.data.sel(itemID=_X_train_indices)
         _data_test = self.data.sel(itemID=_X_test_indices)
@@ -228,3 +245,93 @@ class DataLoader():
                    data=data,
                    performance=performance,
                    config=config)
+
+    @lru_cache(maxsize=1)
+    def y_binary(self, rel_tolerance: float = 0.1) -> xr.DataArray:
+        if rel_tolerance == 0.0:
+            return (self.y == self.performance.optimizer).T
+
+        else:
+            threshold = self.performance.min(
+                dim='optimizer') + abs(
+                    self.performance.min(dim='optimizer') * rel_tolerance)
+
+        return (self.performance <= threshold).expand_dims(
+            dim={'realization': np.arange(self.n_realizations)}
+        ).stack(problem=['itemID', 'realization']).T
+
+    def plot_performance_labels(self,
+                                y_pred: Optional[xr.DataArray] = None,
+                                rel_tolerance: float = 0.1,
+                                return_df: bool = False,
+                                ax=None,
+                                ax2=None,
+                                set_yticklabels: bool = True):
+
+        _X = self.X.unstack().stack(problem=('itemID', 'realization'))
+
+        if y_pred is None:
+            _y = self.y_binary(rel_tolerance=rel_tolerance)
+
+        else:
+            _y = (y_pred == self.performance.optimizer).T
+
+        grouped_Xy = pd.concat([_X.to_pandas(
+        ).T, _y.to_pandas()], axis=1)
+
+        df = grouped_Xy.groupby(
+            list(self.features.values)).mean().reset_index()
+
+        num_rows = len(df)
+        n_features = len(self.features)
+
+        col_optimizers = list(self.performance.optimizer.values)
+        df[col_optimizers] = df[col_optimizers].div(
+            df[col_optimizers].sum(axis=1), axis=0)
+
+        if ax is None:
+            fig, (ax, ax2) = plt.subplots(
+                2, 1, gridspec_kw={'height_ratios': [
+                    4, 1]}, figsize=(10, 0.5 * num_rows))
+
+        colors = ['skyblue', 'salmon', 'lightgreen',
+                  'gold', 'red']  # Define colors for each label
+
+        yticklabels = []
+
+        legend_patches = [mpatches.Patch(
+            color=colors[i], label=label) for i, label in enumerate(
+                df.columns[n_features:])]
+
+        for i, (_, row) in enumerate(df.iterrows()):
+            labels = row.index[n_features:]  # Excluding the feature columns
+            freq = row.values[n_features:]  # Excluding the feature values
+            if set_yticklabels:
+                yticklabels.append(
+                    ", ".join([f"{feature}: {value}" for
+                               feature, value in row[:n_features].items()]))
+            left = 0
+            for j, (label, value) in enumerate(zip(labels, freq)):
+                ax.barh(i, width=value, height=0.3, left=left,
+                        color=colors[j], label=label)
+                left += value
+
+        ax.set_yticks(np.arange(num_rows))
+        ax.set_yticklabels(yticklabels)
+        ax.set_xlabel('Frequency')
+        ax2.legend(handles=legend_patches, loc='center',
+                   ncol=len(legend_patches))
+
+        ax2.axis('off')
+        text = f"Relative tolerance: {rel_tolerance}"
+        if y_pred is None:
+            text += "- Test data"
+
+        else:
+            text += "- Predicted data"
+        ax.set_title(text)
+
+        if return_df:
+            return ax, df
+
+        return ax

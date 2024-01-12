@@ -6,6 +6,8 @@ Module containing various classifiers
 # =============================================================================
 
 # Third-party
+from typing import Any
+
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.gaussian_process import (GaussianProcessClassifier,
                                       GaussianProcessRegressor)
@@ -26,32 +28,46 @@ __status__ = 'Stable'
 
 
 class Classifier():
-    def __init__(self, model_name: str, regressor: bool = False, **parameters):
+    def __init__(self,
+                 model_name: str,
+                 regressor: bool,
+                 clf: Any,
+                 **parameters):
 
         self.model_name = model_name
         self.regressor = regressor
         self.parameters = parameters
+        self.clf = clf
 
-        self.clf = self._create_classifier()
+        # self.clf = self._create_classifier()
+        # self.name = self.create_name()
 
-    def _create_classifier(self):
-        if self.model_name == 'DecisionTree':
-            return create_decisiontree(self.parameters)
+    @property
+    def name(self) -> str:
+        return self.create_name()
 
-        elif self.model_name == 'SVC':
-            return create_svc(self.parameters)
+    @classmethod
+    def from_name(cls, model_name: str, regressor: bool = False, **parameters):
+        return cls(regressor=regressor,
+                   clf=create_classifier(model_name, **parameters)
+                   )
 
-        elif self.model_name == 'KNN':
-            return create_knn(self.parameters)
+    @classmethod
+    def from_sklearn_directly(cls, model_name: str,
+                              clf: Any, regressor: bool = False):
 
-        elif self.model_name == 'GPC':
-            return create_gpc(self.parameters)
+        return cls(model_name=model_name, regressor=regressor, clf=clf)
 
-        elif self.model_name == 'GPR':
-            return create_gpr(self.parameters)
+    def create_name(self) -> str:
+        name = self.model_name
 
-        elif self.model_name == 'GradientBoostingRegressor':
-            return create_gradientboostingregressor(self.parameters)
+        if self.regressor:
+            name += '_reg'
+
+        for key, value in self.parameters.items():
+            name += f'_{key}={value}'
+
+        return name
 
     def fit(self, X, y):
         self.clf.fit(X, y)
@@ -59,7 +75,30 @@ class Classifier():
     def predict(self, X):
         return self.clf.predict(X)
 
+    def predict_proba(self, X):
+        return self.clf.predict_proba(X)
+
 # =============================================================================
+
+
+def create_classifier(self, model_name: str, **parameters) -> Any:
+    if model_name == 'DecisionTree':
+        return create_decisiontree(parameters)
+
+    elif model_name == 'SVC':
+        return create_svc(parameters)
+
+    elif model_name == 'KNN':
+        return create_knn(parameters)
+
+    elif model_name == 'GPC':
+        return create_gpc(parameters)
+
+    elif model_name == 'GPR':
+        return create_gpr(parameters)
+
+    elif model_name == 'GradientBoostingRegressor':
+        return create_gradientboostingregressor(parameters)
 
 
 def create_gpr(parameters):
