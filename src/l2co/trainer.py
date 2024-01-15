@@ -61,42 +61,6 @@ class Trainer():
         self.confusion_matrix = None
         self.performance_profile = None
 
-    def train(self):
-        """
-        Train the classifier.
-
-        Parameters
-        ----------
-        clf : tree.DecisionTreeClassifier
-            The classifier.
-        """
-        if self.clf.regressor:
-            self.clf.fit(self.data_train.X, self.data_train.y_reg)
-        else:
-            self.clf.fit(self.data_train.X.T, self.data_train.y)
-
-    def predict(self) -> xr.DataArray:
-
-        # Predict for testing data
-        predictions = self.clf.predict(self.data_test.X.T)
-
-        if self.clf.regressor:
-
-            xarr_predictions = xr.DataArray(
-                predictions, dims=['problem', 'optimizer'],
-                coords={'problem': self.data_test.problem,
-                        'optimizer': self.data_test.optimizer},
-                name=self.name)
-
-            self.y_pred = xarr_predictions.idxmin(
-                dim='optimizer', keep_attrs=True).rename(
-                    self.name)
-
-        else:
-            self.y_pred = xr.DataArray(predictions, dims='problem', coords={
-                'problem': self.data_test.problem},
-                name=self.name)
-
     def create_performance_profile(self):
 
         self.performance_profile = create_performance_profile(
@@ -226,7 +190,7 @@ class Trainer():
         self.confusion_matrix = confusion_matrix(self.data_test.y, self.y_pred)
 
 
-class TrainerProbabilities(Trainer):
+class TrainerStage0(Trainer):
     def __init__(self, data_train: DataLoader,
                  data_test: DataLoader,
                  clf: Classifier, config: DictConfig,
@@ -243,7 +207,6 @@ class TrainerProbabilities(Trainer):
                      self.data_train.y_binary(self.rel_tolerance).to_pandas())
 
     def predict(self) -> xr.DataArray:
-
         y_pred_proba = xr.DataArray(
             np.array(self.clf.predict_proba(self.data_test.X.T.to_pandas()))[
                 :, :, 1].T,
@@ -260,15 +223,35 @@ class TrainerProbabilities(Trainer):
         # Use apply_ufunc to apply the function along the desired coordinates
         result = xr.apply_ufunc(
             random_choice_with_probabilities,
-            p.unstack(),
+            # p.unstack(),
+            p,
             input_core_dims=[['optimizer']],
             vectorize=True,
             dask='parallelized',
             output_dtypes=[object],
         )
 
-        self.y_pred = result.stack(problem=('itemID', 'realization')).astype(
-            'U100').rename(self.name)
+        # self.y_pred = result.stack(problem=('itemID', 'realization')).astype(
+        #     'U100').rename(self.name)
+
+        self.y_pred = result.rename(self.name)
+
+    def plot(self):
+        fig, ax = plt.subplots(4, 2, figsize=(15, 15), gridspec_kw={
+                               'height_ratios': [1, 0.25, 1, 0.25]})
+        axs = ax
+        _ = self.plot_confusion_matrix(ax=axs[0, 0], ax2=axs[1, 0])
+        _ = self.plot_performance_profile(
+            ax=axs[0, 1], ax2=axs[1, 1], show_combinations=False)
+        _ = self.data_test.plot_performance_labels(
+            rel_tolerance=self.rel_tolerance,
+            ax=axs[2, 0], ax2=axs[3, 0],
+            y_pred=self.y_pred, set_yticklabels=False)
+        _ = self.data_test.plot_performance_labels(
+            rel_tolerance=self.rel_tolerance,
+            ax=axs[2, 1], ax2=axs[3, 1], set_yticklabels=False)
+
+        return fig
 
 # =============================================================================
 
@@ -341,7 +324,7 @@ class ClassifierConstructorProba(DataGenerator):
         clf = Classifier.from_name(model_name=model_name,
                                    regressor=self.config.regression,
                                    **parameters)
-        trainer = TrainerProbabilities(
+        trainer = TrainerStage0(
             data_train=self.data_train, data_test=self.data_test,
             clf=clf, config=self.config,
             rel_tolerance=self.config.rel_tolerance)

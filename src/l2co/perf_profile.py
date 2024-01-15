@@ -171,7 +171,7 @@ def create_performance_profile(
         ds_output.min(dim=['optimizer', 'iterations']) + 1.0
 
     # Slice at the given total number of iterations
-    ds_budget = ds_positive.sel(iterations=iterations)
+    ds_budget = ds_positive.sel(iterations=iterations-1)
 
     # Calculate the performance profile
     performance_profile = calculate_performance_ratio(

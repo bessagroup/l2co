@@ -11,9 +11,9 @@ from __future__ import annotations
 from functools import cached_property, lru_cache
 from typing import Optional, Tuple
 
+# Third-party
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
-# Third-party
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -115,8 +115,8 @@ class DataLoader():
                                 experimentdata: ExperimentData,
                                 data: xr.Dataset, data_samples: xr.Dataset,
                                 select_single_optimizers: bool = True):
-        n_realizations = len(data.realization)
-        n_iterations = len(data.iterations)-2  # HAS TO BE -1
+        n_realizations = data.realization.size
+        n_iterations = data.iterations.size  # HAS TO BE -1
 
         # Features
         X = get_labels(experimentdata=experimentdata,
@@ -151,9 +151,14 @@ class DataLoader():
             'realization', and 'itemID'.
         """
         logger.debug("Creating labels")
-        return self.performance.idxmin(dim='optimizer').expand_dims(
+        # return self.performance.idxmin(dim='optimizer').expand_dims(
+        #     dim={'realization': np.arange(self.n_realizations)}
+        # ).stack(problem=['itemID', 'realization']).astype('U100')
+
+        return self.performance.expand_dims(
             dim={'realization': np.arange(self.n_realizations)}
-        ).stack(problem=['itemID', 'realization']).astype('U100')
+        ).stack(problem=['itemID', 'realization']
+                ).sel(problem=self.problem, drop=True).idxmin(dim='optimizer')
 
     @cached_property
     def y_reg(self) -> xr.DataArray:
@@ -187,9 +192,10 @@ class DataLoader():
         xarray.DataArray
             The problem coordinate.
         """
-        return self.X.unstack(
-            'problem').stack(
-                problem=['itemID', 'realization']).problem
+        return self.X.problem
+        # return self.X.unstack(
+        #     'problem').stack(
+        #         problem=['itemID', 'realization']).problem
 
     @property
     def optimizers(self) -> xr.DataArray:
@@ -215,17 +221,27 @@ class DataLoader():
         DataLoader
             The data loader with only the single optimizers.
         """
+        # TODO: select appropriate data with only single optimizers!
+
+        single_optimizers = [o.values for o in self.performance.optimizer
+                             if '+' not in str(o.values)]
+
+        performance = self.performance.sel(
+            optimizer=single_optimizers)
+
+        data = self.data.sel(optimizer=single_optimizers)
+
         return DataLoader(
             X=self.X,
             n_iterations=self.n_iterations,
             n_realizations=self.n_realizations,
-            performance=select_optimizers_without_switch(self.performance),
-            data=self.data,
+            performance=performance,
+            data=data,
             config=self.config,
             experimentdata=self.experimentdata
         )
 
-    def select(self, indices: np.ndarray) -> DataLoader:
+    def select(self, itemID_indices: np.ndarray) -> DataLoader:
         """
         Select a subset of itemIDs of the data loader.
 
@@ -245,13 +261,28 @@ class DataLoader():
         """
         return DataLoader(
             X=self.X.unstack('problem').sel(
-                itemID=indices).stack(problem=['itemID', 'realization']),
+                itemID=itemID_indices).stack(
+                    problem=['itemID', 'realization']),
             n_iterations=self.n_iterations,
             n_realizations=self.n_realizations,
-            performance=self.performance.sel(itemID=indices),
-            data=self.data.sel(itemID=indices),
+            performance=self.performance.sel(itemID=itemID_indices),
+            data=self.data.sel(itemID=itemID_indices),
             config=self.config,
-            experimentdata=self.experimentdata.select(indices))
+            experimentdata=self.experimentdata.select(itemID_indices))
+
+    def select_problems(self, problem_indices: xr.DataArray) -> DataLoader:
+        _problem_indices = problem_indices.sortby('itemID')
+        _unique_itemID = np.unique(problem_indices.itemID.values)
+        return DataLoader(
+            X=self.X.sel(problem=_problem_indices),
+            n_iterations=self.n_iterations,
+            n_realizations=self.n_realizations,
+            performance=self.performance.sel(
+                itemID=_unique_itemID),
+            data=self.data.sel(itemID=_unique_itemID),
+            config=self.config,
+            experimentdata=self.experimentdata.select(_unique_itemID)
+        )
 
     def query_t(self, t: int) -> DataLoader:
         """
@@ -268,12 +299,13 @@ class DataLoader():
             The queried data loader.
         """
         performance_t = query_t(self.performance, t=t)
+        data = self.data.sel(iterations=range(t))
         return DataLoader(
             X=self.X,
             n_iterations=t,
             n_realizations=self.n_realizations,
             performance=performance_t,
-            data=self.data,
+            data=data,
             config=self.config,
             experimentdata=self.experimentdata
         )
@@ -315,8 +347,6 @@ class DataLoader():
         config = self.config
 
         # Performance
-        # TODO: This is not correct!
-
         performance = self.performance.sel(
             optimizer=filtered_optimizer).assign_coords(
             optimizer=np.array(
@@ -371,7 +401,8 @@ class DataLoader():
 
         return (self.performance <= threshold).expand_dims(
             dim={'realization': np.arange(self.n_realizations)}
-        ).stack(problem=['itemID', 'realization']).T
+        ).stack(problem=['itemID', 'realization']
+                ).sel(problem=self.problem, drop=True).T
 
     def plot_performance_labels(self,
                                 y_pred: Optional[xr.DataArray] = None,
