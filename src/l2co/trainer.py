@@ -45,14 +45,13 @@ logger = l2co_logger.getChild(__name__)
 class Trainer():
     def __init__(self, data_train: DataLoader,
                  data_test: DataLoader,
-                 clf: Classifier, config: DictConfig,
-                 name: str = 'classifier'):
+                 clf: Classifier, config: DictConfig):
         self.data_train = data_train
         self.data_test = data_test
         self.clf = clf
         self.config = config
-        self.name = name
 
+        self.name = clf.model_name
         self.y_pred = None
         self.precision = None
         self.f1 = None
@@ -107,14 +106,15 @@ class Trainer():
 
         self.performance_profile.load()
 
-    def plot_performance_profile(self, ax=None, ax2=None):
+    def plot_performance_profile(
+            self, ax=None, ax2=None, show_combinations: bool = True):
         if self.performance_profile is None:
             self.create_performance_profile()
 
         ax = plot_performance_profile(
             self.performance_profile,
             strategy_names=[self.name],
-            ax=ax, ax2=ax2)
+            ax=ax, ax2=ax2, show_combinations=show_combinations)
 
         return ax
 
@@ -230,24 +230,22 @@ class TrainerProbabilities(Trainer):
     def __init__(self, data_train: DataLoader,
                  data_test: DataLoader,
                  clf: Classifier, config: DictConfig,
-                 name: str = 'classifier',
                  rel_tolerance: float = 0.0):
         super().__init__(data_train=data_train,
                          data_test=data_test,
                          clf=clf,
-                         config=config,
-                         name=name)
+                         config=config)
 
         self.rel_tolerance = rel_tolerance
 
     def train(self):
-        self.clf.fit(self.data_train.X.T,
-                     self.data_train.y_binary(self.rel_tolerance))
+        self.clf.fit(self.data_train.X.T.to_pandas(),
+                     self.data_train.y_binary(self.rel_tolerance).to_pandas())
 
     def predict(self) -> xr.DataArray:
 
         y_pred_proba = xr.DataArray(
-            np.array(self.clf.predict_proba(self.data_test.X.T))[
+            np.array(self.clf.predict_proba(self.data_test.X.T.to_pandas()))[
                 :, :, 1].T,
             dims=self.data_test.y_binary(self.rel_tolerance).dims,
             coords=self.data_test.y_binary(self.rel_tolerance).coords)
@@ -325,3 +323,62 @@ class ClassifierConstructor(DataGenerator):
         self.experiment_sample.store(object=trainer.plot_distribution_labels(),
                                      name="distribution_labels",
                                      to_disk=True)
+
+
+class ClassifierConstructorProba(DataGenerator):
+    def __init__(self, config: DictConfig,
+                 data_train: DataLoader,
+                 data_test: DataLoader):
+        self.config = config
+        self.data_train = data_train
+        self.data_test = data_test
+
+    def execute(self):
+        model_name = self.experiment_sample.get('classifier')
+        parameters = self.experiment_sample.input_data
+        del parameters['classifier']
+
+        clf = Classifier.from_name(model_name=model_name,
+                                   regressor=self.config.regression,
+                                   **parameters)
+        trainer = TrainerProbabilities(
+            data_train=self.data_train, data_test=self.data_test,
+            clf=clf, config=self.config,
+            rel_tolerance=self.config.rel_tolerance)
+
+        trainer.train()
+        trainer.predict()
+
+        trainer.calculate_classifier_metrics()
+        trainer.create_performance_profile()
+
+        if self.config.debug:
+            self.experiment_sample.store(
+                object=trainer.y_pred.unstack('problem'),
+                name='da_predictions', to_disk=True
+            )
+
+        self.experiment_sample.store(
+            object=trainer.precision, name='precision')
+        self.experiment_sample.store(object=trainer.recall, name='recall')
+        self.experiment_sample.store(object=trainer.f1, name='f1')
+        self.experiment_sample.store(object=trainer.accuracy, name='accuracy')
+        self.experiment_sample.store(
+            object=trainer.performance_profile.to_pandas(),
+            name='performance_profile_csv', to_disk=True)
+
+        fig, ax = plt.subplots(4, 2, figsize=(15, 15), gridspec_kw={
+                               'height_ratios': [1, 0.25, 1, 0.25]})
+        axs = ax
+        _ = trainer.plot_confusion_matrix(ax=axs[0, 0], ax2=axs[1, 0])
+        _ = trainer.plot_performance_profile(
+            ax=axs[0, 1], ax2=axs[1, 1], show_combinations=False)
+        _ = trainer.data_test.plot_performance_labels(
+            rel_tolerance=self.config.rel_tolerance,
+            ax=axs[2, 0], ax2=axs[3, 0],
+            y_pred=trainer.y_pred, set_yticklabels=False)
+        _ = trainer.data_test.plot_performance_labels(
+            rel_tolerance=self.config.rel_tolerance,
+            ax=axs[2, 1], ax2=axs[3, 1], set_yticklabels=False)
+
+        self.experiment_sample.store(object=fig, name="fig", to_disk=True)

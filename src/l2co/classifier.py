@@ -8,14 +8,16 @@ Module containing various classifiers
 # Third-party
 from typing import Any
 
-from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.ensemble import (GradientBoostingClassifier,
+                              GradientBoostingRegressor)
 from sklearn.gaussian_process import (GaussianProcessClassifier,
                                       GaussianProcessRegressor)
 from sklearn.gaussian_process.kernels import (RBF, ConstantKernel,
                                               ExpSineSquared, Matern)
 from sklearn.multiclass import OneVsOneClassifier, OneVsRestClassifier
-from sklearn.multioutput import MultiOutputRegressor
+from sklearn.multioutput import MultiOutputClassifier, MultiOutputRegressor
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.pipeline import Pipeline
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 
@@ -31,7 +33,7 @@ class Classifier():
     def __init__(self,
                  model_name: str,
                  regressor: bool,
-                 clf: Any,
+                 clf: Pipeline,
                  **parameters):
 
         self.model_name = model_name
@@ -81,7 +83,7 @@ class Classifier():
 # =============================================================================
 
 
-def create_classifier(self, model_name: str, **parameters) -> Any:
+def create_classifier(self, model_name: str, **parameters) -> Pipeline:
     if model_name == 'DecisionTree':
         return create_decisiontree(parameters)
 
@@ -99,6 +101,22 @@ def create_classifier(self, model_name: str, **parameters) -> Any:
 
     elif model_name == 'GradientBoostingRegressor':
         return create_gradientboostingregressor(parameters)
+
+    elif model_name == 'GradientBoostingClassifier':
+        return create_gradientboostingclassifier(parameters)
+
+
+def create_gradientboostingclassifier(parameters):
+    learning_rate = parameters['learning_rate']
+    n_estimators = parameters['n_estimators']
+    min_samples_leaf = parameters['min_samples_leaf']
+    max_depth = parameters['max_depth']
+    return MultiOutputClassifier(
+        GradientBoostingClassifier(
+            n_estimators=n_estimators,
+            learning_rate=learning_rate,
+            min_samples_leaf=min_samples_leaf,
+            max_depth=max_depth,))
 
 
 def create_gpr(parameters):

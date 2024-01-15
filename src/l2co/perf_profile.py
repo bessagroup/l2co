@@ -193,7 +193,8 @@ def create_performance_profile(
 
 def plot_performance_profile(performance_profile: xr.Dataset,
                              strategy_names: Optional[List[str]] = None,
-                             ax=None, ax2=None):
+                             ax=None, ax2=None,
+                             show_combinations: bool = True):
 
     if strategy_names is None:
         strategy_names = []
@@ -215,9 +216,12 @@ def plot_performance_profile(performance_profile: xr.Dataset,
             # make the line thicker
             linewidth = 3
 
-        if optimizer not in ['CMAES', 'LBFGSB', 'Adam', 'PSO']:
-            # change line to dashed
-            linestyle = '--'
+        # check if optimizer has a + in the name
+        if '+' in optimizer:
+            if show_combinations is False:
+                continue
+            else:
+                linestyle = '--'
 
         legend_patches.append(mpatches.Patch(
             color=next(color_cycle_iter),

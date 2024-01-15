@@ -50,7 +50,8 @@ class DataLoader():
                  n_realizations: int,
                  performance: xr.Dataset,
                  data: xr.Dataset,
-                 config: DictConfig,):
+                 config: DictConfig,
+                 experimentdata: ExperimentData):
         """
         A data loader class for stage0 of the L2CO framework.
 
@@ -68,6 +69,8 @@ class DataLoader():
             The data.
         config : DictConfig
             The configuration file in hydra format.
+        experimentdata : ExperimentData
+            The experiment data.
         """
         self.X = X
         self.n_iterations = n_iterations
@@ -75,6 +78,64 @@ class DataLoader():
         self.performance = performance
         self.data = data
         self.config = config
+        self.experimentdata = experimentdata
+
+    @classmethod
+    def from_experimentdata(cls, config: DictConfig,
+                            experimentdata: ExperimentData,
+                            select_single_optimizers: bool = True):
+
+        _data = load_all_data(experimentdata)
+
+        # Get the number of realizations
+        n_realizations = _data.realization.size
+        n_iterations = _data.iterations.size - 1
+
+        # Features
+        X = get_labels(experimentdata=experimentdata,
+                       n_realizations=n_realizations)
+
+        # Performance
+        performance = query_t(get_performance(
+            experimentdata), t=n_iterations)
+
+        if select_single_optimizers:
+            performance = select_optimizers_without_switch(performance)
+
+        return cls(X=X,
+                   n_iterations=n_iterations,
+                   n_realizations=n_realizations,
+                   performance=performance,
+                   data=_data,
+                   config=config,
+                   experimentdata=experimentdata)
+
+    @classmethod
+    def from_preprocessed_files(cls, config: DictConfig,
+                                experimentdata: ExperimentData,
+                                data: xr.Dataset, data_samples: xr.Dataset,
+                                select_single_optimizers: bool = True):
+        n_realizations = len(data.realization)
+        n_iterations = len(data.iterations)-2  # HAS TO BE -1
+
+        # Features
+        X = get_labels(experimentdata=experimentdata,
+                       n_realizations=n_realizations)
+
+        # Performance
+        performance = get_performance_preprocessed(
+            data, data_samples)
+
+        if select_single_optimizers:
+            performance = select_optimizers_without_switch(performance)
+
+        return cls(X=X,
+                   n_iterations=n_iterations,
+                   n_realizations=n_realizations,
+                   data=data,
+                   performance=performance,
+                   config=config,
+                   experimentdata=experimentdata)
 
     @cached_property
     def y(self) -> xr.DataArray:
@@ -145,6 +206,133 @@ class DataLoader():
                             coords={'optimizer': np.unique(self.y)},
                             name='optimizer')
 
+    def select_single_optimizers(self) -> DataLoader:
+        """
+        Select only the single optimizers.
+
+        Returns
+        -------
+        DataLoader
+            The data loader with only the single optimizers.
+        """
+        return DataLoader(
+            X=self.X,
+            n_iterations=self.n_iterations,
+            n_realizations=self.n_realizations,
+            performance=select_optimizers_without_switch(self.performance),
+            data=self.data,
+            config=self.config,
+            experimentdata=self.experimentdata
+        )
+
+    def select(self, indices: np.ndarray) -> DataLoader:
+        """
+        Select a subset of itemIDs of the data loader.
+
+        Parameters
+        ----------
+        indices : np.ndarray
+            The indices to select.
+
+        Returns
+        -------
+        DataLoader
+            The selected data loader.
+
+        Notes
+        -----
+        Selects on the itemID dimension.
+        """
+        return DataLoader(
+            X=self.X.unstack('problem').sel(
+                itemID=indices).stack(problem=['itemID', 'realization']),
+            n_iterations=self.n_iterations,
+            n_realizations=self.n_realizations,
+            performance=self.performance.sel(itemID=indices),
+            data=self.data.sel(itemID=indices),
+            config=self.config,
+            experimentdata=self.experimentdata.select(indices))
+
+    def query_t(self, t: int) -> DataLoader:
+        """
+        Query the data loader at a specific iteration.
+
+        Parameters
+        ----------
+        t : int
+            The iteration to query.
+
+        Returns
+        -------
+        DataLoader
+            The queried data loader.
+        """
+        performance_t = query_t(self.performance, t=t)
+        return DataLoader(
+            X=self.X,
+            n_iterations=t,
+            n_realizations=self.n_realizations,
+            performance=performance_t,
+            data=self.data,
+            config=self.config,
+            experimentdata=self.experimentdata
+        )
+
+    def query_optimizer(self, optimizer: str) -> DataLoader:
+        filtered_optimizer = np.array(
+            [o for o in self.data.optimizer.values if o.startswith(optimizer)],
+            dtype=object
+        )
+
+        _, df_output = self.experimentdata.to_pandas()
+        df_selected = df_output[filtered_optimizer]
+
+        selection: pd.Series = df_selected.apply(
+            lambda row: next((col for col, val in row.items()
+                              if val is not None), None), axis=1)
+
+        # remove all rows that are None
+        selection = selection[selection.notnull()]
+
+        # ExperimentData
+        experimentdata = self.experimentdata.select(selection.index)
+
+        # Data
+        data_selected = xr.concat(
+            [self.data.sel(itemID=i, optimizer=p)
+             for i, p in selection.items()],
+            dim='itemID').drop('optimizer').expand_dims(
+                {'optimizer': [optimizer]})
+
+        # Features
+        X = self.X.unstack('problem').sel(
+            itemID=selection.index).stack(problem=['itemID', 'realization'])
+
+        n_iterations = self.n_iterations
+        n_realizations = self.n_realizations
+
+        # Config
+        config = self.config
+
+        # Performance
+        # TODO: This is not correct!
+
+        performance = self.performance.sel(
+            optimizer=filtered_optimizer).assign_coords(
+            optimizer=np.array(
+                [o.split('+')[-1] if '+' in o else o
+                 for o in filtered_optimizer], dtype=object))
+
+        return DataLoader(
+            X=X,
+            n_iterations=n_iterations,
+            n_realizations=n_realizations,
+            performance=performance,
+            data=data_selected,
+            config=config,
+            experimentdata=experimentdata
+        )
+
     def train_test_split(
             self,
             test_size: float = 0.2, random_state: Optional[int] = None
@@ -168,83 +356,8 @@ class DataLoader():
             self.X.unstack('problem').itemID, test_size=test_size,
             random_state=random_state)
 
-        X_train = self.X.unstack('problem').sel(
-            itemID=_X_train_indices).stack(problem=['itemID', 'realization'])
-        X_test = self.X.unstack('problem').sel(
-            itemID=_X_test_indices).stack(problem=['itemID', 'realization'])
-
-        _data_train = self.data.sel(itemID=_X_train_indices)
-        _data_test = self.data.sel(itemID=_X_test_indices)
-
-        _performance_train = self.performance.sel(itemID=_X_train_indices)
-        _performance_test = self.performance.sel(itemID=_X_test_indices)
-
-        return (
-            DataLoader(
-                X=X_train,
-                n_iterations=self.n_iterations,
-                n_realizations=self.n_realizations,
-                performance=_performance_train,
-                data=_data_train,
-                config=self.config),
-            DataLoader(
-                X=X_test,
-                n_iterations=self.n_iterations,
-                n_realizations=self.n_realizations,
-                performance=_performance_test,
-                data=_data_test,
-                config=self.config)
-        )
-
-    @classmethod
-    def from_experimentdata(cls, config: DictConfig,
-                            experimentdata: ExperimentData):
-
-        _data = load_all_data(experimentdata)
-
-        # Get the number of realizations
-        n_realizations = _data.realization.size
-        n_iterations = _data.iterations.size - 1
-
-        # Features
-        X = get_labels(experimentdata=experimentdata,
-                       n_realizations=n_realizations)
-
-        # Performance
-        performance = query_t(get_performance(
-            experimentdata), t=n_iterations)
-
-        performance = select_optimizers_without_switch(performance)
-
-        return cls(X=X,
-                   n_iterations=n_iterations,
-                   n_realizations=n_realizations,
-                   performance=performance,
-                   data=_data,
-                   config=config)
-
-    @classmethod
-    def from_preprocessed_files(cls, config: DictConfig,
-                                experimentdata: ExperimentData,
-                                data: xr.Dataset, data_samples: xr.Dataset):
-        n_realizations = len(data.realization)
-        n_iterations = len(data.iterations)-2  # HAS TO BE -1
-
-        # Features
-        X = get_labels(experimentdata=experimentdata,
-                       n_realizations=n_realizations)
-
-        # Performance
-        performance = query_t(get_performance_preprocessed(
-            data, data_samples), t=n_iterations)
-        performance = select_optimizers_without_switch(performance)
-
-        return cls(X=X,
-                   n_iterations=n_iterations,
-                   n_realizations=n_realizations,
-                   data=data,
-                   performance=performance,
-                   config=config)
+        return (self.select(_X_train_indices),
+                self.select(_X_test_indices))
 
     @lru_cache(maxsize=1)
     def y_binary(self, rel_tolerance: float = 0.1) -> xr.DataArray:
