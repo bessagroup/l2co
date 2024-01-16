@@ -7,6 +7,10 @@ Module containing a trainer class to evaluate the performance of a classifier
 
 from __future__ import annotations
 
+from abc import abstractmethod
+# Standard
+from typing import Iterable, Optional, Tuple
+
 # Third-party
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
@@ -20,7 +24,6 @@ from sklearn.metrics import (accuracy_score, confusion_matrix,
                              precision_recall_fscore_support)
 
 # Local
-from ._logging import logger as l2co_logger
 from .classifier import Classifier
 from .data_loader import DataLoader
 from .perf_profile import create_performance_profile, plot_performance_profile
@@ -36,13 +39,25 @@ __status__ = 'Stable'
 # make sure no plots are showing
 plt.ioff()
 
-# create a logger
-logger = l2co_logger.getChild(__name__)
-
 # =============================================================================
 
 
 class Trainer():
+    """
+    Class to train and evaluate the performance of a classifier
+
+    Parameters
+    ----------
+    data_train : DataLoader
+        Data loader containing the training data
+    data_test : DataLoader
+        Data loader containing the test data
+    clf : Classifier
+        Classifier to be evaluated
+    config : DictConfig
+        Configuration object
+    """
+
     def __init__(self, data_train: DataLoader,
                  data_test: DataLoader,
                  clf: Classifier, config: DictConfig):
@@ -61,7 +76,25 @@ class Trainer():
         self.confusion_matrix = None
         self.performance_profile = None
 
+    @abstractmethod
+    def train(self):
+        """
+        Train the classifier
+        """
+        pass
+
+    @abstractmethod
+    def predict(self) -> xr.DataArray:
+        """
+        Predict the labels for the test data
+        """
+        pass
+
     def create_performance_profile(self):
+        """
+        Create a performance profile for the classifier and loads it into
+        memory
+        """
 
         self.performance_profile = create_performance_profile(
             ds_raw=self.data_test.data,
@@ -71,23 +104,69 @@ class Trainer():
         self.performance_profile.load()
 
     def plot_performance_profile(
-            self, ax=None, ax2=None, show_combinations: bool = True):
+            self,
+            axes: Optional[Iterable[plt.Axes, plt.Axes]] = None,
+            show_combinations: bool = True
+    ) -> Tuple[plt.Axes, plt.Axes]:
+        """
+        Plot the performance profile for the classifier
+
+        Parameters
+        ----------
+        axes : Optional[Tuple[plt.Axes, plt.Axes]], optional
+            Tuple containing two matplotlib axes objects, by default None
+        show_combinations : bool, optional
+            Whether to show the combinations of strategies, by default True
+
+        Returns
+        -------
+        Tuple[plt.Axes, plt.Axes]
+            Matplotlib axes object containing the performance profile
+
+        Notes
+        -----
+
+        - If no axes are provided, a new figure will be created
+        - If no performance profile is available, it will be created
+        """
+
         if self.performance_profile is None:
             self.create_performance_profile()
 
         ax = plot_performance_profile(
             self.performance_profile,
-            strategy_names=[self.name],
-            ax=ax, ax2=ax2, show_combinations=show_combinations)
+            strategy_names=[self.name], axes=axes,
+            show_combinations=show_combinations)
 
         return ax
 
-    def plot_confusion_matrix(self, ax=None, ax2=None):
+    def plot_confusion_matrix(
+            self,
+            axes: Optional[Iterable[plt.Axes, plt.Axes]] = None
+    ) -> Tuple[plt.Axes, plt.Axes]:
+        """
+        Plot the confusion matrix for the classifier
+
+        Parameters
+        ----------
+        axes : Optional[Tuple[plt.Axes, plt.Axes]], optional
+            Tuple containing two matplotlib axes objects, by default None
+
+        Returns
+        -------
+        Tuple[plt.Axes, plt.Axes]
+            Matplotlib axes object containing the confusion matrix
+
+        Notes
+        -----
+        - If no axes are provided, a new figure will be created
+        - If no confusion matrix is available, it will be created
+        """
         if self.confusion_matrix is None:
             self.calculate_classifier_metrics()
 
-        if ax is None:
-            fig, (ax, ax2) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [
+        if axes is None:
+            fig, axes = plt.subplots(2, 1, gridspec_kw={'height_ratios': [
                 4, 1]},
                 figsize=(16, 16))
 
@@ -95,19 +174,39 @@ class Trainer():
                 f"Recall: {self.recall:.2f}\n"
                 f"F1: {self.f1:.2f} - Accuracy: {self.accuracy:.2f}")
 
-        ax2.text(0.5, 0.5, text, ha='center', va='center', fontsize=14)
-        ax = sns.heatmap(
+        axes[1].text(0.5, 0.5, text, ha='center', va='center', fontsize=14)
+        axes[0] = sns.heatmap(
             self.confusion_matrix,
             annot=True, fmt='d',
             xticklabels=self.data_test.optimizers.values,
             yticklabels=self.data_test.optimizers.values,
-            ax=ax)
+            ax=axes[0])
 
-        ax2.axis('off')
+        axes[1].axis('off')
 
-        return ax
+        return axes
 
-    def plot_distribution_labels(self, ax=None, ax2=None):
+    def plot_distribution_labels(
+            self,
+            axes: Optional[Iterable[plt.Axes, plt.Axes]] = None
+    ) -> Tuple[plt.Axes, plt.Axes]:
+        """
+        Plot the distribution of labels for the classifier
+
+        Parameters
+        ----------
+        axes : Optional[Tuple[plt.Axes, plt.Axes]], optional
+            Tuple containing two matplotlib axes objects, by default None
+
+        Returns
+        -------
+        Tuple[plt.Axes, plt.Axes]
+            Matplotlib axes object containing the distribution of labels
+
+        Notes
+        -----
+        - If no axes are provided, a new figure will be created
+        """
 
         xx = self.data_test.X.unstack().stack(
             problem=['itemID', 'realization']).T
@@ -137,8 +236,8 @@ class Trainer():
         num_rows = len(df)
         # num_labels = len(df.columns) - 5  # Excluding the feature columns
 
-        if ax is None:
-            fig, (ax, ax2) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [
+        if axes is None:
+            fig, axes = plt.subplots(2, 1, gridspec_kw={'height_ratios': [
                 4, 1]}, figsize=(10, 0.5 * num_rows))
 
         colors = ['skyblue', 'salmon', 'lightgreen',
@@ -158,28 +257,39 @@ class Trainer():
                            feature, value in row[:n_features].items()]))
             left = 0
             for j, (label, value) in enumerate(zip(labels, freq)):
-                ax.barh(i, width=value, height=0.3, left=left,
-                        color=colors[j], label=label)
+                axes[0].barh(i, width=value, height=0.3, left=left,
+                             color=colors[j], label=label)
                 left += value
 
                 if value != 0.0:
-                    ax.text(left - value / 2, i,
-                            f'{(value*row["total_count"]):.0f}',
-                            ha='center', va='center', color='black')
+                    axes[0].text(left - value / 2, i,
+                                 f'{(value*row["total_count"]):.0f}',
+                                 ha='center', va='center', color='black')
 
-        ax.set_yticks(np.arange(num_rows))
-        ax.set_yticklabels(yticklabels)
-        ax.set_xlabel('Frequency')
-        ax2.legend(handles=legend_patches, loc='center',
-                   ncol=len(legend_patches), fontsize='small')
+        axes[0].set_yticks(np.arange(num_rows))
+        axes[0].set_yticklabels(yticklabels)
+        axes[0].set_xlabel('Frequency')
+        axes[1].legend(handles=legend_patches, loc='center',
+                       ncol=len(legend_patches), fontsize='small')
 
-        ax2.axis('off')
+        axes[1].axis('off')
 
-        ax.set_title(self.clf.name)
+        axes[0].set_title(self.clf.name)
 
-        return ax
+        return axes
 
     def calculate_classifier_metrics(self):
+        """
+        Calculate the classifier metrics y_pred
+
+        Notes
+        -----
+        - If no predictions are available, they will be created by calling
+            self.predict()
+        """
+        if self.y_pred is None:
+            self.predict()
+
         # CLASSIFIER METRICS
         (self.precision, self.recall,
          self.f1, self.support) = precision_recall_fscore_support(
@@ -231,25 +341,24 @@ class TrainerStage0(Trainer):
             output_dtypes=[object],
         )
 
-        # self.y_pred = result.stack(problem=('itemID', 'realization')).astype(
-        #     'U100').rename(self.name)
-
         self.y_pred = result.rename(self.name)
 
     def plot(self):
-        fig, ax = plt.subplots(4, 2, figsize=(15, 15), gridspec_kw={
-                               'height_ratios': [1, 0.25, 1, 0.25]})
-        axs = ax
-        _ = self.plot_confusion_matrix(ax=axs[0, 0], ax2=axs[1, 0])
+        fig, axes = plt.subplots(4, 2, figsize=(15, 15), gridspec_kw={
+            'height_ratios': [1, 0.25, 1, 0.25]})
+
+        axes = axes
+
+        _ = self.plot_confusion_matrix(axes=[axes[0, 0], axes[1, 0]])
         _ = self.plot_performance_profile(
-            ax=axs[0, 1], ax2=axs[1, 1], show_combinations=False)
+            axes=[axes[0, 1], axes[1, 1]], show_combinations=False)
         _ = self.data_test.plot_performance_labels(
             rel_tolerance=self.rel_tolerance,
-            ax=axs[2, 0], ax2=axs[3, 0],
+            axes=[axes[2, 0], axes[3, 0]],
             y_pred=self.y_pred, set_yticklabels=False)
         _ = self.data_test.plot_performance_labels(
             rel_tolerance=self.rel_tolerance,
-            ax=axs[2, 1], ax2=axs[3, 1], set_yticklabels=False)
+            axes=[axes[2, 1], axes[3, 1]], set_yticklabels=False)
 
         return fig
 
@@ -350,18 +459,17 @@ class ClassifierConstructorProba(DataGenerator):
             object=trainer.performance_profile.to_pandas(),
             name='performance_profile_csv', to_disk=True)
 
-        fig, ax = plt.subplots(4, 2, figsize=(15, 15), gridspec_kw={
-                               'height_ratios': [1, 0.25, 1, 0.25]})
-        axs = ax
-        _ = trainer.plot_confusion_matrix(ax=axs[0, 0], ax2=axs[1, 0])
+        fig, axes = plt.subplots(4, 2, figsize=(15, 15), gridspec_kw={
+            'height_ratios': [1, 0.25, 1, 0.25]})
+        _ = trainer.plot_confusion_matrix(axes=axes[0])
         _ = trainer.plot_performance_profile(
-            ax=axs[0, 1], ax2=axs[1, 1], show_combinations=False)
+            axes=axes[1], show_combinations=False)
         _ = trainer.data_test.plot_performance_labels(
             rel_tolerance=self.config.rel_tolerance,
-            ax=axs[2, 0], ax2=axs[3, 0],
+            axes=axes[2],
             y_pred=trainer.y_pred, set_yticklabels=False)
         _ = trainer.data_test.plot_performance_labels(
             rel_tolerance=self.config.rel_tolerance,
-            ax=axs[2, 1], ax2=axs[3, 1], set_yticklabels=False)
+            axes=axes[3], set_yticklabels=False)
 
         self.experiment_sample.store(object=fig, name="fig", to_disk=True)

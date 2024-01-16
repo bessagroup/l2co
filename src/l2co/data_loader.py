@@ -9,7 +9,7 @@ from __future__ import annotations
 
 # Standard
 from functools import cached_property, lru_cache
-from typing import Optional, Tuple
+from typing import Iterable, Optional, Tuple
 
 # Third-party
 import matplotlib.patches as mpatches
@@ -96,8 +96,7 @@ class DataLoader():
                        n_realizations=n_realizations)
 
         # Performance
-        performance = query_t(get_performance(
-            experimentdata), t=n_iterations)
+        performance = get_performance(experimentdata)
 
         if select_single_optimizers:
             performance = select_optimizers_without_switch(performance)
@@ -116,7 +115,7 @@ class DataLoader():
                                 data: xr.Dataset, data_samples: xr.Dataset,
                                 select_single_optimizers: bool = True):
         n_realizations = data.realization.size
-        n_iterations = data.iterations.size  # HAS TO BE -1
+        n_iterations = data.iterations.size
 
         # Features
         X = get_labels(experimentdata=experimentdata,
@@ -151,32 +150,11 @@ class DataLoader():
             'realization', and 'itemID'.
         """
         logger.debug("Creating labels")
-        # return self.performance.idxmin(dim='optimizer').expand_dims(
-        #     dim={'realization': np.arange(self.n_realizations)}
-        # ).stack(problem=['itemID', 'realization']).astype('U100')
 
         return self.performance.expand_dims(
             dim={'realization': np.arange(self.n_realizations)}
         ).stack(problem=['itemID', 'realization']
                 ).sel(problem=self.problem, drop=True).idxmin(dim='optimizer')
-
-    @cached_property
-    def y_reg(self) -> xr.DataArray:
-        """
-        Returns the performance index along the 'optimizer' dimension,
-        expanded with a new dimension 'realization' and stacked with 'itemID'
-        and 'realization' dimensions. Used for regression models
-
-        Returns
-        -------
-        xr.DataArray
-            The resulting DataArray with dimensions 'problem',
-            'realization', and 'itemID'.
-        """
-        logger.debug("Creating labels")
-        return self.performance.expand_dims(
-            dim={'realization': np.arange(self.n_realizations)}
-        ).stack(problem=['itemID', 'realization']).T
 
     @property
     def features(self) -> xr.DataArray:
@@ -193,9 +171,6 @@ class DataLoader():
             The problem coordinate.
         """
         return self.X.problem
-        # return self.X.unstack(
-        #     'problem').stack(
-        #         problem=['itemID', 'realization']).problem
 
     @property
     def optimizers(self) -> xr.DataArray:
@@ -212,6 +187,21 @@ class DataLoader():
                             coords={'optimizer': np.unique(self.y)},
                             name='optimizer')
 
+    @lru_cache(maxsize=1)
+    def y_binary(self, rel_tolerance: float = 0.1) -> xr.DataArray:
+        if rel_tolerance == 0.0:
+            return (self.y == self.performance.optimizer).T
+
+        else:
+            threshold = self.performance.min(
+                dim='optimizer') + abs(
+                    self.performance.min(dim='optimizer') * rel_tolerance)
+
+        return (self.performance <= threshold).expand_dims(
+            dim={'realization': np.arange(self.n_realizations)}
+        ).stack(problem=['itemID', 'realization']
+                ).sel(problem=self.problem, drop=True).T
+
     def select_single_optimizers(self) -> DataLoader:
         """
         Select only the single optimizers.
@@ -221,8 +211,6 @@ class DataLoader():
         DataLoader
             The data loader with only the single optimizers.
         """
-        # TODO: select appropriate data with only single optimizers!
-
         single_optimizers = [o.values for o in self.performance.optimizer
                              if '+' not in str(o.values)]
 
@@ -241,7 +229,7 @@ class DataLoader():
             experimentdata=self.experimentdata
         )
 
-    def select(self, itemID_indices: np.ndarray) -> DataLoader:
+    def select_itemID(self, itemID_indices: np.ndarray) -> DataLoader:
         """
         Select a subset of itemIDs of the data loader.
 
@@ -271,6 +259,24 @@ class DataLoader():
             experimentdata=self.experimentdata.select(itemID_indices))
 
     def select_problems(self, problem_indices: xr.DataArray) -> DataLoader:
+        """
+        Select a subset of problems of the data loader.
+
+        Parameters
+        ----------
+        problem_indices : xr.DataArray
+            The problem indices to select.
+
+        Returns
+        -------
+        DataLoader
+            The selected data loader.
+
+        Notes
+        -----
+        Selects on the problem dimension. Also sorts the problem indices on
+        itemID.
+        """
         _problem_indices = problem_indices.sortby('itemID')
         _unique_itemID = np.unique(problem_indices.itemID.values)
         return DataLoader(
@@ -311,6 +317,19 @@ class DataLoader():
         )
 
     def query_optimizer(self, optimizer: str) -> DataLoader:
+        """
+        Query the data loader for a specific optimizer.
+
+        Parameters
+        ----------
+        optimizer : str
+            The optimizer to query.
+
+        Returns
+        -------
+        DataLoader
+            The queried data loader.
+        """
         filtered_optimizer = np.array(
             [o for o in self.data.optimizer.values if o.startswith(optimizer)],
             dtype=object
@@ -386,31 +405,38 @@ class DataLoader():
             self.X.unstack('problem').itemID, test_size=test_size,
             random_state=random_state)
 
-        return (self.select(_X_train_indices),
-                self.select(_X_test_indices))
+        return (self.select_itemID(_X_train_indices),
+                self.select_itemID(_X_test_indices))
 
-    @lru_cache(maxsize=1)
-    def y_binary(self, rel_tolerance: float = 0.1) -> xr.DataArray:
-        if rel_tolerance == 0.0:
-            return (self.y == self.performance.optimizer).T
+    def plot_performance_labels(
+            self,
+            y_pred: Optional[xr.DataArray] = None,
+            rel_tolerance: float = 0.0,
+            return_df: bool = False,
+            axes: Optional[Iterable[plt.Axes, plt.Axes]] = None,
+            set_yticklabels: bool = True
+    ) -> Tuple[plt.Axes, plt.Axes]:
+        """
+        Plot the performance labels.
 
-        else:
-            threshold = self.performance.min(
-                dim='optimizer') + abs(
-                    self.performance.min(dim='optimizer') * rel_tolerance)
+        Parameters
+        ----------
+        y_pred : Optional[xr.DataArray], optional
+            The predicted labels, by default None
+        rel_tolerance : float, optional
+            The relative tolerance, by default 0.0
+        return_df : bool, optional
+            Whether to return the dataframe, by default False
+        axes : Optional[Tuple[plt.Axes, plt.Axes]], optional
+            The axes to plot on, by default None
+        set_yticklabels : bool, optional
+            Whether to set the yticklabels, by default True
 
-        return (self.performance <= threshold).expand_dims(
-            dim={'realization': np.arange(self.n_realizations)}
-        ).stack(problem=['itemID', 'realization']
-                ).sel(problem=self.problem, drop=True).T
-
-    def plot_performance_labels(self,
-                                y_pred: Optional[xr.DataArray] = None,
-                                rel_tolerance: float = 0.1,
-                                return_df: bool = False,
-                                ax=None,
-                                ax2=None,
-                                set_yticklabels: bool = True):
+        Returns
+        -------
+        Tuple[plt.Axes, plt.Axes]
+            The axes.
+        """
 
         _X = self.X.unstack().stack(problem=('itemID', 'realization'))
 
@@ -433,8 +459,8 @@ class DataLoader():
         df[col_optimizers] = df[col_optimizers].div(
             df[col_optimizers].sum(axis=1), axis=0)
 
-        if ax is None:
-            fig, (ax, ax2) = plt.subplots(
+        if axes is None:
+            fig, axes = plt.subplots(
                 2, 1, gridspec_kw={'height_ratios': [
                     4, 1]}, figsize=(10, 0.5 * num_rows))
 
@@ -456,26 +482,26 @@ class DataLoader():
                                feature, value in row[:n_features].items()]))
             left = 0
             for j, (label, value) in enumerate(zip(labels, freq)):
-                ax.barh(i, width=value, height=0.3, left=left,
-                        color=colors[j], label=label)
+                axes[0].barh(i, width=value, height=0.3, left=left,
+                             color=colors[j], label=label)
                 left += value
 
-        ax.set_yticks(np.arange(num_rows))
-        ax.set_yticklabels(yticklabels)
-        ax.set_xlabel('Frequency')
-        ax2.legend(handles=legend_patches, loc='center',
-                   ncol=len(legend_patches))
+        axes[0].set_yticks(np.arange(num_rows))
+        axes[0].set_yticklabels(yticklabels)
+        axes[0].set_xlabel('Frequency')
+        axes[1].legend(handles=legend_patches, loc='center',
+                       ncol=len(legend_patches))
 
-        ax2.axis('off')
+        axes[1].axis('off')
         text = f"Relative tolerance: {rel_tolerance}"
         if y_pred is None:
             text += "- Test data"
 
         else:
             text += "- Predicted data"
-        ax.set_title(text)
+        axes[0].set_title(text)
 
         if return_df:
-            return ax, df
+            return axes, df
 
-        return ax
+        return axes

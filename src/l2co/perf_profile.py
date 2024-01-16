@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from itertools import cycle
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
@@ -191,10 +191,11 @@ def create_performance_profile(
     return pp_to_dataset
 
 
-def plot_performance_profile(performance_profile: xr.Dataset,
-                             strategy_names: Optional[List[str]] = None,
-                             ax=None, ax2=None,
-                             show_combinations: bool = True):
+def plot_performance_profile(
+    performance_profile: xr.Dataset,
+        strategy_names: Optional[List[str]] = None,
+        axes: Optional[Iterable[plt.Axes, plt.Axes]] = None,
+        show_combinations: bool = True):
 
     if strategy_names is None:
         strategy_names = []
@@ -203,10 +204,10 @@ def plot_performance_profile(performance_profile: xr.Dataset,
     color_cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
     color_cycle_iter = cycle(color_cycle)
 
-    if ax is None:
-        fig, (ax, ax2) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [
+    if axes is None:
+        fig, axes = plt.subplots(2, 1, gridspec_kw={'height_ratios': [
             4, 1]}, figsize=(10, 7))
-    ax.set_xscale('log')
+    axes[0].set_xscale('log')
     # ax.set_yscale('log')
     for optimizer in performance_profile.data_vars:
         linewidth = 1
@@ -227,14 +228,14 @@ def plot_performance_profile(performance_profile: xr.Dataset,
             color=next(color_cycle_iter),
             label=optimizer, linestyle=linestyle))
 
-        ax.plot(performance_profile.f,
-                performance_profile[optimizer],
-                label=optimizer, linewidth=linewidth,
-                linestyle=linestyle)
+        axes[0].plot(performance_profile.f,
+                     performance_profile[optimizer],
+                     label=optimizer, linewidth=linewidth,
+                     linestyle=linestyle)
 
-    ax2.legend(handles=legend_patches, loc='center',
-               ncol=len(legend_patches) // 3, fontsize='small')
+    axes[1].legend(handles=legend_patches, loc='center',
+                   ncol=len(legend_patches) // 3, fontsize='small')
 
-    ax2.axis('off')
+    axes[1].axis('off')
 
-    return ax
+    return axes

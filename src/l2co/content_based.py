@@ -93,20 +93,17 @@ def _get_labels(experimentdata: ExperimentData, index: int) -> str:
 def _get_not_encoded_labels(
         experimentdata: ExperimentData, index: int) -> Dict[str, Any]:
     experiment_sample = experimentdata.get_experiment_sample(index)
-    function_name = experiment_sample.get('function_name')
+    noise = experiment_sample.get('noise')
     dim = experiment_sample.get('dimensionality')
-
-    f = _datagenerator_factory(function_name, domain=dim)
 
     labels = {}
 
-    if f.noise is None:
+    if noise is None:
         labels['noise'] = 0.0
     else:
-        labels['noise'] = f.noise
+        labels['noise'] = noise
 
     labels['dim'] = dim
-    # labels['noise'] = f.noise
 
     return labels
 
