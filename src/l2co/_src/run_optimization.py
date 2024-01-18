@@ -738,8 +738,8 @@ def _get_handshake(optimizer_1: str, optimizer_2: str) -> str:
 
 
 def _get_scheduler(
-        optimizer_1: str, optimizer_2,
-        iterations: int) -> OptimizerScheduler:
+        optimizer_1: str, optimizer_2: str,
+        iterations: int, first_x0: str = 'new') -> OptimizerScheduler:
     """
     Get the scheduler for two optimizers
 
@@ -751,6 +751,8 @@ def _get_scheduler(
         name of the second optimizer
     iterations : int
         total number of iterations across both optimizers
+    first_x0 : str, optional
+        x0 selection strategy for the first optimizer, by default 'new'
 
     Returns
     -------
@@ -761,14 +763,15 @@ def _get_scheduler(
     i_1 = iterations // 2 + (iterations % 2)
 
     if optimizer_1 == optimizer_2:
-        return [(optimizer_1, iterations, 'best')]
+        return [(optimizer_1, iterations, first_x0)]
 
-    return [(optimizer_1, i_0, 'new'),
+    return [(optimizer_1, i_0, first_x0),
             (optimizer_2, i_1, _get_handshake(optimizer_1, optimizer_2))]
 
 
 def _get_all_combinations(
-        optimizers: List[str], iterations: int) -> List[OptimizerScheduler]:
+        optimizers: List[str], iterations: int,
+        first_x0: str = 'new') -> List[OptimizerScheduler]:
     """
     Get all combination of two optimizer names
 
@@ -778,13 +781,17 @@ def _get_all_combinations(
         list of optimizer names
     iterations : int
         total number of iterations across both optimizers
+    first_x0 : str, optional
+        x0 selection strategy for the first optimizer, by default 'new'
 
     Returns
     -------
     List[OptimizerScheduler]
         List of optimizer schedulers
     """
-    return [_get_scheduler(opt_1, opt_2, iterations)
+    return [_get_scheduler(
+        optimizer_1=opt_1, optimizer_2=opt_2,
+        iterations=iterations, first_x0=first_x0)
             for opt_1, opt_2 in product(optimizers, repeat=2)]
 
 

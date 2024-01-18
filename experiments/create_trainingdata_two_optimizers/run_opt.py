@@ -7,10 +7,9 @@ from config import Config
 from f3dasm.datageneration import DataGenerator
 
 # Local
-from l2co.run_optimization import (_get_all_combinations,
-                                   _get_name_from_scheduler,
-                                   run_multiple_realizations)
-from l2co.run_sampling import run_sampling
+from l2co import run_multiple_realizations, run_sampling
+from l2co._src.run_optimization import (_get_all_combinations,
+                                        _get_name_from_scheduler)
 
 #                                                          Authorship & Credits
 # =============================================================================

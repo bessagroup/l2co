@@ -32,8 +32,6 @@ import xarray as xr
 from f3dasm import ExperimentData
 from f3dasm._src.datageneration.functions.function_factory import \
     _datagenerator_factory
-from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.preprocessing import MinMaxScaler
 
 from ._logging import logger
 
@@ -45,7 +43,7 @@ __status__ = 'Planning'
 # =============================================================================
 
 
-def _get_labels(experimentdata: ExperimentData, index: int) -> str:
+def get_labels_one(experimentdata: ExperimentData, index: int) -> str:
     """
     Create a string with the labels for a given itemID.
 
@@ -69,14 +67,6 @@ def _get_labels(experimentdata: ExperimentData, index: int) -> str:
 
     categories_list = []
 
-    # if f.noise is None:
-    #     f.noise = 0.0
-
-    # Append features
-    # if f.noise == 0.0:
-    #     categories_list.append('noiseless')
-    # if f.noise > 0.0:
-    #     categories_list.append('noisy')
     if f.convex:
         categories_list.append('convex')
     if f.separable:
@@ -84,13 +74,10 @@ def _get_labels(experimentdata: ExperimentData, index: int) -> str:
     if f.multimodal:
         categories_list.append('multimodal')
 
-    # categories_list.append(f"dim={dim}")
-    # check if categories_list is empty
-
     return ",".join(categories_list)
 
 
-def _get_not_encoded_labels(
+def get_not_encoded_labels(
         experimentdata: ExperimentData, index: int) -> Dict[str, Any]:
     experiment_sample = experimentdata.get_experiment_sample(index)
     noise = experiment_sample.get('noise')
@@ -127,7 +114,7 @@ def get_labels(experimentdata: ExperimentData,
     """
     t_start = perf_counter()
 
-    df = pd.DataFrame([_get_labels(experimentdata, i)
+    df = pd.DataFrame([get_labels_one(experimentdata, i)
                        for i in experimentdata.index], columns=['labels'],
                       index=experimentdata.index)
 
@@ -146,7 +133,7 @@ def get_labels(experimentdata: ExperimentData,
     df.drop('labels', axis=1, inplace=True)
 
     df_non_encoded = pd.DataFrame(
-        [_get_not_encoded_labels(experimentdata, i)
+        [get_not_encoded_labels(experimentdata, i)
          for i in experimentdata.index],
         index=experimentdata.index)
 
@@ -165,116 +152,3 @@ def get_labels(experimentdata: ExperimentData,
     return xarr.expand_dims(
         dim={'realization': np.arange(n_realizations)}
     ).stack(problem=['realization', 'itemID']).T
-
-
-def cosine_sim(single_vec, training_set) -> np.ndarray:
-    """
-    Compute the cosine similarity between a single vector and a training set.
-
-    Parameters
-    ----------
-    single_vec : numpy.ndarray
-        A single vector.
-    training_set : numpy.ndarray
-        A training set.
-
-    Returns
-    -------
-    numpy.ndarray
-        The cosine similarity between the single vector and the training set.
-    """
-    return cosine_similarity(single_vec.reshape(1, -1), training_set.T).ravel()
-
-
-def calculate_similarity_features(
-        ds_single: xr.DataArray, ds_features: xr.DataArray) -> xr.DataArray:
-    """
-    Calculate the cosine similarity between a single vector and a training set.
-
-    Parameters
-    ----------
-    ds_single : xarray.DataArray
-        A single vector.
-    ds_features : xarray.DataArray
-        A training set.
-
-    Returns
-    -------
-    xarray.DataArray
-        The cosine similarity between the single vector and the training set.
-    """
-    cosine_similarities: xr.DataArray = xr.apply_ufunc(
-        cosine_sim,
-        ds_single,
-        ds_features,
-        input_core_dims=[['features'],
-                         ['features', 'itemID']],
-        output_core_dims=[['itemID']],
-        dask='parallelized',
-        dask_gufunc_kwargs={'allow_rechunk': True,
-                            },  # Use allow_rechunk to handle chunking
-        output_dtypes=[float]  # dtype of the output
-    )
-
-    cosine_similarities = cosine_similarities.rename('features')
-    logger.info("Similarity features calculated!")
-
-    return cosine_similarities
-
-
-def predict_zero(
-        ds_performance: xr.DataArray, ds_features: xr.DataArray) -> str:
-    """
-    Predict the optimizer before considering evaluating the function. This
-    is done by calculating the cosine similarity between the features of the
-    function to be evaluated and the features of the problems in the
-    training set.
-
-    Parameters
-    ----------
-    ds_performance : xarray.DataArray
-        The performance of the optimizers on the training set.
-    ds_features : xarray.DataArray
-        The features of the training set.
-
-    Returns
-    -------
-    str
-        The name of the optimizer that is predicted to perform best.
-    """
-
-    ds_comb = xr.merge([ds_performance, ds_features])
-
-    # only display the itemIDs where features > 0.6
-    ds_comb = ds_comb.where(ds_comb.features > 0.6, drop=True)
-
-    scaler = MinMaxScaler()
-
-    scaled = xr.apply_ufunc(
-        scaler.fit_transform, ds_comb.performance,
-        input_core_dims=[['optimizer', 'itemID']],
-        output_core_dims=[['optimizer', 'itemID']],
-        vectorize=True, dask='parallelized',
-        dask_gufunc_kwargs={'allow_rechunk': True,
-                            },  # Use allow_rechunk to handle chunking
-    )
-
-    prediction = ds_comb.optimizer[int(
-        (ds_comb.features * scaled).sum(dim='itemID').argmin())].item()
-    return prediction
-
-
-def trim(arr, query):
-    # check if query is empty separator
-    if query == '':
-        trim_start = arr.values
-
-    else:
-        trim_start = [i.split(query)[1].lstrip('+')
-                      if i != query else i for i in arr.values]
-
-    trim_end = [i.split('+')[0] for i in trim_start]
-
-    return xr.DataArray(
-        np.array(trim_end),
-        dims=arr.dims, coords=arr.coords)

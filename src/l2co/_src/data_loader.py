@@ -101,11 +101,19 @@ class DataLoader():
         if select_single_optimizers:
             performance = select_optimizers_without_switch(performance)
 
+        # Performance: Expand and stack dimension realization and itemID
+        performance_stacked = performance.expand_dims(
+            {'realization': np.arange(_data.realization.size)}).stack(
+                problem=('realization', 'itemID'))
+
+        # Stack dimensions realization and itemID
+        data_stacked = _data.stack(problem=('realization', 'itemID'))
+
         return cls(X=X,
                    n_iterations=n_iterations,
                    n_realizations=n_realizations,
-                   performance=performance,
-                   data=_data,
+                   performance=performance_stacked,
+                   data=data_stacked,
                    config=config,
                    experimentdata=experimentdata)
 
@@ -128,13 +136,45 @@ class DataLoader():
         if select_single_optimizers:
             performance = select_optimizers_without_switch(performance)
 
+        # Performance: Expand and stack dimension realization and itemID
+        performance_stacked = performance.expand_dims(
+            {'realization': np.arange(data.realization.size)}).stack(
+                problem=('realization', 'itemID'))
+
+        # Stack dimensions realization and itemID
+        data_stacked = data.stack(problem=('realization', 'itemID'))
+
         return cls(X=X,
                    n_iterations=n_iterations,
                    n_realizations=n_realizations,
-                   data=data,
-                   performance=performance,
+                   data=data_stacked,
+                   performance=performance_stacked,
                    config=config,
                    experimentdata=experimentdata)
+
+    def filter_nan_or_inf(self) -> DataLoader:
+        """
+        Filter out all rows with NaN or Inf values.
+
+        Returns
+        -------
+        DataLoader
+            The filtered data loader.
+        """
+        # d_stacked = self.data.stack(problem=('realization', 'itemID'))
+        mask = self.data.where(np.logical_or(
+            np.isnan(self.data), np.isnan(self.data)), drop=True)
+
+        faulty_problems = mask.problem
+
+        correct_problems = self.data.problem.where(
+            ~self.data.problem.isin(faulty_problems), drop=True)
+
+        return self.select_problems(correct_problems)
+
+    def has_nan_or_inf(self) -> bool:
+        return np.logical_or.reduce(
+            [np.isnan(self.data.output), np.isnan(self.data.output)]).any()
 
     @cached_property
     def y(self) -> xr.DataArray:
@@ -151,10 +191,8 @@ class DataLoader():
         """
         logger.debug("Creating labels")
 
-        return self.performance.expand_dims(
-            dim={'realization': np.arange(self.n_realizations)}
-        ).stack(problem=['itemID', 'realization']
-                ).sel(problem=self.problem, drop=True).idxmin(dim='optimizer')
+        return self.performance.sel(problem=self.problem, drop=True).idxmin(
+            dim='optimizer')
 
     @property
     def features(self) -> xr.DataArray:
@@ -197,10 +235,13 @@ class DataLoader():
                 dim='optimizer') + abs(
                     self.performance.min(dim='optimizer') * rel_tolerance)
 
-        return (self.performance <= threshold).expand_dims(
-            dim={'realization': np.arange(self.n_realizations)}
-        ).stack(problem=['itemID', 'realization']
-                ).sel(problem=self.problem, drop=True).T
+        return (self.performance <= threshold).sel(
+            problem=self.problem, drop=True).T
+
+    @cached_property
+    def X_trajectory(self) -> xr.DataArray:
+        return self.data.isel(
+            output_dim=0, drop=True).output.rename('trajectory')
 
     def select_single_optimizers(self) -> DataLoader:
         """
@@ -229,35 +270,6 @@ class DataLoader():
             experimentdata=self.experimentdata
         )
 
-    def select_itemID(self, itemID_indices: np.ndarray) -> DataLoader:
-        """
-        Select a subset of itemIDs of the data loader.
-
-        Parameters
-        ----------
-        indices : np.ndarray
-            The indices to select.
-
-        Returns
-        -------
-        DataLoader
-            The selected data loader.
-
-        Notes
-        -----
-        Selects on the itemID dimension.
-        """
-        return DataLoader(
-            X=self.X.unstack('problem').sel(
-                itemID=itemID_indices).stack(
-                    problem=['itemID', 'realization']),
-            n_iterations=self.n_iterations,
-            n_realizations=self.n_realizations,
-            performance=self.performance.sel(itemID=itemID_indices),
-            data=self.data.sel(itemID=itemID_indices),
-            config=self.config,
-            experimentdata=self.experimentdata.select(itemID_indices))
-
     def select_problems(self, problem_indices: xr.DataArray) -> DataLoader:
         """
         Select a subset of problems of the data loader.
@@ -284,8 +296,8 @@ class DataLoader():
             n_iterations=self.n_iterations,
             n_realizations=self.n_realizations,
             performance=self.performance.sel(
-                itemID=_unique_itemID),
-            data=self.data.sel(itemID=_unique_itemID),
+                problem=_problem_indices),
+            data=self.data.sel(problem=_problem_indices),
             config=self.config,
             experimentdata=self.experimentdata.select(_unique_itemID)
         )
@@ -335,29 +347,33 @@ class DataLoader():
             dtype=object
         )
 
-        _, df_output = self.experimentdata.to_pandas()
-        df_selected = df_output[filtered_optimizer]
+        # _, df_output = self.experimentdata.to_pandas()
+        # df_selected = df_output[filtered_optimizer]
 
-        selection: pd.Series = df_selected.apply(
-            lambda row: next((col for col, val in row.items()
-                              if val is not None), None), axis=1)
+        # selection: pd.Series = df_selected.apply(
+        #     lambda row: next((col for col, val in row.items()
+        #                       if val is not None), None), axis=1)
 
-        # remove all rows that are None
-        selection = selection[selection.notnull()]
+        # # remove all rows that are None
+        # selection = selection[selection.notnull()]
 
-        # ExperimentData
-        experimentdata = self.experimentdata.select(selection.index)
+        # # ExperimentData
+        # experimentdata = self.experimentdata.select(selection.index)
 
         # Data
-        data_selected = xr.concat(
-            [self.data.sel(itemID=i, optimizer=p)
-             for i, p in selection.items()],
-            dim='itemID').drop('optimizer').expand_dims(
-                {'optimizer': [optimizer]})
 
-        # Features
-        X = self.X.unstack('problem').sel(
-            itemID=selection.index).stack(problem=['itemID', 'realization'])
+        data_selected = self.data.sel(optimizer=optimizer)
+
+        # data_selected = xr.concat(
+        #     [self.data.sel(itemID=i, optimizer=p)
+        #      for i, p in selection.items()],
+        #     dim='itemID').drop('optimizer').expand_dims(
+        #         {'optimizer': [optimizer]}).stack(
+        #             problem=('realization', 'itemID'))
+
+        # # Features
+        # X = self.X.unstack('problem').sel(
+        #     itemID=selection.index).stack(problem=['itemID', 'realization'])
 
         n_iterations = self.n_iterations
         n_realizations = self.n_realizations
@@ -373,13 +389,13 @@ class DataLoader():
                  for o in filtered_optimizer], dtype=object))
 
         return DataLoader(
-            X=X,
+            X=self.X,
             n_iterations=n_iterations,
             n_realizations=n_realizations,
             performance=performance,
             data=data_selected,
             config=config,
-            experimentdata=experimentdata
+            experimentdata=self.experimentdata
         )
 
     def train_test_split(
@@ -402,11 +418,11 @@ class DataLoader():
             The train and test data loaders.
         """
         _X_train_indices, _X_test_indices, = train_test_split(
-            self.X.unstack('problem').itemID, test_size=test_size,
+            self.X.problem, test_size=test_size,
             random_state=random_state)
 
-        return (self.select_itemID(_X_train_indices),
-                self.select_itemID(_X_test_indices))
+        return (self.select_problems(_X_train_indices),
+                self.select_problems(_X_test_indices))
 
     def plot_performance_labels(
             self,
@@ -438,16 +454,19 @@ class DataLoader():
             The axes.
         """
 
-        _X = self.X.unstack().stack(problem=('itemID', 'realization'))
-
         if y_pred is None:
             _y = self.y_binary(rel_tolerance=rel_tolerance)
 
         else:
             _y = (y_pred == self.performance.optimizer).T
 
-        grouped_Xy = pd.concat([_X.to_pandas(
-        ).T, _y.to_pandas()], axis=1)
+        y_pandas = _y.to_pandas()
+        x_pandas = self.X.to_pandas()
+
+        y_pandas.index = y_pandas.index.set_names(['realization', 'itemID'])
+        x_pandas.index = x_pandas.index.set_names(['realization', 'itemID'])
+
+        grouped_Xy = pd.concat([x_pandas, y_pandas], axis=1)
 
         df = grouped_Xy.groupby(
             list(self.features.values)).mean().reset_index()

@@ -161,7 +161,7 @@ def create_performance_profile(
     ds_output = ds_raw.sel(output_dim='y', drop=True).output
 
     # combine the itemID and realization coordinate
-    ds_output = ds_output.stack(problem=('itemID', 'realization'))
+    # ds_output = ds_output.stack(problem=('itemID', 'realization'))
 
     # Calculat the best found value (cummin)
     ds_output = _output_cummin(ds_output)

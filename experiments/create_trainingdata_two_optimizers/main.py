@@ -13,7 +13,7 @@ process
 """
 
 #
-#                                                                        Modules
+#                                                                       Modules
 # =============================================================================
 
 # Standard
@@ -33,7 +33,7 @@ from hydra.core.config_store import ConfigStore
 from run_opt import BenchmarkOptimizationRoutine
 
 # Local
-from l2co._logging import logger
+from l2co import logger
 
 #                                                          Authorship & Credits
 # =============================================================================

@@ -17,7 +17,10 @@ Author: Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)
 
 # Local
 
-from ._logging import logger
+from . import classifier, data, performance, preprocessing
+from ._src._logging import logger
+from ._src.run_optimization import run_multiple_realizations
+from ._src.run_sampling import run_sampling
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -28,4 +31,11 @@ __status__ = 'Planning'
 #
 # =============================================================================
 
-__all__ = ["logger"]
+__all__ = ["logger",
+           "run_multiple_realizations",
+           "run_sampling",
+           "classifier",
+           "data",
+           "performance",
+           "preprocessing",
+           ]
