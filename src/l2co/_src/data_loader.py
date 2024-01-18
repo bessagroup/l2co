@@ -161,7 +161,6 @@ class DataLoader():
         DataLoader
             The filtered data loader.
         """
-        # d_stacked = self.data.stack(problem=('realization', 'itemID'))
         mask = self.data.where(np.logical_or(
             np.isnan(self.data), np.isnan(self.data)), drop=True)
 
@@ -240,8 +239,12 @@ class DataLoader():
 
     @cached_property
     def X_trajectory(self) -> xr.DataArray:
-        return self.data.isel(
+        _X_trajectory = self.data.isel(
             output_dim=0, drop=True).output.rename('trajectory')
+
+        return xr.apply_ufunc(
+            np.log, (_X_trajectory - _X_trajectory.min('iterations')
+                     ) + 1.0, dask='parallelized')
 
     def select_single_optimizers(self) -> DataLoader:
         """
@@ -347,33 +350,7 @@ class DataLoader():
             dtype=object
         )
 
-        # _, df_output = self.experimentdata.to_pandas()
-        # df_selected = df_output[filtered_optimizer]
-
-        # selection: pd.Series = df_selected.apply(
-        #     lambda row: next((col for col, val in row.items()
-        #                       if val is not None), None), axis=1)
-
-        # # remove all rows that are None
-        # selection = selection[selection.notnull()]
-
-        # # ExperimentData
-        # experimentdata = self.experimentdata.select(selection.index)
-
-        # Data
-
         data_selected = self.data.sel(optimizer=optimizer)
-
-        # data_selected = xr.concat(
-        #     [self.data.sel(itemID=i, optimizer=p)
-        #      for i, p in selection.items()],
-        #     dim='itemID').drop('optimizer').expand_dims(
-        #         {'optimizer': [optimizer]}).stack(
-        #             problem=('realization', 'itemID'))
-
-        # # Features
-        # X = self.X.unstack('problem').sel(
-        #     itemID=selection.index).stack(problem=['itemID', 'realization'])
 
         n_iterations = self.n_iterations
         n_realizations = self.n_realizations
