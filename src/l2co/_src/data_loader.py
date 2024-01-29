@@ -219,10 +219,11 @@ class DataLoader():
         xarray.DataArray
             The optimizers coordinate.
         """
-        return xr.DataArray(np.unique(self.y),
-                            dims='optimizer',
-                            coords={'optimizer': np.unique(self.y)},
-                            name='optimizer')
+        return self.performance.optimizer
+        # return xr.DataArray(np.unique(self.y),
+        #                     dims='optimizer',
+        #                     coords={'optimizer': np.unique(self.y)},
+        #                     name='optimizer')
 
     @lru_cache(maxsize=1)
     def y_binary(self, rel_tolerance: float = 0.1) -> xr.DataArray:
@@ -241,6 +242,16 @@ class DataLoader():
     def X_trajectory(self) -> xr.DataArray:
         _X_trajectory = self.data.isel(
             output_dim=0, drop=True).output.rename('trajectory')
+
+        return xr.apply_ufunc(
+            np.log, (_X_trajectory - _X_trajectory.min('iterations')
+                     ) + 1.0, dask='parallelized')
+
+    @lru_cache(maxsize=1)
+    def X_trajectory2(self, iterations: int, t_start: int = 0) -> xr.DataArray:
+        _X_trajectory = self.data.isel(
+            output_dim=0, iterations=range(t_start, iterations), drop=True
+        ).output.rename('trajectory')
 
         return xr.apply_ufunc(
             np.log, (_X_trajectory - _X_trajectory.min('iterations')
