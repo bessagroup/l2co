@@ -1,13 +1,44 @@
+"""
+Module containing functions that compute the performance of optimizers
+
+Functions
+---------
+
+get_performance
+    Generate a dataset that captures the performance of an optimizer
+    on a benchmark function as function of the number of function evaluations.
+query_t
+    Query the performance dataset for the performance of the optimizers
+    after a given number of function evaluations.
+is_sparse
+    Check if the performance DataArray is sparse.
+collaborative_filtering
+    Fill in missing values in the performance DataFrame using
+    collaborative filtering.
+"""
+
+#                                                                       Modules
+# =============================================================================
+
+# Standard
 from __future__ import annotations
 
 from itertools import cycle
 from typing import Iterable, List, Optional
 
+# Third-party
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 from f3dasm import ExperimentData
+
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Stable'
+# =============================================================================
 
 
 def _output_cummin(ds):
@@ -183,8 +214,9 @@ def create_performance_profile(
 
     if strategies is not None:
         for strategy in strategies:
+            _strategy = strategy.sortby('problem')
             pp_to_dataset[strategy.name] = calculate_performance_ratio(
-                ds_budget.sel(optimizer=strategy), ds_budget.min(
+                ds_budget.sel(optimizer=_strategy), ds_budget.min(
                     dim='optimizer')
             )
 
@@ -196,6 +228,25 @@ def plot_performance_profile(
         strategy_names: Optional[List[str]] = None,
         axes: Optional[Iterable[plt.Axes, plt.Axes]] = None,
         show_combinations: bool = True):
+    """
+    Plot the performance profile for the given dataset.
+
+    Parameters
+    ----------
+    performance_profile : xr.Dataset
+        The performance profile to plot
+    strategy_names : List[str], optional
+        The strategies to highlight in the plot, by default None
+    axes : List[plt.Axes], optional
+        The axes to plot the performance profile on, by default None
+    show_combinations : bool, optional
+        If combinations of optimizers should be shown, by default True
+
+    Returns
+    -------
+    axes : List[plt.Axes]
+        The axes the performance profile was plotted on.
+    """
 
     if strategy_names is None:
         strategy_names = []

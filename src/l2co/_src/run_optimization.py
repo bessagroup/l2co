@@ -792,7 +792,7 @@ def _get_all_combinations(
     return [_get_scheduler(
         optimizer_1=opt_1, optimizer_2=opt_2,
         iterations=iterations, first_x0=first_x0)
-            for opt_1, opt_2 in product(optimizers, repeat=2)]
+        for opt_1, opt_2 in product(optimizers, repeat=2)]
 
 
 def _get_name_from_scheduler(scheduler: OptimizerScheduler) -> str:

@@ -1,13 +1,19 @@
 """
 Module containing a data loader class for stage0 of the L2CO framework.
+
+Classes
+-------
+
+DataLoader
+    A data loader class for optimization dynamics data
 """
 
 #                                                                       Modules
 # =============================================================================
 
+# Standard
 from __future__ import annotations
 
-# Standard
 from functools import cached_property, lru_cache
 from typing import Iterable, Optional, Tuple
 

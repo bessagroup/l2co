@@ -1,13 +1,14 @@
 """
-Module containing various classifiers
+Module containing various classifiers for stage0
 """
 
 #                                                                       Modules
 # =============================================================================
 
-# Third-party
+# Standard
 from typing import Any
 
+# Third-party
 from sklearn.ensemble import (GradientBoostingClassifier,
                               GradientBoostingRegressor)
 from sklearn.gaussian_process import (GaussianProcessClassifier,
@@ -29,7 +30,7 @@ __status__ = 'Stable'
 # =============================================================================
 
 
-class Classifier():
+class Stage0Model():
     def __init__(self,
                  model_name: str,
                  regressor: bool,

@@ -1,15 +1,25 @@
 """
-Module containing a trainer class to evaluate the performance of a classifier
+Module containing a trainer class to evaluate the performance of the
+optimization dynamics classifier.
+
+Classes
+-------
+Trainer
+    Base class to train and evaluate the performance of a classifier
+TrainerStage1
+    Implementation of the Trainer class for 
+    stage 0 and stage 1 of the classifier
+
+
 """
 
 #                                                                       Modules
 # =============================================================================
 
+# Standard
 from __future__ import annotations
 
-# Standard
 from abc import abstractmethod
-# from functools import cached_property
 from typing import Dict, Iterable, Optional, Tuple
 
 # Third-party
@@ -19,22 +29,21 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import xarray as xr
-from f3dasm.datageneration import DataGenerator
 from omegaconf import DictConfig
 from sklearn.metrics import (accuracy_score, confusion_matrix,
                              precision_recall_fscore_support)
 
-# Local
-from .classifier import Classifier
 from .data_loader import DataLoader
 from .lstm_autoencoder import LSTMMultiOutputClassifier, Stage1Model
 from .perf_profile import create_performance_profile, plot_performance_profile
+# Local
+from .stage0_model import Stage0Model
 
 #                                                          Authorship & Credits
 # =============================================================================
 __author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
 __credits__ = ['Martin van der Schelling']
-__status__ = 'Stable'
+__status__ = 'Planning'
 # =============================================================================
 
 
@@ -62,7 +71,7 @@ class Trainer():
 
     def __init__(self, data_train: DataLoader,
                  data_test: DataLoader,
-                 clf: Classifier, config: DictConfig):
+                 clf: Stage0Model, config: DictConfig):
         self.data_train = data_train
         self.data_test = data_test
         self.clf = clf
@@ -79,18 +88,29 @@ class Trainer():
         self.performance_profile = None
 
     @abstractmethod
-    def train(self):
+    def train_stage0(self):
         """
-        Train the classifier
+        Train the classifier for stage0 for the test data
         """
-        pass
+        ...
 
     @abstractmethod
-    def predict(self) -> xr.DataArray:
+    def train_stage1(self):
+        ...
+
+    @abstractmethod
+    def predict_stage0(self) -> xr.DataArray:
         """
-        Predict the labels for the test data
+        Predict the labels for stage 0 for the test data
         """
-        pass
+        ...
+
+    @abstractmethod
+    def predict_stage1(self) -> xr.DataArray:
+        """
+        Predict the labels for stage 1 for the test data
+        """
+        ...
 
     def create_performance_profile(
             self, strategies: Iterable[xr.DataArray]):
@@ -105,11 +125,18 @@ class Trainer():
             by default None
         """
         data_test = self.data_test.data.sortby('problem')
+        best_perf_profile = self.data_test.query_t(
+            self.iterations).y.rename('best_perf_profile')
+        worst_perf_profile = self.data_test.select_single_optimizers().query_t(
+            self.iterations).performance.idxmax(
+                dim='optimizer').rename('worst_perf_profile')
+
+        _strategies = [best_perf_profile, worst_perf_profile, *strategies]
 
         self.performance_profile = create_performance_profile(
             ds_raw=data_test,
             iterations=self.data_test.n_iterations,
-            strategies=strategies)
+            strategies=_strategies)
 
         self.performance_profile.load()
 
@@ -151,7 +178,9 @@ class Trainer():
 
         ax = plot_performance_profile(
             self.performance_profile,
-            strategy_names=strategy_names, axes=axes,
+            strategy_names=[
+                'best_perf_profile', 'worst_perf_profile', *strategy_names
+            ], axes=axes,
             show_combinations=show_combinations)
 
         return ax
@@ -171,7 +200,7 @@ class Trainer():
         y_true : xarray.DataArray
             True labels
         y_pred : xarray.DataArray
-            Predicted labels    
+            Predicted labels
         optimizers : xarray.DataArray
             Optimizers
         axes : Optional[Tuple[plt.Axes, plt.Axes]], optional
@@ -189,7 +218,7 @@ class Trainer():
         """
         if self.confusion_matrix is None:
             self.calculate_classifier_metrics(
-                y_true=y_true, y_pred=y_pred, optimizer=optimizers)
+                y_true=y_true, y_pred=y_pred, optimizers=optimizers)
 
         if axes is None:
             fig, axes = plt.subplots(2, 1, gridspec_kw={'height_ratios': [
@@ -324,11 +353,6 @@ class Trainer():
         - If no predictions are available, they will be created by calling
             self.predict()
         """
-        # if self.y_pred is None:
-        #     self.predict()
-
-        # y = self.data_test.y.sortby('problem')
-
         # CLASSIFIER METRICS
         (self.precision, self.recall,
          self.f1, self.support) = precision_recall_fscore_support(
@@ -337,7 +361,7 @@ class Trainer():
 
         # create confusion matrix
         self.confusion_matrix = confusion_matrix(
-            y_true=y_true, y_pred=y_pred, optimizers=optimizers)
+            y_true=y_true, y_pred=y_pred, labels=optimizers)
 
     def plot(self, y_true: xr.DataArray, y_pred: xr.DataArray,
              strategies: xr.DataArray, strategy_names: xr.DataArray,
@@ -350,12 +374,12 @@ class Trainer():
                                        optimizers=optimizers, axes=[
                                            axes[0, 0], axes[1, 0]])
         _ = self.plot_performance_profile(
-            strategies=strategies, strategy_names=strategy_names,
+            strategies=[strategies], strategy_names=strategy_names,
             axes=[axes[0, 1], axes[1, 1]], show_combinations=False)
         _ = data_test.plot_performance_labels(
             rel_tolerance=self.rel_tolerance,
             axes=[axes[2, 0], axes[3, 0]],
-            y_pred=self.y_pred, set_yticklabels=False)
+            y_pred=y_pred, set_yticklabels=False)
         _ = data_test.plot_performance_labels(
             rel_tolerance=self.rel_tolerance,
             axes=[axes[2, 1], axes[3, 1]],
@@ -363,57 +387,13 @@ class Trainer():
 
         return fig
 
-
-class TrainerStage0(Trainer):
-    def __init__(self, data_train: DataLoader,
-                 data_test: DataLoader,
-                 clf: Classifier, config: DictConfig,
-                 rel_tolerance: float = 0.0):
-        super().__init__(data_train=data_train,
-                         data_test=data_test,
-                         clf=clf,
-                         config=config)
-
-        self.rel_tolerance = rel_tolerance
-
-    def train(self):
-        self.clf.fit(self.data_train.X.to_pandas(),
-                     self.data_train.y_binary(self.rel_tolerance).to_pandas())
-
-    def predict(self) -> xr.DataArray:
-        y_pred_proba = xr.DataArray(
-            np.array(self.clf.predict_proba(self.data_test.X.to_pandas()))[
-                :, :, 1].T,
-            dims=self.data_test.y_binary(self.rel_tolerance).dims,
-            coords=self.data_test.y_binary(self.rel_tolerance).coords)
-
-        p = (y_pred_proba / y_pred_proba.sum(dim='optimizer'))
-
-        # Define a function to apply np.random.choice with probabilities from p
-        def random_choice_with_probabilities(p_values):
-            choice = np.random.choice(p.optimizer.values, p=p_values.ravel())
-            return choice
-
-        # Use apply_ufunc to apply the function along the desired coordinates
-        result = xr.apply_ufunc(
-            random_choice_with_probabilities,
-            # p.unstack(),
-            p,
-            input_core_dims=[['optimizer']],
-            vectorize=True,
-            dask='parallelized',
-            output_dtypes=[object],
-        )
-
-        self.y_pred = result.rename(self.name)
-
 # =============================================================================
 
 
 class TrainerStage1(Trainer):
     def __init__(self, data_train: DataLoader,
                  data_test: DataLoader,
-                 stage0_clf: Classifier, config: DictConfig,
+                 stage0_clf: Stage0Model, config: DictConfig,
                  iterations: int,
                  t_switch: int,
                  t_start: int,
@@ -497,7 +477,9 @@ class TrainerStage1(Trainer):
 
         list_y_pred_stage1 = []
 
-        for optimizer in self.data_test.select_single_optimizers().optimizers.values:
+        for optimizer in self.data_test.select_single_optimizers(
+
+        ).optimizers.values:
             problems = self.y_pred_stage0.where(
                 self.y_pred_stage0 == optimizer, drop=True).problem
             _d_test = self.data_test.query_optimizer(
@@ -587,115 +569,3 @@ class TrainerStage1(Trainer):
             data_test=self.data_test.query_t(self.iterations),
             strategies=self.y_pred_stage1,
             strategy_names=[f"{self.name}_stage1"])
-
-# =============================================================================
-
-
-class ClassifierConstructor(DataGenerator):
-    def __init__(self, config: DictConfig,
-                 data_train: DataLoader,
-                 data_test: DataLoader):
-        self.config = config
-        self.data_train = data_train
-        self.data_test = data_test
-
-    def execute(self):
-        model_name = self.experiment_sample.get('classifier')
-        parameters = self.experiment_sample.input_data
-        del parameters['classifier']
-
-        clf = Classifier(model_name=model_name,
-                         regressor=self.config.regression, **parameters)
-        trainer = Trainer(data_train=self.data_train, data_test=self.data_test,
-                          clf=clf, config=self.config)
-
-        trainer.train()
-        trainer.predict()
-
-        trainer.calculate_classifier_metrics()
-        trainer.create_performance_profile()
-
-        if self.config.debug:
-            self.experiment_sample.store(
-                object=trainer.y_pred.unstack('problem'),
-                name='da_predictions', to_disk=True
-            )
-
-        self.experiment_sample.store(
-            object=trainer.precision, name='precision')
-        self.experiment_sample.store(object=trainer.recall, name='recall')
-        self.experiment_sample.store(object=trainer.f1, name='f1')
-        self.experiment_sample.store(object=trainer.accuracy, name='accuracy')
-        self.experiment_sample.store(
-            object=trainer.performance_profile.to_pandas(),
-            name='performance_profile_csv', to_disk=True)
-
-        self.experiment_sample.store(object=trainer.plot_confusion_matrix(),
-                                     name="confusion_matrix",
-                                     to_disk=True)
-
-        self.experiment_sample.store(object=trainer.plot_performance_profile(),
-                                     name="performance_profile",
-                                     to_disk=True)
-
-        self.experiment_sample.store(object=trainer.plot_distribution_labels(),
-                                     name="distribution_labels",
-                                     to_disk=True)
-
-
-class ClassifierConstructorProba(DataGenerator):
-    def __init__(self, config: DictConfig,
-                 data_train: DataLoader,
-                 data_test: DataLoader):
-        self.config = config
-        self.data_train = data_train
-        self.data_test = data_test
-
-    def execute(self):
-        model_name = self.experiment_sample.get('classifier')
-        parameters = self.experiment_sample.input_data
-        del parameters['classifier']
-
-        clf = Classifier.from_name(model_name=model_name,
-                                   regressor=self.config.regression,
-                                   **parameters)
-        trainer = TrainerStage0(
-            data_train=self.data_train, data_test=self.data_test,
-            clf=clf, config=self.config,
-            rel_tolerance=self.config.rel_tolerance)
-
-        trainer.train()
-        trainer.predict()
-
-        trainer.calculate_classifier_metrics()
-        trainer.create_performance_profile()
-
-        if self.config.debug:
-            self.experiment_sample.store(
-                object=trainer.y_pred.unstack('problem'),
-                name='da_predictions', to_disk=True
-            )
-
-        self.experiment_sample.store(
-            object=trainer.precision, name='precision')
-        self.experiment_sample.store(object=trainer.recall, name='recall')
-        self.experiment_sample.store(object=trainer.f1, name='f1')
-        self.experiment_sample.store(object=trainer.accuracy, name='accuracy')
-        self.experiment_sample.store(
-            object=trainer.performance_profile.to_pandas(),
-            name='performance_profile_csv', to_disk=True)
-
-        fig, axes = plt.subplots(4, 2, figsize=(15, 15), gridspec_kw={
-            'height_ratios': [1, 0.25, 1, 0.25]})
-        _ = trainer.plot_confusion_matrix(axes=axes[0])
-        _ = trainer.plot_performance_profile(
-            axes=axes[1], show_combinations=False)
-        _ = trainer.data_test.plot_performance_labels(
-            rel_tolerance=self.config.rel_tolerance,
-            axes=axes[2],
-            y_pred=trainer.y_pred, set_yticklabels=False)
-        _ = trainer.data_test.plot_performance_labels(
-            rel_tolerance=self.config.rel_tolerance,
-            axes=axes[3], set_yticklabels=False)
-
-        self.experiment_sample.store(object=fig, name="fig", to_disk=True)

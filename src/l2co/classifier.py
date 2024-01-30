@@ -6,7 +6,7 @@ Submodule for classifiers
 # =============================================================================
 
 # Local
-from ._src.classifier import Classifier
+from ._src.stage0_model import Stage0Model
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -17,4 +17,4 @@ __status__ = 'Planning'
 #
 # =============================================================================
 
-__all__ = ["Classifier"]
+__all__ = ["Stage0Model"]
