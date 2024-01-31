@@ -46,7 +46,7 @@ __status__ = 'Planning'
 # =============================================================================
 
 
-def _output_cummin(ds: xr.Dataset) -> xr.DataArray:
+def output_cummin(ds: xr.Dataset) -> xr.DataArray:
     """
     Compute the cumulative minimum of the output values.
 
@@ -72,7 +72,7 @@ def _output_cummin(ds: xr.Dataset) -> xr.DataArray:
             'iterations')), coords=ds.output.coords, dims=ds.output.dims)
 
 
-def _randomsearch_baseline(
+def randomsearch_baseline(
         rs: xr.Dataset, size: int, shuffles: int = 99) -> np.ndarray:
     """
     Compute the random search baseline for the performance of an optimizer
@@ -142,7 +142,7 @@ def _calculate_metric(
     cumulative minimum of the output values of the optimization process and
     the baseline.
     """
-    ds['output_cummin'] = _output_cummin(ds)
+    ds['output_cummin'] = output_cummin(ds)
 
     # Find the minimum value of the output
     y_min = ds.output.min()
@@ -156,7 +156,7 @@ def _calculate_metric(
     return np.log(a/b)
 
 
-def _get_metric(
+def get_metric(
         data: ExperimentData, index: int):
     """
     Compute the performance of an optimizer on a benchmark function.
@@ -193,7 +193,7 @@ def _get_metric(
         output_data_with_references['random_samples'])
 
     # Establish the baseline
-    baseline = _randomsearch_baseline(rs, size=len(ds.iterations))
+    baseline = randomsearch_baseline(rs, size=len(ds.iterations))
 
     # Return the calculated performance metric
     return _calculate_metric(ds, baseline)
@@ -222,8 +222,8 @@ def get_metric_preprocessed(
     """
     return _calculate_metric(
         ds.sel(itemID=index),
-        _randomsearch_baseline(ds_samples.sel(itemID=index),
-                               size=len(ds.iterations)))
+        randomsearch_baseline(ds_samples.sel(itemID=index),
+                              size=len(ds.iterations)))
 
 
 def get_performance_preprocessed(ds_all: xr.Dataset,
@@ -295,7 +295,7 @@ def get_performance(experimentdata: ExperimentData) -> xr.DataArray:
     t_start = perf_counter()
 
     combined = xr.concat(
-        [_get_metric(experimentdata, i) for i in experimentdata.index],
+        [get_metric(experimentdata, i) for i in experimentdata.index],
         dim=xr.DataArray(experimentdata.index, dims='itemID'))
 
     # Drop the output dimension and rename the DataArray to 'performance'
