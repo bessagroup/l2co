@@ -1,24 +1,41 @@
 """
 Module containing various classifiers for stage0
+
+Classes
+-------
+Stage0Model
+    Class for creating a stage0 model
+
+Functions
+---------
+create_classifier
+    Function for creating a classifier
+create_decisiontree
+    Function for creating a decision tree classifier
+create_gpc
+    Function for creating a Gaussian process classifier
+create_knn
+    Function for creating a k-nearest neighbors classifier
+create_svc
+    Function for creating a support vector classifier
+create_gradientboostingclassifier
+    Function for creating a gradient boosting classifier
 """
 
 #                                                                       Modules
 # =============================================================================
 
 # Standard
-from typing import Any
+from typing import Iterable, Optional
 
 # Third-party
-from sklearn.ensemble import (GradientBoostingClassifier,
-                              GradientBoostingRegressor)
-from sklearn.gaussian_process import (GaussianProcessClassifier,
-                                      GaussianProcessRegressor)
-from sklearn.gaussian_process.kernels import (RBF, ConstantKernel,
-                                              ExpSineSquared, Matern)
-from sklearn.multiclass import OneVsOneClassifier, OneVsRestClassifier
-from sklearn.multioutput import MultiOutputClassifier, MultiOutputRegressor
+from sklearn.base import BaseEstimator
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.gaussian_process import GaussianProcessClassifier
+from sklearn.multioutput import MultiOutputClassifier
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.pipeline import Pipeline
+from sklearn.pipeline import make_pipeline
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 
@@ -33,55 +50,161 @@ __status__ = 'Stable'
 class Stage0Model():
     def __init__(self,
                  model_name: str,
-                 regressor: bool,
-                 clf: Pipeline,
+                 clf: BaseEstimator,
+                 preprocessing_step: Optional[ColumnTransformer] = None,
                  **parameters):
+        """
+        Class for creating a stage0 model
 
+        Parameters
+        ----------
+        model_name : str
+            The name of the model
+        clf : BaseEstimator
+            The scikit-learn classifier object
+        preprocessing_step : Optional[ColumnTransformer], optional
+            Optional preprocessing step for the features, by default None
+        parameters : dict
+            Optional parameters for the classifier
+
+        Returns
+        -------
+        Stage0Model
+            A stage0 model object
+        """
         self.model_name = model_name
-        self.regressor = regressor
         self.parameters = parameters
-        self.clf = clf
+        if preprocessing_step is None:
+            self.clf = make_pipeline(MultiOutputClassifier(clf))
+
+        else:
+            self.clf = make_pipeline(preprocessing_step,
+                                     MultiOutputClassifier(clf))
+
+    @classmethod
+    def from_name(cls, model_name: str,
+                  preprocessing_step: Optional[ColumnTransformer] = None,
+                  **parameters):
+        """
+        Create a stage0 model from the name of a model
+
+        Parameters
+        ----------
+        model_name : str
+            The name of the model
+        preprocessing_step : Optional[ColumnTransformer], optional
+            Optional preprocessing step for the features, by default None
+        parameters : dict
+            Optional parameters for the classifier
+
+        Returns
+        -------
+        Stage0Model
+            A stage0 model object
+
+        Notes
+        -----
+
+        Internally, there is a mapping from strings to scikit-learn classifiers
+        """
+        return cls(clf=sklearn_classifier_factory(model_name, **parameters),
+                   model_name=model_name,
+                   preprocessing_step=preprocessing_step,
+                   parameters=parameters)
 
     @property
     def name(self) -> str:
+        """
+        Property that returns the name of the model
+
+        Returns
+        -------
+        str
+            The name of the model
+        """
         return self.create_name()
 
-    @classmethod
-    def from_name(cls, model_name: str, regressor: bool = False, **parameters):
-        return cls(regressor=regressor,
-                   clf=create_classifier(model_name, **parameters)
-                   )
-
-    @classmethod
-    def from_sklearn_directly(cls, model_name: str,
-                              clf: Any, regressor: bool = False):
-
-        return cls(model_name=model_name, regressor=regressor, clf=clf)
-
     def create_name(self) -> str:
-        name = self.model_name
+        """
+        Method that creates a name for the model
 
-        if self.regressor:
-            name += '_reg'
+        Returns
+        -------
+        str
+            The name of the model
+
+        Notes
+        -----
+        The name of the model is created by concatenating the model_name and
+        the chosen hyperparameters.
+        """
+        name = self.model_name
 
         for key, value in self.parameters.items():
             name += f'_{key}={value}'
 
         return name
 
-    def fit(self, X, y):
+    def fit(self, X: Iterable, y: Iterable):
+        """
+        Method for fitting the model
+
+        Parameters
+        ----------
+        X : Iterable
+            The features in array-like structure
+        y : Any
+            The labels in array-like structure
+        """
         self.clf.fit(X, y)
 
-    def predict(self, X):
-        return self.clf.predict(X)
+    def load(self, path: str):
+        """
+        Load the model from a file
 
-    def predict_proba(self, X):
+        Parameters
+        ----------
+        path : str
+            The path to the model
+        """
+        ...
+
+    def predict_proba(self, X: Iterable) -> Iterable[float]:
+        """
+        Method for predicting the probabilities
+
+        Parameters
+        ----------
+        X : Iterable
+            The features in array-like structure
+
+        Returns
+        -------
+        Iterable[float]
+            The probabilities
+        """
         return self.clf.predict_proba(X)
 
 # =============================================================================
 
 
-def create_classifier(self, model_name: str, **parameters) -> Pipeline:
+def sklearn_classifier_factory(
+        self, model_name: str, **parameters) -> BaseEstimator:
+    """
+    Function for creating a classifier from a string
+
+    Parameters
+    ----------
+    model_name : str
+        The name of the model
+    parameters : dict
+        Optional parameters for the classifier
+
+    Returns
+    -------
+    BaseEstimator
+        The sklearn estimator
+    """
     if model_name == 'DecisionTree':
         return create_decisiontree(parameters)
 
@@ -94,83 +217,102 @@ def create_classifier(self, model_name: str, **parameters) -> Pipeline:
     elif model_name == 'GPC':
         return create_gpc(parameters)
 
-    elif model_name == 'GPR':
-        return create_gpr(parameters)
-
-    elif model_name == 'GradientBoostingRegressor':
-        return create_gradientboostingregressor(parameters)
-
     elif model_name == 'GradientBoostingClassifier':
         return create_gradientboostingclassifier(parameters)
 
 
-def create_gradientboostingclassifier(parameters):
+def create_gradientboostingclassifier(parameters) -> BaseEstimator:
+    """
+    Function for creating a gradient boosting classifier
+
+    Parameters
+    ----------
+    parameters : dict
+        Hyperparameters for the classifier
+
+    Returns
+    -------
+    BaseEstimator
+        The sklearn estimator
+    """
     learning_rate = parameters['learning_rate']
     n_estimators = parameters['n_estimators']
     min_samples_leaf = parameters['min_samples_leaf']
     max_depth = parameters['max_depth']
-    return MultiOutputClassifier(
-        GradientBoostingClassifier(
-            n_estimators=n_estimators,
-            learning_rate=learning_rate,
-            min_samples_leaf=min_samples_leaf,
-            max_depth=max_depth,))
+    return GradientBoostingClassifier(
+        n_estimators=n_estimators,
+        learning_rate=learning_rate,
+        min_samples_leaf=min_samples_leaf,
+        max_depth=max_depth,)
 
 
-def create_gpr(parameters):
-    kernel = parameters['kernel']
+def create_decisiontree(parameters) -> BaseEstimator:
+    """
+    Function for creating a decision tree classifier
 
-    if kernel == 'RBF':
-        kernel = ConstantKernel(1.0, constant_value_bounds="fixed") * \
-            RBF(1.0, length_scale_bounds="fixed")
+    Parameters
+    ----------
+    parameters : dict
+        Hyperparameters for the classifier
 
-    elif kernel == 'ExpSineSquared':
-        kernel = ConstantKernel(1.0, constant_value_bounds="fixed") * \
-            ExpSineSquared(1.0, length_scale_bounds="fixed",
-                           periodicity_bounds="fixed")
-
-    elif kernel == 'Matern':
-        kernel = ConstantKernel(1.0, constant_value_bounds="fixed") * \
-            Matern(1.0, length_scale_bounds="fixed", nu=1.5)
-
-    return MultiOutputRegressor(GaussianProcessRegressor(kernel=kernel))
-
-
-def create_gradientboostingregressor(parameters):
-    learning_rate = parameters['learning_rate']
-    n_estimators = parameters['n_estimators']
-    return MultiOutputRegressor(
-        GradientBoostingRegressor(random_state=0,
-                                  n_estimators=n_estimators,
-                                  learning_rate=learning_rate))
-
-
-def create_decisiontree(parameters):
+    Returns
+    -------
+    BaseEstimator
+        The sklearn estimator
+    """
     criterion = parameters['criterion']
     return DecisionTreeClassifier(criterion=criterion)
 
 
-def create_gpc(parameters):
+def create_gpc(parameters) -> BaseEstimator:
+    """
+    Function for creating a Gaussian Process classifier
+
+    Parameters
+    ----------
+    parameters : dict
+        Hyperparameters for the classifier
+
+    Returns
+    -------
+    BaseEstimator
+        The sklearn estimator
+    """
     return GaussianProcessClassifier()
 
 
-def create_knn(parameters):
+def create_knn(parameters) -> BaseEstimator:
+    """
+    Function for creating a k-NN classifier
+
+    Parameters
+    ----------
+    parameters : dict
+        Hyperparameters for the classifier
+
+    Returns
+    -------
+    BaseEstimator
+        The sklearn estimator
+    """
     n_neighbors = parameters['n_neighbors']
     weights = parameters['weights']
     return KNeighborsClassifier(n_neighbors=n_neighbors, weights=weights)
 
 
-def create_svc(parameters):
+def create_svc(parameters) -> BaseEstimator:
+    """
+    Function for creating SVC classifier
+
+    Parameters
+    ----------
+    parameters : dict
+        Hyperparameters for the classifier
+
+    Returns
+    -------
+    BaseEstimator
+        The sklearn estimator
+    """
     kernel = parameters['kernel']
-    clf = SVC(kernel=kernel)
-    return create_multiclass_classifier(parameters, clf)
-
-
-def create_multiclass_classifier(parameters, single_clf):
-    multiclass_mode = parameters['multiclass_mode']
-
-    if multiclass_mode == 'one-vs-rest':
-        return OneVsRestClassifier(single_clf)
-
-    if multiclass_mode == 'one-vs-one':
-        return OneVsOneClassifier(single_clf)
+    return SVC(kernel=kernel)

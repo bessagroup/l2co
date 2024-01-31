@@ -96,7 +96,7 @@ def transformer_factory(dtype: str) -> Pipeline:
 
 def preprocessing_factory(feature_types: dict) -> ColumnTransformer:
     """
-    Factory function that returns a ColumnTransformer 
+    Factory function that returns a ColumnTransformer
     for preprocessing the data.
 
     Parameters

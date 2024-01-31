@@ -4,10 +4,10 @@ optimization dynamics classifier.
 
 Classes
 -------
-Trainer
+TrainerBase
     Base class to train and evaluate the performance of a classifier
 TrainerStage1
-    Implementation of the Trainer class for 
+    Implementation of the Trainer class for
     stage 0 and stage 1 of the classifier
 
 
@@ -33,10 +33,10 @@ from omegaconf import DictConfig
 from sklearn.metrics import (accuracy_score, confusion_matrix,
                              precision_recall_fscore_support)
 
-from .data_loader import DataLoader
-from .lstm_autoencoder import LSTMMultiOutputClassifier, Stage1Model
-from .perf_profile import create_performance_profile, plot_performance_profile
 # Local
+from .data_loader import DataLoader
+from .lstm_autoencoder import LSTMMultiOutputClassifier, SingleStage1Model
+from .perf_profile import create_performance_profile, plot_performance_profile
 from .stage0_model import Stage0Model
 
 #                                                          Authorship & Credits
@@ -47,13 +47,7 @@ __status__ = 'Planning'
 # =============================================================================
 
 
-# make sure no plots are showing
-plt.ioff()
-
-# =============================================================================
-
-
-class Trainer():
+class TrainerBase():
     """
     Class to train and evaluate the performance of a classifier
 
@@ -71,13 +65,13 @@ class Trainer():
 
     def __init__(self, data_train: DataLoader,
                  data_test: DataLoader,
-                 clf: Stage0Model, config: DictConfig):
+                 stage0model: Stage0Model, config: DictConfig):
         self.data_train = data_train
         self.data_test = data_test
-        self.clf = clf
+        self.stage0model = stage0model
         self.config = config
 
-        self.name = clf.model_name
+        self.name = stage0model.model_name
         self.y_pred = None
         self.precision = None
         self.f1 = None
@@ -90,12 +84,15 @@ class Trainer():
     @abstractmethod
     def train_stage0(self):
         """
-        Train the classifier for stage0 for the test data
+        Train the classifier for stage0
         """
         ...
 
     @abstractmethod
     def train_stage1(self):
+        """
+        Train the classifier for stage1
+        """
         ...
 
     @abstractmethod
@@ -289,7 +286,6 @@ class Trainer():
 
         # Plotting horizontal bars for each row
         num_rows = len(df)
-        # num_labels = len(df.columns) - 5  # Excluding the feature columns
 
         if axes is None:
             fig, axes = plt.subplots(2, 1, gridspec_kw={'height_ratios': [
@@ -329,7 +325,7 @@ class Trainer():
 
         axes[1].axis('off')
 
-        axes[0].set_title(self.clf.name)
+        axes[0].set_title(self.stage0model.name)
 
         return axes
 
@@ -390,7 +386,7 @@ class Trainer():
 # =============================================================================
 
 
-class TrainerStage1(Trainer):
+class TrainerStage1(TrainerBase):
     def __init__(self, data_train: DataLoader,
                  data_test: DataLoader,
                  stage0_clf: Stage0Model, config: DictConfig,
@@ -399,6 +395,29 @@ class TrainerStage1(Trainer):
                  t_start: int,
                  rel_tolerance: float = 0.0,
                  name: str = 'trainer'):
+        """
+        Trainer class combining the models and the data for the data-driven
+        optimization dynamics classifier
+
+        Parameters
+        ----------
+        data_train : DataLoader
+            Data loader containing the training data
+        data_test : DataLoader
+            Data loader containing the test data
+        stage0_clf : Stage0Model
+            The stage0 classifier
+        rel_tolerance : float, optional
+            Relative tolerance, by default 0.0
+        iterations : int
+            Number of iterations
+        t_switch : int
+            Iteration number of the switch
+        t_start : int
+            Iteration number of the start of the trajectory
+        name : str, optional
+            Name of the trainer, by default 'trainer'
+        """
 
         self.data_train = data_train
         self.data_test = data_test
@@ -424,6 +443,9 @@ class TrainerStage1(Trainer):
         self.clf = self.stage0_clf
 
     def train_stage0(self):
+        """
+        Train the classifier for stage0
+        """
         _d_train = self.data_train.select_single_optimizers().query_t(
             self.iterations)
 
@@ -432,16 +454,33 @@ class TrainerStage1(Trainer):
 
     def train_stage1_optimizer(
             self, optimizer: str,
-            epochs: int = 3, batch_size: int = 32) -> Stage1Model:
+            epochs: int = 3, batch_size: int = 32) -> SingleStage1Model:
+        """
+        Train the classifier for stage1 for a specific optimizer
+
+        Parameters
+        ----------
+        optimizer : str
+            The optimizer
+        epochs : int, optional
+            Number of epochs, by default 3
+        batch_size : int, optional
+            Batch size, by default 32
+
+        Returns
+        -------
+        SingleStage1Model
+            The trained classifier for stage1
+        """
 
         _d_train = self.data_train.query_optimizer(optimizer).query_t(
             self.iterations)
 
         _d_train, _d_val = _d_train.train_test_split(test_size=0.2)
 
-        X_train = np.atleast_3d(_d_train.X_trajectory2(
+        X_train = np.atleast_3d(_d_train.X_trajectory(
             self.t_switch, t_start=self.t_start))
-        X_val = np.atleast_3d(_d_val.X_trajectory2(
+        X_val = np.atleast_3d(_d_val.X_trajectory(
             self.t_switch, t_start=self.t_start))
 
         X_train = np.transpose(X_train, (1, 0, 2))
@@ -461,14 +500,20 @@ class TrainerStage1(Trainer):
 
         return model
 
-    def train_stage1(self) -> None:
-        self.stage1_clf: Dict[str, Stage1Model] = {
+    def train_stage1(self):
+        """
+        Train the classifier for stage1
+        """
+        self.stage1_clf: Dict[str, SingleStage1Model] = {
             optimizer: self.train_stage1_optimizer(optimizer)
             for optimizer in
             self.data_train.select_single_optimizers().optimizers.values
         }
 
     def predict_stage1(self) -> xr.DataArray:
+        """
+        Predict the labels for stage 1 for the test data
+        """
         if self.y_pred_stage0 is None:
             self.predict_stage0()
 
@@ -485,7 +530,7 @@ class TrainerStage1(Trainer):
             _d_test = self.data_test.query_optimizer(
                 optimizer).query_t(self.iterations).select_problems(problems)
 
-            X_test = np.atleast_3d(_d_test.X_trajectory2(
+            X_test = np.atleast_3d(_d_test.X_trajectory(
                 self.t_switch, t_start=self.t_start))
             X_test = np.transpose(X_test, (1, 0, 2))
 
@@ -519,7 +564,10 @@ class TrainerStage1(Trainer):
         self.y_pred_stage1 = xr.DataArray(
             result_series).rename(f"{self.name}_stage1")
 
-    def predict_stage0(self) -> None:
+    def predict_stage0(self):
+        """
+        Predict the labels for stage 0 for the test data
+        """
         _d_test = self.data_test.select_single_optimizers().query_t(
             self.iterations)
 
@@ -550,6 +598,9 @@ class TrainerStage1(Trainer):
         self.y_pred_stage0 = result.rename(f"{self.name}_stage0")
 
     def plot_stage0(self):
+        """
+        Plot the performance profile for the classifier for stage 0
+        """
         return self.plot(
             y_true=self.data_test.select_single_optimizers().query_t(
                 self.iterations).y,
@@ -561,6 +612,9 @@ class TrainerStage1(Trainer):
             strategy_names=[f"{self.name}_stage0"])
 
     def plot_stage1(self):
+        """
+        Plot the performance profile for the classifier for stage 1
+        """
         return self.plot(
             y_true=self.data_test.query_t(
                 self.iterations).y,

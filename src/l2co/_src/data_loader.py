@@ -30,7 +30,7 @@ from sklearn.model_selection import train_test_split
 # Local
 from ._logging import logger as l2co_logger
 from .content_based import get_labels
-from .perf_profile import load_all_data
+from .perf_profile import create_performance_profile, load_all_data
 from .performance import (get_performance, get_performance_preprocessed,
                           query_t, select_optimizers_without_switch)
 
@@ -43,9 +43,6 @@ __status__ = 'Stable'
 
 # create a logger
 logger = l2co_logger.getChild(__name__)
-
-# make sure no plots are showing
-plt.ioff()
 
 # =============================================================================
 
@@ -64,25 +61,25 @@ class DataLoader():
         Parameters
         ----------
         X : xarray.DataArray
-            The features.
+            The features of the optimization problems.
         n_iterations : int
-            The number of iterations.
+            The number of training steps of each roll-out.
         n_realizations : int
-            The number of realizations.
+            The number of realizations for each problem.
         performance : xarray.Dataset
             The performance dataset.
         data : xarray.Dataset
-            The data.
+            The raw optimization trajectories.
         config : DictConfig
             The configuration file in hydra format.
         experimentdata : ExperimentData
             The experiment data.
         """
-        self.X = X
+        self.X = X.sortby('problem')
         self.n_iterations = n_iterations
         self.n_realizations = n_realizations
-        self.performance = performance
-        self.data = data
+        self.performance = performance.sortby('problem')
+        self.data = data.sortby('problem')
         self.config = config
         self.experimentdata = experimentdata
 
@@ -90,6 +87,23 @@ class DataLoader():
     def from_experimentdata(cls, config: DictConfig,
                             experimentdata: ExperimentData,
                             select_single_optimizers: bool = True):
+        """
+        Create a data loader from a f3dasm ExperimentData object.
+
+        Parameters
+        ----------
+        config : DictConfig
+            The configuration file in hydra format.
+        experimentdata : ExperimentData
+            The experiment data object.
+        select_single_optimizers : bool, optional
+            Whether to select only the single optimizers, by default True
+
+        Returns
+        -------
+        DataLoader
+            The resulting data loader.
+        """
 
         _data = load_all_data(experimentdata)
 
@@ -128,6 +142,29 @@ class DataLoader():
                                 experimentdata: ExperimentData,
                                 data: xr.Dataset, data_samples: xr.Dataset,
                                 select_single_optimizers: bool = True):
+        """
+        Create a data loader from preprocessed files of the optimization
+        trajectories (data) and the roll-outs of random search (data_samples).
+
+        Parameters
+        ----------
+        config : DictConfig
+            The configuration file in hydra format.
+        experimentdata : ExperimentData
+            The experiment data object.
+        data : xarray.Dataset
+            The raw optimization trajectories.
+        data_samples : xarray.Dataset
+            The raw optimization trajectories.
+        select_single_optimizers : bool, optional
+            Whether to select only the single optimizers, by default True
+
+        Returns
+        -------
+        DataLoader
+            The resulting data loader.
+        """
+
         n_realizations = data.realization.size
         n_iterations = data.iterations.size
 
@@ -160,7 +197,8 @@ class DataLoader():
 
     def filter_nan_or_inf(self) -> DataLoader:
         """
-        Filter out all rows with NaN or Inf values.
+        Filter out all problems with NaN or Inf values in the optimization
+        raw data.
 
         Returns
         -------
@@ -201,6 +239,14 @@ class DataLoader():
 
     @property
     def features(self) -> xr.DataArray:
+        """
+        Property method to return the features coordinate
+
+        Returns
+        -------
+        xarray.DataArray
+            The features coordinate.
+        """
         return self.X.features
 
     @property
@@ -226,10 +272,6 @@ class DataLoader():
             The optimizers coordinate.
         """
         return self.performance.optimizer
-        # return xr.DataArray(np.unique(self.y),
-        #                     dims='optimizer',
-        #                     coords={'optimizer': np.unique(self.y)},
-        #                     name='optimizer')
 
     @lru_cache(maxsize=1)
     def y_binary(self, rel_tolerance: float = 0.1) -> xr.DataArray:
@@ -244,17 +286,24 @@ class DataLoader():
         return (self.performance <= threshold).sel(
             problem=self.problem, drop=True).T
 
-    @cached_property
-    def X_trajectory(self) -> xr.DataArray:
-        _X_trajectory = self.data.isel(
-            output_dim=0, drop=True).output.rename('trajectory')
-
-        return xr.apply_ufunc(
-            np.log, (_X_trajectory - _X_trajectory.min('iterations')
-                     ) + 1.0, dask='parallelized')
-
     @lru_cache(maxsize=1)
-    def X_trajectory2(self, iterations: int, t_start: int = 0) -> xr.DataArray:
+    def X_trajectory(self, iterations: int, t_start: int = 0) -> xr.DataArray:
+        """
+        Select the history of an optimization trajectory.
+
+        Parameters
+        ----------
+        iterations : int
+            The number of iterations to select.
+        t_start : int, optional
+            The starting iteration number of the requested trajectory,
+            by default 0
+
+        Returns
+        -------
+        xr.DataArray
+            The selected trajectory.
+        """
         _X_trajectory = self.data.isel(
             output_dim=0, iterations=range(t_start, iterations), drop=True
         ).output.rename('trajectory')
@@ -262,6 +311,30 @@ class DataLoader():
         return xr.apply_ufunc(
             np.log, (_X_trajectory - _X_trajectory.min('iterations')
                      ) + 1.0, dask='parallelized')
+
+    def performance_profile(
+            self, strategies: Optional[Iterable[xr.DataArray]] = None
+    ) -> xr.Dataset:
+
+        if strategies is None:
+            strategies = []
+
+        # self.data = self.data.sortby('problem')
+        best_perf_profile = self.query_t(
+            self.n_iterations-1).y.rename('best_perf_profile')
+        worst_perf_profile = self.query_t(
+            self.n_iterations-1).performance.idxmax(
+                dim='optimizer').rename('worst_perf_profile')
+
+        _strategies = [best_perf_profile, worst_perf_profile, *strategies]
+
+        performance_profile = create_performance_profile(
+            ds_raw=self.data,
+            iterations=self.n_iterations,
+            strategies=_strategies)
+
+        # performance_profile.load()
+        return performance_profile
 
     def select_single_optimizers(self) -> DataLoader:
         """
