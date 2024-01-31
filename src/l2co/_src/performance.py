@@ -105,7 +105,10 @@ def _randomsearch_baseline(
     shuffled_arrays = np.minimum.accumulate(rs_data).reshape(1, -1)
 
     for _ in range(shuffles):
+        # Shuffle the datapoints
         np.random.shuffle(rs_data)
+
+        # Concatenate the accumulated minimum of the shuffled data
         shuffled_arrays = np.concatenate(
             [shuffled_arrays, np.minimum.accumulate(rs_data).reshape(1, -1)])
 
@@ -140,8 +143,12 @@ def _calculate_metric(
     the baseline.
     """
     ds['output_cummin'] = _output_cummin(ds)
+
+    # Find the minimum value of the output
     y_min = ds.output.min()
 
+    # Select the cumulative minimum and subtract the minimum value
+    # Add one to make sure we don't take the log of zero
     a = ds.output_cummin.sel(
         output_dim='y').median('realization') - y_min + 1.0
     b = baseline - y_min.values + 1.0
@@ -170,25 +177,49 @@ def _get_metric(
         on a benchmark function.
     """
 
+    # Retrieve the ExperimentSample of the given index
     experiment_sample = data.get_experiment_sample(index)
 
+    # Load the optimization dynamics data
     ds = xr.open_mfdataset(
         [data.project_dir / path for key, path in
          experiment_sample.output_data_with_references.items()
          if _validate_path(
              path, data.project_dir) and key != 'random_samples'])
 
+    # Load the random search data
     rs = xr.open_dataset(
         data.project_dir / experiment_sample.
         output_data_with_references['random_samples'])
 
+    # Establish the baseline
     baseline = _randomsearch_baseline(rs, size=len(ds.iterations))
 
+    # Return the calculated performance metric
     return _calculate_metric(ds, baseline)
 
 
-def _get_metric_preprocessed(
-        ds: xr.Dataset, ds_samples: xr.Dataset, index: int):
+def get_metric_preprocessed(
+        ds: xr.Dataset, ds_samples: xr.Dataset, index: int) -> xr.DataArray:
+    """
+    Compute the performance of an optimizer on a benchmark function.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset
+        xarray Dataset object containing the output values of the
+        optimization process.
+    ds_samples : xarray.Dataset
+        xarray Dataset object containing the output values of the
+        random search process.
+    index : int
+        index of the experiment sample
+
+    Returns
+    -------
+    xarray.DataArray
+        xarray DataArray object containing the performance of the optimizer
+    """
     return _calculate_metric(
         ds.sel(itemID=index),
         _randomsearch_baseline(ds_samples.sel(itemID=index),
@@ -197,8 +228,27 @@ def _get_metric_preprocessed(
 
 def get_performance_preprocessed(ds_all: xr.Dataset,
                                  ds_random: xr.Dataset) -> xr.DataArray:
+    """
+    Get the performance of the optimizers on the benchmark functions from
+    preprocessed files
+
+    Parameters
+    ----------
+    ds_all : xarray.Dataset
+        xarray Dataset object containing the output values of the
+        optimization process.
+    ds_random : xarray.Dataset
+        xarray Dataset object containing the output values of the
+        random search process.
+
+    Returns
+    -------
+    xarray.DataArray
+        xarray DataArray object containing the performance of the optimizers
+        on the benchmark functions.
+    """
     t_start = perf_counter()
-    combined = xr.concat([_get_metric_preprocessed(ds_all, ds_random, i)
+    combined = xr.concat([get_metric_preprocessed(ds_all, ds_random, i)
                          for i in ds_all.itemID], dim=ds_all.itemID)
 
     combined = combined.drop('output_dim')
@@ -248,6 +298,7 @@ def get_performance(experimentdata: ExperimentData) -> xr.DataArray:
         [_get_metric(experimentdata, i) for i in experimentdata.index],
         dim=xr.DataArray(experimentdata.index, dims='itemID'))
 
+    # Drop the output dimension and rename the DataArray to 'performance'
     combined = combined.drop('output_dim')
     combined = combined.rename('performance')
 
@@ -352,16 +403,3 @@ def collaborative_filtering(sparse_ds: xr.DataArray) -> xr.DataArray:
     # cast to xr.DataArray
     return complete_df.set_index(
         ['itemID', 'optimizer']).to_xarray()['performance']
-
-
-def constrain_on_first_optimizer(
-        performance: xr.DataArray, query: str = '') -> xr.DataArray:
-    return performance.sel(
-        optimizer=[o for o in performance.optimizer.values
-                   if o.startswith(query)])
-
-
-def select_optimizers_without_switch(performance: xr.DataArray):
-    return performance.sel(
-        optimizer=[o.values for
-                   o in performance.optimizer if '+' not in str(o.values)])
