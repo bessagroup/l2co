@@ -28,8 +28,8 @@ create_gradientboostingclassifier
 # Standard
 from typing import Iterable, Optional
 
-import numpy as np
 # Third-party
+import numpy as np
 import xarray as xr
 from sklearn.base import BaseEstimator
 from sklearn.compose import ColumnTransformer
@@ -41,6 +41,7 @@ from sklearn.pipeline import make_pipeline
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 
+# Local
 from .data_loader import DataLoader
 
 #                                                          Authorship & Credits

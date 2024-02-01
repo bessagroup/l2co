@@ -9,8 +9,6 @@ TrainerBase
 TrainerStage1
     Implementation of the Trainer class for
     stage 0 and stage 1 of the classifier
-
-
 """
 
 #                                                                       Modules
@@ -34,9 +32,9 @@ from sklearn.metrics import (accuracy_score, confusion_matrix,
 
 # Local
 from .data_loader import DataLoader
-from .lstm_autoencoder import SingleStage1Model, Stage1Model
 from .perf_profile import create_performance_profile, plot_performance_profile
 from .stage0_model import Stage0Model
+from .stage1_model import SingleStage1Model, Stage1Model
 
 #                                                          Authorship & Credits
 # =============================================================================

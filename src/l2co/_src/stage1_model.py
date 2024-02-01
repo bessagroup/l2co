@@ -1,13 +1,20 @@
 """
 Module for the stage1 model
+
+Classes
+-------
+Stage1Model
+    Class for creating a stage1 model
+LSTMMultiOutputClassifier
+    LSTM Multi-output classifier neural network
 """
 
 #                                                                       Modules
 # =============================================================================
 
+# Standard
 from __future__ import annotations
 
-# Standard
 from copy import deepcopy
 from typing import Dict, Optional, Protocol, Tuple
 
@@ -15,9 +22,9 @@ from typing import Dict, Optional, Protocol, Tuple
 import numpy as np
 import pandas as pd
 import xarray as xr
-from tensorflow.keras.callbacks import ModelCheckpoint
-from tensorflow.keras.layers import LSTM, Dense, Input
-from tensorflow.keras.models import Sequential
+from keras.callbacks import ModelCheckpoint
+from keras.layers import LSTM, Dense, Input
+from keras.models import Sequential
 
 # Local
 from .data_loader import DataLoader
@@ -65,6 +72,7 @@ def combine_stage0_stage1_predictions(
     result_series = df.apply(string_concatenation, axis=1)
     return xr.DataArray(result_series)
 
+#                                                                Protocol class
 # =============================================================================
 
 
@@ -98,6 +106,7 @@ class SingleStage1Model(Protocol):
         """
         ...
 
+#                                                             Stage1Model class
 # =============================================================================
 
 
@@ -235,6 +244,9 @@ class Stage1Model:
         for optimizer in self.optimizers.values:
             self.models[optimizer].load(model_path)
 
+
+#                                                         Model implementations
+# =============================================================================
 
 class LSTMMultiOutputClassifier(SingleStage1Model):
     def __init__(self, n_outputs: int, length_sequence: int,
