@@ -28,7 +28,9 @@ create_gradientboostingclassifier
 # Standard
 from typing import Iterable, Optional
 
+import numpy as np
 # Third-party
+import xarray as xr
 from sklearn.base import BaseEstimator
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import GradientBoostingClassifier
@@ -38,6 +40,8 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import make_pipeline
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
+
+from .data_loader import DataLoader
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -184,6 +188,37 @@ class Stage0Model():
             The probabilities
         """
         return self.clf.predict_proba(X)
+
+    def predict(self, data_test: DataLoader) -> xr.DataArray:
+        """
+        Predict the labels for stage 0 for the test data
+        """
+
+        y_pred_proba = xr.DataArray(
+            np.array(self.predict_proba(data_test.X.to_pandas()))[
+                :, :, 1].T,
+            dims=data_test.y_binary().dims,
+            coords=data_test.y_binary().coords)
+
+        p = (y_pred_proba / y_pred_proba.sum(dim='optimizer'))
+
+        # Define a function to apply np.random.choice with probabilities from p
+        def random_choice_with_probabilities(p_values):
+            choice = np.random.choice(p.optimizer.values, p=p_values.ravel())
+            return choice
+
+        # Use apply_ufunc to apply the function along the desired coordinates
+        result = xr.apply_ufunc(
+            random_choice_with_probabilities,
+            # p.unstack(),
+            p,
+            input_core_dims=[['optimizer']],
+            vectorize=True,
+            dask='parallelized',
+            output_dtypes=[object],
+        )
+
+        return result
 
 # =============================================================================
 

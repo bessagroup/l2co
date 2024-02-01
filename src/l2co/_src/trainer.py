@@ -19,8 +19,7 @@ TrainerStage1
 # Standard
 from __future__ import annotations
 
-from abc import abstractmethod
-from typing import Dict, Iterable, Optional, Tuple
+from typing import Iterable, Optional, Tuple
 
 # Third-party
 import matplotlib.patches as mpatches
@@ -29,13 +28,13 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import xarray as xr
-from omegaconf import DictConfig
+from sklearn.base import BaseEstimator
 from sklearn.metrics import (accuracy_score, confusion_matrix,
                              precision_recall_fscore_support)
 
 # Local
 from .data_loader import DataLoader
-from .lstm_autoencoder import LSTMMultiOutputClassifier, SingleStage1Model
+from .lstm_autoencoder import SingleStage1Model, Stage1Model
 from .perf_profile import create_performance_profile, plot_performance_profile
 from .stage0_model import Stage0Model
 
@@ -47,32 +46,65 @@ __status__ = 'Planning'
 # =============================================================================
 
 
-class TrainerBase():
-    """
-    Class to train and evaluate the performance of a classifier
-
-    Parameters
-    ----------
-    data_train : DataLoader
-        Data loader containing the training data
-    data_test : DataLoader
-        Data loader containing the test data
-    clf : Classifier
-        Classifier to be evaluated
-    config : DictConfig
-        Configuration object
-    """
-
+class Trainer:
     def __init__(self, data_train: DataLoader,
                  data_test: DataLoader,
-                 stage0model: Stage0Model, config: DictConfig):
+                 stage0_clf: BaseEstimator,
+                 stage1_clf: SingleStage1Model,
+                 iterations: int,
+                 t_switch: int,
+                 t_start: int,
+                 rel_tolerance: float,
+                 preprocessing_step,
+                 epochs: int = 3,
+                 batch_size: int = 32,
+                 name: str = 'trainer'):
+        """
+        Trainer class combining the models and the data for the data-driven
+        optimization dynamics classifier
+
+        Parameters
+        ----------
+        data_train : DataLoader
+            Data loader containing the training data
+        data_test : DataLoader
+            Data loader containing the test data
+        stage0_clf : sklearn.BaseEstimator
+            The stage0 classifier
+        stage1_clf : SingleStage1Model
+            The stage1 classifier
+        rel_tolerance : float, optional
+            Relative tolerance, by default 0.0
+        preprocessing_step : ColumnTransformer
+            Preprocessing step for the categorical input features
+        iterations : int
+            Number of iterations of the optimization dynamics
+        t_switch : int
+            Iteration number of the switch
+        t_start : int
+            Iteration number of the start of the trajectory
+        name : str, optional
+            Name of the trainer, by default 'trainer'
+        epochs : int, optional
+            Number of epochs, by default 3
+        batch_size : int, optional
+            Batch size, by default 32
+        """
+
         self.data_train = data_train
         self.data_test = data_test
-        self.stage0model = stage0model
-        self.config = config
+        self.rel_tolerance = rel_tolerance
+        self.iterations = iterations
+        self.t_switch = t_switch
+        self.t_start = t_start
+        self.name = name
+        self.epochs = epochs
+        self.batch_size = batch_size
 
-        self.name = stage0model.model_name
+        self.y_pred_stage0 = None
         self.y_pred = None
+        self.stage1_clf = None
+
         self.precision = None
         self.f1 = None
         self.recall = None
@@ -81,33 +113,106 @@ class TrainerBase():
         self.confusion_matrix = None
         self.performance_profile = None
 
-    @abstractmethod
+        self.stage0_model = Stage0Model(
+            model_name='stage0_model',
+            preprocessing_step=preprocessing_step,
+            clf=stage0_clf)
+
+        self.stage1_model = Stage1Model(
+            optimizers=self.data_train.select_single_optimizers().optimizers,
+            model=stage1_clf,
+            iterations=iterations,
+            t_start=t_start,
+            t_switch=t_switch,
+            rel_tolerance=rel_tolerance,
+            name='stage0_model')
+
+    def train(self):
+        """
+        Train the models with the training data
+        """
+        self.train_stage0()
+        self.train_stage1()
+
     def train_stage0(self):
         """
-        Train the classifier for stage0
+        Train the stage0 model with the training data
         """
-        ...
+        _d_train = self.data_train.select_single_optimizers().query_t(
+            self.iterations)
 
-    @abstractmethod
+        self.stage0_model.fit(_d_train.X.to_pandas(),
+                              _d_train.y_binary(self.rel_tolerance).to_pandas()
+                              )
+
     def train_stage1(self):
         """
-        Train the classifier for stage1
+        Train the stage1 model with the training data
         """
-        ...
+        self.stage1_model.train(self.data_train, batch_size=self.batch_size,
+                                epochs=self.epochs)
 
-    @abstractmethod
+    def predict(self):
+        """
+        Predict the labels for stage 0 and stage 1 for the test data
+        """
+        self.stage0_prediction = self.predict_stage0()
+        self.stage1_prediction = self.predict_stage1()
+
     def predict_stage0(self) -> xr.DataArray:
         """
         Predict the labels for stage 0 for the test data
-        """
-        ...
 
-    @abstractmethod
+        Returns
+        -------
+        xarray.DataArray
+            The predicted labels
+        """
+        _d_test = self.data_test.select_single_optimizers().query_t(
+            self.iterations)
+
+        return self.stage0_model.predict(_d_test).rename(
+            f"{self.name}_stage0")
+
     def predict_stage1(self) -> xr.DataArray:
         """
         Predict the labels for stage 1 for the test data
+
+        Returns
+        -------
+        xarray.DataArray
+            The predicted labels
         """
-        ...
+        return self.stage1_model.predict(
+            self.data_test, self.stage0_prediction).rename(
+                f"{self.name}_stage1")
+
+    def plot_stage0(self):
+        """
+        Plot the performance profile for the classifier for stage 0
+        """
+        return self.plot(
+            y_true=self.data_test.select_single_optimizers().query_t(
+                self.iterations).y,
+            y_pred=self.stage0_prediction,
+            strategies=self.stage0_prediction,
+            optimizers=self.data_test.select_single_optimizers().optimizers,
+            data_test=self.data_test.select_single_optimizers().query_t(
+                self.iterations),
+            strategy_names=[f"{self.name}_stage0"])
+
+    def plot_stage1(self):
+        """
+        Plot the performance profile for the classifier for stage 1
+        """
+        return self.plot(
+            y_true=self.data_test.query_t(
+                self.iterations).y,
+            y_pred=self.stage1_prediction,
+            strategies=self.stage1_prediction,
+            optimizers=self.data_test.optimizers,
+            data_test=self.data_test.query_t(self.iterations),
+            strategy_names=[f"{self.name}_stage1"])
 
     def create_performance_profile(
             self, strategies: Iterable[xr.DataArray]):
@@ -382,244 +487,3 @@ class TrainerBase():
             y_pred=None, set_yticklabels=False)
 
         return fig
-
-# =============================================================================
-
-
-class TrainerStage1(TrainerBase):
-    def __init__(self, data_train: DataLoader,
-                 data_test: DataLoader,
-                 stage0_clf: Stage0Model, config: DictConfig,
-                 iterations: int,
-                 t_switch: int,
-                 t_start: int,
-                 rel_tolerance: float = 0.0,
-                 name: str = 'trainer'):
-        """
-        Trainer class combining the models and the data for the data-driven
-        optimization dynamics classifier
-
-        Parameters
-        ----------
-        data_train : DataLoader
-            Data loader containing the training data
-        data_test : DataLoader
-            Data loader containing the test data
-        stage0_clf : Stage0Model
-            The stage0 classifier
-        rel_tolerance : float, optional
-            Relative tolerance, by default 0.0
-        iterations : int
-            Number of iterations
-        t_switch : int
-            Iteration number of the switch
-        t_start : int
-            Iteration number of the start of the trajectory
-        name : str, optional
-            Name of the trainer, by default 'trainer'
-        """
-
-        self.data_train = data_train
-        self.data_test = data_test
-        self.stage0_clf = stage0_clf
-        self.rel_tolerance = rel_tolerance
-        self.iterations = iterations
-        self.t_switch = t_switch
-        self.t_start = t_start
-        self.name = name
-
-        self.y_pred_stage0 = None
-        self.y_pred = None
-        self.stage1_clf = None
-
-        self.precision = None
-        self.f1 = None
-        self.recall = None
-        self.support = None
-        self.accuracy = None
-        self.confusion_matrix = None
-        self.performance_profile = None
-
-        self.clf = self.stage0_clf
-
-    def train_stage0(self):
-        """
-        Train the classifier for stage0
-        """
-        _d_train = self.data_train.select_single_optimizers().query_t(
-            self.iterations)
-
-        self.stage0_clf.fit(_d_train.X.to_pandas(),
-                            _d_train.y_binary(self.rel_tolerance).to_pandas())
-
-    def train_stage1_optimizer(
-            self, optimizer: str,
-            epochs: int = 3, batch_size: int = 32) -> SingleStage1Model:
-        """
-        Train the classifier for stage1 for a specific optimizer
-
-        Parameters
-        ----------
-        optimizer : str
-            The optimizer
-        epochs : int, optional
-            Number of epochs, by default 3
-        batch_size : int, optional
-            Batch size, by default 32
-
-        Returns
-        -------
-        SingleStage1Model
-            The trained classifier for stage1
-        """
-
-        _d_train = self.data_train.query_optimizer(optimizer).query_t(
-            self.iterations)
-
-        _d_train, _d_val = _d_train.train_test_split(test_size=0.2)
-
-        X_train = np.atleast_3d(_d_train.X_trajectory(
-            self.t_switch, t_start=self.t_start))
-        X_val = np.atleast_3d(_d_val.X_trajectory(
-            self.t_switch, t_start=self.t_start))
-
-        X_train = np.transpose(X_train, (1, 0, 2))
-        X_val = np.transpose(X_val, (1, 0, 2))
-
-        y_train = np.atleast_2d(_d_train.y_binary(
-            self.rel_tolerance).astype(int))
-        y_val = np.atleast_2d(_d_val.y_binary(
-            self.rel_tolerance).astype(int))
-
-        model = LSTMMultiOutputClassifier(
-            optimizers=_d_train.optimizers,
-            length_sequence=self.t_switch-self.t_start)
-
-        model.train(X_train, y_train, X_val, y_val,
-                    epochs=epochs, batch_size=batch_size)
-
-        return model
-
-    def train_stage1(self):
-        """
-        Train the classifier for stage1
-        """
-        self.stage1_clf: Dict[str, SingleStage1Model] = {
-            optimizer: self.train_stage1_optimizer(optimizer)
-            for optimizer in
-            self.data_train.select_single_optimizers().optimizers.values
-        }
-
-    def predict_stage1(self) -> xr.DataArray:
-        """
-        Predict the labels for stage 1 for the test data
-        """
-        if self.y_pred_stage0 is None:
-            self.predict_stage0()
-
-        if self.stage1_clf is None:
-            self.train_stage1()
-
-        list_y_pred_stage1 = []
-
-        for optimizer in self.data_test.select_single_optimizers(
-
-        ).optimizers.values:
-            problems = self.y_pred_stage0.where(
-                self.y_pred_stage0 == optimizer, drop=True).problem
-            _d_test = self.data_test.query_optimizer(
-                optimizer).query_t(self.iterations).select_problems(problems)
-
-            X_test = np.atleast_3d(_d_test.X_trajectory(
-                self.t_switch, t_start=self.t_start))
-            X_test = np.transpose(X_test, (1, 0, 2))
-
-            list_y_pred_stage1.append(xr.DataArray(
-                self.stage1_clf[optimizer].predict(X_test),
-                dims=['problem', 'optimizer'],
-                coords={'optimizer': _d_test.optimizers,
-                        'problem': _d_test.problem})
-            )
-
-        y_pred_stage1 = xr.concat(
-            list_y_pred_stage1, dim='problem').sortby('problem')
-
-        y_pred_stage1 = y_pred_stage1.idxmax(
-            dim='optimizer').sortby('problem')
-        self.y_pred_stage0 = self.y_pred_stage0.sortby('problem')
-
-        df = pd.DataFrame({'stage0': self.y_pred_stage0.to_pandas(),
-                          'stage1': y_pred_stage1.to_pandas()})
-
-        # Custom function to apply to each row
-        def custom_function(row):
-            if row['stage0'] == row['stage1']:
-                return row['stage0']  # Return the first column name
-            else:
-                # Concatenate values with a + sign
-                return f"{row['stage0']}+{row['stage1']}"
-
-        # Apply the custom function to each row
-        result_series = df.apply(custom_function, axis=1)
-        self.y_pred_stage1 = xr.DataArray(
-            result_series).rename(f"{self.name}_stage1")
-
-    def predict_stage0(self):
-        """
-        Predict the labels for stage 0 for the test data
-        """
-        _d_test = self.data_test.select_single_optimizers().query_t(
-            self.iterations)
-
-        y_pred_proba = xr.DataArray(
-            np.array(self.stage0_clf.predict_proba(_d_test.X.to_pandas()))[
-                :, :, 1].T,
-            dims=_d_test.y_binary(self.rel_tolerance).dims,
-            coords=_d_test.y_binary(self.rel_tolerance).coords)
-
-        p = (y_pred_proba / y_pred_proba.sum(dim='optimizer'))
-
-        # Define a function to apply np.random.choice with probabilities from p
-        def random_choice_with_probabilities(p_values):
-            choice = np.random.choice(p.optimizer.values, p=p_values.ravel())
-            return choice
-
-        # Use apply_ufunc to apply the function along the desired coordinates
-        result = xr.apply_ufunc(
-            random_choice_with_probabilities,
-            # p.unstack(),
-            p,
-            input_core_dims=[['optimizer']],
-            vectorize=True,
-            dask='parallelized',
-            output_dtypes=[object],
-        )
-
-        self.y_pred_stage0 = result.rename(f"{self.name}_stage0")
-
-    def plot_stage0(self):
-        """
-        Plot the performance profile for the classifier for stage 0
-        """
-        return self.plot(
-            y_true=self.data_test.select_single_optimizers().query_t(
-                self.iterations).y,
-            y_pred=self.y_pred_stage0,
-            strategies=self.y_pred_stage0,
-            optimizers=self.data_test.select_single_optimizers().optimizers,
-            data_test=self.data_test.select_single_optimizers().query_t(
-                self.iterations),
-            strategy_names=[f"{self.name}_stage0"])
-
-    def plot_stage1(self):
-        """
-        Plot the performance profile for the classifier for stage 1
-        """
-        return self.plot(
-            y_true=self.data_test.query_t(
-                self.iterations).y,
-            y_pred=self.y_pred_stage1,
-            optimizers=self.data_test.optimizers,
-            data_test=self.data_test.query_t(self.iterations),
-            strategies=self.y_pred_stage1,
-            strategy_names=[f"{self.name}_stage1"])

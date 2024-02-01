@@ -7,7 +7,7 @@ Submodule for the trainer
 # =============================================================================
 
 # Local
-from ._src.trainer import TrainerStage1
+from ._src.trainer import Trainer
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -18,5 +18,5 @@ __status__ = 'Planning'
 #
 # =============================================================================
 
-__all__ = ["TrainerStage1",
+__all__ = ["Trainer",
            ]

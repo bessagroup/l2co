@@ -31,8 +31,7 @@ from sklearn.model_selection import train_test_split
 from ._logging import logger as l2co_logger
 from .content_based import get_labels
 from .perf_profile import create_performance_profile, load_all_data
-from .performance import (get_performance, get_performance_preprocessed,
-                          query_t, select_optimizers_without_switch)
+from .performance import get_performance, get_performance_preprocessed, query_t
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -75,18 +74,17 @@ class DataLoader():
         experimentdata : ExperimentData
             The experiment data.
         """
-        self.X = X.sortby('problem')
+        self.X = X  # X.sortby('problem')
         self.n_iterations = n_iterations
         self.n_realizations = n_realizations
-        self.performance = performance.sortby('problem')
-        self.data = data.sortby('problem')
+        self.performance = performance  # performance.sortby('problem')
+        self.data = data  # data.sortby('problem')
         self.config = config
         self.experimentdata = experimentdata
 
     @classmethod
     def from_experimentdata(cls, config: DictConfig,
-                            experimentdata: ExperimentData,
-                            select_single_optimizers: bool = True):
+                            experimentdata: ExperimentData):
         """
         Create a data loader from a f3dasm ExperimentData object.
 
@@ -96,8 +94,6 @@ class DataLoader():
             The configuration file in hydra format.
         experimentdata : ExperimentData
             The experiment data object.
-        select_single_optimizers : bool, optional
-            Whether to select only the single optimizers, by default True
 
         Returns
         -------
@@ -118,9 +114,6 @@ class DataLoader():
         # Performance
         performance = get_performance(experimentdata)
 
-        if select_single_optimizers:
-            performance = select_optimizers_without_switch(performance)
-
         # Performance: Expand and stack dimension realization and itemID
         performance_stacked = performance.expand_dims(
             {'realization': np.arange(_data.realization.size)}).stack(
@@ -140,8 +133,7 @@ class DataLoader():
     @classmethod
     def from_preprocessed_files(cls, config: DictConfig,
                                 experimentdata: ExperimentData,
-                                data: xr.Dataset, data_samples: xr.Dataset,
-                                select_single_optimizers: bool = True):
+                                data: xr.Dataset, data_samples: xr.Dataset):
         """
         Create a data loader from preprocessed files of the optimization
         trajectories (data) and the roll-outs of random search (data_samples).
@@ -156,8 +148,6 @@ class DataLoader():
             The raw optimization trajectories.
         data_samples : xarray.Dataset
             The raw optimization trajectories.
-        select_single_optimizers : bool, optional
-            Whether to select only the single optimizers, by default True
 
         Returns
         -------
@@ -175,9 +165,6 @@ class DataLoader():
         # Performance
         performance = get_performance_preprocessed(
             data, data_samples)
-
-        if select_single_optimizers:
-            performance = select_optimizers_without_switch(performance)
 
         # Performance: Expand and stack dimension realization and itemID
         performance_stacked = performance.expand_dims(
