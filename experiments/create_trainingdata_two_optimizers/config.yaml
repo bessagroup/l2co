@@ -91,11 +91,12 @@ domain:
     value: 500
 
 experimentdata:
-  from_sampling:
-    sampler: "random"
-    seed: 2023
-    n_samples: 2000
-    domain: ${domain}
+  # from_sampling:
+  #   sampler: "random"
+  #   seed: 2023
+  #   n_samples: 50
+  #   domain: ${domain}
+  from_file: /home/martin/Documents/GitHub/L2CO/experiments/create_trainingdata_two_optimizers/outputs/2024-02-02/12-08-19
 
 mode: cluster
 

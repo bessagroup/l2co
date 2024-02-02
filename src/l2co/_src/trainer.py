@@ -31,6 +31,7 @@ from sklearn.metrics import (accuracy_score, confusion_matrix,
                              precision_recall_fscore_support)
 
 # Local
+from ._logging import logger
 from .data_loader import DataLoader
 from .perf_profile import create_performance_profile, plot_performance_profile
 from .stage0_model import Stage0Model
@@ -143,12 +144,16 @@ class Trainer:
                               _d_train.y_binary(self.rel_tolerance).to_pandas()
                               )
 
+        logger.info(f"Trained stage0 model: {self.stage0_model.name}")
+
     def train_stage1(self):
         """
         Train the stage1 model with the training data
         """
         self.stage1_model.train(self.data_train, batch_size=self.batch_size,
                                 epochs=self.epochs)
+
+        logger.info(f"Trained stage1 model: {self.stage1_model.name}")
 
     def predict(self):
         """
@@ -169,8 +174,12 @@ class Trainer:
         _d_test = self.data_test.select_single_optimizers().query_t(
             self.iterations)
 
-        return self.stage0_model.predict(_d_test).rename(
+        predictions = self.stage0_model.predict(_d_test).rename(
             f"{self.name}_stage0")
+
+        logger.info("Predicted stage0 labels")
+
+        return predictions
 
     def predict_stage1(self) -> xr.DataArray:
         """
@@ -181,9 +190,14 @@ class Trainer:
         xarray.DataArray
             The predicted labels
         """
-        return self.stage1_model.predict(
+
+        logger.info("Predicting stage1 labels")
+
+        predictions = self.stage1_model.predict(
             self.data_test, self.stage0_prediction).rename(
                 f"{self.name}_stage1")
+
+        return predictions
 
     def plot_stage0(self):
         """

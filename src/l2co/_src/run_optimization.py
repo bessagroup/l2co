@@ -21,7 +21,7 @@ experiment_two_optimizers
 
 # Standard
 from copy import deepcopy
-from functools import lru_cache
+from functools import lru_cache, wraps
 from itertools import product
 from time import perf_counter
 from typing import Any, Dict, List, Optional, Tuple
@@ -141,8 +141,6 @@ def run_multiple_realizations(
         parallelization=parallelization,
     )
 
-    logger.debug(f"LRU-cache: {run_first_multiple_realizations.cache_info()}")
-
     # SECOND OPTIMIZER
     domain = make_nd_continuous_domain(bounds=np.tile(
         [0., 1.], (dimensionality, 1)), dimensionality=dimensionality)
@@ -242,6 +240,9 @@ def run_second_multiple_realizations(
             kwargs=kwargs, n_iterations=n_iterations,
             x0_selection=x0_selection, sampler=sampler
         )
+
+    logger.debug(f"(2/2) Created {optimizer} optimization for {n_iterations} "
+                 f"iterations on {data_generator} function ")
 
     return results
 
@@ -355,7 +356,7 @@ def _run_second_multiple_realizations_parallel(
 
 
 @lru_cache(maxsize=MAX_CACHE_SIZE)
-def run_first_multiple_realizations(
+def _run_first_multiple_realizations(
     optimizer: str,
     data_generator: str,
     sampler: str,
@@ -427,13 +428,34 @@ def run_first_multiple_realizations(
             realizations=realizations, n_samples=n_samples, seed=seed,
             n_iterations=n_iterations, x0_selection=x0_selection)
 
-    logger.debug(f"Cached {optimizer} optimization for {n_iterations} "
+    logger.debug(f"(1/2) Created {optimizer} optimization for {n_iterations} "
                  f"iterations on {dimensionality}D {data_generator} function "
                  f"(noise={noise}, offset={offset}, seed={seed}) "
                  f"with {x0_selection} x0 selection. "
                  f"for {realizations} realizations.")
 
     return results
+
+
+def cached_function_with_logging(*args, **kwargs):
+    hits_before = _run_first_multiple_realizations.cache_info().hits
+    result = _run_first_multiple_realizations(*args, **kwargs)
+    hits_after = _run_first_multiple_realizations.cache_info().hits
+    if hits_after > hits_before:
+        logger.debug(f"(1/2) Used cached result of {kwargs['optimizer']} "
+                     f"optimization for {kwargs['n_iterations']} "
+                     f"iterations on {kwargs['dimensionality']}D "
+                     f"{kwargs['data_generator']} function "
+                     f"(noise={kwargs['noise']}, offset={kwargs['offset']}, "
+                     f"seed={kwargs['seed']}) "
+                     f"with {kwargs['x0_selection']} x0 selection. "
+                     f"for {kwargs['realizations']} realizations.")
+
+    return result
+
+
+run_first_multiple_realizations = wraps(
+    _run_first_multiple_realizations)(cached_function_with_logging)
 
 
 def _run_first_multiple_realizations_sequential(
@@ -613,11 +635,6 @@ def _run_single_optimizer(
         iterations=n_iterations,
         x0_selection=x0_selection,
         sampler=sampler)
-
-    logger.debug(f"Finished {optimizer} optimization for {n_iterations} "
-                 f"iterations on {dimensionality}D {data_generator} function "
-                 f"(noise={noise}, offset={offset}, seed={seed}) "
-                 f"with {x0_selection} x0 selection.")
 
     return data
 

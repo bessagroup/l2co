@@ -51,6 +51,8 @@ def pre_processing(config: Config):
     logger.info("== PRE-PROCESS ==")
     data = f3dasm.ExperimentData.from_yaml(config.experimentdata)
 
+    data.mark_all_in_progress_open()
+    data.mark_all_error_open()
     # Dirty hack for TypeError: Cannot setitem on a Categorical with a
     # new category (), set the categories first
     function_name_column = data._input_data.columns.iloc('function_name')
@@ -85,7 +87,14 @@ def pre_processing(config: Config):
 
 def post_processing(config: Config):
     logger.info("== POST-PROCESSING ==")
-    experimentdata = f3dasm.ExperimentData.from_file(Path().cwd())
+
+    if 'from_file' in config.experimentdata:
+        project_dir = config.experimentdata.from_file
+
+    else:
+        project_dir = Path().cwd()
+
+    experimentdata = f3dasm.ExperimentData.from_file(project_dir)
 
     while True:
         if experimentdata.is_all_finished():
@@ -133,12 +142,18 @@ def process(config: Config):
 
     logger.info("== PROCESS ==")
 
+    if 'from_file' in config.experimentdata:
+        project_dir = config.experimentdata.from_file
+
+    else:
+        project_dir = Path().cwd()
+
     # Retrieve the ExperimentData object
     try:
-        data = f3dasm.ExperimentData.from_file(Path().cwd())
+        data = f3dasm.ExperimentData.from_file(project_dir)
     except FileNotFoundError:
         sleep(60)
-        data = f3dasm.ExperimentData.from_file(Path().cwd())
+        data = f3dasm.ExperimentData.from_file(project_dir)
 
     logger.debug("Loaded experimentdata")
 
