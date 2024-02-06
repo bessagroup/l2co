@@ -24,7 +24,7 @@ from copy import deepcopy
 from functools import lru_cache, wraps
 from itertools import product
 from time import perf_counter
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 # Third-party
 import numpy as np
@@ -126,7 +126,7 @@ def run_multiple_realizations(
     optimizer, n_iterations, x0_selection = _optimizer_scheduler.pop(0)
 
     # FIRST OPTIMIZERS
-    results = run_first_multiple_realizations(
+    results, histories, best_solutions = run_first_multiple_realizations(
         optimizer=optimizer,
         data_generator=data_generator,
         sampler=sampler,
@@ -151,20 +151,22 @@ def run_multiple_realizations(
               'offset': offset}
 
     for optimizer, n_iterations, x0_selection in _optimizer_scheduler:
-        results = run_second_multiple_realizations(
+        results, histories, best_solutions = run_second_multiple_realizations(
             results=results, optimizer=optimizer,
             data_generator=data_generator,
             kwargs=kwargs, n_iterations=n_iterations,
             x0_selection=x0_selection,
             parallelization=parallelization,
-            sampler=sampler
+            sampler=sampler,
+            best_solutions=best_solutions,
+            histories=histories,
         )
 
     logger.info(f"Optimized {dimensionality}D {data_generator} function with "
                 f"{name}: "
                 f"({perf_counter() - start_timer:.2f} s)")
 
-    xarr = _listexperimentdata_to_dataset(results)
+    xarr = _listexperimentdata_to_dataset(histories)
 
     # Add attributes
     xarr.attrs['number_of_samples']: int = n_samples
@@ -197,8 +199,10 @@ def run_second_multiple_realizations(
     n_iterations: int,
     x0_selection: str,
     parallelization: bool,
-    sampler: str = 'random',
-) -> List[ExperimentData]:
+    sampler: str,
+    histories: List[ExperimentData],
+    best_solutions: List[ExperimentData],
+) -> Tuple[List[ExperimentData], List[ExperimentData], List[ExperimentData]]:
     """
     Run multiple realizations of the second optimizer
 
@@ -218,6 +222,77 @@ def run_second_multiple_realizations(
         x0 selection strategy
     parallelization : bool
         if the optimizations are run in parallel on multiple cores
+    sampler: str
+        name of the sampler if x0_selection = 'new'
+    histories : List[f3dasm.ExperimentData]
+        List of ExperimentData objects from the first optimizer.
+    best_solutions : List[f3dasm.ExperimentData]
+        List of ExperimentData objects from the first optimizer containing
+        the best solution per realization.
+
+    Returns
+    -------
+    Tuple[List[ExperimentData], List[ExperimentData], List[ExperimentData]]
+        Tuple of lists of the ExperimentData objects containing the results
+        of the optimizations, the histories and the best solutions.
+    """
+
+    if parallelization:
+        _results = _run_second_multiple_realizations_parallel(
+            results=results, optimizer=optimizer,
+            data_generator=data_generator,
+            kwargs=kwargs, n_iterations=n_iterations,
+            x0_selection=x0_selection, sampler=sampler,
+            histories=histories, best_solutions=best_solutions
+        )
+    else:
+        _results = _run_second_multiple_realizations_sequential(
+            results=results, optimizer=optimizer,
+            data_generator=data_generator,
+            kwargs=kwargs, n_iterations=n_iterations,
+            x0_selection=x0_selection, sampler=sampler,
+            histories=histories, best_solutions=best_solutions
+        )
+
+    data, history, best_solutions = list(zip(*_results))
+
+    logger.debug(f"(2/2) Created {optimizer} optimization for {n_iterations} "
+                 f"iterations on {data_generator} function ")
+
+    return data, history, best_solutions
+
+
+def _run_second_optimizer(data: ExperimentData, index: int,
+                          optimizer: str, data_generator: str, sampler: str,
+                          n_iterations: int, kwargs: dict, x0_selection: str,
+                          best_solution: ExperimentData,
+                          history: ExperimentData) -> List[ExperimentData]:
+    """
+    Run the second optimizer
+
+    Parameters
+    ----------
+    data : f3dasm.ExperimentData
+        ExperimentData object from the first optimizer.
+    index : int
+        index of the realization
+    optimizer : str
+        Name of the second optimizer
+    data_generator : str
+        Name of the benchmark function
+    sampler: str
+        name of the sampler if x0_selection = 'new'
+    n_iterations : int
+        number of iterations
+    kwargs : Dict[str, Any]
+        Key-word arguments of the data generator
+    x0_selection : str
+        x0 selection strategy
+    best_solution : f3dasm.ExperimentData
+        ExperimentData object containing the best solution from the first
+        optimizer
+    history : f3dasm.ExperimentData
+        ExperimentData object containing the history of the first optimizer
 
     Returns
     -------
@@ -226,25 +301,50 @@ def run_second_multiple_realizations(
         second optimizer run.
     """
 
-    if parallelization:
-        results = _run_second_multiple_realizations_parallel(
-            results=results, optimizer=optimizer,
-            data_generator=data_generator,
-            kwargs=kwargs, n_iterations=n_iterations,
-            x0_selection=x0_selection, sampler=sampler
-        )
+    hyperparameters = {'seed': kwargs['seed'] + index + 1}
+    n_before = len(history)
+
+    if x0_selection == 'best':
+        _x0_selection = deepcopy(best_solution)
+
     else:
-        results = _run_second_multiple_realizations_sequential(
-            results=results, optimizer=optimizer,
-            data_generator=data_generator,
-            kwargs=kwargs, n_iterations=n_iterations,
-            x0_selection=x0_selection, sampler=sampler
-        )
+        _x0_selection = x0_selection
 
-    logger.debug(f"(2/2) Created {optimizer} optimization for {n_iterations} "
-                 f"iterations on {data_generator} function ")
+    def call(data: ExperimentData):
+        nonlocal history
+        nonlocal best_solution
+        history += data.get_output_data()
 
-    return results
+        trial_solution = data.get_n_best_output(1)
+
+        _, y_best = best_solution.to_numpy()
+        _, y_trial = trial_solution.to_numpy()
+
+        if y_best.size == 0:
+            best_solution = trial_solution
+            return
+
+        if y_trial < y_best:
+            best_solution = trial_solution
+
+    data.optimize(optimizer=optimizer,
+                  data_generator=data_generator,
+                  iterations=n_iterations, kwargs=kwargs,
+                  hyperparameters=hyperparameters,
+                  x0_selection=_x0_selection,
+                  sampler=sampler,
+                  overwrite=True,
+                  callback=call)
+
+    best_solution._reset_index()
+    history._reset_index()
+
+    while len(history) < n_iterations + n_before:
+        history += best_solution.get_output_data()
+
+    history = history.select(range(n_before + n_iterations))
+
+    return [data, history, best_solution]
 
 
 def _run_second_multiple_realizations_sequential(
@@ -255,7 +355,9 @@ def _run_second_multiple_realizations_sequential(
     n_iterations: int,
     x0_selection: str,
     sampler: str,
-) -> ExperimentData:
+    histories: List[ExperimentData],
+    best_solutions: List[ExperimentData],
+) -> List[List[ExperimentData]]:
     """
     Run multiple realizations of the second optimizer
     This operation is done sequentially
@@ -277,23 +379,35 @@ def _run_second_multiple_realizations_sequential(
         x0 selection strategy
     sampler: str
         name of the sampler if x0_selection = 'new'
+    histories: List[f3dasm.ExperimentData]
+        List of ExperimentData objects from the first optimizer.
+    best_solutions: List[f3dasm.ExperimentData]
+        List of ExperimentData objects from the first optimizer containing
+        the best solution per realization.
 
     Returns
     -------
-    List[f3dasm.ExperimentData]
-        List of ExperimentData objects with concatenated results from the
-        second optimizer run.
+    List[List[ExperimentData]]
+        List of three ExperimentData lists: the results, the histories and the
+        best solutions.
     """
 
-    for index, experiment_data in enumerate(results):
-        hyperparameters = {'seed': kwargs['seed'] + index + 1}
-        experiment_data.optimize(optimizer=optimizer,
-                                 data_generator=data_generator,
-                                 iterations=n_iterations, kwargs=kwargs,
-                                 hyperparameters=hyperparameters,
-                                 x0_selection=x0_selection,
-                                 sampler=sampler)
-    return results
+    return [
+        _run_second_optimizer(
+            data=experiment_data,
+            index=index,
+            optimizer=optimizer,
+            data_generator=data_generator,
+            sampler=sampler,
+            n_iterations=n_iterations,
+            kwargs=kwargs,
+            x0_selection=x0_selection,
+            best_solution=best_solution,
+            history=history_first
+        ) for index, (experiment_data, history_first, best_solution
+                      ) in enumerate(
+            zip(results, histories, best_solutions))
+    ]
 
 
 def _run_second_multiple_realizations_parallel(
@@ -303,8 +417,10 @@ def _run_second_multiple_realizations_parallel(
     kwargs: Dict[str, Any],
     n_iterations: int,
     x0_selection: str,
-    sampler: str
-) -> List[ExperimentData]:
+    sampler: str,
+    histories: List[ExperimentData],
+    best_solutions: List[ExperimentData],
+) -> List[List[ExperimentData]]:
     """
     Run multiple realizations of the second optimizer
     This operation is done in parallel.
@@ -326,26 +442,41 @@ def _run_second_multiple_realizations_parallel(
         x0 selection strategy
     sampler: str
         name of the sampler if x0_selection = 'new'
+    histories: List[f3dasm.ExperimentData]
+        List of ExperimentData objects from the first optimizer.
+    best_solutions: List[f3dasm.ExperimentData]
+        List of ExperimentData objects from the first optimizer containing
+        the best solution per realization.
 
     Returns
     -------
-    List[f3dasm.ExperimentData]
-        List of ExperimentData objects with concatenated results from the
-        second optimizer run.
+    List[List[ExperimentData]]
+        List of three ExperimentData lists: the results, the histories and the
+        best solutions.
     """
 
-    def f(index: int, experiment_data: ExperimentData) -> ExperimentData:
-        hyperparameters = {'seed': kwargs['seed'] + index + 1}
-        experiment_data.optimize(optimizer=optimizer,
-                                 data_generator=data_generator,
-                                 iterations=n_iterations, kwargs=kwargs,
-                                 hyperparameters=hyperparameters,
-                                 x0_selection=x0_selection,
-                                 sampler=sampler)
-        return experiment_data
+    def f(index: int, experiment_data: ExperimentData,
+          history_first: ExperimentData, best_solution: ExperimentData
+          ) -> ExperimentData:
 
-    args = [(index, experiment_data)
-            for index, experiment_data in enumerate(results)]
+        return _run_second_optimizer(
+            data=experiment_data,
+            index=index,
+            optimizer=optimizer,
+            data_generator=data_generator,
+            sampler=sampler,
+            n_iterations=n_iterations,
+            kwargs=kwargs,
+            x0_selection=x0_selection,
+            best_solution=best_solution,
+            history=history_first
+        )
+
+    args = [
+        (index, experiment_data, history_first, best_solution)
+        for index, (experiment_data, history_first, best_solution
+                    ) in enumerate(zip(results, histories, best_solutions))
+    ]
 
     with mp.Pool() as pool:
         results = pool.starmap(f, args)
@@ -369,7 +500,7 @@ def _run_first_multiple_realizations(
     n_iterations: int,
     x0_selection: str,
     parallelization: bool,
-) -> List[ExperimentData]:
+) -> Tuple[List[ExperimentData], List[ExperimentData], List[ExperimentData]]:
     """
     Run a single optimizer on a single function for multiple realizations.
     This operation is done in parallel
@@ -403,9 +534,9 @@ def _run_first_multiple_realizations(
 
     Returns
     -------
-    List[f3dasm.ExperimentData]
-        List of Experiment data object containing the results
-        of the optimization for multiple realizations.
+    Tuple[List[ExperimentData], List[ExperimentData], List[ExperimentData]]
+        Tuple of lists of the ExperimentData objects containing the results
+        of the optimizations, the histories and the best solutions.
 
     Note
     ----
@@ -414,19 +545,21 @@ def _run_first_multiple_realizations(
 
     # FIRST OPTIMIZERS
     if parallelization:
-        results = _run_first_multiple_realizations_parallel(
+        _results = _run_first_multiple_realizations_parallel(
             optimizer=optimizer, data_generator=data_generator,
             sampler=sampler, dimensionality=dimensionality, noise=noise,
             offset=offset,
             realizations=realizations, n_samples=n_samples, seed=seed,
             n_iterations=n_iterations, x0_selection=x0_selection)
     else:
-        results = _run_first_multiple_realizations_sequential(
+        _results = _run_first_multiple_realizations_sequential(
             optimizer=optimizer, data_generator=data_generator,
             sampler=sampler,
             dimensionality=dimensionality, noise=noise, offset=offset,
             realizations=realizations, n_samples=n_samples, seed=seed,
             n_iterations=n_iterations, x0_selection=x0_selection)
+
+    data, history, best_solutions = list(zip(*_results))
 
     logger.debug(f"(1/2) Created {optimizer} optimization for {n_iterations} "
                  f"iterations on {dimensionality}D {data_generator} function "
@@ -434,7 +567,7 @@ def _run_first_multiple_realizations(
                  f"with {x0_selection} x0 selection. "
                  f"for {realizations} realizations.")
 
-    return results
+    return data, history, best_solutions
 
 
 def cached_function_with_logging(*args, **kwargs):
@@ -470,7 +603,7 @@ def _run_first_multiple_realizations_sequential(
     seed: int,
     n_iterations: int,
     x0_selection: str,
-) -> List[ExperimentData]:
+) -> List[List[ExperimentData]]:
     """
     Run a single optimizer on a single function for multiple realizations.
     This operation is done sequentially
@@ -502,9 +635,9 @@ def _run_first_multiple_realizations_sequential(
 
     Returns
     -------
-    List[f3dasm.ExperimentData]
-        List of Experiment data object containing the results
-        of the optimization for multiple realizations.
+    List[List[ExperimentData]]
+        List of three ExperimentData lists: the results, the histories and the
+        best solutions.
     """
 
     return [_run_single_optimizer(optimizer, data_generator, sampler,
@@ -525,7 +658,7 @@ def _run_first_multiple_realizations_parallel(
     seed: int,
     n_iterations: int,
     x0_selection: str,
-) -> List[ExperimentData]:
+) -> List[List[ExperimentData]]:
     """
     Run a single optimizer on a single function for multiple realizations.
     This operation is done in parallel
@@ -557,9 +690,9 @@ def _run_first_multiple_realizations_parallel(
 
     Returns
     -------
-    List[f3dasm.ExperimentData]
-        List of Experiment data object containing the results
-        of the optimization for multiple realizations.
+    List[List[ExperimentData]]
+        List of three ExperimentData lists: the results, the histories and the
+        best solutions.
     """
 
     args = [(optimizer, data_generator, sampler,
@@ -576,7 +709,8 @@ def _run_first_multiple_realizations_parallel(
 def _run_single_optimizer(
         optimizer: str, data_generator: str, sampler: str, dimensionality: int,
         noise: float, offset: bool, seed: int, n_samples: int,
-        n_iterations: int, x0_selection: str) -> ExperimentData:
+        n_iterations: int, x0_selection: str
+) -> List[ExperimentData]:
     """
     Run a single optimizer on a single function.
 
@@ -605,8 +739,9 @@ def _run_single_optimizer(
 
     Returns
     -------
-    ExperimentData
-        Experiment data object containing the results of the optimization
+    List[ExperimentData]
+        List of three ExperimentData objects: the results, the histories 
+        and the best solutions.
     """
 
     domain = make_nd_continuous_domain(bounds=np.tile(
@@ -629,88 +764,121 @@ def _run_single_optimizer(
         data.evaluate(data_generator=data_generator,
                       kwargs=kwargs, mode='sequential')
 
+    experimentdata_callback = data.get_output_data()
+    best_solution = data.get_n_best_output(1)
+
+    def call(data: ExperimentData):
+        nonlocal best_solution
+        nonlocal experimentdata_callback
+        experimentdata_callback += data.get_output_data()
+
+        trial_solution = data.get_n_best_output(1)
+
+        _, y_best = best_solution.to_numpy()
+        _, y_trial = trial_solution.to_numpy()
+
+        if y_best.size == 0:
+            best_solution = trial_solution
+            return
+
+        if y_trial < y_best:
+            best_solution = trial_solution
+
     data.optimize(
         optimizer=optimizer, data_generator=data_generator,
         kwargs=kwargs, hyperparameters=hyperparameters,
         iterations=n_iterations,
         x0_selection=x0_selection,
-        sampler=sampler)
-
-    return data
-
-
-def experiment_two_optimizers(
-    optimizers: List[str],
-    data_generator: str,
-    sampler: str,
-    realizations: int,
-    iterations: int,
-    dimensionality: int,
-    n_samples: int = 30,
-    parallelization: bool = True,
-    seed: Optional[int] = None,
-    noise: float = 0.0,
-    offset: bool = True,
-) -> xr.Dataset:
-    """
-    Experiment where we find all combinations of two optimizers and run them\
-    each for half of the total budget over many realizations.
-
-    Parameters
-    ----------
-    optimizers : List[str]
-        list of optimizer names to use
-    data_generator : str
-        name of the benchmark function
-    sampler : str
-        name of the sampling technique
-    realizations : int
-        number of realizations
-    iterations : int
-        total number of iterations
-    dimensionality : int
-        number of input dimensions of the problem
-    n_samples : int, optional
-        number of initial samples, by default 30
-    parallelization : bool, optional
-        if True, run the realizations in parallel, by default True
-    seed : int, optional
-        seed for the pseudo-random number generator, by default None
-    noise : float, optional
-        standard deviation of Gaussian noise on the objective, by default 0.0
-    offset : bool, optional
-        if True, the function is offset by a random vector, by default True
-
-    Returns
-    -------
-    xr.Dataset
-        xarray Dataset containing the results of the experiment
-
-    Notes
-    -----
-    Additional arguments of the benchmark function are stored in the xarray\
-    Dataset as attributes.
-
-    If no seed is given, a seed is randomly generator and stored between\
-    0 and 1e5.
-    """
-
-    seed = seed if seed is not None else np.random.randint(0, 1e5)
-
-    optimizer_schedulers = _get_all_combinations(optimizers, iterations)
-
-    return xr.concat([run_multiple_realizations(
-        optimizer_scheduler=optimizer_schedulers,
-        data_generator=data_generator,
         sampler=sampler,
-        realizations=realizations,
-        dimensionality=dimensionality,
-        noise=noise,
-        offset=offset,
-        n_samples=n_samples,
-        parallelization=parallelization,
-        seed=seed)
-        for optimizer_schedulers in optimizer_schedulers], dim='optimizer')
+        overwrite=True,
+        callback=call)
+
+    best_solution._reset_index()
+
+    while len(experimentdata_callback) < n_iterations + n_samples:
+        experimentdata_callback += best_solution.get_output_data()
+
+    experimentdata_callback._reset_index()
+
+    # Cutoff overiterations
+    experimentdata_callback = experimentdata_callback.select(
+        range(n_iterations + n_samples))
+
+    return [data, experimentdata_callback, best_solution]
+
+
+# def experiment_two_optimizers(
+#     optimizers: List[str],
+#     data_generator: str,
+#     sampler: str,
+#     realizations: int,
+#     iterations: int,
+#     dimensionality: int,
+#     n_samples: int = 30,
+#     parallelization: bool = True,
+#     seed: Optional[int] = None,
+#     noise: float = 0.0,
+#     offset: bool = True,
+# ) -> xr.Dataset:
+#     """
+#     Experiment where we find all combinations of two optimizers and run them\
+#     each for half of the total budget over many realizations.
+
+#     Parameters
+#     ----------
+#     optimizers : List[str]
+#         list of optimizer names to use
+#     data_generator : str
+#         name of the benchmark function
+#     sampler : str
+#         name of the sampling technique
+#     realizations : int
+#         number of realizations
+#     iterations : int
+#         total number of iterations
+#     dimensionality : int
+#         number of input dimensions of the problem
+#     n_samples : int, optional
+#         number of initial samples, by default 30
+#     parallelization : bool, optional
+#         if True, run the realizations in parallel, by default True
+#     seed : int, optional
+#         seed for the pseudo-random number generator, by default None
+#     noise : float, optional
+#         standard deviation of Gaussian noise on the objective, by default 0.0
+#     offset : bool, optional
+#         if True, the function is offset by a random vector, by default True
+
+#     Returns
+#     -------
+#     xr.Dataset
+#         xarray Dataset containing the results of the experiment
+
+#     Notes
+#     -----
+#     Additional arguments of the benchmark function are stored in the xarray\
+#     Dataset as attributes.
+
+#     If no seed is given, a seed is randomly generator and stored between\
+#     0 and 1e5.
+#     """
+
+#     seed = seed if seed is not None else np.random.randint(0, 1e5)
+
+#     optimizer_schedulers = _get_all_combinations(optimizers, iterations)
+
+#     return xr.concat([run_multiple_realizations(
+#         optimizer_scheduler=optimizer_schedulers,
+#         data_generator=data_generator,
+#         sampler=sampler,
+#         realizations=realizations,
+#         dimensionality=dimensionality,
+#         noise=noise,
+#         offset=offset,
+#         n_samples=n_samples,
+#         parallelization=parallelization,
+#         seed=seed)
+#         for optimizer_schedulers in optimizer_schedulers], dim='optimizer')
 
 
 # =============================================================================
@@ -734,7 +902,7 @@ def _get_handshake(optimizer_1: str, optimizer_2: str) -> str:
 
     Notes
     -----
-    The handshake method is either 'best', 'last' or 'random'
+    The handshake method is either 'best', 'last', 'new' or 'random'
     """
     if optimizer_1.lower() == optimizer_2.lower():
         return 'last'
@@ -751,7 +919,7 @@ def _get_handshake(optimizer_1: str, optimizer_2: str) -> str:
     if optimizer_1.lower() == 'pso' and optimizer_2.lower() == 'cmaes':
         return 'last'
 
-    return 'random'
+    return 'new'
 
 
 def _get_scheduler(
