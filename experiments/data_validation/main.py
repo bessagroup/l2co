@@ -13,10 +13,9 @@ main
 # =============================================================================
 
 # Standard
-import logging
 from pathlib import Path
 from time import perf_counter
-from typing import List, Tuple
+from typing import List
 
 # Third-party
 import hydra
@@ -26,7 +25,7 @@ from f3dasm import ExperimentData
 # Local
 from setup_logger import logger, warning_logger
 
-from l2co._logging import logger as l2co_logger
+from l2co import logger as l2co_logger
 
 #                                                          Authorship & Credits
 # =============================================================================
