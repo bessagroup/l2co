@@ -94,7 +94,7 @@ experimentdata:
   from_sampling:
     sampler: "random"
     seed: 2024
-    n_samples: 10
+    n_samples: 3
     domain: ${domain}
   # from_file: /home/martin/Documents/GitHub/L2CO/experiments/create_trainingdata_two_optimizers/outputs/2024-02-02/12-08-19
 
@@ -105,7 +105,7 @@ optimization:
   upper_bound: 1.0
   sampler_name: "latin"
   number_of_samples: 0
-  realizations: 3
+  realizations: 2
   parallelization: True
   optimizers:
     - name: CMAES

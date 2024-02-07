@@ -1,7 +1,7 @@
 import logging
 from typing import Tuple
 
-from l2co._logging import logger as l2co_logger
+from l2co import logger as l2co_logger
 
 
 def create_loggers() -> Tuple[logging.Logger, logging.Logger]:

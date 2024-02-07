@@ -1,4 +1,4 @@
-project_dir: '/home/martin/Documents/538734.hpc06.hpc'
+project_dir: /home/martin/Documents/GitHub/L2CO/experiments/create_trainingdata_two_optimizers/outputs/2024-02-06/21-35-50
 log_level: 20
-portion: 30
+portion: 
 select_output_and_combine: True

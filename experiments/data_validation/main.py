@@ -70,24 +70,24 @@ def main(config):
 
     files: List[List[Path]] = df_output.values.tolist()
 
-    # Open the first file
-    xarr_file = xr.open_dataset(np.array(files).ravel()[0])
-    xarr_experiment = xr.open_mfdataset(files[0])
+    # # Open the first file
+    # xarr_file = xr.open_dataset(np.array(files).ravel()[0])
+    # xarr_experiment = xr.open_mfdataset(files[0])
 
-    for index, experiment in enumerate(files):
-        logger.info(
-            f"({index+1} / {len(files)}) - "
-            f"Validating experiment {experiment[0].stem}")
-        for file in experiment:
-            logger.debug(
-                f"({index+1} / {len(np.array(files).ravel())}) "
-                f"- Validating file {file}")
-            _file = xr.open_dataset(file)
+    # for index, experiment in enumerate(files):
+    #     logger.info(
+    #         f"({index+1} / {len(files)}) - "
+    #         f"Validating experiment {experiment[0].stem}")
+    #     for file in experiment:
+    #         logger.debug(
+    #             f"({index+1} / {len(np.array(files).ravel())}) "
+    #             f"- Validating file {file}")
+    #         _file = xr.open_dataset(file)
 
-            validation(xarr_file, _file, file)
+    #         validation(xarr_file, _file, file)
 
-        _exp = xr.open_mfdataset(experiment)
-        validate_experiment(xarr_experiment, _exp, experiment)
+    #     _exp = xr.open_mfdataset(experiment)
+    #     validate_experiment(xarr_experiment, _exp, experiment)
 
     # Open the whole thing:
     t_start = perf_counter()
