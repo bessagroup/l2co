@@ -149,11 +149,23 @@ def process(config: Config):
         project_dir = Path().cwd()
 
     # Retrieve the ExperimentData object
-    try:
-        data = f3dasm.ExperimentData.from_file(project_dir)
-    except FileNotFoundError:
-        sleep(60)
-        data = f3dasm.ExperimentData.from_file(project_dir)
+    max_tries = 5
+    tries = 0
+
+    while tries < max_tries:
+        try:
+            logger.info(f"Open ExperimentData at {project_dir}")
+            data = f3dasm.ExperimentData.from_file(project_dir)
+            break  # Break out of the loop if successful
+        except FileNotFoundError:
+            tries += 1
+            logger.info(f"FileNotFoundError ({project_dir}), sleeping!")
+            sleep(10)
+
+    if tries == max_tries:
+        logger.error(
+            f"Could not open ExperimentData after {max_tries} attempts.")
+        raise FileNotFoundError
 
     logger.debug("Loaded experimentdata")
 

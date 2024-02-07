@@ -78,7 +78,7 @@ domain:
       ]
   dimensionality:
     type: category
-    categories: [2, 10, 25]
+    categories: [2, 10, 25, 100]
   noise:
     type: category
     categories: [0.0, 0.1]
@@ -88,15 +88,15 @@ domain:
     high: 1000000
   budget:
     type: constant
-    value: 500
+    value: 2000
 
 experimentdata:
   from_sampling:
     sampler: "random"
     seed: 2024
-    n_samples: 3
+    n_samples: 10
     domain: ${domain}
-  # from_file: /home/martin/Documents/GitHub/L2CO/experiments/create_trainingdata_two_optimizers/outputs/2024-02-02/12-08-19
+  # from_file: /home/martin/Documents/GitHub/L2CO/experiments/create_trainingdata_two_optimizers/outputs/2024-02-07/10-08-06
 
 mode: cluster
 
@@ -115,6 +115,6 @@ optimization:
   fraction_of_all_combinations: 1.0
 
 hpc:
-  jobid: -1
+  jobid: 1
 
 log_level: 20
