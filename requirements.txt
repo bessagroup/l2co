@@ -5,3 +5,4 @@ recommenders
 xarray
 dask
 tensorflow
+opfunu==1.0.1
