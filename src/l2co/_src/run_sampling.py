@@ -86,4 +86,7 @@ def run_sampling(data_generator: str, sampler: str, dimensionality: int,
     logger.info(f"Sampled {dimensionality}D {data_generator} function "
                 f"({perf_counter() - start_timer:.2f} s)")
 
+    # Store only the output data
+    data = data.get_output_data()
+
     return data.to_xarray()
