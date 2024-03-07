@@ -5,8 +5,12 @@ Source code for the l2co package.
 #                                                                       Modules
 # =============================================================================
 
+from f3dasm._src.datageneration.functions.function_factory import \
+    FUNCTION_MAPPING
 # Third-party
 from matplotlib import pyplot as plt
+
+from l2co._src.opfunu_functions import CEC_FUNCTIONS, NAMED_FUNCTIONS
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -20,3 +24,6 @@ __status__ = 'Planning'
 plt.ioff()
 
 # =============================================================================
+
+FUNCTION_MAPPING.update(NAMED_FUNCTIONS)
+FUNCTION_MAPPING.update(CEC_FUNCTIONS)

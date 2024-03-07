@@ -80,17 +80,46 @@ class OpfunuFunc(PyBenchFunction):
     def is_dim_compatible(cls, d: int) -> bool:
         _o = cls.opfunu_class(ndim=None)
         if hasattr(_o, 'dim_supported'):
-            return cls._check_dim_supported(d, _o.dim_supported)
+            return cls._check_dim_supported(d, _o.dim_supported, _o.dim_max)
 
         else:
             return _o.is_ndim_compatible(d)
 
     @staticmethod
-    def _check_dim_supported(d: int, dim_supported: List[int] | None) -> bool:
+    def _check_dim_supported(
+            d: int,
+            dim_supported: List[int] | None, dim_max: int) -> bool:
         if dim_supported is None:
-            return True
+            return d < dim_max
 
         return d in dim_supported
+
+    #                                                                Properties
+    # =========================================================================
+
+    @property
+    def differentiable(self) -> bool:
+        return self.opfunu_function.differentiable
+
+    @property
+    def convex(self) -> bool:
+        return self.opfunu_function.convex
+
+    @property
+    def parametric(self) -> bool:
+        return self.opfunu_function.parametric
+
+    @property
+    def randomized_term(self) -> bool:
+        return self.opfunu_function.randomized_term
+
+    @property
+    def separable(self) -> bool:
+        return self.opfunu_function.separable
+
+    @property
+    def multimodal(self) -> bool:
+        return not self.opfunu_function.unimodal
 
     def get_global_minimum(
             self, *args, **kwargs) -> Tuple[np.ndarray, np.ndarray]:
@@ -110,12 +139,12 @@ class OpfunuFunc(PyBenchFunction):
 # 2010 and 2019 are not working for gradient-free
 # TODO: gradient calculation is not working for all other functions!
 CEC_FUNCTIONS = {
-    f.__name__: OpfunuFunc.from_partial(f)
+    f.__name__.lower(): OpfunuFunc.from_partial(f)
     for f in opfunu.get_all_cec_functions()
     if not f.__name__.endswith('2010') and not f.__name__.endswith('2019')}
 
 # =============================================================================
 
 NAMED_FUNCTIONS = {
-    f.__name__: OpfunuFunc.from_partial(f)
+    f.__name__.lower(): OpfunuFunc.from_partial(f)
     for f in opfunu.get_all_named_functions()}

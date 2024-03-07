@@ -45,6 +45,10 @@ __credits__ = ['Martin van der Schelling']
 __status__ = 'Planning'
 # =============================================================================
 
+INVALID_VALUE = 1.0
+
+# =============================================================================
+
 
 def output_cummin(ds: xr.Dataset) -> xr.DataArray:
     """
@@ -145,13 +149,13 @@ def _calculate_metric(
     ds['output_cummin'] = output_cummin(ds)
 
     # Find the minimum value of the output
-    y_min = ds.output.min()
+    y_min = min(ds.output.min().values, baseline.min())
 
     # Select the cumulative minimum and subtract the minimum value
     # Add one to make sure we don't take the log of zero
     a = ds.output_cummin.sel(
         output_dim='y').median('realization') - y_min + 1.0
-    b = baseline - y_min.values + 1.0
+    b = baseline - y_min + 1.0
 
     return np.log(a/b)
 
@@ -227,7 +231,8 @@ def get_metric_preprocessed(
 
 
 def get_performance_preprocessed(ds_all: xr.Dataset,
-                                 ds_random: xr.Dataset) -> xr.DataArray:
+                                 ds_random: xr.Dataset,
+                                 ) -> xr.DataArray:
     """
     Get the performance of the optimizers on the benchmark functions from
     preprocessed files
@@ -250,7 +255,6 @@ def get_performance_preprocessed(ds_all: xr.Dataset,
     t_start = perf_counter()
     combined = xr.concat([get_metric_preprocessed(ds_all, ds_random, i)
                          for i in ds_all.itemID], dim=ds_all.itemID)
-
     combined = combined.drop('output_dim')
     combined = combined.rename('performance')
 

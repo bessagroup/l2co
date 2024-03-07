@@ -19,6 +19,7 @@ for_the_first_window
 # =============================================================================
 
 # Third-party
+import numpy as np
 import pandas as pd
 import surprise
 import xarray as xr
@@ -72,21 +73,59 @@ def create_interaction_matrix_from_full_data(
     return df
 
 
-def collaborative_filtering(df_interaction: pd.DataFrame) -> pd.DataFrame:
+# def collaborative_filtering(df_interaction: pd.DataFrame) -> pd.DataFrame:
+#     """
+#     Compute the collaborative filtering predictions for the performance of
+#     optimizers on benchmark functions.
+
+#     Parameters
+#     ----------
+#     df_interaction : pandas.DataFrame
+#         DataFrame containing the sparse matrix performances
+#         between optimizers and optimization problems.
+
+#     Returns
+#     -------
+#     pandas.DataFrame
+#         DataFrame containing a full matrix of the predicted performance of
+#         optimizers on benchmark functions.
+
+#     Notes
+#     -----
+#     The collaborative filtering predictions are computed using the
+#     `surprise.SVD` algorithm.
+#     """
+#     reader = surprise.Reader(rating_scale=(
+#         df_interaction['rating'].min(), df_interaction['rating'].max()))
+
+#     train_set = surprise.Dataset.load_from_df(
+#         df_interaction, reader=reader).build_full_trainset()
+
+#     svd = surprise.SVD(random_state=0, n_factors=200,
+#                        n_epochs=30, verbose=False)
+#     svd.fit(train_set)
+
+#     df_predictions = compute_ranking_predictions(
+#         svd, df_interaction, usercol='problem',
+#         itemcol='optimizer', remove_seen=True)
+#     df_predictions.columns = df_interaction.columns
+#     return pd.concat([df_interaction, df_predictions], ignore_index=True)
+
+def collaborative_filtering(performance: xr.DataArray):
     """
     Compute the collaborative filtering predictions for the performance of
     optimizers on benchmark functions.
 
     Parameters
     ----------
-    df_interaction : pandas.DataFrame
-        DataFrame containing the sparse matrix performances
+    performance : xarray.DataArray
+        DataArray containing the sparse matrix performances
         between optimizers and optimization problems.
 
     Returns
     -------
-    pandas.DataFrame
-        DataFrame containing a full matrix of the predicted performance of
+    xarray.DataArray
+        DataArray containing a full matrix of the predicted performance of
         optimizers on benchmark functions.
 
     Notes
@@ -94,21 +133,31 @@ def collaborative_filtering(df_interaction: pd.DataFrame) -> pd.DataFrame:
     The collaborative filtering predictions are computed using the
     `surprise.SVD` algorithm.
     """
+    df = performance.sel(realization=0, drop=True).to_dataframe().dropna(
+        axis=0).reset_index()
+    n_realizations = np.unique(performance.realization).size
+
     reader = surprise.Reader(rating_scale=(
-        df_interaction['rating'].min(), df_interaction['rating'].max()))
+        df['performance'].min(), df['performance'].max()))
 
     train_set = surprise.Dataset.load_from_df(
-        df_interaction, reader=reader).build_full_trainset()
+        df, reader=reader).build_full_trainset()
 
     svd = surprise.SVD(random_state=0, n_factors=200,
                        n_epochs=30, verbose=False)
     svd.fit(train_set)
 
     df_predictions = compute_ranking_predictions(
-        svd, df_interaction, usercol='problem',
-        itemcol='optimizer', remove_seen=True)
-    df_predictions.columns = df_interaction.columns
-    return pd.concat([df_interaction, df_predictions], ignore_index=True)
+        svd, df, usercol='optimizer',
+        itemcol='itemID', remove_seen=True)
+    df_predictions.columns = df.columns
+
+    performance_full = xr.DataArray(
+        pd.concat([df, df_predictions], ignore_index=False).set_index(
+            ['optimizer', 'itemID']).unstack().droplevel(level=None, axis=1))
+    performance_full = performance_full.expand_dims({'realization': np.arange(
+        n_realizations)}).stack(problem=('realization', 'itemID'))
+    return performance_full
 
 
 def for_the_first_window(df_interaction: pd.DataFrame) -> pd.DataFrame:

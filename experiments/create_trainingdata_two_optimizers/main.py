@@ -28,12 +28,15 @@ import numpy as np
 from config import Config
 from f3dasm import logger as f3dasm_logger
 from f3dasm._src.datageneration.functions.function_factory import \
-    is_dim_compatible
+    FUNCTION_MAPPING
 from hydra.core.config_store import ConfigStore
 from run_opt import BenchmarkOptimizationRoutine
 
 # Local
 from l2co import logger
+from l2co._src.opfunu_functions import CEC_FUNCTIONS, NAMED_FUNCTIONS
+from l2co._src.run_optimization import (_get_all_combinations,
+                                        _get_name_from_scheduler)
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -51,8 +54,6 @@ def pre_processing(config: Config):
     logger.info("== PRE-PROCESS ==")
     data = f3dasm.ExperimentData.from_yaml(config.experimentdata)
 
-    data.mark_all_in_progress_open()
-    data.mark_all_error_open()
     # Dirty hack for TypeError: Cannot setitem on a Categorical with a
     # new category (), set the categories first
     function_name_column = data._input_data.columns.iloc('function_name')
@@ -60,25 +61,43 @@ def pre_processing(config: Config):
         function_name_column].astype(
         'object')
 
-    for index, input_data in enumerate(data):
-        i = data._input_data.data.iloc[index]
+    for sample in data:
+        dim = sample.get("dimensionality")
+        f = FUNCTION_MAPPING[sample.get("function_name").lower()]
+        if not f.is_dim_compatible(sample.get("dimensionality")):
+            compatible_functions = [
+                ff for ff in filter(lambda f: FUNCTION_MAPPING[f.lower(
+                )].is_dim_compatible(dim),
+                    list(config.domain.function_name.categories))]
 
-        if not is_dim_compatible(
-                i[function_name_column].values[0], data.domain):
-            filtered_class_list = [ff for ff in filter(
-                lambda f: is_dim_compatible(f, data.domain),
-                                   list(
-                    data.domain.space['function_name'].categories))]
-            new_function_name = np.random.choice(filtered_class_list)
+            new_function_name = np.random.choice(compatible_functions)
 
             data._input_data.set_data(
-                index, value=new_function_name, column='function_name')
+                index=sample.job_number,
+                value=new_function_name, column="function_name")
 
     # Dirty hack for TypeError: Cannot setitem on a Categorical with
     # a new category (), set the categories first
     data._input_data.data[function_name_column] = data.\
         _input_data.data[function_name_column].astype(
         'category')
+
+    # OUTPUT DATA
+    optimizers = [opt_config['name'] for
+                  opt_config in config.optimization.optimizers]
+    optimizer_names = [_get_name_from_scheduler(
+        schedule) for schedule in _get_all_combinations(optimizers, 100)]
+
+    for name in optimizer_names:
+        data.add_output_parameter(name=name, is_disk=True, exist_ok=True)
+
+    # add random samples column
+    data.add_output_parameter(name='random_samples',
+                              is_disk=True, exist_ok=True)
+
+    data.mark_all_in_progress_open()
+    data.mark_all_error_open()
+    data.mark_all_nan_open()
 
     # Store the ExperimentData to a csv file
     data.store()
@@ -113,6 +132,9 @@ def main(config: Config):
     config
         Configuration parameters defined in config.yaml
     """
+
+    FUNCTION_MAPPING.update(NAMED_FUNCTIONS)
+    FUNCTION_MAPPING.update(CEC_FUNCTIONS)
 
     logger.setLevel(config.log_level)
     f3dasm_logger.setLevel(config.log_level)

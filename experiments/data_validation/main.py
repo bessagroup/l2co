@@ -59,8 +59,15 @@ def main(config):
 
     _, df_output = experiment_data.to_pandas()
 
+    # remove all values that say 'ERROR' and 'invalid'
+    df_output = df_output.replace('ERROR', np.nan)
+    df_output = df_output.replace('invalid', np.nan)
+    df_output = df_output.replace('not working', np.nan)
+
     # preceed every entry of df_output with experimentdata.project_dir
-    df_output = df_output.apply(lambda x: experiment_data.project_dir / x)
+    df_output = df_output.applymap(
+        lambda x: experiment_data.project_dir / x, na_action='ignore')
+    # df_output = df_output.apply(lambda x: experiment_data.project_dir / x)
 
     df_random_samples = df_output['random_samples']
     files_random_samples: List[Path] = df_random_samples.values.tolist()
@@ -68,7 +75,10 @@ def main(config):
     # don't include the column 'random_samples'
     df_output = df_output.drop(columns=['random_samples'])
 
-    files: List[List[Path]] = df_output.values.tolist()
+    # remove all experiments where none of the optimizers have finished
+    df_output = df_output.dropna(how='all')
+
+    # files: List[List[Path]] = df_output.values.tolist()
 
     # # Open the first file
     # xarr_file = xr.open_dataset(np.array(files).ravel()[0])
@@ -92,11 +102,22 @@ def main(config):
     # Open the whole thing:
     t_start = perf_counter()
     logger.info("Opening the whole thing")
-    xarr_full = xr.open_mfdataset(
-        files,
-        concat_dim=[xr.DataArray([int(f[0].stem) for f in files],
-                                 dims='itemID'), 'optimizer'],
-        combine='nested')
+
+    combined_rows = []
+
+    for row, values in df_output.iterrows():
+        a = xr.open_mfdataset(values.dropna(), combine='by_coords')
+        combined_rows.append(a.assign_coords(
+            {'itemID': [row]}).drop('input'))
+
+    xarr_full = xr.concat(combined_rows, dim='itemID')
+
+    # xarr_full = xr.open_mfdataset(
+    #     files,
+    #     concat_dim=[xr.DataArray([int(f[0].stem) for f in files],
+    #                              dims='itemID'), 'optimizer'],
+    #     combine='nested')
+
     logger.info(
         f"Finished opening the whole thing "
         f"(Took {perf_counter() - t_start} seconds)")
@@ -114,8 +135,8 @@ def main(config):
         f"(Took {perf_counter() - t_start} seconds)")
 
     if config.select_output_and_combine:
-        xarr_only_output = xarr_full.drop('input')
-        xarr_only_output = xarr_only_output.drop('input_dim')
+        # xarr_only_output = xarr_full.drop('input')
+        xarr_only_output = xarr_full.drop('input_dim')
         xarr_only_output.load().to_netcdf('entire_dataset.nc')
 
         xarr_random_all = xarr_full_samples.drop('input')

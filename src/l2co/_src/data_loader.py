@@ -31,7 +31,8 @@ from sklearn.model_selection import train_test_split
 from ._logging import logger as l2co_logger
 from .content_based import get_labels
 from .perf_profile import create_performance_profile, load_all_data
-from .performance import get_performance, get_performance_preprocessed, query_t
+from .performance import (INVALID_VALUE, get_performance,
+                          get_performance_preprocessed, query_t)
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -82,6 +83,7 @@ class DataLoader():
         self.config = config
         self.experimentdata = experimentdata
 
+    # NOT WORKING!
     @classmethod
     def from_experimentdata(cls, config: DictConfig,
                             experimentdata: ExperimentData):
@@ -101,6 +103,22 @@ class DataLoader():
             The resulting data loader.
         """
 
+        _, _df_output = experimentdata.to_pandas()
+        # remove all values that say 'ERROR' and 'invalid'
+        _df_output = _df_output.replace('ERROR', np.nan)
+        _df_output = _df_output.replace('invalid', np.nan)
+        _df_output = _df_output.replace('not working', np.nan)
+
+        # remove all experiments where none of the optimizers have finished
+        _valid_indices = _df_output.drop(
+            columns=['random_samples']).dropna(how='all').index
+
+        experimentdata = experimentdata.select(_valid_indices)
+
+        # get column names where all rows are nan
+        _columns_to_drop = _df_output.columns[_df_output.isna().all()]
+        experimentdata = experimentdata.drop_output(_columns_to_drop)
+
         _data = load_all_data(experimentdata)
 
         # Get the number of realizations
@@ -118,6 +136,25 @@ class DataLoader():
         performance_stacked = performance.expand_dims(
             {'realization': np.arange(_data.realization.size)}).stack(
                 problem=('realization', 'itemID'))
+
+        # Fill in unvalid runs with 1000.0
+        _, df_output = experimentdata.to_pandas()
+        df_output = df_output.drop(
+            columns=['random_samples']).sort_index(axis=1)
+        da = xr.DataArray(
+            df_output.T, dims=['optimizer', 'itemID']).expand_dims(
+            {'realization': np.arange(2),
+             'iterations': np.arange(_data.iterations.size),
+             })
+        da_mask = xr.where(da == 'invalid', True, False)
+        da_mask = da_mask.transpose(
+            'optimizer', 'iterations', 'realization', 'itemID')
+
+        performance_stacked = performance_stacked.where(
+            ~da_mask,
+            other=INVALID_VALUE)
+        performance_stacked = performance_stacked.stack(
+            problem=('realization', 'itemID'))
 
         # Stack dimensions realization and itemID
         data_stacked = _data.stack(problem=('realization', 'itemID'))
@@ -158,6 +195,22 @@ class DataLoader():
         n_realizations = data.realization.size
         n_iterations = data.iterations.size
 
+        _, _df_output = experimentdata.to_pandas()
+        # remove all values that say 'ERROR' and 'invalid'
+        _df_output = _df_output.replace('ERROR', np.nan)
+        _df_output = _df_output.replace('invalid', np.nan)
+        _df_output = _df_output.replace('not working', np.nan)
+
+        # remove all experiments where none of the optimizers have finished
+        _valid_indices = _df_output.drop(
+            columns=['random_samples']).dropna(how='all').index
+
+        experimentdata = experimentdata.select(_valid_indices)
+
+        # get column names where all rows are nan
+        _columns_to_drop = _df_output.columns[_df_output.isna().all()]
+        experimentdata = experimentdata.drop_output(_columns_to_drop)
+
         # Features
         X = get_labels(experimentdata=experimentdata,
                        n_realizations=n_realizations)
@@ -168,8 +221,26 @@ class DataLoader():
 
         # Performance: Expand and stack dimension realization and itemID
         performance_stacked = performance.expand_dims(
-            {'realization': np.arange(data.realization.size)}).stack(
-                problem=('realization', 'itemID'))
+            {'realization': np.arange(data.realization.size)})
+
+        # Fill in unvalid runs with 1000.0
+        _, df_output = experimentdata.to_pandas()
+        df_output = df_output.drop(
+            columns=['random_samples']).sort_index(axis=1)
+        da = xr.DataArray(
+            df_output.T, dims=['optimizer', 'itemID']).expand_dims(
+            {'realization': np.arange(2),
+             'iterations': np.arange(data.iterations.size),
+             })
+        da_mask = xr.where(da == 'invalid', True, False)
+        da_mask = da_mask.transpose(
+            'optimizer', 'iterations', 'realization', 'itemID')
+
+        performance_stacked = performance_stacked.where(
+            ~da_mask,
+            other=INVALID_VALUE)
+        performance_stacked = performance_stacked.stack(
+            problem=('realization', 'itemID'))
 
         # Stack dimensions realization and itemID
         data_stacked = data.stack(problem=('realization', 'itemID'))
@@ -206,7 +277,8 @@ class DataLoader():
         return np.logical_or.reduce(
             [np.isnan(self.data.output), np.isnan(self.data.output)]).any()
 
-    @cached_property
+    # @cached_property
+    @property
     def y(self) -> xr.DataArray:
         """
         Returns the minimum performance index along the 'optimizer' dimension,
@@ -578,3 +650,14 @@ class DataLoader():
             return axes, df
 
         return axes
+
+    def has_unknown_performances(self) -> bool:
+        """
+        Check if the performance dataset contains unknown values.
+
+        Returns
+        -------
+        bool
+            Whether the performance dataset contains unknown values.
+        """
+        return bool(self.performance.isnull().any())

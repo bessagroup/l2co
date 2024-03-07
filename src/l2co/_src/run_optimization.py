@@ -32,6 +32,7 @@ import xarray as xr
 from f3dasm import ExperimentData
 from f3dasm._src.datageneration.functions.function_factory import \
     _datagenerator_factory
+from f3dasm._src.optimization.optimizer_factory import OPTIMIZER_MAPPING
 from f3dasm.design import make_nd_continuous_domain
 from pathos.helpers import mp
 
@@ -49,6 +50,9 @@ __status__ = 'Stable'
 # =============================================================================
 
 MAX_CACHE_SIZE = 20
+GRADIENT_BASED = [
+    key for key, value in OPTIMIZER_MAPPING.items() if value.require_gradients
+]
 
 #                                                                  Type aliases
 # =============================================================================
@@ -1015,3 +1019,23 @@ def _listexperimentdata_to_dataset(
     return xr.concat([r.to_xarray() for r in results],
                      dim=xr.DataArray(np.arange(len(results)),
                                       dims='realization'))
+
+
+# =============================================================================
+
+def needs_gradient(optimizer_scheduler: OptimizerScheduler) -> bool:
+    """
+    Check if the optimizer scheduler needs gradient information
+
+    Parameters
+    ----------
+    optimizer_scheduler : List[Tuple[str, int, str]]
+        optimizer scheduler
+
+    Returns
+    -------
+    bool
+        True if the optimizer scheduler contains a gradient-based optimizer
+    """
+    return any(
+        name.lower() in GRADIENT_BASED for name, _, _ in optimizer_scheduler)
