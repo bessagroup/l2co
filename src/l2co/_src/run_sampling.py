@@ -89,4 +89,5 @@ def run_sampling(data_generator: str, sampler: str, dimensionality: int,
     # Store only the output data
     data = data.get_output_data()
 
-    return data.to_xarray()
+    # return data.to_xarray()
+    return data
