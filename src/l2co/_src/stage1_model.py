@@ -20,11 +20,10 @@ from typing import Dict, Optional, Protocol, Tuple
 
 # Third-party
 import numpy as np
-import pandas as pd
 import xarray as xr
 from keras.callbacks import ModelCheckpoint
 from keras.layers import LSTM, Dense, Input
-from keras.models import Sequential
+from keras.models import Sequential, load_model
 
 # Local
 from .data_loader import DataLoader
@@ -37,40 +36,40 @@ __status__ = 'Planning'
 # =============================================================================
 
 
-def combine_stage0_stage1_predictions(
-        stage0_predictions: pd.DataFrame,
-        stage1_predictions: pd.DataFrame) -> xr.DataArray:
-    """
-    Combine the stage0 and stage1 predictions
+# def combine_stage0_stage1_predictions(
+#         stage0_predictions: pd.DataFrame,
+#         stage1_predictions: pd.DataFrame) -> xr.DataArray:
+#     """
+#     Combine the stage0 and stage1 predictions
 
-    Parameters
-    ----------
-    stage0_predictions : pd.DataFrame
-        The stage0 predictions
-    stage1_predictions : pd.DataFrame
-        The stage1 predictions
+#     Parameters
+#     ----------
+#     stage0_predictions : pd.DataFrame
+#         The stage0 predictions
+#     stage1_predictions : pd.DataFrame
+#         The stage1 predictions
 
-    Returns
-    -------
-    xr.DataArray
-        The combined predictions
-    """
+#     Returns
+#     -------
+#     xr.DataArray
+#         The combined predictions
+#     """
 
-    # Combine the stage0 and stage1 predictions
-    df = pd.DataFrame({'stage0': stage0_predictions,
-                       'stage1': stage1_predictions})
+#     # Combine the stage0 and stage1 predictions
+#     df = pd.DataFrame({'stage0': stage0_predictions,
+#                        'stage1': stage1_predictions})
 
-    # Custom function to apply to each row
-    def string_concatenation(row):
-        if row['stage0'] == row['stage1']:
-            return row['stage0']  # Return the first column name
-        else:
-            # Concatenate values with a + sign
-            return f"{row['stage0']}+{row['stage1']}"
+#     # Custom function to apply to each row
+#     def string_concatenation(row):
+#         if row['stage0'] == row['stage1']:
+#             return row['stage0']  # Return the first column name
+#         else:
+#             # Concatenate values with a + sign
+#             return f"{row['stage0']}+{row['stage1']}"
 
-    # Apply the custom function to each row
-    result_series = df.apply(string_concatenation, axis=1)
-    return xr.DataArray(result_series)
+#     # Apply the custom function to each row
+#     result_series = df.apply(string_concatenation, axis=1)
+#     return xr.DataArray(result_series)
 
 #                                                                Protocol class
 # =============================================================================
@@ -106,6 +105,12 @@ class SingleStage1Model(Protocol):
         """
         ...
 
+    def save(self) -> None:
+        """
+        Protocol method for saving the model
+        """
+        ...
+
 #                                                             Stage1Model class
 # =============================================================================
 
@@ -132,23 +137,30 @@ class Stage1Model:
         data_train, data_val = data.train_test_split(
             test_size=0.2, random_state=seed)
 
-        X_train = np.atleast_3d(data_train.X_trajectory(
-            iterations=self.t_switch, t_start=self.t_start))
-        X_val = np.atleast_3d(data_val.X_trajectory(
-            iterations=self.t_switch, t_start=self.t_start))
+        da_train = data_train.X_trajectory(
+            iterations=self.t_switch, t_start=self.t_start).dropna('problem')
+
+        da_val = data_val.X_trajectory(
+            iterations=self.t_switch, t_start=self.t_start).dropna('problem')
+
+        X_train = np.atleast_3d(da_train)
+        X_val = np.atleast_3d(da_val)
 
         X_train = np.transpose(X_train, (1, 0, 2))
         X_val = np.transpose(X_val, (1, 0, 2))
 
         y_train = np.atleast_2d(data_train.y_binary(
-            self.rel_tolerance).astype(int))
+            self.rel_tolerance).sel(
+                problem=da_train.problem.values).astype(int))
         y_val = np.atleast_2d(data_val.y_binary(
-            self.rel_tolerance).astype(int))
+            self.rel_tolerance).sel(
+                problem=da_val.problem.values).astype(int))
 
         return X_train, y_train, X_val, y_val
 
     def train(self, data_train: DataLoader,
-              batch_size: int, epochs: int):
+              batch_size: int, epochs: int,
+              save_model: bool = False):
         """
         Train the stage1 model
 
@@ -170,7 +182,9 @@ class Stage1Model:
                 _d_train, optimizer)
 
             self.models[optimizer].train(X_train, y_train, X_val, y_val,
-                                         epochs=epochs, batch_size=batch_size)
+                                         epochs=epochs, batch_size=batch_size,
+                                         save_model=save_model,
+                                         save_name=f'{self.name}_{optimizer}')
 
     def predict(
             self, data_test: DataLoader,
@@ -211,10 +225,18 @@ class Stage1Model:
         stage1_predictions = stage1_predictions.idxmax(
             dim='optimizer').sortby('problem')
 
-        combined_predictions = combine_stage0_stage1_predictions(
-            stage0_predictions, stage1_predictions)
+        def concat_with_plus(opt1, opt2):
+            if opt1 == opt2:
+                return str(opt1)
+            return str(opt1) + '+' + str(opt2)
 
-        return combined_predictions
+        combined_predictions = xr.apply_ufunc(
+            concat_with_plus, stage0_predictions, stage1_predictions,
+            vectorize=True,
+            dask='parallelized',
+            output_dtypes=[object])
+
+        return combined_predictions.sortby('problem')
 
     def create_models(self) -> Dict[str, SingleStage1Model]:
         """
@@ -232,7 +254,7 @@ class Stage1Model:
         return {optimizer: deepcopy(self.model)
                 for optimizer in self.optimizers.values}
 
-    def load(self, model_path: str) -> None:
+    def load(self) -> None:
         """
         Load the model parameters from a file
 
@@ -242,7 +264,7 @@ class Stage1Model:
             The path to the model
         """
         for optimizer in self.optimizers.values:
-            self.models[optimizer].load(model_path)
+            self.models[optimizer].load(f'{self.name}_{optimizer}')
 
 
 #                                                         Model implementations
@@ -256,12 +278,14 @@ class LSTMMultiOutputClassifier(SingleStage1Model):
 
         Parameters
         ----------
-        optimizers : xr.DataArray
-            The optimizers
+        n_outputs: int
+            The number of outputs
         length_sequence : int
             The length of the sequence
         optimizer : str, optional
             The optimizer, by default 'adam'
+        latent_dim : int, optional
+            The latent dimension, by default 32
         """
 
         self.loss: str = 'binary_crossentropy'
@@ -291,7 +315,8 @@ class LSTMMultiOutputClassifier(SingleStage1Model):
     def train(
             self, X_train: np.ndarray, y_train: np.ndarray, X_val: np.ndarray,
             y_val: np.ndarray,
-            batch_size: int = 32, save_model: bool = False, epochs: int = 3):
+            batch_size: int = 32, save_model: bool = False, epochs: int = 3,
+            save_name: Optional[str] = None):
         """
         Train the model
 
@@ -314,7 +339,7 @@ class LSTMMultiOutputClassifier(SingleStage1Model):
         """
         if save_model:
             checkpoint = ModelCheckpoint(
-                'model_weights.h5', save_best_only=True)
+                f'{save_name}.h5', save_best_only=True)
             callbacks_list = [checkpoint]
 
         else:
@@ -337,3 +362,9 @@ class LSTMMultiOutputClassifier(SingleStage1Model):
             The test data
         """
         return self.model.predict(X_test)
+
+    def load(self, name: str):
+        """
+        Load the model
+        """
+        self.model = load_model(f'{name}.h5')

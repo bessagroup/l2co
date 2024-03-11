@@ -219,7 +219,7 @@ class Stage0Model():
             output_dtypes=[object],
         )
 
-        return result
+        return result.sortby('problem')
 
 # =============================================================================
 

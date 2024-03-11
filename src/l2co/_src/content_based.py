@@ -73,6 +73,8 @@ def get_labels_one(experimentdata: ExperimentData, index: int) -> str:
         categories_list.append('seperable')
     if f.multimodal:
         categories_list.append('multimodal')
+    if f.differentiable:
+        categories_list.append('differentiable')
 
     return ",".join(categories_list)
 

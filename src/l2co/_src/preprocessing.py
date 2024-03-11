@@ -60,7 +60,8 @@ def standard_scaler_factory() -> StandardScaler:
 
 FEATURE_TYPES = {'convex': 'categorical', 'multimodal': 'categorical',
                  'seperable': 'categorical',
-                 'noise': 'categorical', 'dim': 'ordinal'}
+                 'noise': 'categorical', 'dim': 'ordinal',
+                 'differentiable': 'categorical'}
 
 # =============================================================================
 

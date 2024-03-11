@@ -146,12 +146,19 @@ class Trainer:
 
         logger.info(f"Trained stage0 model: {self.stage0_model.name}")
 
-    def train_stage1(self):
+    def load_stage1(self):
+        """
+        Load the stage1 model
+        """
+        self.stage1_model.load()
+
+    def train_stage1(self, save_model: bool = False):
         """
         Train the stage1 model with the training data
         """
         self.stage1_model.train(self.data_train, batch_size=self.batch_size,
-                                epochs=self.epochs)
+                                epochs=self.epochs,
+                                save_model=save_model)
 
         logger.info(f"Trained stage1 model: {self.stage1_model.name}")
 

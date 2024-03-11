@@ -297,7 +297,7 @@ domain:
       ]
   dimensionality:
     type: category
-    categories: [10, 20, 100, 101]
+    categories: [10, 20, 100, 25, 101]
   noise:
     type: category
     categories: [0.0, 0.1]
@@ -310,7 +310,7 @@ domain:
     value: 100
 
 experimentdata:
-  # from_file: /home/martin/Documents/GitHub/L2CO/experiments/create_trainingdata_two_optimizers/outputs/2024-03-04/09-48-53
+  # from_file: /home/martin/Documents/GitHub/L2CO/experiments/create_trainingdata_two_optimizers/outputs/2024-03-06/16-11-02
   from_sampling:
     sampler: "random"
     seed: 2036
@@ -331,8 +331,7 @@ optimization:
     - name: PSO
     - name: Adam
     - name: LBFGSB
-    - name: DifferentialEvolution
-  fraction_of_all_combinations: 0.2
+  fraction_of_all_combinations: 1.0
 
 hpc:
   jobid: -1
