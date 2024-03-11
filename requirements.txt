@@ -5,4 +5,4 @@ recommenders
 xarray
 dask
 tensorflow
-opfunu @ git+https://github.com/mpvanderschelling/opfunu@main
+opfunu @ git+https://github.com/mpvanderschelling/opfunu@master
