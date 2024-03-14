@@ -16,17 +16,24 @@ LSTMMultiOutputClassifier
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Dict, Optional, Protocol, Tuple
+from typing import Dict, Iterable, Optional, Protocol, Tuple
 
 # Third-party
 import numpy as np
 import xarray as xr
+from joblib import dump, load
 from keras.callbacks import ModelCheckpoint
 from keras.layers import LSTM, Dense, Input
 from keras.models import Sequential, load_model
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.impute import SimpleImputer
+from sklearn.multioutput import MultiOutputClassifier
+from sklearn.pipeline import make_pipeline
 
-# Local
 from .data_loader import DataLoader
+from .ela import ELA_FEATURE_LABELS, create_ela_features
+# Local
+from .preprocessing import preprocessing_factory
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -368,3 +375,111 @@ class LSTMMultiOutputClassifier(SingleStage1Model):
         Load the model
         """
         self.model = load_model(f'{name}.h5')
+
+
+class ELAClassifier(Stage1Model):
+    def __init__(self, iterations: int, rel_tolerance: float, t_switch: int,
+                 name: str = 'stage1_model'):
+        self.model = self.create_model()
+        self.name = name
+        self.iterations = iterations
+        self.t_switch = t_switch
+        self.rel_tolerance = rel_tolerance
+
+    def create_model(self):
+        """
+        Instantiate the model
+        """
+        clf = RandomForestClassifier()
+        preprocessing_step = preprocessing_factory(
+            feature_types=ELA_FEATURE_LABELS)
+        return make_pipeline(preprocessing_step,
+                             SimpleImputer(strategy='mean'),
+                             MultiOutputClassifier(clf))
+
+    def train(self, data_train: DataLoader, save_model: bool = False):
+        """
+        Protocol method for training the model
+        """
+        X_train = create_ela_features(
+            data_train.data_samples, n_realizations=data_train.n_realizations)
+        y_train = data_train.select_single_optimizers().query_t(
+            self.iterations).y_binary(self.rel_tolerance)
+
+        X_train = X_train.sel(problem=data_train.problem)
+
+        self.model.fit(X_train.to_pandas(), y_train.to_pandas())
+
+    def load(self, model_path: str) -> None:
+        """
+        Protocol method for loading the model
+        """
+        self.model = load(f'{model_path}.joblib')
+
+    def predict_proba(self, X: Iterable) -> Iterable[float]:
+        """
+        Method for predicting the probabilities
+
+        Parameters
+        ----------
+        X : Iterable
+            The features in array-like structure
+
+        Returns
+        -------
+        Iterable[float]
+            The probabilities
+        """
+        return self.model.predict_proba(X)
+
+    def predict(
+            self, data_test: DataLoader,
+            stage0_predictions: xr.DataArray) -> xr.DataArray:
+        """
+        Protocol method for predicting
+        """
+        y_shape = data_test.select_single_optimizers().query_t(
+            self.iterations).y_binary()
+
+        X_test = create_ela_features(
+            data_test.data_samples, n_realizations=data_test.n_realizations,
+            iterations=self.t_switch)
+
+        X_test = X_test.sel(problem=data_test.problem)
+        y_pred = self.model.predict_proba(X_test.to_pandas())
+
+        return xr.DataArray(
+            np.array(y_pred)[:, :, 1].T,
+            coords=y_shape.coords).idxmax('optimizer')
+
+        # return xr.DataArray(
+        #     np.array(self.model.predict_proba(X_test.to_pandas()))[
+        #         :, :, 1].T,
+        #     dims=data_test.y_binary().dims,
+        #     coords=data_test.y_binary().coords)
+
+        # p = (y_pred_proba / y_pred_proba.sum(dim='optimizer'))
+
+        # # Define a function to apply np.random.choice with probabilities from p
+        # def random_choice_with_probabilities(p_values):
+        #     choice = np.random.choice(p.optimizer.values, p=p_values.ravel())
+        #     return choice
+
+        # # Use apply_ufunc to apply the function along the desired coordinates
+        # result = xr.apply_ufunc(
+        #     random_choice_with_probabilities,
+        #     # p.unstack(),
+        #     p,
+        #     input_core_dims=[['optimizer']],
+        #     vectorize=True,
+        #     dask='parallelized',
+        #     output_dtypes=[object],
+        # )
+
+        # return result.sortby('problem')
+
+    def save(self) -> None:
+        """
+        Protocol method for saving the model
+        """
+        dump(self.model, f'{self.name}.joblib')

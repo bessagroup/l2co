@@ -35,6 +35,7 @@ from sklearn.base import BaseEstimator
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.gaussian_process import GaussianProcessClassifier
+from sklearn.impute import SimpleImputer
 from sklearn.multioutput import MultiOutputClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import make_pipeline
@@ -57,6 +58,7 @@ class Stage0Model():
                  model_name: str,
                  clf: BaseEstimator,
                  preprocessing_step: Optional[ColumnTransformer] = None,
+                 impute_nans: bool = False,
                  **parameters):
         """
         Class for creating a stage0 model
@@ -69,6 +71,8 @@ class Stage0Model():
             The scikit-learn classifier object
         preprocessing_step : Optional[ColumnTransformer], optional
             Optional preprocessing step for the features, by default None
+        impute_nans : bool, optional
+            If True, impute NaNs in the data, by default False
         parameters : dict
             Optional parameters for the classifier
 
@@ -83,8 +87,13 @@ class Stage0Model():
             self.clf = make_pipeline(MultiOutputClassifier(clf))
 
         else:
-            self.clf = make_pipeline(preprocessing_step,
-                                     MultiOutputClassifier(clf))
+            if impute_nans:
+                self.clf = make_pipeline(preprocessing_step,
+                                         SimpleImputer(strategy='mean'),
+                                         MultiOutputClassifier(clf))
+            else:
+                self.clf = make_pipeline(preprocessing_step,
+                                         MultiOutputClassifier(clf))
 
     @classmethod
     def from_name(cls, model_name: str,

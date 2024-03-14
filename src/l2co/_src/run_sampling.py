@@ -32,10 +32,31 @@ __status__ = 'Stable'
 # =============================================================================
 
 
-def run_sampling(data_generator: str, sampler: str, dimensionality: int,
-                 noise: float, offset: bool,
-                 seed: int, n_samples: int,
-                 parallelization: bool) -> xr.Dataset:
+def run_sampling(
+    data_generator: str, sampler: str, dimensionality: int,
+        noise: float, offset: bool,
+        seed: int, n_samples: int,
+        parallelization: bool,
+        realizations: int) -> xr.Dataset:
+
+    return xr.concat(
+        [run_sampling_one_realization(
+            data_generator=data_generator,
+            sampler=sampler,
+            noise=noise,
+            offset=offset,
+            dimensionality=dimensionality,
+            seed=seed + index,
+            n_samples=n_samples,
+            parallelization=parallelization) for index in range(realizations)],
+        dim=xr.DataArray(np.arange(realizations), dims='realization'))
+
+
+def run_sampling_one_realization(
+    data_generator: str, sampler: str, dimensionality: int,
+        noise: float, offset: bool,
+        seed: int, n_samples: int,
+        parallelization: bool) -> xr.Dataset:
     """
     Sample from the search-space of a benchmark function using a given
     sampling technique.
@@ -87,7 +108,6 @@ def run_sampling(data_generator: str, sampler: str, dimensionality: int,
                 f"({perf_counter() - start_timer:.2f} s)")
 
     # Store only the output data
-    data = data.get_output_data()
+    # data = data.get_output_data()
 
-    # return data.to_xarray()
-    return data
+    return data.to_xarray()
