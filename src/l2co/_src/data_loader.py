@@ -54,7 +54,8 @@ class DataLoader():
                  performance: xr.Dataset,
                  data: xr.Dataset,
                  config: DictConfig,
-                 experimentdata: ExperimentData):
+                 experimentdata: ExperimentData,
+                 data_samples: xr.Dataset):
         """
         A data loader class for stage0 of the L2CO framework.
 
@@ -82,6 +83,7 @@ class DataLoader():
         self.data = data  # data.sortby('problem')
         self.config = config
         self.experimentdata = experimentdata
+        self.data_samples = data_samples
 
     # NOT WORKING!
     @classmethod
@@ -244,6 +246,10 @@ class DataLoader():
 
         # Stack dimensions realization and itemID
         data_stacked = data.stack(problem=('realization', 'itemID'))
+        data_samples_stacked = data_samples.stack(
+            problem=('realization', 'itemID'))
+        # data_samples_stacked = data_samples_stacked.sel(
+        #     itemID=np.unique(data_stacked.itemID.values))
 
         return cls(X=X,
                    n_iterations=n_iterations,
@@ -251,7 +257,8 @@ class DataLoader():
                    data=data_stacked,
                    performance=performance_stacked,
                    config=config,
-                   experimentdata=experimentdata)
+                   experimentdata=experimentdata,
+                   data_samples=data_samples_stacked)
 
     def filter_nan_or_inf(self) -> DataLoader:
         """
@@ -419,7 +426,8 @@ class DataLoader():
             performance=performance,
             data=data,
             config=self.config,
-            experimentdata=self.experimentdata
+            experimentdata=self.experimentdata,
+            data_samples=self.data_samples
         )
 
     def select_problems(self, problem_indices: xr.DataArray) -> DataLoader:
@@ -451,7 +459,8 @@ class DataLoader():
                 problem=_problem_indices),
             data=self.data.sel(problem=_problem_indices),
             config=self.config,
-            experimentdata=self.experimentdata.select(_unique_itemID)
+            experimentdata=self.experimentdata.select(_unique_itemID),
+            data_samples=self.data_samples.sel(problem=_problem_indices)
         )
 
     def query_t(self, t: int) -> DataLoader:
@@ -477,7 +486,8 @@ class DataLoader():
             performance=performance_t,
             data=data,
             config=self.config,
-            experimentdata=self.experimentdata
+            experimentdata=self.experimentdata,
+            data_samples=self.data_samples
         )
 
     def query_optimizer(self, optimizer: str) -> DataLoader:
@@ -521,7 +531,8 @@ class DataLoader():
             performance=performance,
             data=data_selected,
             config=config,
-            experimentdata=self.experimentdata
+            experimentdata=self.experimentdata,
+            data_samples=self.data_samples
         )
 
     def train_test_split(

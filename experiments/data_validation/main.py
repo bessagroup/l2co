@@ -139,9 +139,9 @@ def main(config):
         xarr_only_output = xarr_full.drop('input_dim')
         xarr_only_output.load().to_netcdf('entire_dataset.nc')
 
-        xarr_random_all = xarr_full_samples.drop('input')
-        xarr_random_all = xarr_random_all.drop('input_dim')
-        xarr_random_all.load().to_netcdf('entire_dataset_samples.nc')
+        # xarr_random_all = xarr_full_samples.drop('input')
+        # xarr_random_all = xarr_random_all.drop('input_dim')
+        xarr_full_samples.load().to_netcdf('entire_dataset_samples.nc')
 
         # Store ExperimentData
         experiment_data.store(Path().cwd())

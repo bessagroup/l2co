@@ -314,7 +314,7 @@ experimentdata:
   from_sampling:
     sampler: "random"
     seed: 2036
-    n_samples: 20
+    n_samples: 10
     domain: ${domain}
 
 mode: cluster

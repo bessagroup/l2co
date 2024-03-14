@@ -171,7 +171,7 @@ def process(config: Config):
         project_dir = Path().cwd()
 
     # Retrieve the ExperimentData object
-    max_tries = 5
+    max_tries = 100
     tries = 0
 
     while tries < max_tries:
@@ -187,7 +187,8 @@ def process(config: Config):
     if tries == max_tries:
         logger.error(
             f"Could not open ExperimentData after {max_tries} attempts.")
-        raise FileNotFoundError
+        raise FileNotFoundError(f"Could not open ExperimentData after "
+                                f"{max_tries} attempts.")
 
     logger.debug("Loaded experimentdata")
 
