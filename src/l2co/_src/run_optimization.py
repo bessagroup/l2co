@@ -23,6 +23,7 @@ experiment_two_optimizers
 from copy import deepcopy
 from functools import lru_cache, wraps
 from itertools import product
+from multiprocessing import get_start_method, set_start_method
 from time import perf_counter
 from typing import Any, Dict, List, Tuple
 
@@ -39,6 +40,7 @@ from pathos.helpers import mp
 # Local
 from ._logging import logger
 
+set_start_method('forkserver')
 #                                                          Authorship & Credits
 # =============================================================================
 __author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
@@ -703,6 +705,8 @@ def _run_first_multiple_realizations_parallel(
              dimensionality, noise, offset, seed + index,
              n_samples, n_iterations, x0_selection)
             for index in range(realizations)]
+
+    logger.debug(f"Current start method: {get_start_method()}")
 
     with mp.Pool() as pool:
         results = pool.starmap(_run_single_optimizer, args)
