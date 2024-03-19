@@ -146,11 +146,11 @@ class Trainer:
 
         logger.info(f"Trained stage0 model: {self.stage0_model.name}")
 
-    def load_stage1(self):
+    def load_stage1(self, path: str):
         """
         Load the stage1 model
         """
-        self.stage1_model.load()
+        self.stage1_model.load(path)
 
     def train_stage1(self, save_model: bool = False):
         """

@@ -14,7 +14,7 @@ DataLoader
 # Standard
 from __future__ import annotations
 
-from functools import cached_property, lru_cache
+from functools import lru_cache
 from typing import Iterable, Optional, Tuple
 
 # Third-party
@@ -213,6 +213,9 @@ class DataLoader():
         _columns_to_drop = _df_output.columns[_df_output.isna().all()]
         experimentdata = experimentdata.drop_output(_columns_to_drop)
 
+        data = data.sel(itemID=experimentdata.index)
+        data_samples = data_samples.sel(itemID=experimentdata.index)
+
         # Features
         X = get_labels(experimentdata=experimentdata,
                        n_realizations=n_realizations)
@@ -231,7 +234,7 @@ class DataLoader():
             columns=['random_samples']).sort_index(axis=1)
         da = xr.DataArray(
             df_output.T, dims=['optimizer', 'itemID']).expand_dims(
-            {'realization': np.arange(2),
+            {'realization': np.arange(n_realizations),
              'iterations': np.arange(data.iterations.size),
              })
         da_mask = xr.where(da == 'invalid', True, False)

@@ -748,7 +748,7 @@ def _run_single_optimizer(
     Returns
     -------
     List[ExperimentData]
-        List of three ExperimentData objects: the results, the histories 
+        List of three ExperimentData objects: the results, the histories
         and the best solutions.
     """
 
@@ -931,7 +931,7 @@ def _get_handshake(optimizer_1: str, optimizer_2: str) -> str:
 
 
 def _get_scheduler(
-        optimizer_1: str, optimizer_2: str,
+        optimizer_1: str, optimizer_2: str, switch: float,
         iterations: int, first_x0: str = 'new') -> OptimizerScheduler:
     """
     Get the scheduler for two optimizers
@@ -944,6 +944,8 @@ def _get_scheduler(
         name of the second optimizer
     iterations : int
         total number of iterations across both optimizers
+    switch : float, optional
+        fraction of the iterations to use for the first optimizer
     first_x0 : str, optional
         x0 selection strategy for the first optimizer, by default 'new'
 
@@ -952,8 +954,11 @@ def _get_scheduler(
     List[Tuple[str, int, str]]
         List of schedulers for the two optimizers
     """
-    i_0 = (iterations // 2)
-    i_1 = iterations // 2 + (iterations % 2)
+
+    i_0 = int(iterations // (1/switch))
+    i_1 = iterations - i_0
+    # i_0 = (iterations // 2)
+    # i_1 = iterations // 2 + (iterations % 2)
 
     if optimizer_1 == optimizer_2:
         return [(optimizer_1, iterations, first_x0)]
@@ -964,7 +969,8 @@ def _get_scheduler(
 
 def _get_all_combinations(
         optimizers: List[str], iterations: int,
-        first_x0: str = 'new') -> List[OptimizerScheduler]:
+        first_x0: str = 'new',
+        switch: float = 0.5) -> List[OptimizerScheduler]:
     """
     Get all combination of two optimizer names
 
@@ -976,6 +982,9 @@ def _get_all_combinations(
         total number of iterations across both optimizers
     first_x0 : str, optional
         x0 selection strategy for the first optimizer, by default 'new'
+    switch : float, optional
+        fraction of the iterations to use for the first
+        optimizer, by default 0.5
 
     Returns
     -------
@@ -984,7 +993,8 @@ def _get_all_combinations(
     """
     return [_get_scheduler(
         optimizer_1=opt_1, optimizer_2=opt_2,
-        iterations=iterations, first_x0=first_x0)
+        iterations=iterations, first_x0=first_x0,
+        switch=switch)
         for opt_1, opt_2 in product(optimizers, repeat=2)]
 
 

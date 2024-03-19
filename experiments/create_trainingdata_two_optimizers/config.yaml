@@ -297,7 +297,7 @@ domain:
       ]
   dimensionality:
     type: category
-    categories: [10, 20, 100, 25, 101]
+    categories: [2, 10, 20, 50, 100]
   noise:
     type: category
     categories: [0.0, 0.1]
@@ -314,7 +314,7 @@ experimentdata:
   from_sampling:
     sampler: "random"
     seed: 2036
-    n_samples: 10
+    n_samples: 1000
     domain: ${domain}
 
 mode: cluster
@@ -332,8 +332,9 @@ optimization:
     - name: Adam
     - name: LBFGSB
   fraction_of_all_combinations: 1.0
+  switch: 0.3
 
 hpc:
   jobid: -1
 
-log_level: 10
+log_level: 20

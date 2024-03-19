@@ -71,7 +71,8 @@ def _output_cummin(ds):
         output_core_dims=[['iterations']],
         vectorize=True,
         dask='parallelized',
-        output_dtypes=[ds.dtype]
+        output_dtypes=[ds.dtype],
+        dask_gufunc_kwargs={'allow_rechunk': True}
     )
 
 

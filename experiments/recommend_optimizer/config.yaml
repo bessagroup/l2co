@@ -1,8 +1,35 @@
 data:
-  training_project_dir: /home/martin/Documents/GitHub/L2CO/experiments/create_trainingdata_two_optimizers/outputs/2023-12-07/15-15-31
-  test_project_dir: /home/martin/Documents/GitHub/L2CO/experiments/create_trainingdata_two_optimizers/outputs/2023-12-05/14-35-45
+  training_project_dir: '/home/martin/Documents/550278.hpc06.hpc'
+  testing_project_dir:
 
 seed: 42
 
-t_switch: 250
-t_start: 30
+t_switch: 1000
+t_start: 0
+iterations: 2000
+
+test_size: 0.2
+
+rel_tolerance: 0.01
+epochs: 3
+batch_size: 32
+
+stage0_clf:
+  _target_: sklearn.ensemble.GradientBoostingClassifier
+  loss: 'log_loss'
+  learning_rate: 0.1
+  n_estimators: 100
+  max_depth: 3
+
+stage1_clf:
+  n_outputs: 4
+  length_sequence: 1000
+  path: #/home/martin/Documents/GitHub/L2CO/experiments/recommend_optimizer/outputs/2024-03-18/15-21-01
+
+feature_types:
+  convex: categorical
+  multimodal: categorical
+  seperable: categorical
+  noise: categorical
+  dim: ordinal
+  differentiable: categorical

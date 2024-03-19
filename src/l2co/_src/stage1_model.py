@@ -16,6 +16,7 @@ LSTMMultiOutputClassifier
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 from typing import Dict, Iterable, Optional, Protocol, Tuple
 
 # Third-party
@@ -100,7 +101,7 @@ class SingleStage1Model(Protocol):
         """
         ...
 
-    def load(self, model_path: str) -> None:
+    def load(self, path: Path) -> None:
         """
         Protocol method for loading the model
         """
@@ -126,7 +127,7 @@ class Stage1Model:
     def __init__(self, optimizers: xr.DataArray, model: SingleStage1Model,
                  iterations: int, t_start: int,
                  t_switch: int, rel_tolerance: float,
-                 name: str = 'stage1_model'):
+                 name: str = 'stage1_model', **kwargs):
         self.optimizers = optimizers
         self.model = model
         self.models = self.create_models()
@@ -233,6 +234,10 @@ class Stage1Model:
             dim='optimizer').sortby('problem')
 
         def concat_with_plus(opt1, opt2):
+
+            if str(opt2) == 'nan':
+                return str(opt1)
+
             if opt1 == opt2:
                 return str(opt1)
             return str(opt1) + '+' + str(opt2)
@@ -261,17 +266,18 @@ class Stage1Model:
         return {optimizer: deepcopy(self.model)
                 for optimizer in self.optimizers.values}
 
-    def load(self) -> None:
+    def load(self, path: str) -> None:
         """
         Load the model parameters from a file
 
         Parameters
         ----------
-        model_path : str
+        path : str
             The path to the model
         """
         for optimizer in self.optimizers.values:
-            self.models[optimizer].load(f'{self.name}_{optimizer}')
+            self.models[optimizer].load(
+                Path(path) / f'{self.name}_{optimizer}')
 
 
 #                                                         Model implementations
@@ -279,7 +285,7 @@ class Stage1Model:
 
 class LSTMMultiOutputClassifier(SingleStage1Model):
     def __init__(self, n_outputs: int, length_sequence: int,
-                 optimizer: str = 'adam', latent_dim: int = 32):
+                 optimizer: str = 'adam', latent_dim: int = 32, **kwargs):
         """
         LSTM Multi-output classifier neural network
 
@@ -370,11 +376,11 @@ class LSTMMultiOutputClassifier(SingleStage1Model):
         """
         return self.model.predict(X_test)
 
-    def load(self, name: str):
+    def load(self, path: Path):
         """
         Load the model
         """
-        self.model = load_model(f'{name}.h5')
+        self.model = load_model(f'{path}.h5')
 
 
 class ELAClassifier(Stage1Model):
@@ -460,7 +466,8 @@ class ELAClassifier(Stage1Model):
 
         # p = (y_pred_proba / y_pred_proba.sum(dim='optimizer'))
 
-        # # Define a function to apply np.random.choice with probabilities from p
+        # # Define a function to apply np.random.choice with probabilities
+        # from p
         # def random_choice_with_probabilities(p_values):
         #     choice = np.random.choice(p.optimizer.values, p=p_values.ravel())
         #     return choice

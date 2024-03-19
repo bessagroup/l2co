@@ -40,7 +40,10 @@ class BenchmarkOptimizationRoutine(DataGenerator):
         optimizers = [opt_config['name'] for
                       opt_config in self.config.optimization.optimizers]
 
-        optimizer_schedulers = _get_all_combinations(optimizers, budget)
+        optimizer_schedulers = _get_all_combinations(
+            optimizers=optimizers,
+            iterations=budget,
+            switch=self.config.optimization.switch)
 
         # Sample from the optimizer_schedulers:
         n = int(len(optimizer_schedulers) * self.config.
