@@ -408,7 +408,7 @@ class ELAClassifier(Stage1Model):
         Protocol method for training the model
         """
         X_train = create_ela_features(
-            data_train.data_samples, n_realizations=data_train.n_realizations)
+            data_train.data_samples)
         y_train = data_train.select_single_optimizers().query_t(
             self.iterations).y_binary(self.rel_tolerance)
 
@@ -448,7 +448,7 @@ class ELAClassifier(Stage1Model):
             self.iterations).y_binary()
 
         X_test = create_ela_features(
-            data_test.data_samples, n_realizations=data_test.n_realizations,
+            data_test.data_samples,
             iterations=self.t_switch)
 
         X_test = X_test.sel(problem=data_test.problem)

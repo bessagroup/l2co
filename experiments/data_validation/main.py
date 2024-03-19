@@ -26,6 +26,7 @@ from f3dasm import ExperimentData
 from setup_logger import logger, warning_logger
 
 from l2co import logger as l2co_logger
+from l2co._src.ela import create_ela_features
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -134,6 +135,9 @@ def main(config):
         f"Finished opening the whole thing: random samples "
         f"(Took {perf_counter() - t_start} seconds)")
 
+    # ELA features
+    xarr_ela_features = create_ela_features(xarr_full_samples)
+
     if config.select_output_and_combine:
         # xarr_only_output = xarr_full.drop('input')
         xarr_only_output = xarr_full.drop('input_dim')
@@ -142,6 +146,8 @@ def main(config):
         # xarr_random_all = xarr_full_samples.drop('input')
         # xarr_random_all = xarr_random_all.drop('input_dim')
         xarr_full_samples.load().to_netcdf('entire_dataset_samples.nc')
+
+        xarr_ela_features.load().to_netcdf('ela_features.nc')
 
         # Store ExperimentData
         experiment_data.store(Path().cwd())
