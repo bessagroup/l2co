@@ -77,7 +77,6 @@ def main(config):
     df_output = df_output.drop(columns=['random_samples'])
 
     # remove all experiments where none of the optimizers have finished
-    df_output = df_output.dropna(how='all')
 
     # Open the whole thing:
     t_start = perf_counter()
@@ -116,7 +115,11 @@ def main(config):
 
     # ELA features
     ela_list_train, ela_list_test = [], []
+
     for index, file_r in enumerate(files_random_samples):
+        if file_r == np.nan:
+            continue
+
         ela_list_train.append(create_ela_feature_1(
             xr.open_dataset(file_r), itemID=int(file_r.stem)))
         l2co_logger.info(
