@@ -256,7 +256,9 @@ class Trainer:
 
         self.performance_profile = create_performance_profile(
             ds_raw=data_test,
+            ds_samples=self.data_test.data_samples.sortby('problem'),
             iterations=self.data_test.n_iterations,
+            t_switch=self.t_switch,
             strategies=_strategies)
 
         self.performance_profile.load()

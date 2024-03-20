@@ -148,7 +148,7 @@ def main(config):
         # xarr_random_all = xarr_random_all.drop('input_dim')
         xarr_full_samples.load().to_netcdf('entire_dataset_samples.nc')
 
-        xarr_ela_features.load().to_netcdf('ela_features.nc')
+        # xarr_ela_features.load().to_netcdf('ela_features.nc')
 
         # Store ExperimentData
         experiment_data.store(Path().cwd())

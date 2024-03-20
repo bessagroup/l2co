@@ -399,7 +399,9 @@ class DataLoader():
 
         performance_profile = create_performance_profile(
             ds_raw=self.data,
+            ds_samples=self.data_samples,
             iterations=self.n_iterations,
+            t_switch=self.config.t_switch,
             strategies=_strategies)
 
         # performance_profile.load()

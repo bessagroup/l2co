@@ -151,7 +151,9 @@ def calculate_performance_ratio(
 
 def create_performance_profile(
         ds_raw: ExperimentData | xr.Dataset,
+        ds_samples: xr.Dataset,
         iterations: int,
+        t_switch: int,
         strategies: Optional[List[xr.DataArray]] = None) -> xr.Dataset:
     """
     Create a performance profile for the given experiment data and iterations.
@@ -191,6 +193,23 @@ def create_performance_profile(
 
     # Select only the output variable
     ds_output = ds_raw.sel(output_dim='y', drop=True).output
+    data_samples = ds_samples.sel(output_dim='y', drop=True).output
+
+    opts = [entry for entry in ds_output.optimizer.values if '+' not in entry]
+
+    a = []
+    for opt in opts:
+        a.append(
+            xr.concat([data_samples.sel(
+                iterations=np.arange(t_switch)), ds_output.sel(
+                    optimizer=opt, iterations=np.arange(iterations-t_switch)
+            ).assign_coords(iterations=np.arange(t_switch, iterations))],
+                dim='iterations').assign_coords(
+                    optimizer=f'random_samples+{opt}'))
+
+    random_combinations = xr.concat(a, dim='optimizer')
+
+    ds_output = xr.concat([ds_output, random_combinations], dim='optimizer')
 
     # combine the itemID and realization coordinate
     # ds_output = ds_output.stack(problem=('itemID', 'realization'))

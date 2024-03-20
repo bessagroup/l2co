@@ -1,5 +1,5 @@
 data:
-  training_project_dir: '/home/martin/Documents/550278.hpc06.hpc'
+  training_project_dir: /media/martin/T7/data/550278.hpc06.hpc
   testing_project_dir:
 
 seed: 42
