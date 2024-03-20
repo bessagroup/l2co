@@ -71,12 +71,14 @@ def main(config):
     # df_output = df_output.apply(lambda x: experiment_data.project_dir / x)
 
     df_random_samples = df_output['random_samples']
-    files_random_samples: List[Path] = df_random_samples.values.tolist()
+    files_random_samples: List[Path] = df_random_samples.dropna(
+    ).values.tolist()
 
     # don't include the column 'random_samples'
     df_output = df_output.drop(columns=['random_samples'])
 
     # remove all experiments where none of the optimizers have finished
+    df_output = df_output.dropna(how='all')
 
     # Open the whole thing:
     t_start = perf_counter()
