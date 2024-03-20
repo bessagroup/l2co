@@ -113,4 +113,4 @@ def preprocessing_factory(feature_types: dict) -> ColumnTransformer:
     return make_column_transformer(
         *[(transformer_factory(feature_type), [feature_name])
           for feature_name, feature_type in feature_types.items()],
-        remainder='passthrough')
+        remainder='drop')
