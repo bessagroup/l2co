@@ -26,7 +26,7 @@ from f3dasm import ExperimentData
 from setup_logger import logger, warning_logger
 
 from l2co import logger as l2co_logger
-from l2co._src.ela import create_ela_features
+from l2co._src.ela import create_ela_feature_1
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -79,27 +79,6 @@ def main(config):
     # remove all experiments where none of the optimizers have finished
     df_output = df_output.dropna(how='all')
 
-    # files: List[List[Path]] = df_output.values.tolist()
-
-    # # Open the first file
-    # xarr_file = xr.open_dataset(np.array(files).ravel()[0])
-    # xarr_experiment = xr.open_mfdataset(files[0])
-
-    # for index, experiment in enumerate(files):
-    #     logger.info(
-    #         f"({index+1} / {len(files)}) - "
-    #         f"Validating experiment {experiment[0].stem}")
-    #     for file in experiment:
-    #         logger.debug(
-    #             f"({index+1} / {len(np.array(files).ravel())}) "
-    #             f"- Validating file {file}")
-    #         _file = xr.open_dataset(file)
-
-    #         validation(xarr_file, _file, file)
-
-    #     _exp = xr.open_mfdataset(experiment)
-    #     validate_experiment(xarr_experiment, _exp, experiment)
-
     # Open the whole thing:
     t_start = perf_counter()
     logger.info("Opening the whole thing")
@@ -136,7 +115,24 @@ def main(config):
         f"(Took {perf_counter() - t_start} seconds)")
 
     # ELA features
-    xarr_ela_features = create_ela_features(xarr_full_samples)
+    ela_list_train, ela_list_test = [], []
+    for index, file_r in enumerate(files_random_samples):
+        ela_list_train.append(create_ela_feature_1(
+            xr.open_dataset(file_r), itemID=int(file_r.stem)))
+        l2co_logger.info(
+            f"({index+1}/{len(files_random_samples)}) - Created ELA (train) for itemID = {file_r.stem}")
+
+    xr_ela_train = xr.concat(ela_list_train, dim='problem')
+    xr_ela_train.unstack().to_netcdf('ela_features_train.nc')
+
+    for index, file_r in enumerate(files_random_samples):
+        ela_list_test.append(create_ela_feature_1(
+            xr.open_dataset(file_r), itemID=int(file_r.stem), iterations=config.t_switch))
+        l2co_logger.info(
+            f"({index+1}/{len(files_random_samples)}) - Created ELA (test) for itemID = {file_r.stem}")
+
+    xr_ela_test = xr.concat(ela_list_train, dim='problem')
+    xr_ela_test.unstack().to_netcdf('ela_features_test.nc')
 
     if config.select_output_and_combine:
         # xarr_only_output = xarr_full.drop('input')

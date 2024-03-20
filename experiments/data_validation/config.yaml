@@ -2,3 +2,4 @@ project_dir: /home/martin/Documents/GitHub/L2CO/experiments/create_trainingdata_
 log_level: 20
 portion: 
 select_output_and_combine: True
+t_switch: 50

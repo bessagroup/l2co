@@ -17,6 +17,7 @@ from pflacco.classical_ela_features import (calculate_dispersion,
                                             calculate_ela_meta,
                                             calculate_information_content,
                                             calculate_nbc)
+from tqdm import tqdm
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -85,12 +86,42 @@ ELA_FEATURE_LABELS = {
 # =============================================================================
 
 
-def create_ela_features(
-        data_samples: xr.Dataset, n_realizations: int,
-        iterations: Optional[int] = None) -> xr.DataArray:
+def create_ela_feature_1(data_samples: xr.Dataset, itemID: int,
+                         iterations: Optional[int] = None) -> xr.DataArray:
+
+    data_samples = data_samples.expand_dims({'itemID': [int(itemID)]})
+    data_samples = data_samples.stack(problem=('realization', 'itemID'))
+
     ela_list = []
 
     for i in data_samples.problem:
+        if iterations is not None:
+            d = data_samples.sel(problem=i, iterations=np.arange(
+                iterations)).dropna(dim='input_dim')
+        else:
+            d = data_samples.sel(problem=i).dropna(dim='input_dim')
+        X = d.input.values
+        y = d.output.values.ravel()
+        ela_list.append(
+            {**calculate_ela_distribution(X, y),
+             **calculate_ela_meta(X, y),
+             **calculate_ela_level(X, y),
+             **calculate_dispersion(X, y),
+             **calculate_information_content(X, y),
+             **calculate_nbc(X, y)})
+
+    X = pd.DataFrame(ela_list)
+    return xr.DataArray(
+        X, coords={'problem': data_samples.problem,
+                   'features': X.columns})
+
+
+def create_ela_features(
+        data_samples: xr.Dataset,
+        iterations: Optional[int] = None) -> xr.DataArray:
+    ela_list = []
+
+    for i in tqdm(data_samples.problem):
         if iterations is not None:
             d = data_samples.sel(problem=i, iterations=np.arange(
                 iterations)).dropna(dim='input_dim')
