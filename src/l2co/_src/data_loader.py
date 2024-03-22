@@ -401,7 +401,7 @@ class DataLoader():
             ds_raw=self.data,
             ds_samples=self.data_samples,
             iterations=self.n_iterations,
-            t_switch=self.config.t_switch,
+            t_switch=self.config['t_switch'],
             strategies=_strategies)
 
         # performance_profile.load()

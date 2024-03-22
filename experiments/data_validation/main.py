@@ -13,6 +13,7 @@ main
 # =============================================================================
 
 # Standard
+import time
 from pathlib import Path
 from time import perf_counter
 from typing import List
@@ -116,28 +117,46 @@ def main(config):
         f"(Took {perf_counter() - t_start} seconds)")
 
     # ELA features
-    ela_list_train, ela_list_test = [], []
+
+    ela_folder_train = Path().cwd() / 'ela_train'
+    ela_folder_train.mkdir(exist_ok=True)
 
     for index, file_r in enumerate(files_random_samples):
         if file_r == np.nan:
             continue
 
-        ela_list_train.append(create_ela_feature_1(
-            xr.open_dataset(file_r), itemID=int(file_r.stem)))
-        l2co_logger.info(
-            f"({index+1}/{len(files_random_samples)}) - Created ELA (train) for itemID = {file_r.stem}")
+        t = time.perf_counter()
+        xarr_file = xr.open_dataset(file_r, chunks='auto')
 
-    xr_ela_train = xr.concat(ela_list_train, dim='problem')
-    xr_ela_train.unstack().to_netcdf('ela_features_train.nc')
+        if bool(xarr_file.isnull().any().output.values):
+            continue
+
+        ela = create_ela_feature_1(xarr_file, itemID=int(
+            file_r.stem))
+        ela.unstack().to_netcdf(
+            ela_folder_train / f'{file_r.stem}_ela.nc')
+        l2co_logger.info(
+            f"({index+1}/{len(files_random_samples)}) - Created ELA (train) for itemID = {file_r.stem} ({time.perf_counter() - t} s)")
+
+    ela_folder_test = Path().cwd() / 'ela_test'
+    ela_folder_test.mkdir(exist_ok=True)
 
     for index, file_r in enumerate(files_random_samples):
-        ela_list_test.append(create_ela_feature_1(
-            xr.open_dataset(file_r), itemID=int(file_r.stem), iterations=config.t_switch))
-        l2co_logger.info(
-            f"({index+1}/{len(files_random_samples)}) - Created ELA (test) for itemID = {file_r.stem}")
+        if file_r == np.nan:
+            continue
 
-    xr_ela_test = xr.concat(ela_list_train, dim='problem')
-    xr_ela_test.unstack().to_netcdf('ela_features_test.nc')
+        t = time.perf_counter()
+        xarr_file = xr.open_dataset(file_r, chunks='auto')
+
+        if bool(xarr_file.isnull().any().output.values):
+            continue
+
+        ela = create_ela_feature_1(xarr_file, itemID=int(
+            file_r.stem, iterations=config.t_switch))
+        ela.unstack().to_netcdf(
+            ela_folder_test / f'{file_r.stem}_ela.nc')
+        l2co_logger.info(
+            f"({index+1}/{len(files_random_samples)}) - Created ELA (test) for itemID = {file_r.stem} ({time.perf_counter() - t} s)")
 
     if config.select_output_and_combine:
         # xarr_only_output = xarr_full.drop('input')

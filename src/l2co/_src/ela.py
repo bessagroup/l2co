@@ -17,6 +17,7 @@ from pflacco.classical_ela_features import (calculate_dispersion,
                                             calculate_ela_meta,
                                             calculate_information_content,
                                             calculate_nbc)
+from sklearn.decomposition import PCA
 from tqdm import tqdm
 
 #                                                          Authorship & Credits
@@ -102,6 +103,11 @@ def create_ela_feature_1(data_samples: xr.Dataset, itemID: int,
             d = data_samples.sel(problem=i).dropna(dim='input_dim')
         X = d.input.values
         y = d.output.values.ravel()
+
+        if X.shape[1] > 20:
+            pca = PCA(n_components=10)
+            X = pca.fit_transform(X, y)
+
         ela_list.append(
             {**calculate_ela_distribution(X, y),
              **calculate_ela_meta(X, y),
