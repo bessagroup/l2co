@@ -13,21 +13,20 @@ main
 # =============================================================================
 
 # Standard
-import time
 from pathlib import Path
-from time import perf_counter
 from typing import List
 
 # Third-party
 import hydra
 import numpy as np
 import xarray as xr
+from ela_features import (create_ela, create_entire_dataset,
+                          create_entire_dataset_samples)
 from f3dasm import ExperimentData
 # Local
-from setup_logger import logger, warning_logger
+from setup_logger import logger
 
 from l2co import logger as l2co_logger
-from l2co._src.ela import create_ela_feature_1
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -81,122 +80,22 @@ def main(config):
     # remove all experiments where none of the optimizers have finished
     df_output = df_output.dropna(how='all')
 
-    # Open the whole thing:
-    t_start = perf_counter()
-    logger.info("Opening the whole thing")
+    create_entire_dataset(df_output)
 
-    combined_rows = []
-
-    for row, values in df_output.iterrows():
-        a = xr.open_mfdataset(values.dropna(), combine='by_coords')
-        combined_rows.append(a.assign_coords(
-            {'itemID': [row]}).drop('input'))
-
-    xarr_full = xr.concat(combined_rows, dim='itemID')
-
-    # xarr_full = xr.open_mfdataset(
-    #     files,
-    #     concat_dim=[xr.DataArray([int(f[0].stem) for f in files],
-    #                              dims='itemID'), 'optimizer'],
-    #     combine='nested')
-
-    logger.info(
-        f"Finished opening the whole thing "
-        f"(Took {perf_counter() - t_start} seconds)")
-
-    t_start = perf_counter()
-    logger.info("Opening the whole thing: random samples")
-    xarr_full_samples = xr.open_mfdataset(
-        files_random_samples,
-        concat_dim=xr.DataArray([int(f.stem) for f in files_random_samples],
-                                dims='itemID'),
-        combine='nested')
-
-    logger.info(
-        f"Finished opening the whole thing: random samples "
-        f"(Took {perf_counter() - t_start} seconds)")
+    create_entire_dataset_samples(files_random_samples)
 
     # ELA features
+    create_ela(files=files_random_samples, ela_folder='ela', t_switch=1000)
 
-    ela_folder_train = Path().cwd() / 'ela_train'
-    ela_folder_train.mkdir(exist_ok=True)
+    ela_train = xr.concat([xr.open_dataarray(p) for p in (
+        Path().cwd() / 'ela_train').glob('*.nc')], dim='itemID')
 
-    for index, file_r in enumerate(files_random_samples):
-        if file_r == np.nan:
-            continue
+    ela_train.to_netcdf('ela_train.nc')
 
-        t = time.perf_counter()
-        xarr_file = xr.open_dataset(file_r, chunks='auto')
+    ela_test = xr.concat([xr.open_dataarray(p) for p in (
+        Path().cwd() / 'ela_test').glob('*.nc')], dim='itemID')
 
-        if bool(xarr_file.isnull().any().output.values):
-            continue
-
-        ela = create_ela_feature_1(xarr_file, itemID=int(
-            file_r.stem))
-        ela.unstack().to_netcdf(
-            ela_folder_train / f'{file_r.stem}_ela.nc')
-        l2co_logger.info(
-            f"({index+1}/{len(files_random_samples)}) - Created ELA (train) for itemID = {file_r.stem} ({time.perf_counter() - t} s)")
-
-    ela_folder_test = Path().cwd() / 'ela_test'
-    ela_folder_test.mkdir(exist_ok=True)
-
-    for index, file_r in enumerate(files_random_samples):
-        if file_r == np.nan:
-            continue
-
-        t = time.perf_counter()
-        xarr_file = xr.open_dataset(file_r, chunks='auto')
-
-        if bool(xarr_file.isnull().any().output.values):
-            continue
-
-        ela = create_ela_feature_1(xarr_file, itemID=int(
-            file_r.stem, iterations=config.t_switch))
-        ela.unstack().to_netcdf(
-            ela_folder_test / f'{file_r.stem}_ela.nc')
-        l2co_logger.info(
-            f"({index+1}/{len(files_random_samples)}) - Created ELA (test) for itemID = {file_r.stem} ({time.perf_counter() - t} s)")
-
-    if config.select_output_and_combine:
-        # xarr_only_output = xarr_full.drop('input')
-        xarr_only_output = xarr_full.drop('input_dim')
-        xarr_only_output.load().to_netcdf('entire_dataset.nc')
-
-        # xarr_random_all = xarr_full_samples.drop('input')
-        # xarr_random_all = xarr_random_all.drop('input_dim')
-        xarr_full_samples.load().to_netcdf('entire_dataset_samples.nc')
-
-        # xarr_ela_features.load().to_netcdf('ela_features.nc')
-
-        # Store ExperimentData
-        experiment_data.store(Path().cwd())
-
-
-def validate_experiment(expected_xarr: xr.Dataset,
-                        actual_xarr: xr.Dataset,
-                        filenames: List[Path],
-                        ):
-    if not all(expected_xarr.optimizer == actual_xarr.optimizer):
-        warning_logger.warning(f'{filenames} has different optimizers')
-
-    if not all(expected_xarr.output_dim == actual_xarr.output_dim):
-        warning_logger.warning(f'{filenames} has different output dimensions')
-
-
-def validation(
-        expected_xarr: xr.Dataset,
-        actual_xarr: xr.Dataset,
-        filename: Path):
-    if not expected_xarr.data_vars.keys() == actual_xarr.data_vars.keys():
-        warning_logger.warning(f'{filename} has different data variables')
-    if not expected_xarr.coords.keys() == actual_xarr.coords.keys():
-        warning_logger.warning(f'{filename} has different coordinates')
-    if not expected_xarr.attrs.keys() == actual_xarr.attrs.keys():
-        warning_logger.warning(f'{filename} has different attributes')
-
-    if not all(expected_xarr.realization == actual_xarr.realization):
-        warning_logger.warning(f'{filename} has different realizations')
+    ela_test.to_netcdf('ela_test.nc')
 
 
 if __name__ == '__main__':
