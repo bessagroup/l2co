@@ -74,7 +74,7 @@ def process(config):
     while tries < max_tries:
         try:
             logger.info("Open ExperimentData")
-            data = ExperimentData.from_file()
+            data = ExperimentData.from_file(Path().cwd())
             break  # Break out of the loop if successful
         except FileNotFoundError:
             tries += 1
