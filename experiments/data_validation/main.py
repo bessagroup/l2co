@@ -14,6 +14,7 @@ main
 
 # Standard
 from pathlib import Path
+from time import sleep
 from typing import List
 
 # Third-party
@@ -41,10 +42,50 @@ __status__ = 'Stable'
 
 @hydra.main(config_path=".", config_name="config")
 def main(config):
-    # logger, warning_logger = create_loggers()
+    """Main script to call
+
+    Parameters
+    ----------
+    config
+        Configuration parameters defined in config.yaml
+    """
+
     logger.setLevel(config.log_level)
     l2co_logger.setLevel(config.log_level)
+    # Execute the initial_script for the first job
+    if config.hpc.jobid == 0:
+        pre_processing(config)
+        post_processing(config)
 
+    elif config.hpc.jobid == -1:  # Sequential
+        pre_processing(config)
+        process(config)
+        post_processing(config)
+    else:
+        sleep(3*config.hpc.jobid)  # Just to asynchronize the jobs
+        process(config)
+
+
+def process(config):
+    # Retrieve the ExperimentData object
+    max_tries = 100
+    tries = 0
+
+    while tries < max_tries:
+        try:
+            logger.info("Open ExperimentData")
+            data = ExperimentData.from_file()
+            break  # Break out of the loop if successful
+        except FileNotFoundError:
+            tries += 1
+            logger.info("FileNotFoundError, sleeping!")
+            sleep(10)
+
+    ela_generator = ELAGenerator(t_switch=config.t_switch)
+    data.evaluate(data_generator=ela_generator, mode='cluster_parallel')
+
+
+def pre_processing(config):
     experiment_data_all = ExperimentData.from_file(config.project_dir)
 
     logger.info(f"Loaded experiment data from {config.project_dir}")
@@ -84,6 +125,10 @@ def main(config):
     # ELA features
     data = ExperimentData(input_data=pd.DataFrame(
         files_random_samples, columns=['filename']))
+
+    data.store()
+    logger.info("Stored experimentdata")
+
     ela_generator = ELAGenerator(t_switch=config.t_switch)
     data.evaluate(data_generator=ela_generator, mode='cluster_parallel')
     # create_ela(files=files_random_samples, ela_folder='ela', t_switch=1000)
@@ -92,6 +137,8 @@ def main(config):
 
     create_entire_dataset_samples(files_random_samples)
 
+
+def post_processing(config):
     ela_train = xr.concat([xr.open_dataarray(p) for p in (
         Path().cwd() / 'ela_train').glob('*.nc')], dim='itemID')
 

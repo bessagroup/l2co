@@ -6,3 +6,6 @@ log_level: 20
 portion: 
 select_output_and_combine: True
 t_switch: 1000
+
+hpc:
+  jobid: -1
