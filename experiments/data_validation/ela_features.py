@@ -5,6 +5,7 @@ from typing import List, Optional
 import numpy as np
 import pandas as pd
 import xarray as xr
+from f3dasm.datageneration import DataGenerator
 from pathos import multiprocessing as mp
 
 from l2co import logger as l2co_logger
@@ -82,3 +83,37 @@ def create_ela(files: List[Path], ela_folder: str, t_switch: int):
     with mp.Pool() as pool:
         pool.starmap(create_one_ela, [
                      (file_r, ela_folder_test, t_switch) for file_r in files])
+
+
+class ELAGenerator(DataGenerator):
+    def __init__(self, t_switch: Optional[int]):
+        self.t_switch = t_switch
+
+    def execute(self):
+        file_r = Path(self.experiment_sample.get('filename'))
+
+        t = time.perf_counter()
+        if file_r == np.nan:
+            l2co_logger.info(f"File {file_r} is NaN. Skipping...")
+            return
+
+        xarr_file = xr.open_dataset(file_r, chunks='auto')
+
+        if bool(xarr_file.isnull().any().output.values):
+            l2co_logger.info(f"File {file_r} has NaN values. Skipping...")
+            return
+
+        ela_train = create_ela_feature_1(xarr_file, itemID=int(
+            file_r.stem), iterations=None)
+
+        self.experiment_sample.store(
+            object=ela_train.unstack(), name='ela_train', to_disk=True)
+
+        ela_test = create_ela_feature_1(xarr_file, itemID=int(
+            file_r.stem), iterations=self.t_switch)
+
+        self.experiment_sample.store(
+            object=ela_test.unstack(), name='ela_test', to_disk=True)
+
+        l2co_logger.info(
+            f"Created ELA for itemID = {file_r.stem} ({time.perf_counter() - t} s)")

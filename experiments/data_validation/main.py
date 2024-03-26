@@ -19,8 +19,9 @@ from typing import List
 # Third-party
 import hydra
 import numpy as np
+import pandas as pd
 import xarray as xr
-from ela_features import (create_ela, create_entire_dataset,
+from ela_features import (ELAGenerator, create_entire_dataset,
                           create_entire_dataset_samples)
 from f3dasm import ExperimentData
 # Local
@@ -80,12 +81,16 @@ def main(config):
     # remove all experiments where none of the optimizers have finished
     df_output = df_output.dropna(how='all')
 
+    # ELA features
+    data = ExperimentData(input_data=pd.DataFrame(
+        files_random_samples, columns=['filename']))
+    ela_generator = ELAGenerator(t_switch=config.t_switch)
+    data.evaluate(data_generator=ela_generator, mode='cluster_parallel')
+    # create_ela(files=files_random_samples, ela_folder='ela', t_switch=1000)
+
     create_entire_dataset(df_output)
 
     create_entire_dataset_samples(files_random_samples)
-
-    # ELA features
-    create_ela(files=files_random_samples, ela_folder='ela', t_switch=1000)
 
     ela_train = xr.concat([xr.open_dataarray(p) for p in (
         Path().cwd() / 'ela_train').glob('*.nc')], dim='itemID')

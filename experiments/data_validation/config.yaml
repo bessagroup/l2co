@@ -5,4 +5,4 @@ project_dir: /media/martin/T7/data/550046.hpc06.hpc/
 log_level: 20
 portion: 
 select_output_and_combine: True
-t_switch: 50
+t_switch: 1000
