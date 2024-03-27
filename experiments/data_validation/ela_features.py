@@ -105,11 +105,11 @@ class ELAGenerator(DataGenerator):
             l2co_logger.info(f"File {file_r} has NaN values. Skipping...")
             return
 
-        # ela_train = create_ela_feature_1(xarr_file, itemID=int(
-        #     file_r.stem), iterations=None)
+        ela_train = create_ela_feature_1(xarr_file, itemID=int(
+            file_r.stem), iterations=None)
 
-        # self.experiment_sample.store(
-        #     object=ela_train.unstack(), name='ela_train', to_disk=True)
+        self.experiment_sample.store(
+            object=ela_train.unstack(), name='ela_train', to_disk=True)
 
         ela_test = create_ela_feature_1(xarr_file, itemID=int(
             file_r.stem), iterations=self.t_switch)

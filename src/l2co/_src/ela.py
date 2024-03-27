@@ -5,6 +5,7 @@
 # =============================================================================
 
 # Standard
+from copy import deepcopy
 from typing import Optional
 
 # Third-party
@@ -84,6 +85,62 @@ ELA_FEATURE_LABELS = {
     'nbc.costs_runtime': 'scaler',
 }
 
+empty_labels = {
+    'ela_distr.skewness': np.nan,
+    'ela_distr.kurtosis': np.nan,
+    'ela_distr.number_of_peaks': np.nan,
+    'ela_distr.costs_runtime': np.nan,
+    'ela_meta.lin_simple.adj_r2': np.nan,
+    'ela_meta.lin_simple.intercept': np.nan,
+    'ela_meta.lin_simple.coef.min': np.nan,
+    'ela_meta.lin_simple.coef.max': np.nan,
+    'ela_meta.lin_simple.coef.max_by_min': np.nan,
+    'ela_meta.lin_w_interact.adj_r2': np.nan,
+    'ela_meta.quad_simple.adj_r2': np.nan,
+    'ela_meta.quad_simple.cond': np.nan,
+    'ela_meta.quad_w_interact.adj_r2': np.nan,
+    'ela_meta.costs_runtime': np.nan,
+    'ela_level.mmce_lda_10': np.nan,
+    'ela_level.mmce_qda_10': np.nan,
+    'ela_level.lda_qda_10': np.nan,
+    'ela_level.mmce_lda_25': np.nan,
+    'ela_level.mmce_qda_25': np.nan,
+    'ela_level.lda_qda_25': np.nan,
+    'ela_level.mmce_lda_50': np.nan,
+    'ela_level.mmce_qda_50': np.nan,
+    'ela_level.lda_qda_50': np.nan,
+    'ela_level.costs_runtime': np.nan,
+    'disp.ratio_mean_02': np.nan,
+    'disp.ratio_mean_05': np.nan,
+    'disp.ratio_mean_10': np.nan,
+    'disp.ratio_mean_25': np.nan,
+    'disp.ratio_median_02': np.nan,
+    'disp.ratio_median_05': np.nan,
+    'disp.ratio_median_10': np.nan,
+    'disp.ratio_median_25': np.nan,
+    'disp.diff_mean_02': np.nan,
+    'disp.diff_mean_05': np.nan,
+    'disp.diff_mean_10': np.nan,
+    'disp.diff_mean_25': np.nan,
+    'disp.diff_median_02': np.nan,
+    'disp.diff_median_05': np.nan,
+    'disp.diff_median_10': np.nan,
+    'disp.diff_median_25': np.nan,
+    'disp.costs_runtime': np.nan,
+    'ic.h_max': np.nan,
+    'ic.eps_s': np.nan,
+    'ic.eps_max': np.nan,
+    'ic.eps_ratio': np.nan,
+    'ic.m0': np.nan,
+    'ic.costs_runtime': np.nan,
+    'nbc.nn_nb.sd_ratio': np.nan,
+    'nbc.nn_nb.mean_ratio': np.nan,
+    'nbc.nn_nb.cor': np.nan,
+    'nbc.dist_ratio.coeff_var': np.nan,
+    'nbc.nb_fitness.cor': np.nan,
+    'nbc.costs_runtime': np.nan,
+}
+
 # =============================================================================
 
 
@@ -108,13 +165,27 @@ def create_ela_feature_1(data_samples: xr.Dataset, itemID: int,
             pca = PCA(n_components=10)
             X = pca.fit_transform(X, y)
 
-        ela_list.append(
-            {**calculate_ela_distribution(X, y),
-             **calculate_ela_meta(X, y),
-             **calculate_ela_level(X, y),
-             **calculate_dispersion(X, y),
-             **calculate_information_content(X, y),
-             **calculate_nbc(X, y)})
+        features = deepcopy(empty_labels)
+
+        try:
+            features.update(calculate_ela_distribution(X, y))
+            features.update(calculate_ela_meta(X, y))
+            features.update(calculate_ela_level(X, y))
+            features.update(calculate_dispersion(X, y))
+            features.update(calculate_information_content(X, y))
+            features.update(calculate_nbc(X, y))
+        except Exception:
+            pass
+
+        # delete certain keys
+        del features['ela_distr.costs_runtime']
+        del features['ela_meta.costs_runtime']
+        del features['ela_level.costs_runtime']
+        del features['disp.costs_runtime']
+        del features['ic.costs_runtime']
+        del features['nbc.costs_runtime']
+
+        ela_list.append(features)
 
     X = pd.DataFrame(ela_list)
     return xr.DataArray(

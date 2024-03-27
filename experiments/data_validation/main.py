@@ -86,8 +86,7 @@ def process(config):
             logger.info("FileNotFoundError, sleeping!")
             sleep(10)
 
-    ela_generator = ELAGenerator(
-        t_switch=config.t_switch, project_dir=config.project_dir)
+    ela_generator = ELAGenerator(t_switch=config.t_switch)
     data.evaluate(data_generator=ela_generator, mode='cluster_parallel')
 
 
