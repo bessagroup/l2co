@@ -74,60 +74,72 @@ def process(config):
     while tries < max_tries:
         try:
             logger.info("Open ExperimentData")
-            data = ExperimentData.from_file(Path().cwd())
+
+            if "from_file" in config.experimentdata:
+                data = ExperimentData.from_file(
+                    config.experimentdata.from_file)
+            else:
+                data = ExperimentData.from_file(Path().cwd())
             break  # Break out of the loop if successful
         except FileNotFoundError:
             tries += 1
             logger.info("FileNotFoundError, sleeping!")
             sleep(10)
 
-    ela_generator = ELAGenerator(t_switch=config.t_switch)
+    ela_generator = ELAGenerator(
+        t_switch=config.t_switch, project_dir=config.project_dir)
     data.evaluate(data_generator=ela_generator, mode='cluster_parallel')
 
 
 def pre_processing(config):
-    experiment_data_all = ExperimentData.from_file(config.project_dir)
 
-    logger.info(f"Loaded experiment data from {config.project_dir}")
+    if "from_file" in config.experimentdata:
+        data = ExperimentData.from_file(config.experimentdata.from_file)
 
-    # Select portion if applicable
-    if config.portion is not None:
-        experiment_data_all = experiment_data_all.select(range(config.portion))
+    else:
+        experiment_data_all = ExperimentData.from_file(config.project_dir)
 
-    experiment_data = experiment_data_all.select_with_status('finished')
+        logger.info(f"Loaded experiment data from {config.project_dir}")
 
-    logger.info(
-        f"Number of finished jobs: "
-        f"{len(experiment_data)} / {len(experiment_data_all)}")
+        # Select portion if applicable
+        if config.portion is not None:
+            experiment_data_all = experiment_data_all.select(
+                range(config.portion))
 
-    _, df_output = experiment_data.to_pandas()
+        experiment_data = experiment_data_all.select_with_status('finished')
 
-    # remove all values that say 'ERROR' and 'invalid'
-    df_output = df_output.replace('ERROR', np.nan)
-    df_output = df_output.replace('invalid', np.nan)
-    df_output = df_output.replace('not working', np.nan)
+        logger.info(
+            f"Number of finished jobs: "
+            f"{len(experiment_data)} / {len(experiment_data_all)}")
 
-    # preceed every entry of df_output with experimentdata.project_dir
-    df_output = df_output.applymap(
-        lambda x: experiment_data.project_dir / x, na_action='ignore')
-    # df_output = df_output.apply(lambda x: experiment_data.project_dir / x)
+        _, df_output = experiment_data.to_pandas()
 
-    df_random_samples = df_output['random_samples']
-    files_random_samples: List[Path] = df_random_samples.dropna(
-    ).values.tolist()
+        # remove all values that say 'ERROR' and 'invalid'
+        df_output = df_output.replace('ERROR', np.nan)
+        df_output = df_output.replace('invalid', np.nan)
+        df_output = df_output.replace('not working', np.nan)
 
-    # don't include the column 'random_samples'
-    df_output = df_output.drop(columns=['random_samples'])
+        # preceed every entry of df_output with experimentdata.project_dir
+        df_output = df_output.applymap(
+            lambda x: experiment_data.project_dir / x, na_action='ignore')
+        # df_output = df_output.apply(lambda x: experiment_data.project_dir / x)
 
-    # remove all experiments where none of the optimizers have finished
-    df_output = df_output.dropna(how='all')
+        df_random_samples = df_output['random_samples']
+        files_random_samples: List[Path] = df_random_samples.dropna(
+        ).values.tolist()
 
-    # ELA features
-    data = ExperimentData(input_data=pd.DataFrame(
-        files_random_samples, columns=['filename']))
+        # don't include the column 'random_samples'
+        df_output = df_output.drop(columns=['random_samples'])
 
-    data.store()
-    logger.info("Stored experimentdata")
+        # remove all experiments where none of the optimizers have finished
+        df_output = df_output.dropna(how='all')
+
+        # ELA features
+        data = ExperimentData(input_data=pd.DataFrame(
+            files_random_samples, columns=['filename']))
+
+        data.store()
+        logger.info("Stored experimentdata")
 
     ela_generator = ELAGenerator(t_switch=config.t_switch)
     data.evaluate(data_generator=ela_generator, mode='cluster_parallel')

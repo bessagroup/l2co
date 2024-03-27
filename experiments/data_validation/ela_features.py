@@ -86,7 +86,9 @@ def create_ela(files: List[Path], ela_folder: str, t_switch: int):
 
 
 class ELAGenerator(DataGenerator):
-    def __init__(self, t_switch: Optional[int]):
+    def __init__(
+        self, t_switch: Optional[int] = None
+    ):
         self.t_switch = t_switch
 
     def execute(self):
