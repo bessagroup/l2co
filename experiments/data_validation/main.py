@@ -75,7 +75,7 @@ def process(config):
         try:
             logger.info("Open ExperimentData")
 
-            if "from_file" in config.experimentdata:
+            if config.experimentdata is not None:
                 data = ExperimentData.from_file(
                     config.experimentdata.from_file)
             else:
@@ -93,7 +93,7 @@ def process(config):
 
 def pre_processing(config):
 
-    if "from_file" in config.experimentdata:
+    if config.experimentdata is not None:
         data = ExperimentData.from_file(config.experimentdata.from_file)
 
     else:
