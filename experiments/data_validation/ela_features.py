@@ -101,10 +101,6 @@ class ELAGenerator(DataGenerator):
 
         xarr_file = xr.open_dataset(file_r, chunks='auto')
 
-        if bool(xarr_file.isnull().any().output.values):
-            l2co_logger.info(f"File {file_r} has NaN values. Skipping...")
-            return
-
         ela_train = create_ela_feature_1(xarr_file, itemID=int(
             file_r.stem), iterations=None)
 

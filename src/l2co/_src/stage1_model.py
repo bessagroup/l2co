@@ -403,16 +403,25 @@ class ELAClassifier(Stage1Model):
                              SimpleImputer(strategy='mean'),
                              MultiOutputClassifier(clf))
 
-    def train(self, data_train: DataLoader, save_model: bool = False):
+    def train(self, data_train: DataLoader, save_model: bool = False,
+              features: Optional[xr.DataArray] = None) -> None:
         """
         Protocol method for training the model
         """
-        X_train = create_ela_features(
-            data_train.data_samples)
+        if features is None:
+            X_train = create_ela_features(
+                data_train.data_samples)
+
+        else:
+            X_train = features.load().stack(problem=('realization', 'itemID'))
+            X_train = xr.where(np.isinf(X_train), np.nan, X_train)
+
+        # X_train = X_train.sel(problem=data_train.problem)
+
         y_train = data_train.select_single_optimizers().query_t(
             self.iterations).y_binary(self.rel_tolerance)
 
-        X_train = X_train.sel(problem=data_train.problem)
+        y_train = y_train.sel(problem=X_train.problem)
 
         self.model.fit(X_train.to_pandas(), y_train.to_pandas())
 
@@ -439,17 +448,23 @@ class ELAClassifier(Stage1Model):
         return self.model.predict_proba(X)
 
     def predict(
-            self, data_test: DataLoader,
-            stage0_predictions: xr.DataArray) -> xr.DataArray:
+        self, data_test: DataLoader,
+        stage0_predictions: xr.DataArray,
+            features: Optional[xr.DataArray] = None) -> xr.DataArray:
         """
         Protocol method for predicting
         """
         y_shape = data_test.select_single_optimizers().query_t(
             self.iterations).y_binary()
 
-        X_test = create_ela_features(
-            data_test.data_samples,
-            iterations=self.t_switch)
+        if features is None:
+            X_test = create_ela_features(
+                data_test.data_samples,
+                iterations=self.t_switch)
+
+        else:
+            X_test = features.load().stack(problem=('realization', 'itemID'))
+            X_test = xr.where(np.isinf(X_test), np.nan, X_test)
 
         X_test = X_test.sel(problem=data_test.problem)
         y_pred = self.model.predict_proba(X_test.to_pandas())

@@ -33,7 +33,7 @@ ELA_FEATURE_LABELS = {
     'ela_distr.skewness': 'scaler',
     'ela_distr.kurtosis': 'scaler',
     'ela_distr.number_of_peaks': 'ordinal',
-    'ela_distr.costs_runtime': 'scaler',
+    # 'ela_distr.costs_runtime': 'scaler',
     'ela_meta.lin_simple.adj_r2': 'scaler',
     'ela_meta.lin_simple.intercept': 'scaler',
     'ela_meta.lin_simple.coef.min': 'scaler',
@@ -43,7 +43,7 @@ ELA_FEATURE_LABELS = {
     'ela_meta.quad_simple.adj_r2': 'scaler',
     'ela_meta.quad_simple.cond': 'scaler',
     'ela_meta.quad_w_interact.adj_r2': 'scaler',
-    'ela_meta.costs_runtime': 'scaler',
+    # 'ela_meta.costs_runtime': 'scaler',
     'ela_level.mmce_lda_10': 'scaler',
     'ela_level.mmce_qda_10': 'scaler',
     'ela_level.lda_qda_10': 'scaler',
@@ -53,7 +53,7 @@ ELA_FEATURE_LABELS = {
     'ela_level.mmce_lda_50': 'scaler',
     'ela_level.mmce_qda_50': 'scaler',
     'ela_level.lda_qda_50': 'scaler',
-    'ela_level.costs_runtime': 'scaler',
+    # 'ela_level.costs_runtime': 'scaler',
     'disp.ratio_mean_02': 'scaler',
     'disp.ratio_mean_05': 'scaler',
     'disp.ratio_mean_10': 'scaler',
@@ -70,19 +70,19 @@ ELA_FEATURE_LABELS = {
     'disp.diff_median_05': 'scaler',
     'disp.diff_median_10': 'scaler',
     'disp.diff_median_25': 'scaler',
-    'disp.costs_runtime': 'scaler',
+    # 'disp.costs_runtime': 'scaler',
     'ic.h_max': 'scaler',
     'ic.eps_s': 'scaler',
     'ic.eps_max': 'scaler',
     'ic.eps_ratio': 'scaler',
     'ic.m0': 'scaler',
-    'ic.costs_runtime': 'scaler',
+    # 'ic.costs_runtime': 'scaler',
     'nbc.nn_nb.sd_ratio': 'scaler',
     'nbc.nn_nb.mean_ratio': 'scaler',
     'nbc.nn_nb.cor': 'scaler',
     'nbc.dist_ratio.coeff_var': 'scaler',
     'nbc.nb_fitness.cor': 'scaler',
-    'nbc.costs_runtime': 'scaler',
+    # 'nbc.costs_runtime': 'scaler',
 }
 
 empty_labels = {
@@ -155,13 +155,13 @@ def create_ela_feature_1(data_samples: xr.Dataset, itemID: int,
     for i in data_samples.problem:
         if iterations is not None:
             d = data_samples.sel(problem=i, iterations=np.arange(
-                iterations)).dropna(dim='input_dim')
+                iterations))  # .dropna(dim='input_dim')
         else:
-            d = data_samples.sel(problem=i).dropna(dim='input_dim')
+            d = data_samples.sel(problem=i)  # .dropna(dim='input_dim')
         X = d.input.values
         y = d.output.values.ravel()
 
-        if X.shape[1] > 20:
+        if X.shape[1] > 10:
             pca = PCA(n_components=10)
             X = pca.fit_transform(X, y)
 
