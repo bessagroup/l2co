@@ -1,10 +1,43 @@
+domain:
+  stage0_clf.n_estimators:
+    type: category
+    categories: [10, 50, 100, 200, 500]
+
+  stage0_clf.learning_rate:
+    type: category
+    categories: [0.1, 0.01, 0.5, 1.0]
+
+  stage0_clf.max_depth:
+    type: category
+    categories: [3, 6, 10]
+
+  stage0_clf.loss:
+    type: category
+    categories: ['log_loss', 'exponential']
+
+  rel_tolerance:
+    type: category
+    categories: [0.0, 0.01, 0.1, 0.2]
+
+  stage1_clf.latent_dim:
+    type: category
+    categories: [16, 32, 64, 128]
+
+experimentdata:
+  from_sampling:
+    sampler: "grid"
+    seed: 2023
+    n_samples:
+    domain: ${domain}
+
 data:
-  training_project_dir: /media/martin/T7/data/550278.hpc06.hpc
+  training_project_dir: /media/martin/T7/data/benchmark_0.1
   testing_project_dir:
+  ela_project_dir: /media/martin/T7/data/benchmark_0.1
 
-seed: 42
+seed: 88
 
-t_switch: 1000
+t_switch: 200
 t_start: 0
 iterations: 2000
 
@@ -12,19 +45,21 @@ test_size: 0.2
 
 rel_tolerance: 0.01
 epochs: 3
-batch_size: 32
+batch_size: 16
+
+n_optimizers: 4
 
 stage0_clf:
   _target_: sklearn.ensemble.GradientBoostingClassifier
   loss: 'log_loss'
-  learning_rate: 0.1
-  n_estimators: 100
-  max_depth: 3
+  learning_rate: 0.3
+  n_estimators:
+  max_depth: 4
 
 stage1_clf:
-  n_outputs: 4
-  length_sequence: 1000
-  path: #/home/martin/Documents/GitHub/L2CO/experiments/recommend_optimizer/outputs/2024-03-18/15-21-01
+  path: /home/martin/Documents/GitHub/L2CO/experiments/recommend_optimizer/outputs/2024-03-28/16-23-34
+  latent_dim: 32
+  optimizer: adam
 
 feature_types:
   convex: categorical

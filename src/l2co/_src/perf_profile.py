@@ -223,6 +223,7 @@ def create_performance_profile(
 
     # Slice at the given total number of iterations
     ds_budget = ds_positive.sel(iterations=iterations-1)
+    ds_budget = ds_budget.sortby('problem')
 
     # Calculate the performance profile
     performance_profile = calculate_performance_ratio(

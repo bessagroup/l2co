@@ -455,6 +455,40 @@ class Trainer:
 
         return axes
 
+    def accuracy_func(
+            self, y_true: xr.DataArray, y_pred: xr.DataArray) -> float:
+        y_true = y_true.sortby('problem')
+        y_pred = y_pred.sortby('problem')
+        return float(y_true.where((y_pred == y_true.optimizer).T).mean())
+
+    def all_accuracies(self) -> dict:
+
+        optimizers = self.data_test.select_single_optimizers().optimizers
+
+        accuracies = {}
+
+        for optimizer in optimizers.values:
+            y_true = self.data_test.query_optimizer(optimizer).query_t(
+                self.iterations).y_binary(self.rel_tolerance)
+
+            y_pred = self.stage1_prediction.where(
+                self.stage1_prediction.str.startswith(optimizer), drop=True)
+
+            # Define the function to apply
+            def extract_last_part(x):
+                return [str(val).split('+')[-1] for val in x]
+
+            # Apply the function using xr.apply_ufunc
+            y_pred = xr.apply_ufunc(extract_last_part, y_pred,
+                                    input_core_dims=[['problem']],
+                                    output_core_dims=[['problem']],
+                                    output_dtypes=[object]).astype(object)
+
+            y_true = y_true.sel(problem=y_pred.problem)
+            accuracies[optimizer] = self.accuracy_func(y_true, y_pred)
+
+        return accuracies
+
     def calculate_classifier_metrics(
             self, y_true: xr.DataArray,
             y_pred: xr.DataArray, optimizers: xr.DataArray):

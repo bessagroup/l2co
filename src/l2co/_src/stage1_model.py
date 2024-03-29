@@ -416,14 +416,14 @@ class ELAClassifier(Stage1Model):
             X_train = features.load().stack(problem=('realization', 'itemID'))
             X_train = xr.where(np.isinf(X_train), np.nan, X_train)
 
-        # X_train = X_train.sel(problem=data_train.problem)
+        X_train = X_train.sel(problem=data_train.problem)
 
         y_train = data_train.select_single_optimizers().query_t(
             self.iterations).y_binary(self.rel_tolerance)
 
         y_train = y_train.sel(problem=X_train.problem)
 
-        self.model.fit(X_train.to_pandas(), y_train.to_pandas())
+        self.model.fit(X_train.to_pandas().T, y_train.to_pandas())
 
     def load(self, model_path: str) -> None:
         """
@@ -449,7 +449,7 @@ class ELAClassifier(Stage1Model):
 
     def predict(
         self, data_test: DataLoader,
-        stage0_predictions: xr.DataArray,
+        stage0_predictions: xr.DataArray = None,
             features: Optional[xr.DataArray] = None) -> xr.DataArray:
         """
         Protocol method for predicting
@@ -467,12 +467,13 @@ class ELAClassifier(Stage1Model):
             X_test = xr.where(np.isinf(X_test), np.nan, X_test)
 
         X_test = X_test.sel(problem=data_test.problem)
-        y_pred = self.model.predict_proba(X_test.to_pandas())
+        y_pred = self.model.predict_proba(X_test.to_pandas().T)
 
-        return xr.DataArray(
+        xarr_y_pred = xr.DataArray(
             np.array(y_pred)[:, :, 1].T,
             coords=y_shape.coords).idxmax('optimizer')
 
+        return xr.apply_ufunc(lambda x: 'random_samples+' + x, xarr_y_pred)
         # return xr.DataArray(
         #     np.array(self.model.predict_proba(X_test.to_pandas()))[
         #         :, :, 1].T,
