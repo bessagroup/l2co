@@ -1,3 +1,6 @@
+defaults:
+  - override hydra/job_logging: custom
+
 domain:
   stage0_clf.n_estimators:
     type: category
@@ -68,3 +71,6 @@ feature_types:
   noise: categorical
   dim: ordinal
   differentiable: categorical
+
+hpc:
+  jobid: -1
