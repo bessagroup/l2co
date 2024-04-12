@@ -143,9 +143,10 @@ def calculate_performance_ratio(
     # Create a logarithmic scale for f
     # combine rij and f in a dataset
     ds_f = xr.Dataset({'rij': rij, 'f': xr.DataArray(
-        np.logspace(np.log10(1.0), np.log10(max_f_value), 300), dims='f')})
+        np.logspace(np.log10(1.0), np.log10(max_f_value), 1000), dims='f')})
 
-    performance_profile = (ds_f <= ds_f.f).mean(dim='problem').rij
+    performance_profile = np.less_equal(ds_f, ds_f.f+1e-4).where(
+        ~ds_f.isnull(), np.nan).mean(dim='problem').rij
     return performance_profile
 
 
@@ -218,8 +219,13 @@ def create_performance_profile(
     ds_output = _output_cummin(ds_output)
 
     # Scale everything to be 1.0 or larger
+    # ds_positive = ds_output - \
+    #     ds_output.min(dim=['optimizer', 'iterations']) + 1.0
+
     ds_positive = ds_output - \
-        ds_output.min(dim=['optimizer', 'iterations']) + 1.0
+        ds_output.min(dim=['optimizer', 'iterations']).where(
+            ds_output.min(dim=['optimizer', 'iterations']
+                          ) < 0, 0.0) + 1e-17
 
     # Slice at the given total number of iterations
     ds_budget = ds_positive.sel(iterations=iterations-1)

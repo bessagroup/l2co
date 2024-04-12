@@ -4,27 +4,27 @@ defaults:
 domain:
   stage0_clf.n_estimators:
     type: category
-    categories: [10, 50, 100, 200, 500]
+    categories: [200] #[10, 50, 100, 200, 500]
 
   stage0_clf.learning_rate:
     type: category
-    categories: [0.1, 0.01, 0.5, 1.0]
+    categories: [0.1] #[0.1, 0.01, 0.5, 1.0]
 
   stage0_clf.max_depth:
     type: category
-    categories: [3, 6, 10]
+    categories: [10] #[3, 6, 10]
 
   stage0_clf.loss:
     type: category
-    categories: ['log_loss', 'exponential']
+    categories: ['log_loss'] #['log_loss', 'exponential']
 
   rel_tolerance:
     type: category
-    categories: [0.0, 0.01, 0.1, 0.2]
+    categories: [0.005] #[0.0, 0.01, 0.1, 0.2]
 
   stage1_clf.latent_dim:
     type: category
-    categories: [16, 32, 64, 128]
+    categories: [32] #[16, 32, 64, 128]
 
 experimentdata:
   from_sampling:
@@ -55,12 +55,12 @@ n_optimizers: 4
 stage0_clf:
   _target_: sklearn.ensemble.GradientBoostingClassifier
   loss: 'log_loss'
-  learning_rate: 0.3
-  n_estimators:
-  max_depth: 4
+  learning_rate: 0.1
+  n_estimators: 1000
+  max_depth: 6
 
 stage1_clf:
-  path: /home/martin/Documents/GitHub/L2CO/experiments/recommend_optimizer/outputs/2024-03-28/16-23-34
+  path: #/home/martin/Documents/GitHub/L2CO/experiments/recommend_optimizer/outputs/2024-03-28/16-23-34
   latent_dim: 32
   optimizer: adam
 

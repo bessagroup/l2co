@@ -149,15 +149,18 @@ def _calculate_metric(
     ds['output_cummin'] = output_cummin(ds)
 
     # Find the minimum value of the output
-    y_min = min(ds.output.min().values, baseline.min())
+    y_min = min(
+        ds.output_cummin.median('realization').min().values,
+        baseline.min(),
+        0.0)
 
     # Select the cumulative minimum and subtract the minimum value
     # Add one to make sure we don't take the log of zero
     a = ds.output_cummin.sel(
-        output_dim='y').median('realization') - y_min + 1.0
-    b = baseline - y_min + 1.0
+        output_dim='y').median('realization') - y_min + 1e-17
+    b = baseline - y_min + 1e-17
 
-    return np.log(a/b)
+    return np.log10(a/b)
 
 
 def get_metric(

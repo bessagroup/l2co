@@ -188,13 +188,14 @@ class RecommendOptimizer(DataGenerator):
 
         trainer.create_performance_profile(
             strategies=[trainer.stage1_prediction,
+                        trainer.stage0_prediction,
                         y_pred_ela])
 
         fig, axs = plt.subplots(
             2, 1, gridspec_kw={'height_ratios': [3, 1]}, figsize=(10, 10))
 
         _ = trainer.plot_performance_profile(
-            strategies=[trainer.stage1_prediction], strategy_names=['trainer_stage1'], axes=axs)
+            strategies=[trainer.stage1_prediction, trainer.stage0_prediction], strategy_names=['trainer_stage1', 'trainer_stage0'], axes=axs)
 
         self.experiment_sample.store(object=trainer.performance_profile,
                                      name='performance_profile',
@@ -207,6 +208,9 @@ class RecommendOptimizer(DataGenerator):
 
         self.experiment_sample.store(object=fig, name='performance_profile_fig',
                                      to_disk=True)
+
+        self.experiment_sample.store(
+            object=trainer, name='trainer', to_disk=True)
 
 
 @hydra.main(config_path=".", config_name="config")

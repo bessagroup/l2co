@@ -234,7 +234,8 @@ class Trainer:
             strategy_names=[f"{self.name}_stage1"])
 
     def create_performance_profile(
-            self, strategies: Iterable[xr.DataArray]):
+            self, strategies: Iterable[xr.DataArray],
+            show_combinations: bool = True):
         """
         Create a performance profile for the classifier and loads it into
         memory
@@ -245,17 +246,24 @@ class Trainer:
             Additional strategies to include in the performance profile,
             by default None
         """
-        data_test = self.data_test.data.sortby('problem')
-        best_perf_profile = self.data_test.query_t(
+        # data_test = self.data_test.data.sortby('problem')
+
+        if show_combinations:
+            data_test = self.data_test
+
+        else:
+            data_test = self.data_test.select_single_optimizers()
+
+        best_perf_profile = data_test.query_t(
             self.iterations).y.rename('best_perf_profile')
-        worst_perf_profile = self.data_test.select_single_optimizers().query_t(
+        worst_perf_profile = data_test.query_t(
             self.iterations).performance.idxmax(
                 dim='optimizer').rename('worst_perf_profile')
 
         _strategies = [best_perf_profile, worst_perf_profile, *strategies]
 
         self.performance_profile = create_performance_profile(
-            ds_raw=data_test,
+            ds_raw=data_test.data,
             ds_samples=self.data_test.data_samples.sortby('problem'),
             iterations=self.data_test.n_iterations,
             t_switch=self.t_switch,
@@ -297,7 +305,9 @@ class Trainer:
         """
 
         if self.performance_profile is None:
-            self.create_performance_profile(strategies=strategies)
+            self.create_performance_profile(
+                strategies=strategies,
+                show_combinations=show_combinations)
 
         ax = plot_performance_profile(
             self.performance_profile,

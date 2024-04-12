@@ -210,25 +210,27 @@ class Stage0Model():
             dims=data_test.y_binary().dims,
             coords=data_test.y_binary().coords)
 
-        p = (y_pred_proba / y_pred_proba.sum(dim='optimizer'))
+        return y_pred_proba.idxmax(dim='optimizer').sortby('problem')
 
-        # Define a function to apply np.random.choice with probabilities from p
-        def random_choice_with_probabilities(p_values):
-            choice = np.random.choice(p.optimizer.values, p=p_values.ravel())
-            return choice
+        # p = (y_pred_proba / y_pred_proba.sum(dim='optimizer'))
 
-        # Use apply_ufunc to apply the function along the desired coordinates
-        result = xr.apply_ufunc(
-            random_choice_with_probabilities,
-            # p.unstack(),
-            p,
-            input_core_dims=[['optimizer']],
-            vectorize=True,
-            dask='parallelized',
-            output_dtypes=[object],
-        )
+        # # Define a function to apply np.random.choice with probabilities from p
+        # def random_choice_with_probabilities(p_values):
+        #     choice = np.random.choice(p.optimizer.values, p=p_values.ravel())
+        #     return choice
 
-        return result.sortby('problem')
+        # # Use apply_ufunc to apply the function along the desired coordinates
+        # result = xr.apply_ufunc(
+        #     random_choice_with_probabilities,
+        #     # p.unstack(),
+        #     p,
+        #     input_core_dims=[['optimizer']],
+        #     vectorize=True,
+        #     dask='parallelized',
+        #     output_dtypes=[object],
+        # )
+
+        # return result.sortby('problem')
 
 # =============================================================================
 
