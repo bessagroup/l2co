@@ -11,7 +11,7 @@
 # 2. Execute
 # ============================================
 
-JOB_ID=$(echo "${SLURM_ARRAY_JOB_ID}" | sed 's/\[[^][]*\]//g')
+# JOB_ID=$(echo "${SLURM_ARRAY_JOB_ID}" | sed 's/\[[^][]*\]//g')
 
 module load miniconda3
 unset CONDA_SHLVL
@@ -20,8 +20,10 @@ conda activate f3dasm_env
 
 if ! [ -n "${SLURM_ARRAY_TASK_ID+1}" ]; then
   SLURM_ARRAY_TASK_ID=-1
+  SLURM_ARRAY_JOB_ID="${SLURM_JOB_ID}"
 fi
 
+projectfolder=$(basename $(pwd))
 
 python main.py ++hpc.jobid=${SLURM_ARRAY_TASK_ID} \
- hydra.run.dir=/scratch/mpvanderschell/create_trainingdata_two_optimizers/${now:%Y-%m-%d}/${JOB_ID}
+ hydra.run.dir=/scratch/${USER}/${projectfolder}/${SLURM_ARRAY_JOB_ID}
