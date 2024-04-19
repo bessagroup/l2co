@@ -287,6 +287,8 @@ def plot_performance_profile(
             4, 1]}, figsize=(10, 7))
     axes[0].set_xscale('log')
     # ax.set_yscale('log')
+
+    x = performance_profile.f * 100 - 100
     for optimizer in performance_profile.data_vars:
         linewidth = 1
         linestyle = '-'
@@ -306,7 +308,7 @@ def plot_performance_profile(
             color=next(color_cycle_iter),
             label=optimizer, linestyle=linestyle))
 
-        axes[0].plot(performance_profile.f,
+        axes[0].plot(x,
                      performance_profile[optimizer],
                      label=optimizer, linewidth=linewidth,
                      linestyle=linestyle)
@@ -315,5 +317,8 @@ def plot_performance_profile(
                    ncol=len(legend_patches) // 3, fontsize='small')
 
     axes[1].axis('off')
+
+    axes[0].set_ylabel('Relative error [%]')
+    axes[0].set_xlabel('Performance ratio')
 
     return axes

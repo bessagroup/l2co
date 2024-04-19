@@ -160,7 +160,7 @@ def _calculate_metric(
         output_dim='y').median('realization') - y_min + 1e-17
     b = baseline - y_min + 1e-17
 
-    return np.log10(a/b)
+    return np.log10(a/b)  # np.log10((1+a)/(1+b))
 
 
 def get_metric(
@@ -400,13 +400,15 @@ def collaborative_filtering(sparse_ds: xr.DataArray) -> xr.DataArray:
     svd.fit(train_set)
 
     df_predictions = compute_ranking_predictions(
-        svd, df_performance, usercol='itemID',
-        itemcol='optimizer', remove_seen=True)
-    df_predictions.columns = df_performance.columns
+        svd, df_performance, usercol='optimizer',
+        itemcol='itemID', remove_seen=True)
+
+    df_predictions = df_predictions.rename(
+        columns={'prediction': 'performance'})
 
     complete_df = pd.concat(
         [df_performance, df_predictions], ignore_index=True)
 
     # cast to xr.DataArray
     return complete_df.set_index(
-        ['itemID', 'optimizer']).to_xarray()['performance']
+        ['itemID', 'optimizer']).to_xarray()['performance'].T

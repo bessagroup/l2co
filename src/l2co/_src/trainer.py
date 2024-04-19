@@ -126,19 +126,23 @@ class Trainer:
             rel_tolerance=rel_tolerance,
             name='stage0_model')
 
-    def train(self):
+    def train(
+            self, overwrite_performance_values: Optional[xr.DataArray] = None):
         """
         Train the models with the training data
         """
-        self.train_stage0()
+        self.train_stage0(performance=overwrite_performance_values)
         self.train_stage1()
 
-    def train_stage0(self):
+    def train_stage0(self, performance: Optional[xr.DataArray] = None):
         """
         Train the stage0 model with the training data
         """
         _d_train = self.data_train.select_single_optimizers().query_t(
             self.iterations)
+
+        if performance is not None:
+            _d_train.performance = performance.sel(problem=_d_train.X.problem)
 
         self.stage0_model.fit(_d_train.X.to_pandas(),
                               _d_train.y_binary(self.rel_tolerance).to_pandas()

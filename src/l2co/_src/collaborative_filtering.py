@@ -111,53 +111,53 @@ def create_interaction_matrix_from_full_data(
 #     df_predictions.columns = df_interaction.columns
 #     return pd.concat([df_interaction, df_predictions], ignore_index=True)
 
-def collaborative_filtering(performance: xr.DataArray):
-    """
-    Compute the collaborative filtering predictions for the performance of
-    optimizers on benchmark functions.
+# def collaborative_filtering(performance: xr.DataArray):
+#     """
+#     Compute the collaborative filtering predictions for the performance of
+#     optimizers on benchmark functions.
 
-    Parameters
-    ----------
-    performance : xarray.DataArray
-        DataArray containing the sparse matrix performances
-        between optimizers and optimization problems.
+#     Parameters
+#     ----------
+#     performance : xarray.DataArray
+#         DataArray containing the sparse matrix performances
+#         between optimizers and optimization problems.
 
-    Returns
-    -------
-    xarray.DataArray
-        DataArray containing a full matrix of the predicted performance of
-        optimizers on benchmark functions.
+#     Returns
+#     -------
+#     xarray.DataArray
+#         DataArray containing a full matrix of the predicted performance of
+#         optimizers on benchmark functions.
 
-    Notes
-    -----
-    The collaborative filtering predictions are computed using the
-    `surprise.SVD` algorithm.
-    """
-    df = performance.sel(realization=0, drop=True).to_dataframe().dropna(
-        axis=0).reset_index()
-    n_realizations = np.unique(performance.realization).size
+#     Notes
+#     -----
+#     The collaborative filtering predictions are computed using the
+#     `surprise.SVD` algorithm.
+#     """
+#     df = performance.sel(realization=0, drop=True).to_dataframe().dropna(
+#         axis=0).reset_index()
+#     n_realizations = np.unique(performance.realization).size
 
-    reader = surprise.Reader(rating_scale=(
-        df['performance'].min(), df['performance'].max()))
+#     reader = surprise.Reader(rating_scale=(
+#         df['performance'].min(), df['performance'].max()))
 
-    train_set = surprise.Dataset.load_from_df(
-        df, reader=reader).build_full_trainset()
+#     train_set = surprise.Dataset.load_from_df(
+#         df, reader=reader).build_full_trainset()
 
-    svd = surprise.SVD(random_state=0, n_factors=200,
-                       n_epochs=30, verbose=False)
-    svd.fit(train_set)
+#     svd = surprise.SVD(random_state=0, n_factors=200,
+#                        n_epochs=30, verbose=False)
+#     svd.fit(train_set)
 
-    df_predictions = compute_ranking_predictions(
-        svd, df, usercol='optimizer',
-        itemcol='itemID', remove_seen=True)
-    df_predictions.columns = df.columns
+#     df_predictions = compute_ranking_predictions(
+#         svd, df, usercol='optimizer',
+#         itemcol='itemID', remove_seen=True)
+#     df_predictions.columns = df.columns
 
-    performance_full = xr.DataArray(
-        pd.concat([df, df_predictions], ignore_index=False).set_index(
-            ['optimizer', 'itemID']).unstack().droplevel(level=None, axis=1))
-    performance_full = performance_full.expand_dims({'realization': np.arange(
-        n_realizations)}).stack(problem=('realization', 'itemID'))
-    return performance_full
+#     performance_full = xr.DataArray(
+#         pd.concat([df, df_predictions], ignore_index=False).set_index(
+#             ['optimizer', 'itemID']).unstack().droplevel(level=None, axis=1))
+#     performance_full = performance_full.expand_dims({'realization': np.arange(
+#         n_realizations)}).stack(problem=('realization', 'itemID'))
+#     return performance_full
 
 
 def for_the_first_window(df_interaction: pd.DataFrame) -> pd.DataFrame:
@@ -196,3 +196,46 @@ def for_the_first_window(df_interaction: pd.DataFrame) -> pd.DataFrame:
     # sort on problem column
     df_startswith = df_startswith.sort_values(by=['problem'])
     return df_startswith
+
+
+def remove_performance_values(
+        ds_performance: xr.DataArray,
+        ratio_to_remove: float) -> xr.DataArray:
+
+    perf_mean = ds_performance.unstack().mean('realization')
+
+    # Define the percentage of values to mask
+    # percentage_to_mask = 20  # Change this as needed
+
+    # Calculate the number of elements to mask
+    total_elements = np.prod(perf_mean.shape)
+    num_elements_to_mask = int(ratio_to_remove * total_elements)
+
+    # Generate random indices to mask
+    random_indices = np.random.choice(
+        total_elements, size=num_elements_to_mask, replace=False)
+
+    # Reshape the random indices to match the shape of the DataArray
+    random_indices = np.unravel_index(random_indices, perf_mean.shape)
+
+    # Create a mask array with False everywhere except at the random indices
+    mask = perf_mean.isnull().values
+
+    mask[random_indices] = True
+
+    # Don't touch the first and last index to preserve the boundaries
+    mask[:, 0] = False
+    mask[:, -1] = False
+
+    # Ensure that at least one value of every row is False
+    for i in range(mask.shape[1]):
+        if not np.any(~mask[:, i]):
+            # Randomly select one index to set to False
+            index_to_set_false = index_to_set_false = np.random.choice(
+                np.where(perf_mean.isnull().values[:, i] == 0)[0])  # == False
+            mask[index_to_set_false, i] = False
+
+    # Apply the mask to the DataArray
+    performance = perf_mean.where(~mask, drop=False)
+
+    return performance
