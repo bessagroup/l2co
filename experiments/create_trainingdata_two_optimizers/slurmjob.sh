@@ -4,7 +4,7 @@
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem-per-cpu=1GB
-#SBATCH --account=innovation
+#SBATCH --account=research-ME-mse
 #SBATCH --partition=compute
 #SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
 
