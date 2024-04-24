@@ -11,9 +11,9 @@
 # 2. Execute
 # ============================================
 
-module load miniconda3
-unset CONDA_SHLVL
-source "$(conda info --base)/etc/profile.d/conda.sh"
+module load miniconda3/23.11.0s
+source /oscar/runtime/software/external/miniconda3/23.11.0/etc/profile.d/conda.sh 
+
 conda activate f3dasm_env
 
 if ! [ -n "${SLURM_ARRAY_TASK_ID+1}" ]; then
