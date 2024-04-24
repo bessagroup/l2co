@@ -171,7 +171,7 @@ def process(config: Config):
         project_dir = Path().cwd()
 
     # Retrieve the ExperimentData object
-    max_tries = 100
+    max_tries = 500
     tries = 0
 
     while tries < max_tries:
