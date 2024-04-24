@@ -285,7 +285,7 @@ def plot_performance_profile(
     if axes is None:
         fig, axes = plt.subplots(2, 1, gridspec_kw={'height_ratios': [
             4, 1]}, figsize=(10, 7))
-    axes[0].set_xscale('log')
+    # axes[0].set_xscale('log')
     # ax.set_yscale('log')
 
     x = performance_profile.f * 100 - 100
