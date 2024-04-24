@@ -214,7 +214,7 @@ class Stage0Model():
 
         # p = (y_pred_proba / y_pred_proba.sum(dim='optimizer'))
 
-        # # Define a function to apply np.random.choice with probabilities from p
+        # # Define a function to apply np.random.choice with probabilities
         # def random_choice_with_probabilities(p_values):
         #     choice = np.random.choice(p.optimizer.values, p=p_values.ravel())
         #     return choice

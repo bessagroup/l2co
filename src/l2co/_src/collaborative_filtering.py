@@ -21,10 +21,11 @@ for_the_first_window
 # Third-party
 import numpy as np
 import pandas as pd
-import surprise
+# import surprise
 import xarray as xr
-from recommenders.models.surprise.surprise_utils import \
-    compute_ranking_predictions
+
+# from recommenders.models.surprise.surprise_utils import \
+#     compute_ranking_predictions
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -155,7 +156,8 @@ def create_interaction_matrix_from_full_data(
 #     performance_full = xr.DataArray(
 #         pd.concat([df, df_predictions], ignore_index=False).set_index(
 #             ['optimizer', 'itemID']).unstack().droplevel(level=None, axis=1))
-#     performance_full = performance_full.expand_dims({'realization': np.arange(
+#     performance_full = performance_full.expand_dims(
+#       {'realization': np.arange(
 #         n_realizations)}).stack(problem=('realization', 'itemID'))
 #     return performance_full
 
