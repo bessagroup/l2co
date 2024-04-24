@@ -24,4 +24,4 @@ fi
 projectfolder=$(basename $(pwd))
 
 python main.py ++hpc.jobid=${SLURM_ARRAY_TASK_ID} \
- hydra.run.dir=/scratch/${USER}/${projectfolder}/${SLURM_ARRAY_JOB_ID}
+ hydra.run.dir=${HOME}/scratch/${projectfolder}/${SLURM_ARRAY_JOB_ID}
