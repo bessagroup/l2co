@@ -30,9 +30,8 @@ from sklearn.model_selection import train_test_split
 # Local
 from ._logging import logger as l2co_logger
 from .content_based import get_labels
-from .perf_profile import create_performance_profile, load_all_data
-from .performance import (INVALID_VALUE, get_performance,
-                          get_performance_preprocessed, query_t)
+from .perf_profile import create_performance_profile
+from .performance import query_t, scaling
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -51,11 +50,12 @@ class DataLoader():
     def __init__(self, X: xr.DataArray,
                  n_iterations: int,
                  n_realizations: int,
-                 performance: xr.Dataset,
+                 performance: xr.DataArray,
                  data: xr.Dataset,
                  config: DictConfig,
                  experimentdata: ExperimentData,
-                 data_samples: xr.Dataset):
+                 data_samples: xr.Dataset
+                 ):
         """
         A data loader class for stage0 of the L2CO framework.
 
@@ -85,89 +85,8 @@ class DataLoader():
         self.experimentdata = experimentdata
         self.data_samples = data_samples
 
-    # NOT WORKING!
-    @classmethod
-    def from_experimentdata(cls, config: DictConfig,
-                            experimentdata: ExperimentData):
-        """
-        Create a data loader from a f3dasm ExperimentData object.
-
-        Parameters
-        ----------
-        config : DictConfig
-            The configuration file in hydra format.
-        experimentdata : ExperimentData
-            The experiment data object.
-
-        Returns
-        -------
-        DataLoader
-            The resulting data loader.
-        """
-
-        _, _df_output = experimentdata.to_pandas()
-        # remove all values that say 'ERROR' and 'invalid'
-        _df_output = _df_output.replace('ERROR', np.nan)
-        _df_output = _df_output.replace('invalid', np.nan)
-        _df_output = _df_output.replace('not working', np.nan)
-
-        # remove all experiments where none of the optimizers have finished
-        _valid_indices = _df_output.drop(
-            columns=['random_samples']).dropna(how='all').index
-
-        experimentdata = experimentdata.select(_valid_indices)
-
-        # get column names where all rows are nan
-        _columns_to_drop = _df_output.columns[_df_output.isna().all()]
-        experimentdata = experimentdata.drop_output(_columns_to_drop)
-
-        _data = load_all_data(experimentdata)
-
-        # Get the number of realizations
-        n_realizations = _data.realization.size
-        n_iterations = _data.iterations.size - 1
-
-        # Features
-        X = get_labels(experimentdata=experimentdata,
-                       n_realizations=n_realizations)
-
-        # Performance
-        performance = get_performance(experimentdata)
-
-        # Performance: Expand and stack dimension realization and itemID
-        performance_stacked = performance.expand_dims(
-            {'realization': np.arange(_data.realization.size)}).stack(
-                problem=('realization', 'itemID'))
-
-        # Fill in unvalid runs with 1000.0
-        _, df_output = experimentdata.to_pandas()
-        df_output = df_output.drop(
-            columns=['random_samples']).sort_index(axis=1)
-        da = xr.DataArray(
-            df_output.T, dims=['optimizer', 'itemID']).expand_dims(
-            {'realization': np.arange(2),
-             'iterations': np.arange(_data.iterations.size),
-             })
-        da_mask = xr.where(da == 'invalid', True, False)
-        da_mask = da_mask.transpose(
-            'optimizer', 'iterations', 'realization', 'itemID')
-
-        performance_stacked = performance_stacked.where(
-            ~da_mask,
-            other=INVALID_VALUE)
-        performance_stacked = performance_stacked.stack(
-            problem=('realization', 'itemID'))
-
-        # Stack dimensions realization and itemID
-        data_stacked = _data.stack(problem=('realization', 'itemID'))
-
-        return cls(X=X,
-                   n_iterations=n_iterations,
-                   n_realizations=n_realizations,
-                   performance=performance_stacked,
-                   data=data_stacked,
-                   config=config,
-                   experimentdata=experimentdata)
+    #                                                  Alternative Constructors
+    # =========================================================================
 
     @classmethod
     def from_preprocessed_files(cls, config: DictConfig,
@@ -220,74 +139,34 @@ class DataLoader():
         X = get_labels(experimentdata=experimentdata,
                        n_realizations=n_realizations)
 
-        # Performance
-        performance = get_performance_preprocessed(
-            data, data_samples)
-
-        # Performance: Expand and stack dimension realization and itemID
-        performance_stacked = performance.expand_dims(
-            {'realization': np.arange(data.realization.size)})
-
-        # Fill in unvalid runs with 1000.0
-        _, df_output = experimentdata.to_pandas()
-        df_output = df_output.drop(
-            columns=['random_samples']).sort_index(axis=1)
-        da = xr.DataArray(
-            df_output.T, dims=['optimizer', 'itemID']).expand_dims(
-            {'realization': np.arange(n_realizations),
-             'iterations': np.arange(data.iterations.size),
-             })
-        da_mask = xr.where(da == 'invalid', True, False)
-        da_mask = da_mask.transpose(
-            'optimizer', 'iterations', 'realization', 'itemID')
-
-        performance_stacked = performance_stacked.where(
-            ~da_mask,
-            other=INVALID_VALUE)
-        performance_stacked = performance_stacked.stack(
-            problem=('realization', 'itemID'))
+        # # Performance
 
         # Stack dimensions realization and itemID
         data_stacked = data.stack(problem=('realization', 'itemID'))
         data_samples_stacked = data_samples.stack(
             problem=('realization', 'itemID'))
-        # data_samples_stacked = data_samples_stacked.sel(
-        #     itemID=np.unique(data_stacked.itemID.values))
+
+        # New performance idea?
+        performance = scaling(data).stack(
+            problem=('realization', 'itemID')).sel(
+            output_dim='y', drop=True)
+
+        performance_stacked = performance.where(
+            ~performance.isnull(), other=1.0)
 
         return cls(X=X,
                    n_iterations=n_iterations,
                    n_realizations=n_realizations,
                    data=data_stacked,
-                   performance=performance_stacked,
+                   performance=performance_stacked.rename('performance'),
                    config=config,
                    experimentdata=experimentdata,
-                   data_samples=data_samples_stacked)
+                   data_samples=data_samples_stacked
+                   )
 
-    def filter_nan_or_inf(self) -> DataLoader:
-        """
-        Filter out all problems with NaN or Inf values in the optimization
-        raw data.
+    #                                                                Properties
+    # =========================================================================
 
-        Returns
-        -------
-        DataLoader
-            The filtered data loader.
-        """
-        mask = self.data.where(np.logical_or(
-            np.isnan(self.data), np.isnan(self.data)), drop=True)
-
-        faulty_problems = mask.problem
-
-        correct_problems = self.data.problem.where(
-            ~self.data.problem.isin(faulty_problems), drop=True)
-
-        return self.select_problems(correct_problems)
-
-    def has_nan_or_inf(self) -> bool:
-        return np.logical_or.reduce(
-            [np.isnan(self.data.output), np.isnan(self.data.output)]).any()
-
-    # @cached_property
     @property
     def y(self) -> xr.DataArray:
         """
@@ -381,31 +260,8 @@ class DataLoader():
             np.log, (_X_trajectory - _X_trajectory.min('iterations')
                      ) + 1.0, dask='parallelized')
 
-    def performance_profile(
-            self, strategies: Optional[Iterable[xr.DataArray]] = None
-    ) -> xr.Dataset:
-
-        if strategies is None:
-            strategies = []
-
-        # self.data = self.data.sortby('problem')
-        best_perf_profile = self.query_t(
-            self.n_iterations-1).y.rename('best_perf_profile')
-        worst_perf_profile = self.query_t(
-            self.n_iterations-1).performance.idxmax(
-                dim='optimizer').rename('worst_perf_profile')
-
-        _strategies = [best_perf_profile, worst_perf_profile, *strategies]
-
-        performance_profile = create_performance_profile(
-            ds_raw=self.data,
-            ds_samples=self.data_samples,
-            iterations=self.n_iterations,
-            t_switch=self.config['t_switch'],
-            strategies=_strategies)
-
-        # performance_profile.load()
-        return performance_profile
+    #                                                         Data manipulation
+    # =========================================================================
 
     def select_single_optimizers(self) -> DataLoader:
         """
@@ -566,6 +422,61 @@ class DataLoader():
         return (self.select_problems(_X_train_indices),
                 self.select_problems(_X_test_indices))
 
+    #                                                       Performance metrics
+    # =========================================================================
+
+    def performance_profile(
+            self, strategies: Optional[Iterable[xr.DataArray]] = None
+    ) -> xr.Dataset:
+
+        if strategies is None:
+            strategies = []
+
+        # self.data = self.data.sortby('problem')
+        best_perf_profile = self.query_t(
+            self.n_iterations-1).y.rename('best_perf_profile')
+        worst_perf_profile = self.query_t(
+            self.n_iterations-1).performance.idxmax(
+                dim='optimizer').rename('worst_perf_profile')
+
+        _strategies = [best_perf_profile, worst_perf_profile, *strategies]
+
+        performance_profile = create_performance_profile(
+            ds_raw=self.data,
+            ds_samples=self.data_samples,
+            iterations=self.n_iterations,
+            t_switch=self.config['t_switch'],
+            strategies=_strategies)
+
+        return performance_profile
+
+    def rtd_profile(
+            self, strategies: Optional[Iterable[xr.DataArray]] = None,
+            targets: Optional[np.array] = None
+    ) -> xr.Dataset:
+
+        if strategies is None:
+            strategies = []
+
+        if targets is None:
+            rtd = self.performance
+        else:
+            # TODO: This cannot be computed due to memory errors
+            _targets = xr.DataArray(targets, dims=['targets'])
+            rtd = (self.performance.expand_dims(
+                {'targets': len(_targets)}) > _targets).mean('targets')
+
+        rtd = rtd.sortby('problem').to_dataset('optimizer')
+
+        for strategy in strategies:
+            rtd[strategy.name] = self.performance.sortby(
+                'problem').sel(optimizer=strategy).T
+
+        return rtd
+
+    #                                                                  Plotting
+    # =========================================================================
+
     def plot_performance_labels(
             self,
             y_pred: Optional[xr.DataArray] = None,
@@ -666,14 +577,3 @@ class DataLoader():
             return axes, df
 
         return axes
-
-    def has_unknown_performances(self) -> bool:
-        """
-        Check if the performance dataset contains unknown values.
-
-        Returns
-        -------
-        bool
-            Whether the performance dataset contains unknown values.
-        """
-        return bool(self.performance.isnull().any())

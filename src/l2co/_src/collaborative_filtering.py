@@ -4,15 +4,11 @@ techniques to fill in the missing values for the performance of optimizers.
 
 Functions
 ---------
-create_interaction_matrix_from_full_data
-    Create a sparse matrix of the performances of optimizers
-    on benchmark functions.
 collaborative_filtering
     Compute the collaborative filtering predictions for the
     performance of optimizers on benchmark functions.
-for_the_first_window
-    Combine the performances of optimizers that start with
-    the same optimizer in the first window.
+remove_performance_values
+    Remove a fraction of the performance values from the performance DataArray.
 """
 
 #                                                                       Modules
@@ -21,11 +17,11 @@ for_the_first_window
 # Third-party
 import numpy as np
 import pandas as pd
-# import surprise
+import surprise
 import xarray as xr
-
-# from recommenders.models.surprise.surprise_utils import \
-#     compute_ranking_predictions
+from recommenders.models.surprise.surprise_utils import \
+    compute_ranking_predictions
+from sklearn.preprocessing import LabelEncoder
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -35,179 +31,106 @@ __status__ = 'Planning'
 # =============================================================================
 
 
-def create_interaction_matrix_from_full_data(
-        combined: xr.Dataset, budget: int) -> pd.DataFrame:
+def collaborative_filtering(da_performance: xr.DataArray) -> xr.DataArray:
     """
-    Create a sparse matrix of the performances of optimizers on benchmark
-    functions.
+    Fill in missing values in the performance DataFrame using
+    collaborative filtering.
 
     Parameters
     ----------
-    combined : xarray.Dataset
-        xarray Dataset object containing the raw data files for which the
-        optimizer given is the first window
-    budget : int
-        number of function evaluations
+    sparse_ds : xarray.DataArray
+        The performance DataArray with missing values
 
     Returns
     -------
-    pandas.DataFrame
-        DataFrame containing a sparse matrix of the performances of optimizers
-        on benchmark functions.
-
-    Notes
-    -----
-    The sparse matrix is created by selecting the last iteration of the
-    optimization process for each optimizer and optimization problem.
+    xarray.DataArray
+        The performance DataFrame without missing values
     """
 
-    combined = combined.drop('output_dim')
+    df_performance = da_performance.to_dataframe(
+    )['performance'].dropna().reset_index()
+    combined_columns = df_performance['realization'].astype(
+        str) + '+' + df_performance['itemID'].astype(str)
 
-    # change itemID column to problem
-    combined = combined.rename({'itemID': 'problem'})
+    encoder = LabelEncoder()
+    encoded_columns = encoder.fit_transform(combined_columns)
+    df_performance['encoding'] = encoded_columns
 
-    df = combined.sel(iterations=budget-1,
-                      drop=True).to_dataframe(name='rating')
-    # remove missing values in df
-    df = df.dropna()
-    df = df.reset_index()
-    return df
+    df_performance = df_performance[['optimizer', 'encoding', 'performance']]
 
+    reader = surprise.Reader(rating_scale=(
+        df_performance['performance'].min(),
+        df_performance['performance'].max()))
 
-# def collaborative_filtering(df_interaction: pd.DataFrame) -> pd.DataFrame:
-#     """
-#     Compute the collaborative filtering predictions for the performance of
-#     optimizers on benchmark functions.
+    train_set = surprise.Dataset.load_from_df(
+        df_performance, reader=reader).build_full_trainset()
 
-#     Parameters
-#     ----------
-#     df_interaction : pandas.DataFrame
-#         DataFrame containing the sparse matrix performances
-#         between optimizers and optimization problems.
+    svd = surprise.SVD(random_state=0, n_factors=200,
+                       n_epochs=30, verbose=False)
+    svd.fit(train_set)
 
-#     Returns
-#     -------
-#     pandas.DataFrame
-#         DataFrame containing a full matrix of the predicted performance of
-#         optimizers on benchmark functions.
+    df_predictions = compute_ranking_predictions(
+        svd, df_performance, usercol='optimizer',
+        itemcol='encoding', remove_seen=True)
 
-#     Notes
-#     -----
-#     The collaborative filtering predictions are computed using the
-#     `surprise.SVD` algorithm.
-#     """
-#     reader = surprise.Reader(rating_scale=(
-#         df_interaction['rating'].min(), df_interaction['rating'].max()))
+    df_predictions = df_predictions.rename(
+        columns={'prediction': 'performance'})
 
-#     train_set = surprise.Dataset.load_from_df(
-#         df_interaction, reader=reader).build_full_trainset()
+    complete_df = pd.concat(
+        [df_performance, df_predictions], ignore_index=True)
 
-#     svd = surprise.SVD(random_state=0, n_factors=200,
-#                        n_epochs=30, verbose=False)
-#     svd.fit(train_set)
+    complete_df['decoding'] = encoder.inverse_transform(
+        complete_df['encoding'])
 
-#     df_predictions = compute_ranking_predictions(
-#         svd, df_interaction, usercol='problem',
-#         itemcol='optimizer', remove_seen=True)
-#     df_predictions.columns = df_interaction.columns
-#     return pd.concat([df_interaction, df_predictions], ignore_index=True)
+    complete_df['itemID'] = complete_df['decoding'].str.split(
+        '+').str[1].astype(int)
+    complete_df['realization'] = complete_df['decoding'].str.split(
+        '+').str[0].astype(int)
+    complete_df = complete_df[['optimizer',
+                               'itemID', 'realization', 'performance']]
 
-# def collaborative_filtering(performance: xr.DataArray):
-#     """
-#     Compute the collaborative filtering predictions for the performance of
-#     optimizers on benchmark functions.
+    return complete_df.set_index(
+        ['itemID', 'realization', 'optimizer']
+    ).to_xarray()['performance'].T.stack(
+        problem=('realization', 'itemID')).sel(problem=da_performance.problem)
 
-#     Parameters
-#     ----------
-#     performance : xarray.DataArray
-#         DataArray containing the sparse matrix performances
-#         between optimizers and optimization problems.
+    # Check if there is anything to matrix complete
+    # if not da_performance.isnull().values.any():
+    #     return da_performance
 
-#     Returns
-#     -------
-#     xarray.DataArray
-#         DataArray containing a full matrix of the predicted performance of
-#         optimizers on benchmark functions.
+    # df_performance = da_performance.to_dataframe().reset_index().dropna()
 
-#     Notes
-#     -----
-#     The collaborative filtering predictions are computed using the
-#     `surprise.SVD` algorithm.
-#     """
-#     df = performance.sel(realization=0, drop=True).to_dataframe().dropna(
-#         axis=0).reset_index()
-#     n_realizations = np.unique(performance.realization).size
+    # reader = surprise.Reader(rating_scale=(
+    #     df_performance['performance'].min(),
+    #     df_performance['performance'].max()))
 
-#     reader = surprise.Reader(rating_scale=(
-#         df['performance'].min(), df['performance'].max()))
+    # train_set = surprise.Dataset.load_from_df(
+    #     df_performance, reader=reader).build_full_trainset()
 
-#     train_set = surprise.Dataset.load_from_df(
-#         df, reader=reader).build_full_trainset()
+    # svd = surprise.SVD(random_state=0, n_factors=200,
+    #                    n_epochs=30, verbose=False)
+    # svd.fit(train_set)
 
-#     svd = surprise.SVD(random_state=0, n_factors=200,
-#                        n_epochs=30, verbose=False)
-#     svd.fit(train_set)
+    # df_predictions = compute_ranking_predictions(
+    #     svd, df_performance, usercol='optimizer',
+    #     itemcol='itemID', remove_seen=True)
 
-#     df_predictions = compute_ranking_predictions(
-#         svd, df, usercol='optimizer',
-#         itemcol='itemID', remove_seen=True)
-#     df_predictions.columns = df.columns
+    # df_predictions = df_predictions.rename(
+    #     columns={'prediction': 'performance'})
 
-#     performance_full = xr.DataArray(
-#         pd.concat([df, df_predictions], ignore_index=False).set_index(
-#             ['optimizer', 'itemID']).unstack().droplevel(level=None, axis=1))
-#     performance_full = performance_full.expand_dims(
-#       {'realization': np.arange(
-#         n_realizations)}).stack(problem=('realization', 'itemID'))
-#     return performance_full
+    # complete_df = pd.concat(
+    #     [df_performance, df_predictions], ignore_index=True)
 
-
-def for_the_first_window(df_interaction: pd.DataFrame) -> pd.DataFrame:
-    """
-    Combine the performances of optimizers that start with the same optimizer
-    in the first window.
-
-    Parameters
-    ----------
-    df_interaction : pandas.DataFrame
-        DataFrame containing the sparse matrix performances
-        between optimizers and optimization problems.
-
-    Returns
-    -------
-    pandas.DataFrame
-        DataFrame containing the performances of optimizers where the first
-        window is combined.
-    """
-    startswith = []
-    unique_optimizers = df_interaction['optimizer'].str.split(
-        '+').str[0].unique()
-    for opt in unique_optimizers:
-        df_partial = df_interaction[df_interaction['optimizer'].str.startswith(
-            opt)]
-
-        # give all the values of optimizer the value Adam and collapse the rows
-        df_partial['optimizer'] = opt
-
-        # only select unique values of problem
-        df_partial = df_partial.drop_duplicates(subset=['problem'])
-        startswith.append(df_partial)
-
-    df_startswith = pd.concat(startswith, ignore_index=True)
-
-    # sort on problem column
-    df_startswith = df_startswith.sort_values(by=['problem'])
-    return df_startswith
+    # # cast to xr.DataArray
+    # return complete_df.set_index(
+    #     ['itemID', 'optimizer']).to_xarray()['performance'].T
 
 
 def remove_performance_values(
-        ds_performance: xr.DataArray,
+        da_performance: xr.DataArray,
         ratio_to_remove: float) -> xr.DataArray:
 
-    perf_mean = ds_performance.unstack().mean('realization')
-
-    # Define the percentage of values to mask
-    # percentage_to_mask = 20  # Change this as needed
+    perf_mean = da_performance.unstack()  # .mean('realization')
 
     # Calculate the number of elements to mask
     total_elements = np.prod(perf_mean.shape)
@@ -220,24 +143,38 @@ def remove_performance_values(
     # Reshape the random indices to match the shape of the DataArray
     random_indices = np.unravel_index(random_indices, perf_mean.shape)
 
+    np_masked_entries = np.zeros(shape=perf_mean.shape, dtype=bool)
+    np_masked_entries[random_indices] = True
+
+    masked_entries = xr.DataArray(
+        np_masked_entries, dims=perf_mean.dims, coords=perf_mean.coords)
+    # masked_entries[random_indices] = True
+
     # Create a mask array with False everywhere except at the random indices
-    mask = perf_mean.isnull().values
+    mask = perf_mean.isnull()
+    combined_mask = (mask | masked_entries)
 
-    mask[random_indices] = True
+    def check_mask(arr):
+        if not arr.all():
+            return arr
 
-    # Don't touch the first and last index to preserve the boundaries
-    mask[:, 0] = False
-    mask[:, -1] = False
+        new_arr = arr.copy()
+        # set one random index to False
+        random_index = np.random.randint(0, new_arr.size)
+        new_arr[random_index] = False
+        return new_arr
 
-    # Ensure that at least one value of every row is False
-    for i in range(mask.shape[1]):
-        if not np.any(~mask[:, i]):
-            # Randomly select one index to set to False
-            index_to_set_false = index_to_set_false = np.random.choice(
-                np.where(perf_mean.isnull().values[:, i] == 0)[0])  # == False
-            mask[index_to_set_false, i] = False
-
+    checked_mask = xr.apply_ufunc(
+        check_mask,
+        combined_mask,
+        input_core_dims=[['optimizer']],
+        output_core_dims=[['optimizer']],
+        dask='parallelized',
+        vectorize=True,
+        dask_gufunc_kwargs={'allow_rechunk': True}
+    )
     # Apply the mask to the DataArray
-    performance = perf_mean.where(~mask, drop=False)
+    perf_sparse = perf_mean.where(~checked_mask, drop=False)
 
-    return performance
+    return perf_sparse.stack(
+        problem=('realization', 'itemID')).sel(problem=da_performance.problem)

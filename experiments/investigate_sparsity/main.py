@@ -142,7 +142,7 @@ class RecommendOptimizer(DataGenerator):
         # Sparse
 
         sparse_ds = remove_performance_values(
-            ds_performance=trainer.data_train.select_single_optimizers(
+            da_performance=trainer.data_train.select_single_optimizers(
             ).query_t(trainer.iterations).performance,
             ratio_to_remove=config.sparsity)
 
