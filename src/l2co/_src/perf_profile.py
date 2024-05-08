@@ -33,6 +33,8 @@ import numpy as np
 import xarray as xr
 from f3dasm import ExperimentData
 
+from .performance import output_cummin
+
 #                                                          Authorship & Credits
 # =============================================================================
 __author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
@@ -41,39 +43,35 @@ __status__ = 'Stable'
 # =============================================================================
 
 
-def _output_cummin(ds):
-    """
-    Calculate the cumulative minimum of the given dataset.
+# def _output_cummin(ds):
+#     """
+#     Calculate the cumulative minimum of the given dataset.
 
-    Parameters
-    ----------
-    ds : xr.Dataset
-        The dataset to calculate the cumulative minimum for.
+#     Parameters
+#     ----------
+#     ds : xr.Dataset
+#         The dataset to calculate the cumulative minimum for.
 
-    Returns
-    -------
-    xr.Dataset
-        The dataset with the cumulative minimum calculated.
+#     Returns
+#     -------
+#     xr.Dataset
+#         The dataset with the cumulative minimum calculated.
 
-    Notes
-    -----
-    The dataset calculate the cumulative minimum for the coordinate named
-    'iterations'.
-    """
-
-    def min_accumulate_func(arr):
-        return np.minimum.accumulate(arr)
-
-    return xr.apply_ufunc(
-        min_accumulate_func,
-        ds,
-        input_core_dims=[['iterations']],
-        output_core_dims=[['iterations']],
-        vectorize=True,
-        dask='parallelized',
-        output_dtypes=[ds.dtype],
-        dask_gufunc_kwargs={'allow_rechunk': True}
-    )
+#     Notes
+#     -----
+#     The dataset calculate the cumulative minimum for the coordinate named
+#     'iterations'.
+#     """
+#     return xr.apply_ufunc(
+#         np.minimum.accumulate,
+#         ds,
+#         input_core_dims=[['iterations']],
+#         output_core_dims=[['iterations']],
+#         vectorize=True,
+#         dask='parallelized',
+#         output_dtypes=[ds.dtype],
+#         dask_gufunc_kwargs={'allow_rechunk': True}
+#     )
 
 
 def load_all_data(experiment_data: ExperimentData) -> xr.Dataset:
@@ -188,35 +186,36 @@ def create_performance_profile(
     in the experiment_data parameter.
     """
 
-    # Load all the optimization dynamics data
-    if isinstance(ds_raw, ExperimentData):
-        ds_raw = load_all_data(ds_raw)
+    # # Load all the optimization dynamics data
+    # if isinstance(ds_raw, ExperimentData):
+    #     ds_raw = load_all_data(ds_raw)
 
     # Select only the output variable
     ds_output = ds_raw.sel(output_dim='y', drop=True).output
-    data_samples = ds_samples.sel(output_dim='y', drop=True).output
 
-    opts = [entry for entry in ds_output.optimizer.values if '+' not in entry]
+    # data_samples = ds_samples.sel(output_dim='y', drop=True).output
 
-    a = []
-    for opt in opts:
-        a.append(
-            xr.concat([data_samples.sel(
-                iterations=np.arange(t_switch)), ds_output.sel(
-                    optimizer=opt, iterations=np.arange(iterations-t_switch)
-            ).assign_coords(iterations=np.arange(t_switch, iterations))],
-                dim='iterations').assign_coords(
-                    optimizer=f'random_samples+{opt}'))
+    # opts = [entry for entry in ds_output.optimizer.values if '+' not in entry]
 
-    random_combinations = xr.concat(a, dim='optimizer')
+    # a = []
+    # for opt in opts:
+    #     a.append(
+    #         xr.concat([data_samples.sel(
+    #             iterations=np.arange(t_switch)), ds_output.sel(
+    #                 optimizer=opt, iterations=np.arange(iterations-t_switch)
+    #         ).assign_coords(iterations=np.arange(t_switch, iterations))],
+    #             dim='iterations').assign_coords(
+    #                 optimizer=f'random_samples+{opt}'))
 
-    ds_output = xr.concat([ds_output, random_combinations], dim='optimizer')
+    # random_combinations = xr.concat(a, dim='optimizer')
+
+    # ds_output = xr.concat([ds_output, random_combinations], dim='optimizer')
 
     # combine the itemID and realization coordinate
     # ds_output = ds_output.stack(problem=('itemID', 'realization'))
 
     # Calculat the best found value (cummin)
-    ds_output = _output_cummin(ds_output)
+    ds_output = output_cummin(ds_output)
 
     # Scale everything to be 1.0 or larger
     # ds_positive = ds_output - \
@@ -235,9 +234,11 @@ def create_performance_profile(
     performance_profile = calculate_performance_ratio(
         ds_budget, ds_budget.min(dim='optimizer'))
 
-    pp_to_dataset = xr.Dataset({opt: performance_profile.sel(
-        optimizer=opt, drop=True) for opt
-        in performance_profile.optimizer.values})
+    # pp_to_dataset = xr.Dataset({opt: performance_profile.sel(
+    #     optimizer=opt, drop=True) for opt
+    #     in performance_profile.optimizer.values})
+
+    pp_to_dataset = performance_profile.to_dataset('optimizer')
 
     if strategies is not None:
         for strategy in strategies:

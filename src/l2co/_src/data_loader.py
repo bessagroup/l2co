@@ -31,7 +31,7 @@ from sklearn.model_selection import train_test_split
 from ._logging import logger as l2co_logger
 from .content_based import get_labels
 from .perf_profile import create_performance_profile
-from .performance import query_t, scaling
+from .performance import add_random_samples_combinations, query_t, scaling
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -91,7 +91,8 @@ class DataLoader():
     @classmethod
     def from_preprocessed_files(cls, config: DictConfig,
                                 experimentdata: ExperimentData,
-                                data: xr.Dataset, data_samples: xr.Dataset):
+                                data: xr.Dataset, data_samples: xr.Dataset,
+                                add_random_search: bool = False):
         """
         Create a data loader from preprocessed files of the optimization
         trajectories (data) and the roll-outs of random search (data_samples).
@@ -106,6 +107,9 @@ class DataLoader():
             The raw optimization trajectories.
         data_samples : xarray.Dataset
             The raw optimization trajectories.
+        add_random_search : bool, optional
+            Whether to add the random search roll-outs to the data loader,
+            by default False
 
         Returns
         -------
@@ -134,6 +138,13 @@ class DataLoader():
 
         data = data.sel(itemID=experimentdata.index)
         data_samples = data_samples.sel(itemID=experimentdata.index)
+
+        if add_random_search:
+            data = add_random_samples_combinations(
+                data=data,
+                data_samples=data_samples,
+                iterations=config.iterations,
+                t_switch=config.t_switch)
 
         # Features
         X = get_labels(experimentdata=experimentdata,
@@ -263,9 +274,14 @@ class DataLoader():
     #                                                         Data manipulation
     # =========================================================================
 
-    def select_single_optimizers(self) -> DataLoader:
+    def select_single_optimizers(self, include_random_search: bool = False) -> DataLoader:
         """
         Select only the single optimizers.
+
+        Parameters
+        ----------
+        include_random_search : bool, optional
+            Whether to include the random search, by default False
 
         Returns
         -------
@@ -274,6 +290,10 @@ class DataLoader():
         """
         single_optimizers = [o.values for o in self.performance.optimizer
                              if '+' not in str(o.values)]
+
+        if include_random_search:
+            single_optimizers += [f'random_samples+{opt}' for opt in
+                                  single_optimizers]
 
         performance = self.performance.sel(
             optimizer=single_optimizers)
@@ -432,14 +452,16 @@ class DataLoader():
         if strategies is None:
             strategies = []
 
-        # self.data = self.data.sortby('problem')
-        best_perf_profile = self.query_t(
-            self.n_iterations-1).y.rename('best_perf_profile')
-        worst_perf_profile = self.query_t(
-            self.n_iterations-1).performance.idxmax(
-                dim='optimizer').rename('worst_perf_profile')
+        # # self.data = self.data.sortby('problem')
+        # best_perf_profile = self.query_t(
+        #     self.n_iterations-1).y.rename('best_perf_profile')
+        # worst_perf_profile = self.query_t(
+        #     self.n_iterations-1).performance.idxmax(
+        #         dim='optimizer').rename('worst_perf_profile')
 
-        _strategies = [best_perf_profile, worst_perf_profile, *strategies]
+        # _strategies = [best_perf_profile, worst_perf_profile, *strategies]
+
+        _strategies = [*strategies]
 
         performance_profile = create_performance_profile(
             ds_raw=self.data,

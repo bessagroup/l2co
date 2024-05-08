@@ -40,5 +40,6 @@ __all__ = ["logger",
            "performance",
            "preprocessing",
            "LSTMAutoencoder",
-           "LSTMMultiOutputClassifier"
+           "LSTMMultiOutputClassifier",
+           "set_size",
            ]

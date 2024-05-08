@@ -148,3 +148,6 @@ docs/source/_autosummary/
 _autosummary/
 
 notebooks/
+
+# Ignore svg generated files
+*.svg

@@ -169,3 +169,23 @@ def scaling(data: xr.Dataset) -> xr.DataArray:
         dask='parallelized',
         dask_gufunc_kwargs={'allow_rechunk': True}
     )
+
+
+def add_random_samples_combinations(
+        data: xr.Dataset, data_samples: xr.Dataset,
+        iterations: int, t_switch: int) -> xr.Dataset:
+    a = []
+
+    opts = [entry for entry in data.optimizer.values if '+' not in entry]
+
+    for opt in opts:
+        a.append(xr.concat([data_samples.sel(
+            iterations=np.arange(t_switch)).output, data.sel(
+            optimizer=opt, iterations=np.arange(iterations-t_switch)
+        ).assign_coords(iterations=np.arange(t_switch, iterations)).output],
+            dim='iterations').assign_coords(optimizer=f"random_samples+{opt}"))
+
+    random_combinations = xr.concat(a, dim='optimizer')
+
+    return xr.concat(
+        [data.output, random_combinations], dim='optimizer').to_dataset()
