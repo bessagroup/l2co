@@ -31,9 +31,9 @@ from sklearn.impute import SimpleImputer
 from sklearn.multioutput import MultiOutputClassifier
 from sklearn.pipeline import make_pipeline
 
-from .data_loader import DataLoader
-from .ela import ELA_FEATURE_LABELS, create_ela_features
 # Local
+from .data_loader import DataLoader
+from .ela import ELA_FEATURE_LABELS
 from .preprocessing import preprocessing_factory
 
 #                                                          Authorship & Credits
@@ -403,18 +403,14 @@ class ELAClassifier(Stage1Model):
                              SimpleImputer(strategy='mean'),
                              MultiOutputClassifier(clf))
 
-    def train(self, data_train: DataLoader, save_model: bool = False,
-              features: Optional[xr.DataArray] = None) -> None:
+    def train(self, data_train: DataLoader, features: xr.DataArray,
+              save_model: bool = False,
+              ) -> None:
         """
         Protocol method for training the model
         """
-        if features is None:
-            X_train = create_ela_features(
-                data_train.data_samples)
-
-        else:
-            X_train = features.load().stack(problem=('realization', 'itemID'))
-            X_train = xr.where(np.isinf(X_train), np.nan, X_train)
+        X_train = features.load().stack(problem=('realization', 'itemID'))
+        X_train = xr.where(np.isinf(X_train), np.nan, X_train)
 
         X_train = X_train.sel(problem=data_train.problem)
 
@@ -449,22 +445,17 @@ class ELAClassifier(Stage1Model):
 
     def predict(
         self, data_test: DataLoader,
+        features: xr.DataArray,
         stage0_predictions: xr.DataArray = None,
-            features: Optional[xr.DataArray] = None) -> xr.DataArray:
+    ) -> xr.DataArray:
         """
         Protocol method for predicting
         """
         y_shape = data_test.select_single_optimizers().query_t(
             self.iterations).y_binary()
 
-        if features is None:
-            X_test = create_ela_features(
-                data_test.data_samples,
-                iterations=self.t_switch)
-
-        else:
-            X_test = features.load().stack(problem=('realization', 'itemID'))
-            X_test = xr.where(np.isinf(X_test), np.nan, X_test)
+        X_test = features.load().stack(problem=('realization', 'itemID'))
+        X_test = xr.where(np.isinf(X_test), np.nan, X_test)
 
         X_test = X_test.sel(problem=data_test.problem)
         y_pred = self.model.predict_proba(X_test.to_pandas().T)
@@ -474,32 +465,6 @@ class ELAClassifier(Stage1Model):
             coords=y_shape.coords).idxmax('optimizer')
 
         return xr.apply_ufunc(lambda x: 'random_samples+' + x, xarr_y_pred)
-        # return xr.DataArray(
-        #     np.array(self.model.predict_proba(X_test.to_pandas()))[
-        #         :, :, 1].T,
-        #     dims=data_test.y_binary().dims,
-        #     coords=data_test.y_binary().coords)
-
-        # p = (y_pred_proba / y_pred_proba.sum(dim='optimizer'))
-
-        # # Define a function to apply np.random.choice with probabilities
-        # from p
-        # def random_choice_with_probabilities(p_values):
-        #     choice = np.random.choice(p.optimizer.values, p=p_values.ravel())
-        #     return choice
-
-        # # Use apply_ufunc to apply the function along the desired coordinates
-        # result = xr.apply_ufunc(
-        #     random_choice_with_probabilities,
-        #     # p.unstack(),
-        #     p,
-        #     input_core_dims=[['optimizer']],
-        #     vectorize=True,
-        #     dask='parallelized',
-        #     output_dtypes=[object],
-        # )
-
-        # return result.sortby('problem')
 
     def save(self) -> None:
         """

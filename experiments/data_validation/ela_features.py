@@ -9,7 +9,7 @@ from f3dasm.datageneration import DataGenerator
 from pathos import multiprocessing as mp
 
 from l2co import logger as l2co_logger
-from l2co._src.ela import create_ela_feature_1
+from l2co._src.ela import create_ela_features
 
 
 def create_entire_dataset(df_output: pd.DataFrame):
@@ -60,7 +60,7 @@ def create_one_ela(file_r: Path, ela_folder: Path, t_switch: Optional[int]):
         l2co_logger.info(f"File {file_r} has NaN values. Skipping...")
         return
 
-    ela = create_ela_feature_1(xarr_file, itemID=int(
+    ela = create_ela_features(xarr_file, itemID=int(
         file_r.stem), iterations=t_switch)
     ela.unstack().to_netcdf(
         ela_folder / f'{file_r.stem}_ela.nc')
@@ -101,13 +101,13 @@ class ELAGenerator(DataGenerator):
 
         xarr_file = xr.open_dataset(file_r, chunks='auto')
 
-        ela_train = create_ela_feature_1(xarr_file, itemID=int(
+        ela_train = create_ela_features(xarr_file, itemID=int(
             file_r.stem), iterations=None)
 
         self.experiment_sample.store(
             object=ela_train.unstack(), name='ela_train', to_disk=True)
 
-        ela_test = create_ela_feature_1(xarr_file, itemID=int(
+        ela_test = create_ela_features(xarr_file, itemID=int(
             file_r.stem), iterations=self.t_switch)
 
         self.experiment_sample.store(

@@ -4,17 +4,15 @@ Module containing functions that compute the performance of optimizers
 Functions
 ---------
 
-get_performance
-    Generate a dataset that captures the performance of an optimizer
-    on a benchmark function as function of the number of function evaluations.
+output_cummin
+    Calculate the cumulative minimum of the given dataset.
 query_t
     Query the performance dataset for the performance of the optimizers
     after a given number of function evaluations.
-is_sparse
-    Check if the performance DataArray is sparse.
-collaborative_filtering
-    Fill in missing values in the performance DataFrame using
-    collaborative filtering.
+scaling
+    Create a performance value for each problem and iterations per optimizer.
+add_random_samples_combinations
+    Add random samples as optimizers to the optimization dataset.
 """
 
 #                                                                       Modules
@@ -38,18 +36,14 @@ __credits__ = ['Martin van der Schelling']
 __status__ = 'Planning'
 # =============================================================================
 
-INVALID_VALUE = 1.0
-
-# =============================================================================
-
 
 def output_cummin(da: xr.DataArray):
     """
-    Calculate the cumulative minimum of the given dataset.
+    Calculate the cumulative minimum of the given data array.
 
     Parameters
     ----------
-    ds : xr.DataArray
+    da : xr.DataArray
         The dataarray to calculate the cumulative minimum for.
 
     Returns
@@ -94,6 +88,12 @@ def query_t(da_performance: xr.DataArray, t: int) -> xr.DataArray:
     xarray.DataArray
         xarray DataArray containing the performance of the optimizers
         after a given number of function evaluations.
+
+    Raises
+    ------
+    ValueError
+        If the number of iterations is larger than the maximum number of
+        iterations in the performance dataset.
     """
     if t > da_performance.iterations.max():
         raise ValueError(
@@ -111,17 +111,17 @@ def query_t(da_performance: xr.DataArray, t: int) -> xr.DataArray:
 
 def scaling(data: xr.Dataset) -> xr.DataArray:
     """
-    Scale the data to be used as input for the RTD algorithm.
+    Create a performance value for each problem and iterations per optimizer.
 
     Parameters
     ----------
     data : xr.Dataset
-        The data to be scaled.
+        The optimization dataset to be evaluated
 
     Returns
     -------
     xr.DataArray
-        The scaled data.
+        The performance values
     """
     # 1. Calculate cumulative minimum (quality indictor value)
     data['output_cummin'] = output_cummin(data.output)
@@ -148,9 +148,9 @@ def scaling(data: xr.Dataset) -> xr.DataArray:
     ds_log10_positive = np.log10(ds_positive)
 
     # 5. Scale the data
-    # scaler = MinMaxScaler()
-
-    def scale(arr, minimum_over_realizations):
+    def scale(
+            arr: np.ndarray,
+            minimum_over_realizations: np.ndarray) -> np.ndarray:
         scaler = MinMaxScaler()
         scaler.fit(minimum_over_realizations.reshape(-1, 1))
         scaler.partial_fit(arr.flatten().reshape(-1, 1))
@@ -174,6 +174,26 @@ def scaling(data: xr.Dataset) -> xr.DataArray:
 def add_random_samples_combinations(
         data: xr.Dataset, data_samples: xr.Dataset,
         iterations: int, t_switch: int) -> xr.Dataset:
+    """
+    Add random samples as optimizers to the optimization dataset.
+
+    Parameters
+    ----------
+    data : xr.Dataset
+        The performance dataset.
+    data_samples : xr.Dataset
+        The dataset with the random samples.
+    iterations : int
+        The total number of iterations.
+    t_switch : int
+        The number of iterations to switch from random samples to the
+        optimization data.
+
+    Returns
+    -------
+    xr.Dataset
+        The performance dataset with the random samples optimizers added.
+    """
     a = []
 
     opts = [entry for entry in data.optimizer.values if '+' not in entry]

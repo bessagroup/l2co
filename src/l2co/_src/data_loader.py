@@ -42,6 +42,8 @@ __status__ = 'Stable'
 
 # create a logger
 logger = l2co_logger.getChild(__name__)
+INVALID_PERFORMANCE_VALUE = 1.0
+
 
 # =============================================================================
 
@@ -122,9 +124,10 @@ class DataLoader():
 
         _, _df_output = experimentdata.to_pandas()
         # remove all values that say 'ERROR' and 'invalid'
-        _df_output = _df_output.replace('ERROR', np.nan)
-        _df_output = _df_output.replace('invalid', np.nan)
-        _df_output = _df_output.replace('not working', np.nan)
+        _df_output = _df_output.replace(
+            ['ERROR', 'invalid', 'not working'], np.nan)
+        # _df_output = _df_output.replace('invalid', np.nan)
+        # _df_output = _df_output.replace('not working', np.nan)
 
         # remove all experiments where none of the optimizers have finished
         _valid_indices = _df_output.drop(
@@ -151,19 +154,18 @@ class DataLoader():
                        n_realizations=n_realizations)
 
         # # Performance
-
         # Stack dimensions realization and itemID
         data_stacked = data.stack(problem=('realization', 'itemID'))
         data_samples_stacked = data_samples.stack(
             problem=('realization', 'itemID'))
 
-        # New performance idea?
+        # New performance idea
         performance = scaling(data).stack(
             problem=('realization', 'itemID')).sel(
             output_dim='y', drop=True)
 
         performance_stacked = performance.where(
-            ~performance.isnull(), other=1.0)
+            ~performance.isnull(), other=INVALID_PERFORMANCE_VALUE)
 
         return cls(X=X,
                    n_iterations=n_iterations,
@@ -268,13 +270,14 @@ class DataLoader():
         ).output.rename('trajectory')
 
         return xr.apply_ufunc(
-            np.log, (_X_trajectory - _X_trajectory.min('iterations')
-                     ) + 1.0, dask='parallelized')
+            np.log10, (_X_trajectory - _X_trajectory.min('iterations')
+                       ) + 1.0, dask='parallelized')
 
     #                                                         Data manipulation
     # =========================================================================
 
-    def select_single_optimizers(self, include_random_search: bool = False) -> DataLoader:
+    def select_single_optimizers(
+            self, include_random_search: bool = False) -> DataLoader:
         """
         Select only the single optimizers.
 
@@ -465,9 +468,7 @@ class DataLoader():
 
         performance_profile = create_performance_profile(
             ds_raw=self.data,
-            ds_samples=self.data_samples,
             iterations=self.n_iterations,
-            t_switch=self.config['t_switch'],
             strategies=_strategies)
 
         return performance_profile

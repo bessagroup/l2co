@@ -29,6 +29,13 @@ __credits__ = ['Martin van der Schelling']
 __status__ = 'Stable'
 # =============================================================================
 
+FEATURE_TYPES = {'convex': 'categorical', 'multimodal': 'categorical',
+                 'seperable': 'categorical',
+                 'noise': 'categorical', 'dim': 'ordinal',
+                 'differentiable': 'categorical'}
+
+# =============================================================================
+
 
 def ordinal_encoder_factory() -> OrdinalEncoder:
     """
@@ -53,15 +60,6 @@ def standard_scaler_factory() -> StandardScaler:
         A standard scaler
     """
     return StandardScaler()
-
-
-# =============================================================================
-
-
-FEATURE_TYPES = {'convex': 'categorical', 'multimodal': 'categorical',
-                 'seperable': 'categorical',
-                 'noise': 'categorical', 'dim': 'ordinal',
-                 'differentiable': 'categorical'}
 
 # =============================================================================
 

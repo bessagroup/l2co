@@ -7,6 +7,9 @@ Functions
 run_sampling
     Sample from the search-space of a benchmark function using a given sampling
     technique.
+run_sampling_one_realization
+    Sample from the search-space of a benchmark function using a given sampling
+    technique for a single realization.
 """
 
 #                                                                       Modules

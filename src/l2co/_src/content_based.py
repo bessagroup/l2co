@@ -7,15 +7,10 @@ Functions
 
 get_labels
     Get labels for each itemID in the experimentdata.
-cosine_sim
-    Compute the cosine similarity between a single vector and a training set.
-calculate_similarity_features
-    Calculate the cosine similarity between a single vector and a training set.
-predict_zero
-    Predict the optimizer before considering evaluating the function. This
-    is done by calculating the cosine similarity between the features of the
-    function to be evaluated and the features of the problems in the
-    training set.
+get_labels_one
+    Create a string with the labels for a given itemID.
+get_not_encoded_labels
+    Get the labels that are not encoded.
 """
 
 #                                                                       Modules
@@ -33,6 +28,7 @@ from f3dasm import ExperimentData
 from f3dasm._src.datageneration.functions.function_factory import \
     _datagenerator_factory
 
+# Local
 from ._logging import logger
 
 #                                                          Authorship & Credits
@@ -81,6 +77,21 @@ def get_labels_one(experimentdata: ExperimentData, index: int) -> str:
 
 def get_not_encoded_labels(
         experimentdata: ExperimentData, index: int) -> Dict[str, Any]:
+    """
+    Get the labels that are not encoded.
+
+    Parameters
+    ----------
+    experimentdata : f3dasm.ExperimentData
+        ExperimentData object.
+    index : int
+        index of the experiment sample.
+
+    Returns
+    -------
+    dict
+        dictionary with the labels that are not encoded.
+    """
     experiment_sample = experimentdata.get_experiment_sample(index)
     noise = experiment_sample.get('noise')
     dim = experiment_sample.get('dimensionality')
@@ -100,7 +111,7 @@ def get_not_encoded_labels(
 def get_labels(experimentdata: ExperimentData,
                n_realizations: int) -> xr.DataArray:
     """
-    Get labels for each itemID in the experimentdata.
+    Get labels for each optimization problem in the experimentdata.
 
     Parameters
     ----------

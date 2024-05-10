@@ -47,32 +47,40 @@ def collaborative_filtering(da_performance: xr.DataArray) -> xr.DataArray:
         The performance DataFrame without missing values
     """
 
+    # Convert the DataArray to a pandas DataFrame
     df_performance = da_performance.to_dataframe(
     )['performance'].dropna().reset_index()
     combined_columns = df_performance['realization'].astype(
         str) + '+' + df_performance['itemID'].astype(str)
 
+    # Encode the combined columns (realization + itemID)
     encoder = LabelEncoder()
     encoded_columns = encoder.fit_transform(combined_columns)
     df_performance['encoding'] = encoded_columns
 
+    # Select only relevant columns
     df_performance = df_performance[['optimizer', 'encoding', 'performance']]
 
+    # Create a surprise Reader object
     reader = surprise.Reader(rating_scale=(
         df_performance['performance'].min(),
         df_performance['performance'].max()))
 
+    # Load the data into a surprise Dataset object
     train_set = surprise.Dataset.load_from_df(
         df_performance, reader=reader).build_full_trainset()
 
+    # Create a SVD model and fit it to the data
     svd = surprise.SVD(random_state=0, n_factors=200,
                        n_epochs=30, verbose=False)
     svd.fit(train_set)
 
+    # Compute the predictions for the performance of the optimizers
     df_predictions = compute_ranking_predictions(
         svd, df_performance, usercol='optimizer',
         itemcol='encoding', remove_seen=True)
 
+    # Renaming the columns to match the performance DataFrame
     df_predictions = df_predictions.rename(
         columns={'prediction': 'performance'})
 
@@ -94,42 +102,25 @@ def collaborative_filtering(da_performance: xr.DataArray) -> xr.DataArray:
     ).to_xarray()['performance'].T.stack(
         problem=('realization', 'itemID')).sel(problem=da_performance.problem)
 
-    # Check if there is anything to matrix complete
-    # if not da_performance.isnull().values.any():
-    #     return da_performance
-
-    # df_performance = da_performance.to_dataframe().reset_index().dropna()
-
-    # reader = surprise.Reader(rating_scale=(
-    #     df_performance['performance'].min(),
-    #     df_performance['performance'].max()))
-
-    # train_set = surprise.Dataset.load_from_df(
-    #     df_performance, reader=reader).build_full_trainset()
-
-    # svd = surprise.SVD(random_state=0, n_factors=200,
-    #                    n_epochs=30, verbose=False)
-    # svd.fit(train_set)
-
-    # df_predictions = compute_ranking_predictions(
-    #     svd, df_performance, usercol='optimizer',
-    #     itemcol='itemID', remove_seen=True)
-
-    # df_predictions = df_predictions.rename(
-    #     columns={'prediction': 'performance'})
-
-    # complete_df = pd.concat(
-    #     [df_performance, df_predictions], ignore_index=True)
-
-    # # cast to xr.DataArray
-    # return complete_df.set_index(
-    #     ['itemID', 'optimizer']).to_xarray()['performance'].T
-
 
 def remove_performance_values(
         da_performance: xr.DataArray,
         ratio_to_remove: float) -> xr.DataArray:
+    """
+    Remove a fraction of the performance values from the performance DataArray.
 
+    Parameters
+    ----------
+    da_performance : xarray.DataArray
+        The performance DataArray to remove values from.
+    ratio_to_remove : float
+        The fraction of performance values to remove.
+
+    Returns
+    -------
+    xarray.DataArray
+        The performance DataArray with a fraction of the values removed.
+    """
     perf_mean = da_performance.unstack()  # .mean('realization')
 
     # Calculate the number of elements to mask
@@ -154,7 +145,7 @@ def remove_performance_values(
     mask = perf_mean.isnull()
     combined_mask = (mask | masked_entries)
 
-    def check_mask(arr):
+    def check_mask(arr: np.ndarray):
         if not arr.all():
             return arr
 

@@ -1,3 +1,16 @@
+"""
+Plotting module
+
+Functions
+---------
+set_size
+    Set figure dimensions to avoid scaling in LaTeX.
+"""
+
+#
+# =============================================================================
+
+
 def set_size(width, fraction=1, subplots=(1, 1)):
     """Set figure dimensions to avoid scaling in LaTeX.
 

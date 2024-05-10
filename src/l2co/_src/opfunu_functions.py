@@ -1,5 +1,10 @@
 """
-Docstirng
+Port of the opfunu functions to the PyBenchFunction class.
+
+Functions
+---------
+OpfunuFunc
+    Base class for the opfunu functions.
 """
 
 #                                                                       Modules
@@ -136,8 +141,6 @@ class OpfunuFunc(PyBenchFunction):
 # =============================================================================
 
 
-# 2010 and 2019 are not working for gradient-free
-# TODO: gradient calculation is not working for all other functions!
 CEC_FUNCTIONS = {
     f.__name__.lower(): OpfunuFunc.from_partial(f)
     for f in opfunu.get_all_cec_functions()

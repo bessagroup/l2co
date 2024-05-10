@@ -4,17 +4,14 @@ Module containing functions that compute the performance of optimizers
 Functions
 ---------
 
-get_performance
-    Generate a dataset that captures the performance of an optimizer
-    on a benchmark function as function of the number of function evaluations.
-query_t
-    Query the performance dataset for the performance of the optimizers
-    after a given number of function evaluations.
-is_sparse
-    Check if the performance DataArray is sparse.
-collaborative_filtering
-    Fill in missing values in the performance DataFrame using
-    collaborative filtering.
+load_all_data
+    Load all the optimization dynamics data for the given experiment data.
+calculate_performance_ratio
+    Calculate the performance ratio for the given dataset.
+create_performance_profile
+    Create a performance profile for the given experiment data and iterations.
+plot_performance_profile
+    Plot the performance profile for the given dataset.
 """
 
 #                                                                       Modules
@@ -41,37 +38,6 @@ __author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
 __credits__ = ['Martin van der Schelling']
 __status__ = 'Stable'
 # =============================================================================
-
-
-# def _output_cummin(ds):
-#     """
-#     Calculate the cumulative minimum of the given dataset.
-
-#     Parameters
-#     ----------
-#     ds : xr.Dataset
-#         The dataset to calculate the cumulative minimum for.
-
-#     Returns
-#     -------
-#     xr.Dataset
-#         The dataset with the cumulative minimum calculated.
-
-#     Notes
-#     -----
-#     The dataset calculate the cumulative minimum for the coordinate named
-#     'iterations'.
-#     """
-#     return xr.apply_ufunc(
-#         np.minimum.accumulate,
-#         ds,
-#         input_core_dims=[['iterations']],
-#         output_core_dims=[['iterations']],
-#         vectorize=True,
-#         dask='parallelized',
-#         output_dtypes=[ds.dtype],
-#         dask_gufunc_kwargs={'allow_rechunk': True}
-#     )
 
 
 def load_all_data(experiment_data: ExperimentData) -> xr.Dataset:
@@ -149,22 +115,18 @@ def calculate_performance_ratio(
 
 
 def create_performance_profile(
-        ds_raw: ExperimentData | xr.Dataset,
-        ds_samples: xr.Dataset,
+        ds_raw: xr.Dataset,
         iterations: int,
-        t_switch: int,
         strategies: Optional[List[xr.DataArray]] = None) -> xr.Dataset:
     """
     Create a performance profile for the given experiment data and iterations.
 
     Parameters
     ----------
-    experiment_data : ExperimentData | xr.Dataset
-        The experiment data to create the performance profile for.
-
+    ds_raw : xr.Dataset
+        The optimization dynamics data for the given experiment data.
     iterations : int
         The total budget for each of the optimization problems
-
     strategies : List[xr.DataArray], optional
         The strategies to include in the performance profile, by default None
 
@@ -177,49 +139,16 @@ def create_performance_profile(
 
     Notes
     -----
-    If the experiment_data is an ExperimentData object, the optimization
-    dynamics data is loaded from the files in the ExperimentData object.
-
     Strategies are optional, and can be added to the performance profile
     by passing a list of xr.DataArray objects. The xr.DataArray objects
     should have a 'problem' coordinate which is identical to the data provided
-    in the experiment_data parameter.
+    in the ds_raw parameter.
     """
-
-    # # Load all the optimization dynamics data
-    # if isinstance(ds_raw, ExperimentData):
-    #     ds_raw = load_all_data(ds_raw)
-
     # Select only the output variable
     ds_output = ds_raw.sel(output_dim='y', drop=True).output
 
-    # data_samples = ds_samples.sel(output_dim='y', drop=True).output
-
-    # opts = [entry for entry in ds_output.optimizer.values if '+' not in entry]
-
-    # a = []
-    # for opt in opts:
-    #     a.append(
-    #         xr.concat([data_samples.sel(
-    #             iterations=np.arange(t_switch)), ds_output.sel(
-    #                 optimizer=opt, iterations=np.arange(iterations-t_switch)
-    #         ).assign_coords(iterations=np.arange(t_switch, iterations))],
-    #             dim='iterations').assign_coords(
-    #                 optimizer=f'random_samples+{opt}'))
-
-    # random_combinations = xr.concat(a, dim='optimizer')
-
-    # ds_output = xr.concat([ds_output, random_combinations], dim='optimizer')
-
-    # combine the itemID and realization coordinate
-    # ds_output = ds_output.stack(problem=('itemID', 'realization'))
-
     # Calculat the best found value (cummin)
     ds_output = output_cummin(ds_output)
-
-    # Scale everything to be 1.0 or larger
-    # ds_positive = ds_output - \
-    #     ds_output.min(dim=['optimizer', 'iterations']) + 1.0
 
     ds_positive = ds_output - \
         ds_output.min(dim=['optimizer', 'iterations']).where(
@@ -227,16 +156,12 @@ def create_performance_profile(
                           ) < 0, 0.0) + 1e-17
 
     # Slice at the given total number of iterations
-    ds_budget = ds_positive.sel(iterations=iterations-1)
+    ds_budget = ds_positive.isel(iterations=iterations-1)
     ds_budget = ds_budget.sortby('problem')
 
     # Calculate the performance profile
     performance_profile = calculate_performance_ratio(
         ds_budget, ds_budget.min(dim='optimizer'))
-
-    # pp_to_dataset = xr.Dataset({opt: performance_profile.sel(
-    #     optimizer=opt, drop=True) for opt
-    #     in performance_profile.optimizer.values})
 
     pp_to_dataset = performance_profile.to_dataset('optimizer')
 
@@ -286,8 +211,6 @@ def plot_performance_profile(
     if axes is None:
         fig, axes = plt.subplots(2, 1, gridspec_kw={'height_ratios': [
             4, 1]}, figsize=(10, 7))
-    # axes[0].set_xscale('log')
-    # ax.set_yscale('log')
 
     x = performance_profile.f * 100 - 100
     for optimizer in performance_profile.data_vars:

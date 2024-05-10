@@ -4,11 +4,8 @@ optimization dynamics classifier.
 
 Classes
 -------
-TrainerBase
-    Base class to train and evaluate the performance of a classifier
-TrainerStage1
-    Implementation of the Trainer class for
-    stage 0 and stage 1 of the classifier
+Trainer
+    Class for training the optimization dynamics classifier
 """
 
 #                                                                       Modules
@@ -268,9 +265,7 @@ class Trainer:
 
         self.performance_profile = create_performance_profile(
             ds_raw=data_test.data,
-            ds_samples=self.data_test.data_samples.sortby('problem'),
             iterations=self.data_test.n_iterations,
-            t_switch=self.t_switch,
             strategies=_strategies)
 
         self.performance_profile.load()
