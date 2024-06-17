@@ -136,6 +136,7 @@ class RecommendOptimizer(DataGenerator):
 
         print("Created trainer")
 
+        # trainer.train()
         trainer.train_stage0()
 
         t = perf_counter()

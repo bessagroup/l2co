@@ -1,6 +1,7 @@
 numpy >= 1.22
 scipy >= 1.9
 f3dasm >= 1.4.71
+f3dasm_optimize
 recommenders
 xarray
 dask

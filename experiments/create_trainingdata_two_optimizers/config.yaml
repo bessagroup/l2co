@@ -307,14 +307,14 @@ domain:
     high: 1000000
   budget:
     type: constant
-    value: 2000
+    value: 200
 
 experimentdata:
   # from_file: /home/martin/Documents/GitHub/L2CO/experiments/create_trainingdata_two_optimizers/outputs/2024-03-06/16-11-02
   from_sampling:
     sampler: "random"
     seed: 2036
-    n_samples: 1000
+    n_samples: 20
     domain: ${domain}
 
 mode: cluster
@@ -324,7 +324,7 @@ optimization:
   upper_bound: 1.0
   sampler_name: "latin"
   number_of_samples: 0
-  realizations: 10
+  realizations: 3
   parallelization: True
   optimizers:
     - name: CMAES

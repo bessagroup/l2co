@@ -29,7 +29,7 @@ from sklearn.model_selection import train_test_split
 
 # Local
 from ._logging import logger as l2co_logger
-from .content_based import get_labels
+from .content_based import get_labels, get_labels_arbitrary
 from .perf_profile import create_performance_profile
 from .performance import add_random_samples_combinations, query_t, scaling
 
@@ -94,7 +94,8 @@ class DataLoader():
     def from_preprocessed_files(cls, config: DictConfig,
                                 experimentdata: ExperimentData,
                                 data: xr.Dataset, data_samples: xr.Dataset,
-                                add_random_search: bool = False):
+                                add_random_search: bool = False,
+                                arbitrary_labels: bool = False):
         """
         Create a data loader from preprocessed files of the optimization
         trajectories (data) and the roll-outs of random search (data_samples).
@@ -130,8 +131,12 @@ class DataLoader():
         # _df_output = _df_output.replace('not working', np.nan)
 
         # remove all experiments where none of the optimizers have finished
-        _valid_indices = _df_output.drop(
-            columns=['random_samples']).dropna(how='all').index
+        if 'random_samples' in _df_output.columns:
+            _valid_indices = _df_output.drop(
+                columns=['random_samples']).dropna(how='all').index
+
+        else:
+            _valid_indices = _df_output.dropna(how='all').index
 
         experimentdata = experimentdata.select(_valid_indices)
 
@@ -150,8 +155,12 @@ class DataLoader():
                 t_switch=config.t_switch)
 
         # Features
-        X = get_labels(experimentdata=experimentdata,
-                       n_realizations=n_realizations)
+        if arbitrary_labels:
+            X = get_labels_arbitrary(experimentdata=experimentdata,
+                                     n_realizations=n_realizations)
+        else:
+            X = get_labels(experimentdata=experimentdata,
+                           n_realizations=n_realizations)
 
         # # Performance
         # Stack dimensions realization and itemID
@@ -600,3 +609,52 @@ class DataLoader():
             return axes, df
 
         return axes
+
+
+def create_entire_dataset(experiment_data: ExperimentData):
+
+    experiment_data = experiment_data.select_with_status('finished')
+
+    _, df_output = experiment_data.to_pandas()
+
+    # remove all values that say 'ERROR' and 'invalid'
+    df_output = df_output.replace('ERROR', np.nan)
+    df_output = df_output.replace('invalid', np.nan)
+    df_output = df_output.replace('not working', np.nan)
+
+    # preceed every entry of df_output with experimentdata.project_dir
+    df_output = df_output.applymap(
+        lambda x: experiment_data.project_dir / x, na_action='ignore')
+    # df_output = df_output.apply(lambda x: experiment_data.project_dir / x)
+
+    # don't include the column 'random_samples'
+    if 'random_samples' in df_output.columns:
+        df_output = df_output.drop(columns=['random_samples'])
+
+    # remove all experiments where none of the optimizers have finished
+    df_output = df_output.dropna(how='all')
+
+    # Open the whole thing:
+    l2co_logger.info("Opening the whole thing")
+
+    combined_rows = []
+
+    for row, values in df_output.iterrows():
+        a = xr.open_mfdataset(values.dropna(), combine='by_coords')
+
+        if 'input' in a.data_vars:
+            combined_rows.append(a.assign_coords(
+                {'itemID': [row]}).drop('input'))
+        else:
+            combined_rows.append(a.assign_coords(
+                {'itemID': [row]}))
+
+        l2co_logger.info(f"Entire dataset: {row}/{len(df_output)}")
+
+    xarr_full = xr.concat(combined_rows, dim='itemID')
+
+    if 'input_dim' in xarr_full.coords:
+        return xarr_full.drop('input_dim')
+
+    else:
+        return xarr_full

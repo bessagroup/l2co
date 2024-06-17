@@ -165,3 +165,12 @@ def get_labels(experimentdata: ExperimentData,
     return xarr.expand_dims(
         dim={'realization': np.arange(n_realizations)}
     ).stack(problem=['realization', 'itemID']).T
+
+
+def get_labels_arbitrary(experimentdata: ExperimentData, n_realizations: int) -> xr.DataArray:
+    n_realizations = 3
+    X = experimentdata.to_xarray().input.rename(
+        {'iterations': 'itemID', 'input_dim': 'features'})
+    return X.expand_dims(
+        dim={'realization': np.arange(n_realizations)}
+    ).stack(problem=['realization', 'itemID']).T.rename('labels')

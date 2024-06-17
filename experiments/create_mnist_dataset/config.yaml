@@ -1,0 +1,68 @@
+defaults:
+  - override hydra/job_logging: custom
+
+domain:
+  model.n_features:
+    type: category
+    categories:
+      - 16
+      - 32
+      - 64
+      - 128
+  model.n_layers:
+    type: category
+    categories:
+      - 1
+      - 2
+      - 3
+      - 5
+      - 10
+  seed:
+    type: int
+    low: 0
+    high: 1000000
+
+experimentdata:
+  # from_file: /home/martin/Documents/GitHub/L2CO/experiments/create_trainingdata_two_optimizers/outputs/2024-03-06/16-11-02
+  from_sampling:
+    sampler: "random"
+    seed: 2036
+    n_samples: 20
+    domain: ${domain}
+
+mode: cluster
+
+model:
+  n_features: 
+  n_layers:
+  n_labels: 10
+
+optimization:
+  epochs: 5
+  batch_size: 32
+  realizations: 10
+  optimizers:
+    - name: Adam_1e3
+      optimizer: adam
+      hyperparameters:
+        learning_rate: 0.001
+    - name: Amsgrad_1e3
+      optimizer: amsgrad
+      hyperparameters:
+        learning_rate: 0.001    
+    - name: Adam_5e3
+      optimizer: adam
+      hyperparameters:
+        learning_rate: 0.005
+    - name: Amsgrad_5e3
+      optimizer: amsgrad
+      hyperparameters:
+        learning_rate: 0.005    
+
+seed: 
+
+
+hpc:
+  jobid: -1
+
+log_level: 20
