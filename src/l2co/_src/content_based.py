@@ -167,7 +167,8 @@ def get_labels(experimentdata: ExperimentData,
     ).stack(problem=['realization', 'itemID']).T
 
 
-def get_labels_arbitrary(experimentdata: ExperimentData, n_realizations: int) -> xr.DataArray:
+def get_labels_arbitrary(
+        experimentdata: ExperimentData, n_realizations: int) -> xr.DataArray:
     n_realizations = 3
     X = experimentdata.to_xarray().input.rename(
         {'iterations': 'itemID', 'input_dim': 'features'})

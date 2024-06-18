@@ -25,10 +25,11 @@ from time import sleep
 import f3dasm
 import hydra
 from f3dasm import logger as f3dasm_logger
-from mnist_training import MNIST
 
 # Local
 from l2co import logger
+from l2co._src.computervision.datagenerator_api import MNIST
+from l2co._src.data_loader import create_entire_dataset
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -72,6 +73,9 @@ def post_processing(config):
             break
 
         sleep(5)
+
+    ds = create_entire_dataset(experiment_data=experimentdata)
+    ds.to_netcdf("mnist_dataset.nc")
 
 
 @hydra.main(config_path=".", config_name="config")
