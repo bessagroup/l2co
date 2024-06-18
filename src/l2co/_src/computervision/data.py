@@ -12,6 +12,7 @@ from __future__ import annotations
 # Third-party
 import numpy as np
 from jax.random import permutation
+from mnist1d.data import get_dataset_args, make_dataset
 from tensorflow.keras.datasets import cifar10, fashion_mnist, mnist
 
 #                                                          Authorship & Credits
@@ -73,6 +74,15 @@ class Dataset:
         (x_train, y_train), (x_test, y_test) = cifar10.load_data()
         x_train, x_test = x_train / 255.0, x_test / 255.0
         return cls(x_train, x_test, y_train, y_test)
+
+    @classmethod
+    def from_mnist1d(cls):
+        defaults = get_dataset_args()
+        data = make_dataset(defaults)
+        return cls(x_train=data['x'].reshape(-1, 40, 1, 1),
+                   x_test=data['x_test'].reshape(-1, 40, 1, 1),
+                   y_train=data['y'],
+                   y_test=data['y_test'])
 
     def get_batch(self, batch_size):
         for i in range(0, len(self.x_train), batch_size):

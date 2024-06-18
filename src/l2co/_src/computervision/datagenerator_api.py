@@ -36,7 +36,8 @@ OPTIMIZERS_MAPPING = {
 DATASET_MAPPING = {
     'mnist': Dataset.from_mnist,
     'fashion_mnist': Dataset.from_fashion_mnist,
-    'cifar10': Dataset.from_cifar10
+    'cifar10': Dataset.from_cifar10,
+    'mnist1d': Dataset.from_mnist1d,
 }
 
 # =============================================================================

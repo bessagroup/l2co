@@ -27,12 +27,12 @@ experimentdata:
   from_sampling:
     sampler: "random"
     seed: 2036
-    n_samples: 3
+    n_samples: 50
     domain: ${domain}
 
 mode: cluster
 
-dataset: mnist
+dataset: mnist1d
 
 model:
   n_features: 
@@ -42,7 +42,7 @@ model:
 optimization:
   epochs: 5
   batch_size: 32
-  realizations: 3
+  realizations: 10
   optimizers:
     - name: Adam_1e3
       optimizer: adam
