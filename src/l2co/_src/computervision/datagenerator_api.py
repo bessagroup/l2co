@@ -29,7 +29,8 @@ __status__ = 'Stable'
 OPTIMIZERS_MAPPING = {
     'adam': optax.adam,
     'sgd': optax.sgd,
-    'amsgrad': optax.amsgrad
+    'amsgrad': optax.amsgrad,
+    'adabelief': optax.adabelief
 }
 
 DATASET_MAPPING = {
