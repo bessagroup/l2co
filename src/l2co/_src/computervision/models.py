@@ -56,16 +56,12 @@ class CNN(nn.Module):
     def __call__(self, x):
         assert x.ndim == 4  # (batch_size, height, width, channels)
 
-        x = nn.Conv(features=28, kernel_size=(3, 3),
-                    kernel_init=normal_initializer,
-                    bias_init=normal_initializer)(x)  # 32
-        x = nn.relu(x)
-        x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
-        x = nn.Conv(features=48, kernel_size=(3, 3),
-                    kernel_init=normal_initializer,
-                    bias_init=normal_initializer)(x)
-        x = nn.relu(x)
-        x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
+        for _ in range(self.n_layers):
+            x = nn.Conv(features=self.n_features, kernel_size=(3, 3),
+                        kernel_init=normal_initializer,
+                        bias_init=normal_initializer)(x)
+            x = nn.relu(x)
+            x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
 
         x = x.reshape((x.shape[0], -1))  # flatten
 
@@ -77,3 +73,56 @@ class CNN(nn.Module):
                      kernel_init=normal_initializer,
                      bias_init=normal_initializer)(x)
         return nn.log_softmax(x)
+
+
+class ResidualBlock(nn.Module):
+    n_features: int
+
+    @nn.compact
+    def __call__(self, x):
+        residual = x
+        x = nn.Conv(features=self.n_features, kernel_size=(3, 3),
+                    kernel_init=normal_initializer,
+                    bias_init=normal_initializer)(x)
+        x = nn.relu(x)
+        x = nn.Conv(features=self.n_features, kernel_size=(3, 3),
+                    kernel_init=normal_initializer,
+                    bias_init=normal_initializer)(x)
+        return nn.relu(x + residual)
+
+
+class ResNet(nn.Module):
+    n_features: int
+    n_layers: int
+    n_labels: int
+
+    @nn.compact
+    def __call__(self, x):
+        assert x.ndim == 4  # (batch_size, height, width, channels)
+
+        x = nn.Conv(features=self.n_features, kernel_size=(7, 7),
+                    strides=(2, 2),
+                    kernel_init=normal_initializer,
+                    bias_init=normal_initializer)(x)
+        x = nn.relu(x)
+        x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding='SAME')
+
+        for _ in range(self.n_layers):
+            x = ResidualBlock(n_features=self.n_features)(x)
+
+        # Assuming input size to be at least 32x32
+        x = nn.avg_pool(x, window_shape=(4, 4), strides=(4, 4))
+
+        x = x.reshape((x.shape[0], -1))  # flatten
+
+        x = nn.Dense(features=256,
+                     kernel_init=normal_initializer,
+                     bias_init=normal_initializer)(x)
+        x = nn.relu(x)
+        x = nn.Dense(features=self.n_labels,
+                     kernel_init=normal_initializer,
+                     bias_init=normal_initializer)(x)
+        return nn.log_softmax(x)
+
+# Example usage
+# model = ResNet(n_features=64, n_blocks=3, n_labels=10)
