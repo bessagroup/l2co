@@ -9,7 +9,7 @@ Functions for training models
 # Standard
 import logging
 from functools import partial
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 # Third-party
 import flax.linen as nn
@@ -20,6 +20,7 @@ import xarray as xr
 from f3dasm import ExperimentData
 from flax.training.train_state import TrainState
 from optax import softmax_cross_entropy
+from optax._src.base import GradientTransformation
 
 # Local
 from .data import Dataset
@@ -35,21 +36,27 @@ __status__ = 'Stable'
 # =============================================================================
 
 
-def create_initial_params(rng, input_shape: Tuple[int, int], model: nn.Module):
+def create_initial_params(rng: jax.random.KeyArray,
+                          input_shape: Tuple[int, int],
+                          model: nn.Module) -> Dict[str, Any]:
     dummy_input = jnp.ones(input_shape, jnp.float32)
     variables = model.init({'params': rng}, dummy_input)
-
     return variables['params']
 
 
-def compute_metrics(logits, labels, n_classes):
+def compute_metrics(logits: jnp.ndarray,
+                    labels: jnp.ndarray,
+                    n_classes: int) -> Dict[str, jnp.ndarray]:
     one_hot_labels = jax.nn.one_hot(labels, num_classes=n_classes)
     loss = jnp.mean(softmax_cross_entropy(logits, one_hot_labels))
     accuracy = jnp.mean(jnp.argmax(logits, -1) == labels)
     return {'loss': loss, 'accuracy': accuracy}
 
 
-def train_step(state, batch, labels, model: SimpleMLP):
+def train_step(state: TrainState, batch: jnp.ndarray,
+               labels: jnp.ndarray,
+               model: nn.Module) -> Tuple[TrainState, Dict[str, jnp.ndarray]]:
+
     def loss_fn(params):
         logits = model.apply({'params': params}, batch)
         one_hot_labels = jax.nn.one_hot(labels, num_classes=model.n_labels)
@@ -67,15 +74,12 @@ def train_step(state, batch, labels, model: SimpleMLP):
 
 
 def training_loop(
-        optimizer,
-        model: SimpleMLP,
+        optimizer: GradientTransformation,
+        model: nn.Module,
         data: Dataset,
         seed: Optional[int] = None,
         epochs: int = 5,
-        batch_size: int = 32,
-        **hyperparameters) -> xr.Dataset:
-    if not hyperparameters:
-        hyperparameters = {'learning_rate': 0.001}
+        batch_size: int = 32,) -> xr.Dataset:
 
     if seed is None:
         seed = np.random.randint(1e6)
@@ -84,13 +88,11 @@ def training_loop(
     input_shape = data.x_train[0:1].shape  # (1, RESOLUTION, RESOLUTION, 1)
     params = create_initial_params(rng, input_shape, model)
 
-    # Create the optimizer
-    tx = optimizer(**hyperparameters)
-
+    # Create the TrainState
     state = TrainState.create(
         apply_fn=model.apply,
         params=params,
-        tx=tx,
+        tx=optimizer,
     )
 
     # JIT-compiled versions with partial application
@@ -121,15 +123,14 @@ def training_loop(
 
 
 def training_multiple_realizations(
-        optimizer,
+        optimizer: GradientTransformation,
         model: SimpleMLP,
         data: Dataset,
         seed: Optional[int] = None,
         epochs: int = 5,
         batch_size: int = 32,
         n_realizations: int = 10,
-        optimizer_name: Optional[str] = None,
-        **hyperparameters) -> xr.Dataset:
+        optimizer_name: Optional[str] = None,) -> xr.Dataset:
 
     all_losses = []
     for i in range(n_realizations):
@@ -137,7 +138,7 @@ def training_multiple_realizations(
         all_losses.append(
             training_loop(optimizer, model, data, seed=seed+i,
                           epochs=epochs,
-                          batch_size=batch_size, **hyperparameters))
+                          batch_size=batch_size))
 
     xarr = xr.concat(
         all_losses,

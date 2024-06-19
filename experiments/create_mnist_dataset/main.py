@@ -28,7 +28,7 @@ from f3dasm import logger as f3dasm_logger
 
 # Local
 from l2co import logger
-from l2co._src.computervision.datagenerator_api import MNIST
+from l2co._src.computervision.datagenerator_api import ComputerVisionTask
 from l2co._src.data_loader import create_entire_dataset
 
 #                                                          Authorship & Credits
@@ -144,7 +144,7 @@ def process(config):
 
     logger.debug("Loaded experimentdata")
 
-    mnist_routine = MNIST(config)
+    mnist_routine = ComputerVisionTask(config)
 
     data.evaluate(mnist_routine,
                   mode=config.mode)

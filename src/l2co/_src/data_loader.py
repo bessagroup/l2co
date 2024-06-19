@@ -26,6 +26,7 @@ import xarray as xr
 from f3dasm import ExperimentData
 from omegaconf import DictConfig
 from sklearn.model_selection import train_test_split
+from tqdm import tqdm
 
 # Local
 from ._logging import logger as l2co_logger
@@ -639,7 +640,7 @@ def create_entire_dataset(experiment_data: ExperimentData):
 
     combined_rows = []
 
-    for row, values in df_output.iterrows():
+    for row, values in tqdm(df_output.iterrows()):
         a = xr.open_mfdataset(values.dropna(), combine='by_coords')
 
         if 'input' in a.data_vars:

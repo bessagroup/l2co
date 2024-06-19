@@ -32,34 +32,62 @@ experimentdata:
 
 mode: cluster
 
-dataset: mnist1d
+dataset: 
+  _target_: l2co._src.computervision.data.Dataset.from_mnist1d
 
 model:
+  _target_: l2co._src.computervision.models.SimpleMLP
   n_features: 
   n_layers:
   n_labels: 10
 
 optimization:
-  epochs: 5
+  epochs: 10
   batch_size: 32
   realizations: 10
   optimizers:
-    - name: Adam_1e3
-      optimizer: adam
-      hyperparameters:
-        learning_rate: 0.001
-    - name: Amsgrad_1e3
-      optimizer: amsgrad
-      hyperparameters:
-        learning_rate: 0.001    
-    - name: Adam_5e3
-      optimizer: adam
-      hyperparameters:
-        learning_rate: 0.005
-    - name: Amsgrad_5e3
-      optimizer: amsgrad
-      hyperparameters:
-        learning_rate: 0.005    
+    Adam_1e-3:
+      _target_: optax.adam
+      learning_rate: 0.001
+    Amsgrad_1e-3:
+      _target_: optax.amsgrad
+      learning_rate: 0.001
+    Adabelief_1e-3:
+      _target_: optax.adabelief
+      learning_rate: 0.001
+    Adafactor_1e-3:
+      _target_: optax.adafactor
+      learning_rate: 0.001
+    AdamW_1e-3:
+      _target_: optax.adamw
+      learning_rate: 0.001
+    NoisySGD_1e-3:
+      _target_: optax.noisy_sgd
+      learning_rate: 0.001
+    SGD_1e-3:
+      _target_: optax.sgd
+      learning_rate: 0.001
+    Adam_5e-3:
+      _target_: optax.adam
+      learning_rate: 0.005
+    Amsgrad_5e-3:
+      _target_: optax.amsgrad
+      learning_rate: 0.005
+    Adabelief_5e-3:
+      _target_: optax.adabelief
+      learning_rate: 0.005
+    Adafactor_5e-3:
+      _target_: optax.adafactor
+      learning_rate: 0.005
+    AdamW_5e-3:
+      _target_: optax.adamw
+      learning_rate: 0.005
+    NoisySGD_5e-3:
+      _target_: optax.noisy_sgd
+      learning_rate: 0.005
+    SGD_5e-3:
+      _target_: optax.sgd
+      learning_rate: 0.005
 
 seed: 
 
