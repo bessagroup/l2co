@@ -25,6 +25,7 @@ from time import sleep
 import f3dasm
 import hydra
 from f3dasm import logger as f3dasm_logger
+from hydra.utils import instantiate
 
 # Local
 from l2co import logger
@@ -43,6 +44,9 @@ __status__ = 'Stable'
 
 def pre_processing(config):
     logger.setLevel(logging.DEBUG)
+
+    # Caching dataset
+    _ = instantiate(config.dataset)
 
     logger.info("== PRE-PROCESS ==")
     data = f3dasm.ExperimentData.from_yaml(config.experimentdata)
