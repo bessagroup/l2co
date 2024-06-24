@@ -333,6 +333,7 @@ optimization:
     - name: LBFGSB
   fraction_of_all_combinations: 1.0
   switch: 0.3
+  combinations: False
 
 hpc:
   jobid: -1

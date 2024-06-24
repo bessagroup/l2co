@@ -33,7 +33,7 @@ experimentdata:
 mode: cluster
 
 dataset: 
-  _target_: l2co._src.computervision.data.Dataset.from_mnist1d
+  _target_: l2co._src.computervision.data.Dataset.from_cifar10
 
 model:
   _target_: l2co._src.computervision.models.SimpleMLP
