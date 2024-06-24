@@ -20,15 +20,18 @@ process
 import logging
 from pathlib import Path
 from time import sleep
+from typing import Optional
 
 # Third-party
 import f3dasm
 import hydra
 import numpy as np
+import pandas as pd
 from config import Config
 from f3dasm import logger as f3dasm_logger
 from f3dasm._src.datageneration.functions.function_factory import \
     FUNCTION_MAPPING
+from f3dasm.design import Domain
 from hydra.core.config_store import ConfigStore
 from run_opt import BenchmarkOptimizationRoutine
 
@@ -53,34 +56,57 @@ def pre_processing(config: Config):
 
     logger.info("== PRE-PROCESS ==")
     data = f3dasm.ExperimentData.from_yaml(config.experimentdata)
+    domain = Domain.from_yaml(config.domain)
 
-    # Dirty hack for TypeError: Cannot setitem on a Categorical with a
-    # new category (), set the categories first
-    function_name_column = data._input_data.columns.iloc('function_name')
-    data._input_data.data[function_name_column] = data._input_data.data[
-        function_name_column].astype(
-        'object')
+    dim_filters = {d: list(filter(lambda f: FUNCTION_MAPPING[f.lower()].is_dim_compatible(d), list(
+        domain.space['function_name'].categories))) for d in domain.space['dimensionality'].categories}
 
-    for sample in data:
-        dim = sample.get("dimensionality")
-        f = FUNCTION_MAPPING[sample.get("function_name").lower()]
-        if not f.is_dim_compatible(sample.get("dimensionality")):
-            compatible_functions = [
-                ff for ff in filter(lambda f: FUNCTION_MAPPING[f.lower(
-                )].is_dim_compatible(dim),
-                    list(config.domain.function_name.categories))]
+    def sample(dim_filters, domain: Domain,
+               n_samples: int, seed: Optional[int] = None):
+        rng = np.random.default_rng(seed=seed)
+        dims = rng.choice(
+            domain.space['dimensionality'].categories, size=n_samples)
+        function_names = np.array([rng.choice(dim_filters[d]) for d in dims])
+        noise = rng.choice(domain.space['noise'].categories, size=n_samples)
+        seed = rng.integers(
+            domain.space['seed'].lower_bound,
+            domain.space['seed'].upper_bound, size=n_samples)
+        budget = np.array([domain.space['budget'].value] * n_samples)
+        return pd.DataFrame(
+            [dims, function_names, noise, seed, budget],
+            index=['dimensionality', 'function_name', 'noise', 'seed', 'budget']).T
 
-            new_function_name = np.random.choice(compatible_functions)
+    data = f3dasm.ExperimentData.from_sampling(
+        sampler=sample, domain=domain, n_samples=2000, seed=42,
+        dim_filters=dim_filters)
 
-            data._input_data.set_data(
-                index=sample.job_number,
-                value=new_function_name, column="function_name")
+    # # Dirty hack for TypeError: Cannot setitem on a Categorical with a
+    # # new category (), set the categories first
+    # function_name_column = data._input_data.columns.iloc('function_name')
+    # data._input_data.data[function_name_column] = data._input_data.data[
+    #     function_name_column].astype(
+    #     'object')
 
-    # Dirty hack for TypeError: Cannot setitem on a Categorical with
-    # a new category (), set the categories first
-    data._input_data.data[function_name_column] = data.\
-        _input_data.data[function_name_column].astype(
-        'category')
+    # for sample in data:
+    #     dim = sample.get("dimensionality")
+    #     f = FUNCTION_MAPPING[sample.get("function_name").lower()]
+    #     if not f.is_dim_compatible(sample.get("dimensionality")):
+    #         compatible_functions = [
+    #             ff for ff in filter(lambda f: FUNCTION_MAPPING[f.lower(
+    #             )].is_dim_compatible(dim),
+    #                 list(config.domain.function_name.categories))]
+
+    #         new_function_name = np.random.choice(compatible_functions)
+
+    #         data._input_data.set_data(
+    #             index=sample.job_number,
+    #             value=new_function_name, column="function_name")
+
+    # # Dirty hack for TypeError: Cannot setitem on a Categorical with
+    # # a new category (), set the categories first
+    # data._input_data.data[function_name_column] = data.\
+    #     _input_data.data[function_name_column].astype(
+    #     'category')
 
     # OUTPUT DATA
     optimizers = [opt_config['name'] for
