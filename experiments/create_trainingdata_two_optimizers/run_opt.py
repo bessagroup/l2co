@@ -13,6 +13,7 @@ from f3dasm.design import make_nd_continuous_domain
 # Local
 from l2co import logger, run_multiple_realizations, run_sampling
 from l2co._src.run_optimization import (_get_all_combinations,
+                                        _get_all_combinations_no_switch,
                                         _get_name_from_scheduler,
                                         needs_gradient)
 
@@ -40,12 +41,17 @@ class BenchmarkOptimizationRoutine(DataGenerator):
         optimizers = [opt_config['name'] for
                       opt_config in self.config.optimization.optimizers]
 
-        optimizer_schedulers = _get_all_combinations(
-            optimizers=optimizers,
-            iterations=budget,
-            switch=self.config.optimization.switch)
+        if self.config.optimization.combinations:
+            optimizer_schedulers = _get_all_combinations(
+                optimizers=optimizers,
+                iterations=budget,
+                switch=self.config.optimization.switch)
+        else:
+            optimizer_schedulers = _get_all_combinations_no_switch(
+                optimizers=optimizers,
+                iterations=budget)
 
-        # Sample from the optimizer_schedulers:
+            # Sample from the optimizer_schedulers:
         n = int(len(optimizer_schedulers) * self.config.
                 optimization.fraction_of_all_combinations)
 

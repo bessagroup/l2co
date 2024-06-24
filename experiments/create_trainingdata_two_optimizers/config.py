@@ -26,7 +26,7 @@ class OptimizationConfig:
     parallelization: bool
     optimizers: List[Dict]
     fraction_of_all_combinations: float
-
+    combinations: bool
 
 # @dataclass
 # class RecommenderConfig:

@@ -999,6 +999,29 @@ def _get_all_combinations(
         for opt_1, opt_2 in product(optimizers, repeat=2)]
 
 
+def _get_all_combinations_no_switch(
+        optimizers: List[str], iterations: int,
+        first_x0: str = 'new') -> List[OptimizerScheduler]:
+    """
+    Get all combination of two optimizer names
+
+    Parameters
+    ----------
+    optimizers : List[str]
+        list of optimizer names
+    iterations : int
+        total number of iterations
+    first_x0 : str, optional
+        x0 selection strategy for the first optimizer, by default 'new'
+
+    Returns
+    -------
+    List[OptimizerScheduler]
+        List of optimizer schedulers
+    """
+    return [[(opt, iterations, first_x0)] for opt in optimizers]
+
+
 def _get_name_from_scheduler(scheduler: OptimizerScheduler) -> str:
     """
     Create a represented name of the scheduler
