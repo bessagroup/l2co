@@ -39,6 +39,7 @@ from run_opt import BenchmarkOptimizationRoutine
 from l2co import logger
 from l2co._src.opfunu_functions import CEC_FUNCTIONS, NAMED_FUNCTIONS
 from l2co._src.run_optimization import (_get_all_combinations,
+                                        _get_all_combinations_no_switch,
                                         _get_name_from_scheduler)
 
 #                                                          Authorship & Credits
@@ -80,39 +81,17 @@ def pre_processing(config: Config):
         sampler=sample, domain=domain, n_samples=2000, seed=42,
         dim_filters=dim_filters)
 
-    # # Dirty hack for TypeError: Cannot setitem on a Categorical with a
-    # # new category (), set the categories first
-    # function_name_column = data._input_data.columns.iloc('function_name')
-    # data._input_data.data[function_name_column] = data._input_data.data[
-    #     function_name_column].astype(
-    #     'object')
-
-    # for sample in data:
-    #     dim = sample.get("dimensionality")
-    #     f = FUNCTION_MAPPING[sample.get("function_name").lower()]
-    #     if not f.is_dim_compatible(sample.get("dimensionality")):
-    #         compatible_functions = [
-    #             ff for ff in filter(lambda f: FUNCTION_MAPPING[f.lower(
-    #             )].is_dim_compatible(dim),
-    #                 list(config.domain.function_name.categories))]
-
-    #         new_function_name = np.random.choice(compatible_functions)
-
-    #         data._input_data.set_data(
-    #             index=sample.job_number,
-    #             value=new_function_name, column="function_name")
-
-    # # Dirty hack for TypeError: Cannot setitem on a Categorical with
-    # # a new category (), set the categories first
-    # data._input_data.data[function_name_column] = data.\
-    #     _input_data.data[function_name_column].astype(
-    #     'category')
-
     # OUTPUT DATA
     optimizers = [opt_config['name'] for
                   opt_config in config.optimization.optimizers]
-    optimizer_names = [_get_name_from_scheduler(
-        schedule) for schedule in _get_all_combinations(optimizers, 100)]
+
+    if config.optimization.combinations:
+        optimizer_names = [_get_name_from_scheduler(
+            schedule) for schedule in _get_all_combinations(optimizers, 100)]
+    else:
+        optimizer_names = [_get_name_from_scheduler(
+            schedule) for schedule in _get_all_combinations_no_switch(
+                optimizers, 100)]
 
     for name in optimizer_names:
         data.add_output_parameter(name=name, is_disk=True, exist_ok=True)
@@ -175,7 +154,7 @@ def main(config: Config):
         post_processing(config)
 
     else:
-        sleep(3*config.hpc.jobid)  # Just to asynchronize the jobs
+        sleep(0.1*config.hpc.jobid)  # Just to asynchronize the jobs
         process(config)
 
 
