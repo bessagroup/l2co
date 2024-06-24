@@ -1,9 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name="CreateTrainingData"
-#SBATCH --time=24:00:00
+#SBATCH --time=48:00:00
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem-per-cpu=1GB
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem-per-cpu=2GB
 #SBATCH --account=research-ME-mse
 #SBATCH --partition=compute
 #SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
