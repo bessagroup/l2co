@@ -60,7 +60,8 @@ def pre_processing(config: Config):
     domain = Domain.from_yaml(config.domain)
 
     dim_filters = {d: list(filter(
-        lambda f: FUNCTION_MAPPING[f.lower()].is_dim_compatible(d), list(
+        lambda f: FUNCTION_MAPPING[f.lower()].is_dim_compatible(d)
+        and FUNCTION_MAPPING[f.lower()].differentiable, list(
             domain.space['function_name'].categories)))
         for d in domain.space['dimensionality'].categories}
 

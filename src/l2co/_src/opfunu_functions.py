@@ -78,6 +78,12 @@ class OpfunuFunc(PyBenchFunction):
 
         OpfunuFuncPartial.opfunu_class = opfunu_class
         OpfunuFuncPartial.name = opfunu_class.__name__
+        OpfunuFuncPartial.differentiable = opfunu_class.differentiable
+        OpfunuFuncPartial.convex = opfunu_class.convex
+        OpfunuFuncPartial.parametric = opfunu_class.parametric
+        OpfunuFuncPartial.randomized_term = opfunu_class.randomized_term
+        OpfunuFuncPartial.separable = opfunu_class.separable
+        OpfunuFuncPartial.multimodal = not opfunu_class.unimodal
 
         return OpfunuFuncPartial
 
@@ -102,29 +108,30 @@ class OpfunuFunc(PyBenchFunction):
     #                                                                Properties
     # =========================================================================
 
-    @property
-    def differentiable(self) -> bool:
-        return self.opfunu_function.differentiable
+    # @classmethod
+    # @property
+    # def differentiable(cls) -> bool:
+    #     return cls.opfunu_class.differentiable
 
     @property
     def convex(self) -> bool:
-        return self.opfunu_function.convex
+        return self.opfunu_class.convex
 
     @property
     def parametric(self) -> bool:
-        return self.opfunu_function.parametric
+        return self.opfunu_class.parametric
 
     @property
     def randomized_term(self) -> bool:
-        return self.opfunu_function.randomized_term
+        return self.opfunu_class.randomized_term
 
     @property
     def separable(self) -> bool:
-        return self.opfunu_function.separable
+        return self.opfunu_class.separable
 
     @property
     def multimodal(self) -> bool:
-        return not self.opfunu_function.unimodal
+        return not self.opfunu_class.unimodal
 
     def get_global_minimum(
             self, *args, **kwargs) -> Tuple[np.ndarray, np.ndarray]:
