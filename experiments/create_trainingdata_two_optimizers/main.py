@@ -110,7 +110,7 @@ def pre_processing(config: Config):
     data.mark_all_nan_open()
 
     # Store the ExperimentData to a csv file
-    data.store()
+    data.store(create_tmp=True)
     logger.info("Stored experimentdata")
 
 
