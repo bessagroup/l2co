@@ -59,16 +59,20 @@ def pre_processing(config: Config):
     data = f3dasm.ExperimentData.from_yaml(config.experimentdata)
     domain = Domain.from_yaml(config.domain)
 
-    dim_filters = {d: list(filter(lambda f: FUNCTION_MAPPING[f.lower()].is_dim_compatible(d), list(
-        domain.space['function_name'].categories))) for d in domain.space['dimensionality'].categories}
+    dim_filters = {d: list(filter(
+        lambda f: FUNCTION_MAPPING[f.lower()].is_dim_compatible(d), list(
+            domain.space['function_name'].categories)))
+        for d in domain.space['dimensionality'].categories}
 
     def sample(dim_filters, domain: Domain,
                n_samples: int, seed: Optional[int] = None):
         rng = np.random.default_rng(seed=seed)
+
         dims = rng.choice(
             domain.space['dimensionality'].categories, size=n_samples)
         function_names = np.array([rng.choice(dim_filters[d]) for d in dims])
-        noise = rng.choice(domain.space['noise'].categories, size=n_samples)
+        noise = rng.choice(domain.space['noise'].categories, size=n_samples,
+                           p=config.noise_distribution)
         seed = rng.integers(
             domain.space['seed'].lower_bound,
             domain.space['seed'].upper_bound, size=n_samples)
