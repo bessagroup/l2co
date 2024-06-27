@@ -9,7 +9,7 @@ Data for classification tasks
 # Standard
 from __future__ import annotations
 
-from typing import Generator, Tuple
+from typing import Generator, Iterable, Optional, Tuple
 
 # Third-party
 import numpy as np
@@ -56,6 +56,13 @@ class Dataset:
         self.y_train = y_train
         self.y_test = y_test
 
+    def __add__(self, other: Dataset) -> Dataset:
+        return Dataset(
+            np.concatenate([self.x_train, other.x_train]),
+            np.concatenate([self.x_test, other.x_test]),
+            np.concatenate([self.y_train, other.y_train]),
+            np.concatenate([self.y_test, other.y_test]))
+
     #                                                      Dataset constructors
     # =========================================================================
 
@@ -82,13 +89,22 @@ class Dataset:
         return cls(x_train, x_test, y_train, y_test)
 
     @classmethod
-    def from_mnist1d(cls):
+    def from_mnist1d(cls, labels: Optional[Iterable[int]] = None):
         defaults = get_dataset_args()
         data = make_dataset(defaults)
-        return cls(x_train=data['x'].reshape(-1, 40, 1, 1),
-                   x_test=data['x_test'].reshape(-1, 40, 1, 1),
-                   y_train=data['y'],
-                   y_test=data['y_test'])
+
+        _dataset = cls(x_train=data['x'].reshape(-1, 40, 1, 1),
+                       x_test=data['x_test'].reshape(-1, 40, 1, 1),
+                       y_train=data['y'],
+                       y_test=data['y_test'])
+
+        if labels is None:
+            return _dataset
+
+        else:
+            _datasets_with_label = [
+                _dataset.with_label(label) for label in labels]
+            return sum(_datasets_with_label[1:], _datasets_with_label[0])
 
     #                                                   Shuffeling and batching
     # =========================================================================
@@ -116,3 +132,10 @@ class Dataset:
                 y_train=self.y_train[train_indices],
                 x_test=self.x_train[test_indices],
                 y_test=self.y_train[test_indices])
+
+    def with_label(self, label: int) -> Dataset:
+        return Dataset(
+            x_train=self.x_train[self.y_train == label],
+            y_train=self.y_train[self.y_train == label],
+            x_test=self.x_test[self.y_test == label],
+            y_test=self.y_test[self.y_test == label])
