@@ -1,0 +1,124 @@
+domain:
+  '0':
+    type: category
+    categories:
+      - True
+      - False
+  '1':
+    type: category
+    categories:
+      - True
+      - False
+  '2':
+    type: category
+    categories:
+      - True
+      - False
+  '3':
+    type: category
+    categories:
+      - True
+      - False
+  '4':
+    type: category
+    categories:
+      - True
+      - False      
+  '5':
+    type: category
+    categories:
+      - True
+      - False   
+  '6':
+    type: category
+    categories:
+      - True
+      - False   
+  '7':
+    type: category
+    categories:
+      - True
+      - False   
+  '8':
+    type: category
+    categories:
+      - True
+      - False   
+  '9':
+    type: category
+    categories:
+      - True
+      - False   
+
+
+experimentdata:
+  # from_file: /home/martin/Documents/GitHub/L2CO/experiments/create_trainingdata_two_optimizers/outputs/2024-03-06/16-11-02
+  from_sampling:
+    sampler: "random"
+    seed: 2036
+    n_samples: 50
+    domain: ${domain}
+
+mode: cluster
+
+model:
+  _target_: l2co._src.computervision.models.SimpleMLP
+  n_features: 16
+  n_layers: 3
+  n_labels: 10
+
+optimization:
+  epochs: 10
+  batch_size: 32
+  realizations: 10
+  optimizers:
+    Adam_1e-3:
+      _target_: optax.adam
+      learning_rate: 0.001
+    Amsgrad_1e-3:
+      _target_: optax.amsgrad
+      learning_rate: 0.001
+    Adabelief_1e-3:
+      _target_: optax.adabelief
+      learning_rate: 0.001
+    Adafactor_1e-3:
+      _target_: optax.adafactor
+      learning_rate: 0.001
+    AdamW_1e-3:
+      _target_: optax.adamw
+      learning_rate: 0.001
+    NoisySGD_1e-3:
+      _target_: optax.noisy_sgd
+      learning_rate: 0.001
+    SGD_1e-3:
+      _target_: optax.sgd
+      learning_rate: 0.001
+    Adam_5e-3:
+      _target_: optax.adam
+      learning_rate: 0.005
+    Amsgrad_5e-3:
+      _target_: optax.amsgrad
+      learning_rate: 0.005
+    Adabelief_5e-3:
+      _target_: optax.adabelief
+      learning_rate: 0.005
+    Adafactor_5e-3:
+      _target_: optax.adafactor
+      learning_rate: 0.005
+    AdamW_5e-3:
+      _target_: optax.adamw
+      learning_rate: 0.005
+    NoisySGD_5e-3:
+      _target_: optax.noisy_sgd
+      learning_rate: 0.005
+    SGD_5e-3:
+      _target_: optax.sgd
+      learning_rate: 0.005
+
+seed: 0
+
+
+hpc:
+  jobid: -1
+
+log_level: 20
