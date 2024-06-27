@@ -640,7 +640,7 @@ def create_entire_dataset(experiment_data: ExperimentData):
 
     combined_rows = []
 
-    for row, values in tqdm(df_output.iterrows()):
+    for row, values in tqdm(df_output.iterrows(), total=len(df_output)):
         a = xr.open_mfdataset(values.dropna(), combine='by_coords')
 
         if 'input' in a.data_vars:
