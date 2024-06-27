@@ -29,7 +29,8 @@ from hydra.utils import instantiate
 
 # Local
 from l2co import logger
-from l2co._src.computervision.datagenerator_api import ComputerVisionTask
+from l2co._src.computervision.datagenerator_api import \
+    ComputerVisionTask_Dataset
 from l2co._src.data_loader import create_entire_dataset
 
 #                                                          Authorship & Credits
@@ -45,8 +46,8 @@ __status__ = 'Stable'
 def pre_processing(config):
     logger.setLevel(logging.DEBUG)
 
-    # Caching dataset
-    _ = instantiate(config.dataset)
+    # # Caching dataset
+    # _ = instantiate(config.dataset)
 
     logger.info("== PRE-PROCESS ==")
     data = f3dasm.ExperimentData.from_yaml(config.experimentdata)
@@ -148,7 +149,7 @@ def process(config):
 
     logger.debug("Loaded experimentdata")
 
-    mnist_routine = ComputerVisionTask(config)
+    mnist_routine = ComputerVisionTask_Dataset(config)
 
     data.evaluate(mnist_routine,
                   mode=config.mode)
