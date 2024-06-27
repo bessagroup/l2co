@@ -75,6 +75,40 @@ class CNN(nn.Module):
         return nn.log_softmax(x)
 
 
+# =============================================================================
+
+
+class CNN_MNIST1D(nn.Module):
+    n_labels: int
+    channels: int = 25
+    linear_in: int = 125
+
+    @nn.compact
+    def __call__(self, x):
+        x = x.reshape((-1, 1, x.shape[-1]))
+        x = nn.relu(nn.Conv(features=self.channels, kernel_size=(5,),
+                            strides=(2,), padding='same',
+                            kernel_init=normal_initializer,
+                            bias_init=normal_initializer)(x))
+        x = nn.relu(nn.Conv(features=self.channels, kernel_size=(3,),
+                            strides=(2,), padding='same',
+                            kernel_init=normal_initializer,
+                            bias_init=normal_initializer)(x))
+        x = nn.relu(nn.Conv(features=self.channels, kernel_size=(3,),
+                            strides=(2,), padding='same',
+                            kernel_init=normal_initializer,
+                            bias_init=normal_initializer)(x))
+
+        x = x.reshape((x.shape[0], -1))  # flatten the conv features
+        x = nn.Dense(
+            features=self.n_labels, kernel_init=normal_initializer,
+            bias_init=normal_initializer)(x)
+        return nn.log_softmax(x)
+
+
+# =============================================================================
+
+
 class ResidualBlock(nn.Module):
     n_features: int
 

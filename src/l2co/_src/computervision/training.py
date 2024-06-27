@@ -77,9 +77,10 @@ def training_loop(
         optimizer: GradientTransformation,
         model: nn.Module,
         data: Dataset,
+        iterations: int,
         seed: Optional[int] = None,
-        epochs: int = 5,
-        batch_size: int = 32,) -> xr.Dataset:
+        batch_size: int = 32,
+) -> xr.Dataset:
 
     if seed is None:
         seed = np.random.randint(1e6)
@@ -101,23 +102,25 @@ def training_loop(
     # List to store the losses
     training_losses = []
 
-    for epoch in range(epochs):
-        logging.debug(f"Epoch {epoch+1}/{epochs}")
+    for iteration, (batch_x, batch_y) in zip(
+            range(iterations), data.get_batch(
+                batch_size=batch_size, seed=seed)):
+        logging.debug(f"Epoch {iteration+1}/{iterations}")
 
-        # Shuffle the training data
-        data = data.permute(rng)
+        # # Shuffle the training data
+        # data = data.permute(rng)
 
-        for index, (batch_x, batch_y) in enumerate(data.get_batch(batch_size)):
-            state, metrics = jit_train_step(
-                state, batch_x, batch_y)
+        # for index, (batch_x, batch_y) in enumerate(data.get_batch(batch_size)):
+        state, metrics = jit_train_step(
+            state, batch_x, batch_y)
 
-            # Store the loss
-            training_losses.append(metrics['loss'])
+        # Store the loss
+        training_losses.append(metrics['loss'])
 
-            if index % 100 == 0:
-                logging.debug((
-                    f"Step {index // batch_size}: loss = {metrics['loss']:.4f}"
-                    f", accuracy = {metrics['accuracy']:.4f}"))
+        if iteration % 100 == 0:
+            logging.debug((
+                f"Step {iteration // batch_size}: loss = {metrics['loss']:.4f}"
+                f", accuracy = {metrics['accuracy']:.4f}"))
 
     return ExperimentData(output_data=np.array(training_losses)).to_xarray()
 
@@ -126,8 +129,8 @@ def training_multiple_realizations(
         optimizer: GradientTransformation,
         model: SimpleMLP,
         data: Dataset,
+        iterations: int,
         seed: Optional[int] = None,
-        epochs: int = 5,
         batch_size: int = 32,
         n_realizations: int = 10,
         optimizer_name: Optional[str] = None,) -> xr.Dataset:
@@ -137,7 +140,7 @@ def training_multiple_realizations(
         logging.debug(f"Realization {i+1}/{n_realizations}")
         all_losses.append(
             training_loop(optimizer, model, data, seed=seed+i,
-                          epochs=epochs,
+                          iterations=iterations,
                           batch_size=batch_size))
 
     xarr = xr.concat(

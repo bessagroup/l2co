@@ -13,7 +13,7 @@ from typing import Generator, Iterable, Optional, Tuple
 
 # Third-party
 import numpy as np
-from jax.random import KeyArray, permutation
+from jax.random import KeyArray, PRNGKey, permutation
 from mnist1d.data import get_dataset_args, make_dataset
 from sklearn.model_selection import KFold
 from tensorflow.keras.datasets import cifar10, fashion_mnist, mnist
@@ -109,11 +109,44 @@ class Dataset:
     #                                                   Shuffeling and batching
     # =========================================================================
 
-    def get_batch(self, batch_size) -> Generator[
-            Tuple[np.ndarray, np.ndarray], None, None]:
-        for i in range(0, len(self.x_train), batch_size):
-            yield (self.x_train[i:i + batch_size],
-                   self.y_train[i:i + batch_size])
+    def get_batch(
+        self, batch_size, num_epochs: int = 1000,
+            seed: Optional[int] = None
+    ) -> Generator[Tuple[np.ndarray, np.ndarray], None, None]:
+
+        if seed is None:
+            rng = PRNGKey(np.random.randint(0, 2**32 - 1))
+        else:
+            rng = PRNGKey(seed)
+
+        for epoch in range(num_epochs):
+            self._permute(rng)
+
+            for i_batch in range(0, len(self.x_train), batch_size):
+                batch_x = self.x_train[i_batch:i_batch + batch_size]
+                batch_y = self.y_train[i_batch:i_batch + batch_size]
+
+                # Check if the batch has fewer than batch_size items
+                if len(batch_x) < batch_size:
+                    # Reshuffle data
+                    self._permute(rng)
+
+                    # Calculate how many items are missing
+                    missing_count = batch_size - len(batch_x)
+
+                    # Append missing items from the beginning of the
+                    # reshuffled data
+                    batch_x = np.concatenate(
+                        (batch_x, self.x_train[:missing_count]))
+                    batch_y = np.concatenate(
+                        (batch_y, self.y_train[:missing_count]))
+
+                yield (batch_x, batch_y)
+
+    def _permute(self, rng: KeyArray):
+        _permutation = permutation(rng, len(self.x_train))
+        self.x_train = self.x_train[_permutation]
+        self.y_train = self.y_train[_permutation]
 
     def permute(self, rng: KeyArray) -> Dataset:
         _permutation = permutation(rng, len(self.x_train))
