@@ -77,7 +77,6 @@ class CNN(nn.Module):
 
 # =============================================================================
 
-
 class CNN_MNIST1D(nn.Module):
     n_labels: int
     channels: int = 25
@@ -85,25 +84,33 @@ class CNN_MNIST1D(nn.Module):
 
     @nn.compact
     def __call__(self, x):
-        # x = x.reshape((-1, 1, x.shape[-1]))
-        x = nn.relu(nn.Conv(features=self.channels, kernel_size=(5,),
-                            strides=(2,), padding='same',
-                            kernel_init=normal_initializer,
-                            bias_init=normal_initializer)(x))
-        x = nn.relu(nn.Conv(features=self.channels, kernel_size=(3,),
-                            strides=(2,), padding='same',
-                            kernel_init=normal_initializer,
-                            bias_init=normal_initializer)(x))
-        x = nn.relu(nn.Conv(features=self.channels, kernel_size=(3,),
-                            strides=(2,), padding='same',
-                            kernel_init=normal_initializer,
-                            bias_init=normal_initializer)(x))
+        # Conv layer 1
+        x = x.reshape(x.shape[0], -1, 1)
 
-        x = x.reshape((x.shape[0], -1))  # flatten the conv features
-        x = nn.Dense(
-            features=self.n_labels, kernel_init=normal_initializer,
-            bias_init=normal_initializer)(x)
-        return nn.log_softmax(x)
+        x = nn.Conv(features=self.channels, kernel_size=(5,),
+                    strides=(2,), padding='same',
+                    kernel_init=nn.initializers.kaiming_uniform())(x)
+        x = nn.relu(x)
+
+        # Conv layer 2
+        x = nn.Conv(features=self.channels, kernel_size=(3,),
+                    strides=(2,), padding='same',
+                    kernel_init=nn.initializers.kaiming_uniform())(x)
+        x = nn.relu(x)
+
+        # Conv layer 3
+        x = nn.Conv(features=self.channels, kernel_size=(3,),
+                    strides=(2,), padding='same',
+                    kernel_init=nn.initializers.kaiming_uniform())(x)
+        x = nn.relu(x)
+
+        # Flatten the conv features
+        x = x.reshape((x.shape[0], -1))
+
+        # Linear (dense) layer
+        x = nn.Dense(features=self.n_labels,
+                     kernel_init=nn.initializers.kaiming_uniform())(x)
+        return x
 
 
 # =============================================================================
