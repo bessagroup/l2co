@@ -53,22 +53,31 @@ def compute_metrics(logits: jnp.ndarray,
     return {'loss': loss, 'accuracy': accuracy}
 
 
-def train_step(state: TrainState, batch: jnp.ndarray,
-               labels: jnp.ndarray,
+def train_step(state: TrainState, batch_x: jnp.ndarray,
+               batch_y: jnp.ndarray,
                model: nn.Module) -> Tuple[TrainState, Dict[str, jnp.ndarray]]:
 
     def loss_fn(params):
-        logits = model.apply({'params': params}, batch)
-        one_hot_labels = jax.nn.one_hot(labels, num_classes=model.n_labels)
+        logits = model.apply({'params': params}, batch_x)
+        one_hot_labels = jax.nn.one_hot(batch_y, num_classes=model.n_labels)
         loss = jnp.mean(softmax_cross_entropy(logits, one_hot_labels))
         return loss, logits
 
     grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
     (loss, logits), grads = grad_fn(state.params)
     state = state.apply_gradients(grads=grads)
-    metrics = compute_metrics(logits, labels, n_classes=model.n_labels)
+    metrics = compute_metrics(logits, batch_y, n_classes=model.n_labels)
     return state, metrics
 
+
+def evaluate_step(
+        state: TrainState,
+        batch_x: jnp.ndarray,
+        batch_y: jnp.ndarray,
+        model: nn.Module) -> Dict[str, jnp.ndarray]:
+
+    logits = model.apply({'params': state.params}, batch_x)
+    return compute_metrics(logits, batch_y, n_classes=model.n_labels)
 
 # =============================================================================
 
@@ -98,31 +107,40 @@ def training_loop(
 
     # JIT-compiled versions with partial application
     jit_train_step = jax.jit(partial(train_step, model=model))
+    jit_evaluate_step = jax.jit(partial(evaluate_step, model=model))
 
     # List to store the losses
-    training_losses = []
+    training_losses, training_accuracy = [], []
+    testing_losses, testing_accuracy = [], []
 
     for iteration, (batch_x, batch_y) in zip(
             range(iterations), data.get_batch(
                 batch_size=batch_size, seed=seed)):
         logging.debug(f"Epoch {iteration+1}/{iterations}")
 
-        # # Shuffle the training data
-        # data = data.permute(rng)
-
-        # for index, (batch_x, batch_y) in enumerate(data.get_batch(batch_size)):
-        state, metrics = jit_train_step(
+        state, metrics_train = jit_train_step(
             state, batch_x, batch_y)
 
         # Store the loss
-        training_losses.append(metrics['loss'])
+        training_losses.append(metrics_train['loss'])
+        training_accuracy.append(metrics_train['accuracy'])
 
         if iteration % 100 == 0:
             logging.debug((
-                f"Step {iteration // batch_size}: loss = {metrics['loss']:.4f}"
-                f", accuracy = {metrics['accuracy']:.4f}"))
+                f"Step {iteration}: loss = {metrics_train['loss']:.4f}"
+                f", accuracy = {metrics_train['accuracy']:.4f}"))
 
-    return ExperimentData(output_data=np.array(training_losses)).to_xarray()
+        metrics_test = jit_evaluate_step(
+            state, data.x_test, data.y_test)
+
+        testing_losses.append(metrics_test['loss'])
+        testing_accuracy.append(metrics_test['accuracy'])
+
+    return (ExperimentData(output_data=np.array(training_losses)).to_xarray(),
+            ExperimentData(output_data=np.array(
+                training_accuracy)).to_xarray(),
+            ExperimentData(output_data=np.array(testing_losses)).to_xarray(),
+            ExperimentData(output_data=np.array(testing_accuracy)).to_xarray())
 
 
 def training_multiple_realizations(
