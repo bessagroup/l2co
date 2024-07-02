@@ -85,7 +85,7 @@ class CNN_MNIST1D(nn.Module):
 
     @nn.compact
     def __call__(self, x):
-        x = x.reshape((-1, 1, x.shape[-1]))
+        # x = x.reshape((-1, 1, x.shape[-1]))
         x = nn.relu(nn.Conv(features=self.channels, kernel_size=(5,),
                             strides=(2,), padding='same',
                             kernel_init=normal_initializer,
