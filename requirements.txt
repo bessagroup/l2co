@@ -10,3 +10,4 @@ opfunu @ git+https://github.com/mpvanderschelling/opfunu@master
 pflacco
 NetCDF4
 tqdm
+imbalanced-learn
