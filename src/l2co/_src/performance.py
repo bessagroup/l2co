@@ -123,13 +123,17 @@ def scaling(data: xr.Dataset) -> xr.DataArray:
     xr.DataArray
         The performance values
     """
+
+    # 0. unstack the data
+    data_ = data.unstack('problem')
+
     # 1. Calculate cumulative minimum (quality indictor value)
-    data['output_cummin'] = output_cummin(data.output)
+    data_['output_cummin'] = output_cummin(data_.output)
 
     # 2. Make sure the loss is non-negative
-    y_min = data.output_cummin.min(dim=['optimizer', 'iterations']).where(
-        data.output_cummin.min(dim=['optimizer', 'iterations']) < 0.0, 0.0)
-    ds_positive = data['output_cummin'] - y_min.min('realization')
+    y_min = data_.output_cummin.min(dim=['optimizer', 'iterations']).where(
+        data_.output_cummin.min(dim=['optimizer', 'iterations']) < 0.0, 0.0)
+    ds_positive = data_['output_cummin'] - y_min.min('realization')
 
     # 3. Make sure the loss is non-zero
     ds_add_to_become_non_zero = (
@@ -157,7 +161,7 @@ def scaling(data: xr.Dataset) -> xr.DataArray:
         return np.reshape(
             scaler.transform(arr.flatten().reshape(-1, 1)), arr.shape)
 
-    return xr.apply_ufunc(
+    performance = xr.apply_ufunc(
         scale, ds_log10_positive,
         ds_log10_positive.min(
             dim=['optimizer', 'iterations', 'output_dim', 'realization']),
@@ -169,6 +173,10 @@ def scaling(data: xr.Dataset) -> xr.DataArray:
         dask='parallelized',
         dask_gufunc_kwargs={'allow_rechunk': True}
     )
+
+    return performance.stack(
+        problem=('realization', 'itemID')).sel(
+            problem=data.problem, output_dim='y', drop=True)
 
 
 def add_random_samples_combinations(

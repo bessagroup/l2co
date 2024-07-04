@@ -170,6 +170,7 @@ class Stage0Model():
         y : Any
             The labels in array-like structure
         """
+        y = y.loc[:, y.any()]
         self.clf.fit(X, y)
 
     def load(self, path: str):
@@ -203,6 +204,8 @@ class Stage0Model():
         """
         Predict the labels for stage 0 for the test data
         """
+
+        y = data_test.y_binary()
 
         y_pred_proba = xr.DataArray(
             np.array(self.predict_proba(data_test.X.to_pandas()))[

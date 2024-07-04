@@ -7,6 +7,13 @@ set_size
     Set figure dimensions to avoid scaling in LaTeX.
 """
 
+from typing import List, Optional
+
+import matplotlib.pyplot as plt
+import xarray as xr
+
+from .data_loader import DataLoader
+
 #
 # =============================================================================
 
@@ -49,3 +56,45 @@ def set_size(width, fraction=1, subplots=(1, 1)):
     fig_height_in = fig_width_in * golden_ratio * (subplots[0] / subplots[1])
 
     return (fig_width_in, fig_height_in)
+
+
+def plot_rtd_profile(d: DataLoader, ax: Optional[plt.Axes] = None,
+                     strategies: Optional[List[xr.DataArray]] = None):
+    _rtd = d.rtd_profile(strategies).to_array('optimizer').mean('problem')
+
+    if ax is None:
+        fig, ax = plt.subplots(
+            1, 1, figsize=set_size(width=345, subplots=(1, 1)))
+    else:
+        fig = ax.get_figure()
+
+    for optimizer in _rtd.optimizer:
+        ax.plot((1-_rtd).sel(optimizer=optimizer), label=optimizer.values)
+
+    ax.legend()
+    ax.set_xlabel('Function evaluations')
+    ax.set_ylabel('Fraction of function, target pairs')
+    ax.set_ylim(0.0, 1.0)
+    return fig, ax
+
+
+def plot_perf_profile(d: DataLoader, ax: Optional[plt.Axes] = None,
+                      strategies: Optional[List[xr.DataArray]] = None):
+    _perf = d.performance_profile(strategies).to_array('optimizer')
+    rel_error = _perf.f * 100 - 100
+
+    if ax is None:
+        fig, ax = plt.subplots(
+            1, 1, figsize=set_size(width=345, subplots=(1, 1)))
+    else:
+        fig = ax.get_figure()
+
+    for optimizer in _perf.optimizer:
+        ax.plot(rel_error, _perf.sel(optimizer=optimizer),
+                label=optimizer.values)
+
+    ax.legend()
+    ax.set_xlabel('Relative error [%]')
+    ax.set_ylabel('Fraction of solved problems')
+    ax.set_ylim(0.0, 1.0)
+    return fig, ax

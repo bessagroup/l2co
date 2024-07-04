@@ -15,6 +15,7 @@ DataLoader
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Iterable, Optional, Tuple
 
 # Third-party
@@ -94,6 +95,47 @@ class DataLoader():
     # =========================================================================
 
     @classmethod
+    def from_saved_files(
+            cls, path: str, config: Optional[str] = None, **kwargs):
+        """
+        Create a data loader from saved files.
+
+        Parameters
+        ----------
+        path : str
+            The path to the saved files.
+
+        Returns
+        -------
+        DataLoader
+            The resulting data loader.
+        """
+        path = Path(path)
+        experimentdata = ExperimentData.from_file(path)
+        data = xr.open_dataset(
+            path / 'entire_dataset.nc',
+            chunks='auto').set_xindex(['realization', 'itemID'])
+
+        _data = data.unstack('problem')
+
+        if (path / 'entire_dataset_samples.nc').exists():
+            data_samples = xr.open_dataset(
+                path / 'entire_dataset_samples.nc', chunks='auto'
+            ).set_xindex(['realization', 'itemID']
+                         ).unstack('problem')
+        else:
+            data_samples = _data
+        _dataloader = cls.from_preprocessed_files(
+            config=config,
+            experimentdata=experimentdata,
+            data=_data,
+            data_samples=data_samples,
+            **kwargs
+        )
+
+        return _dataloader.select_problems(data.problem)
+
+    @classmethod
     def from_preprocessed_files(cls, config: DictConfig,
                                 experimentdata: ExperimentData,
                                 data: xr.Dataset, data_samples: xr.Dataset,
@@ -130,8 +172,6 @@ class DataLoader():
         # remove all values that say 'ERROR' and 'invalid'
         _df_output = _df_output.replace(
             ['ERROR', 'invalid', 'not working'], np.nan)
-        # _df_output = _df_output.replace('invalid', np.nan)
-        # _df_output = _df_output.replace('not working', np.nan)
 
         # remove all experiments where none of the optimizers have finished
         if 'random_samples' in _df_output.columns:
@@ -172,9 +212,11 @@ class DataLoader():
             problem=('realization', 'itemID'))
 
         # New performance idea
-        performance = scaling(data).stack(
-            problem=('realization', 'itemID')).sel(
-            output_dim='y', drop=True)
+        # performance = scaling(data).stack(
+        #     problem=('realization', 'itemID')).sel(
+        #     output_dim='y', drop=True)
+
+        performance = scaling(data_stacked)
 
         performance_stacked = performance.where(
             ~performance.isnull(), other=INVALID_PERFORMANCE_VALUE)
@@ -188,6 +230,29 @@ class DataLoader():
                    experimentdata=experimentdata,
                    data_samples=data_samples_stacked
                    )
+
+    #                                                                   Storing
+    # =========================================================================
+
+    def store(self, path: str, store_samples: bool = False):
+        """
+        Store the data loader to disk.
+
+        Parameters
+        ----------
+        path : str
+            The path to store the data loader.
+        """
+        _path = Path(path)
+        _path.mkdir(parents=True, exist_ok=True)
+
+        self.experimentdata.store(_path)
+
+        if store_samples:
+            self.data_samples.reset_index('problem').to_netcdf(
+                _path / 'entire_dataset_samples.nc')
+
+        self.data.reset_index('problem').to_netcdf(_path / 'entire_dataset.nc')
 
     #                                                                Properties
     # =========================================================================
@@ -359,6 +424,38 @@ class DataLoader():
             data_samples=self.data_samples.sel(problem=_problem_indices)
         )
 
+    def select_t(self, t: int) -> DataLoader:
+        """
+        Select a subset of the data loader at a specific iteration.
+
+        Parameters
+        ----------
+        t : int
+            The iteration to select.
+
+        Returns
+        -------
+        DataLoader
+            The selected data loader.
+        """
+        data = self.data.isel(iterations=range(t))
+        data_samples = self.data_samples.isel(iterations=range(t))
+        performance_t = scaling(data)
+
+        performance_stacked_t = performance_t.where(
+            ~performance_t.isnull(), other=INVALID_PERFORMANCE_VALUE)
+
+        return DataLoader(
+            X=self.X,
+            n_iterations=t,
+            n_realizations=self.n_realizations,
+            performance=performance_stacked_t,
+            data=data,
+            config=self.config,
+            experimentdata=self.experimentdata,
+            data_samples=data_samples
+        )
+
     def query_t(self, t: int) -> DataLoader:
         """
         Query the data loader at a specific iteration.
@@ -477,7 +574,7 @@ class DataLoader():
         kmeans = KMeans(n_clusters=len(initial_centers), random_state=0,
                         init=initial_centers, n_init=1, max_iter=1).fit(X)
         kmeans.cluster_centers_ = initial_centers
-        new_x, new_y = RandomUnderSampler().fit_resample(
+        new_x, new_y = RandomUnderSampler(replacement=True).fit_resample(
             X.problem.values.reshape(-1, 1), kmeans.predict(X))
 
         return self.select_problems(X.sel(problem=new_x.flatten()).problem)
@@ -666,9 +763,15 @@ def create_entire_dataset(experiment_data: ExperimentData):
     l2co_logger.info("Opening the whole thing")
 
     combined_rows = []
+    faulty_experiments = []
 
     for row, values in tqdm(df_output.iterrows(), total=len(df_output)):
-        a = xr.open_mfdataset(values.dropna(), combine='by_coords')
+        try:
+            a = xr.open_mfdataset(values.dropna(), combine='by_coords')
+        except OSError as e:
+            l2co_logger.error(f"Error: {e}")
+            faulty_experiments.append(row)
+            continue
 
         if 'input' in a.data_vars:
             combined_rows.append(a.assign_coords(
@@ -679,10 +782,12 @@ def create_entire_dataset(experiment_data: ExperimentData):
 
         l2co_logger.info(f"Entire dataset: {row}/{len(df_output)}")
 
+    experiment_data.mark(indices=faulty_experiments, status='error')
+
     xarr_full = xr.concat(combined_rows, dim='itemID')
 
     if 'input_dim' in xarr_full.coords:
-        return xarr_full.drop('input_dim')
+        return xarr_full.drop('input_dim'), experiment_data
 
     else:
-        return xarr_full
+        return xarr_full, experiment_data
