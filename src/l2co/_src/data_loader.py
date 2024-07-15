@@ -29,13 +29,14 @@ from imblearn.under_sampling import RandomUnderSampler
 from omegaconf import DictConfig
 from sklearn.cluster import KMeans
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler
 from tqdm import tqdm
 
 # Local
 from ._logging import logger as l2co_logger
 from .content_based import get_labels, get_labels_arbitrary
 from .perf_profile import create_performance_profile
-from .performance import add_random_samples_combinations, query_t, scaling
+from .performance import add_random_samples_combinations, scaling
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -91,8 +92,8 @@ class DataLoader():
         self.experimentdata = experimentdata
         self.data_samples = data_samples
 
-    #                                                  Alternative Constructors
-    # =========================================================================
+#                                                      Alternative Constructors
+# =============================================================================
 
     @classmethod
     def from_saved_files(
@@ -111,18 +112,30 @@ class DataLoader():
             The resulting data loader.
         """
         path = Path(path)
-        experimentdata = ExperimentData.from_file(path)
+        experimentdata = ExperimentData.from_file(
+            path).select_with_status('finished')
         data = xr.open_dataset(
             path / 'entire_dataset.nc',
-            chunks='auto').set_xindex(['realization', 'itemID'])
+            chunks='auto')
+
+        try:
+            data = data.set_xindex(
+                ['realization', 'itemID']).stack('problem')
+        except ValueError:
+            data = data.stack(problem=('realization', 'itemID'))
 
         _data = data.unstack('problem')
 
         if (path / 'entire_dataset_samples.nc').exists():
             data_samples = xr.open_dataset(
                 path / 'entire_dataset_samples.nc', chunks='auto'
-            ).set_xindex(['realization', 'itemID']
-                         ).unstack('problem')
+            )
+            try:
+                data_samples = data_samples.set_xindex(
+                    ['realization', 'itemID']
+                ).unstack('problem')
+            except ValueError:
+                pass
         else:
             data_samples = _data
         _dataloader = cls.from_preprocessed_files(
@@ -231,8 +244,8 @@ class DataLoader():
                    data_samples=data_samples_stacked
                    )
 
-    #                                                                   Storing
-    # =========================================================================
+#                                                                       Storing
+# =============================================================================
 
     def store(self, path: str, store_samples: bool = False):
         """
@@ -254,8 +267,8 @@ class DataLoader():
 
         self.data.reset_index('problem').to_netcdf(_path / 'entire_dataset.nc')
 
-    #                                                                Properties
-    # =========================================================================
+#                                                                    Properties
+# =============================================================================
 
     @property
     def y(self) -> xr.DataArray:
@@ -272,8 +285,10 @@ class DataLoader():
         """
         logger.debug("Creating labels")
 
-        return self.performance.sel(problem=self.problem, drop=True).idxmin(
-            dim='optimizer')
+        # return self.performance.sel(problem=self.problem, drop=True).idxmin(
+        #     dim='optimizer')
+
+        return self.performance.idxmin('optimizer')
 
     @property
     def features(self) -> xr.DataArray:
@@ -313,16 +328,24 @@ class DataLoader():
 
     @lru_cache(maxsize=1)
     def y_binary(self, rel_tolerance: float = 0.1) -> xr.DataArray:
+        _performance_at_last_t = self.performance.isel(
+            iterations=-1, drop=True)
+
         if rel_tolerance == 0.0:
-            return (self.y == self.performance.optimizer).T
+            # return (
+            #     self.performance.idxmin(
+            #         'optimizer') == self.performance.optimizer).T
+            return (_performance_at_last_t.idxmin(
+                'optimizer') == self.performance.optimizer).T
 
-        else:
-            threshold = self.performance.min(
-                dim='optimizer') + abs(
-                    self.performance.min(dim='optimizer') * rel_tolerance)
+        threshold = _performance_at_last_t.min(
+            dim='optimizer') + abs(
+                _performance_at_last_t.min(dim='optimizer') * rel_tolerance)
 
-        return (self.performance <= threshold).sel(
-            problem=self.problem, drop=True).T
+        # return (self.performance <= threshold).sel(
+        #     problem=self.problem, drop=True).T
+
+        return (_performance_at_last_t <= threshold).T
 
     @lru_cache(maxsize=1)
     def X_trajectory(self, iterations: int, t_start: int = 0) -> xr.DataArray:
@@ -342,54 +365,50 @@ class DataLoader():
         xr.DataArray
             The selected trajectory.
         """
-        _X_trajectory = self.data.isel(
-            output_dim=0, iterations=range(t_start, iterations), drop=True
-        ).output.rename('trajectory')
+        X_d = self.data.isel(iterations=range(t_start, iterations), drop=True)
 
-        return xr.apply_ufunc(
-            np.log10, (_X_trajectory - _X_trajectory.min('iterations')
-                       ) + 1.0, dask='parallelized')
+        # 2. Make sure the loss is non-negative
+        y_min = X_d.output.min(dim=['iterations']).where(
+            X_d.output.min(dim=['iterations']) < 0.0, 0.0)
+        ds_positive = X_d.output - y_min
 
-    #                                                         Data manipulation
-    # =========================================================================
-
-    def select_single_optimizers(
-            self, include_random_search: bool = False) -> DataLoader:
-        """
-        Select only the single optimizers.
-
-        Parameters
-        ----------
-        include_random_search : bool, optional
-            Whether to include the random search, by default False
-
-        Returns
-        -------
-        DataLoader
-            The data loader with only the single optimizers.
-        """
-        single_optimizers = [o.values for o in self.performance.optimizer
-                             if '+' not in str(o.values)]
-
-        if include_random_search:
-            single_optimizers += [f'random_samples+{opt}' for opt in
-                                  single_optimizers]
-
-        performance = self.performance.sel(
-            optimizer=single_optimizers)
-
-        data = self.data.sel(optimizer=single_optimizers)
-
-        return DataLoader(
-            X=self.X,
-            n_iterations=self.n_iterations,
-            n_realizations=self.n_realizations,
-            performance=performance,
-            data=data,
-            config=self.config,
-            experimentdata=self.experimentdata,
-            data_samples=self.data_samples
+        # 3. Make sure the loss is non-zero
+        ds_add_to_become_non_zero = (
+            ds_positive.min(dim='iterations') == 0.0).where(
+            (~(ds_positive.min(dim='iterations') == 0.0)
+             ), other=ds_positive.where(
+                ds_positive > 0.0).min(
+                dim='iterations')
         )
+
+        ds_positive += ds_add_to_become_non_zero
+
+        # 4. Take the base 10 logarithm of the data
+        ds_log10_positive = np.log10(ds_positive)
+
+        # 5. Scale the data
+        def scale(arr: np.ndarray) -> np.ndarray:
+            return np.reshape(MinMaxScaler().fit_transform(
+                arr.flatten().reshape(-1, 1)), arr.shape)
+
+        performance: xr.DataArray = xr.apply_ufunc(
+            scale, ds_log10_positive,
+            input_core_dims=[
+                ['iterations', 'output_dim']],
+            output_core_dims=[['iterations', 'output_dim']],
+            vectorize=True,
+            dask='parallelized',
+            dask_gufunc_kwargs={'allow_rechunk': True}
+        )
+
+        return performance.isel(
+            output_dim=0, drop=True).rename(
+                'trajectory').transpose(
+                    'optimizer', 'iterations', 'problem')
+
+
+#                                                            Selecting problems
+# =============================================================================
 
     def select_problems(self, problem_indices: xr.DataArray) -> DataLoader:
         """
@@ -424,109 +443,30 @@ class DataLoader():
             data_samples=self.data_samples.sel(problem=_problem_indices)
         )
 
-    def select_t(self, t: int) -> DataLoader:
-        """
-        Select a subset of the data loader at a specific iteration.
+    def balance(self, remove_highest_std: Optional[int] = None) -> DataLoader:
+        rtd = self.rtd_profile().to_array(
+            dim='optimizer').T.isel(iterations=-1).compute()
 
-        Parameters
-        ----------
-        t : int
-            The iteration to select.
+        if remove_highest_std is not None:
+            X = rtd[rtd.std('optimizer').argsort().values][
+                remove_highest_std:]
+        else:
+            X = rtd[rtd.std('optimizer').argsort().values]
 
-        Returns
-        -------
-        DataLoader
-            The selected data loader.
-        """
-        data = self.data.isel(iterations=range(t))
-        data_samples = self.data_samples.isel(iterations=range(t))
-        performance_t = scaling(data)
+        initial_centers = np.array([
+            [0., 0., 0., 1.],  # 1
+            [0., 0., 1., 0.],  # 2
+            [0., 1., 0., 0.],  # 4
+            [1., 0., 0., 0.],  # 8
+        ])
 
-        performance_stacked_t = performance_t.where(
-            ~performance_t.isnull(), other=INVALID_PERFORMANCE_VALUE)
+        kmeans = KMeans(n_clusters=len(initial_centers), random_state=0,
+                        init=initial_centers, n_init=1, max_iter=1).fit(X)
+        kmeans.cluster_centers_ = initial_centers
+        new_x, new_y = RandomUnderSampler(replacement=True).fit_resample(
+            X.problem.values.reshape(-1, 1), kmeans.predict(X))
 
-        return DataLoader(
-            X=self.X,
-            n_iterations=t,
-            n_realizations=self.n_realizations,
-            performance=performance_stacked_t,
-            data=data,
-            config=self.config,
-            experimentdata=self.experimentdata,
-            data_samples=data_samples
-        )
-
-    def query_t(self, t: int) -> DataLoader:
-        """
-        Query the data loader at a specific iteration.
-
-        Parameters
-        ----------
-        t : int
-            The iteration to query.
-
-        Returns
-        -------
-        DataLoader
-            The queried data loader.
-        """
-        performance_t = query_t(self.performance, t=t)
-        data = self.data.sel(iterations=range(t))
-        return DataLoader(
-            X=self.X,
-            n_iterations=t,
-            n_realizations=self.n_realizations,
-            performance=performance_t,
-            data=data,
-            config=self.config,
-            experimentdata=self.experimentdata,
-            data_samples=self.data_samples
-        )
-
-    def query_optimizer(self, optimizer: str) -> DataLoader:
-        """
-        Query the data loader for a specific optimizer.
-
-        Parameters
-        ----------
-        optimizer : str
-            The optimizer to query.
-
-        Returns
-        -------
-        DataLoader
-            The queried data loader.
-        """
-        filtered_optimizer = np.array(
-            [o for o in self.data.optimizer.values if o.startswith(optimizer)],
-            dtype=object
-        )
-
-        data_selected = self.data.sel(optimizer=optimizer)
-
-        n_iterations = self.n_iterations
-        n_realizations = self.n_realizations
-
-        # Config
-        config = self.config
-
-        # Performance
-        performance = self.performance.sel(
-            optimizer=filtered_optimizer).assign_coords(
-            optimizer=np.array(
-                [o.split('+')[-1] if '+' in o else o
-                 for o in filtered_optimizer], dtype=object))
-
-        return DataLoader(
-            X=self.X,
-            n_iterations=n_iterations,
-            n_realizations=n_realizations,
-            performance=performance,
-            data=data_selected,
-            config=config,
-            experimentdata=self.experimentdata,
-            data_samples=self.data_samples
-        )
+        return self.select_problems(X.sel(problem=new_x.flatten()).problem)
 
     def train_test_split(
             self,
@@ -554,33 +494,153 @@ class DataLoader():
         return (self.select_problems(_X_train_indices),
                 self.select_problems(_X_test_indices))
 
-    def balance(self, remove_highest_std: Optional[int] = None) -> DataLoader:
-        rtd = self.query_t(self.n_iterations - 1).rtd_profile().to_array(
-            dim='optimizer').T.compute()
+#                                                          Selecting iterations
+# =============================================================================
 
-        if remove_highest_std is not None:
-            X = rtd[rtd.std('optimizer').argsort().values][
-                remove_highest_std:]
-        else:
-            X = rtd[rtd.std('optimizer').argsort().values]
+    def select_t(self, t: int, t_start: Optional[int] = 0) -> DataLoader:
+        """
+        Select a subset of the data loader at a specific iteration.
 
-        initial_centers = np.array([
-            [0., 0., 0., 1.],  # 1
-            [0., 0., 1., 0.],  # 2
-            [0., 1., 0., 0.],  # 4
-            [1., 0., 0., 0.],  # 8
-        ])
+        Parameters
+        ----------
+        t : int
+            The iteration to select.
 
-        kmeans = KMeans(n_clusters=len(initial_centers), random_state=0,
-                        init=initial_centers, n_init=1, max_iter=1).fit(X)
-        kmeans.cluster_centers_ = initial_centers
-        new_x, new_y = RandomUnderSampler(replacement=True).fit_resample(
-            X.problem.values.reshape(-1, 1), kmeans.predict(X))
+        Returns
+        -------
+        DataLoader
+            The selected data loader.
+        """
+        data = self.data.isel(iterations=range(t_start, t))
+        data_samples = self.data_samples.isel(iterations=range(t_start, t))
+        performance_t = scaling(data)
 
-        return self.select_problems(X.sel(problem=new_x.flatten()).problem)
+        performance_stacked_t = performance_t.where(
+            ~performance_t.isnull(), other=INVALID_PERFORMANCE_VALUE)
 
-    #                                                       Performance metrics
-    # =========================================================================
+        return DataLoader(
+            X=self.X,
+            n_iterations=t-t_start,
+            n_realizations=self.n_realizations,
+            performance=performance_stacked_t,
+            data=data,
+            config=self.config,
+            experimentdata=self.experimentdata,
+            data_samples=data_samples
+        )
+
+
+#                                                          Selecting optimizers
+# =============================================================================
+
+    def select_single_optimizers(
+            self, include_random_search: bool = False) -> DataLoader:
+        """
+        Select only the single optimizers.
+
+        Parameters
+        ----------
+        include_random_search : bool, optional
+            Whether to include the random search, by default False
+
+        Returns
+        -------
+        DataLoader
+            The data loader with only the single optimizers.
+        """
+        single_optimizers = [o.values for o in self.performance.optimizer
+                             if '+' not in str(o.values)]
+
+        if include_random_search:
+            single_optimizers += [f'random_samples+{opt}' for opt in
+                                  single_optimizers]
+
+        return self.select_optimizer(single_optimizers)
+
+    def select_optimizer(self, optimizers: Iterable[str] | str) -> DataLoader:
+        """
+        Select a specific optimizer.
+
+        Parameters
+        ----------
+        optimizer : str
+            The optimizer to select.
+
+        Returns
+        -------
+        DataLoader
+            The data loader with only the selected optimizer.
+        """
+        if isinstance(optimizers, str):
+            optimizers = [optimizers]
+
+        data_selected = self.data.sel(optimizer=optimizers)
+        performance = self.performance.sel(optimizer=optimizers)
+
+        return DataLoader(
+            X=self.X,
+            n_iterations=self.n_iterations,
+            n_realizations=self.n_realizations,
+            performance=performance,
+            data=data_selected,
+            config=self.config,
+            experimentdata=self.experimentdata,
+            data_samples=self.data_samples
+        )
+
+    def query_optimizer(self, optimizer: str) -> DataLoader:
+        """
+        Query the data loader for a specific optimizer.
+
+        Parameters
+        ----------
+        optimizer : str
+            The optimizer to query.
+
+        Returns
+        -------
+        DataLoader
+            The queried data loader.
+        """
+        filtered_optimizer = np.array(
+            [o for o in self.data.optimizer.values if o.startswith(optimizer)],
+            dtype=object
+        )
+        # data_selected = self.data.sel(optimizer=[optimizer])
+        data_selected = self.data.sel(
+            optimizer=filtered_optimizer).assign_coords(
+            optimizer=np.array(
+                [o.split('+')[-1] if '+' in o else o
+                 for o in filtered_optimizer], dtype=object))
+
+        n_iterations = self.n_iterations
+        n_realizations = self.n_realizations
+
+        # Config
+        config = self.config
+
+        # Performance
+        performance = self.performance.sel(
+            optimizer=filtered_optimizer).assign_coords(
+            optimizer=np.array(
+                [o.split('+')[-1] if '+' in o else o
+                 for o in filtered_optimizer], dtype=object))
+
+        return DataLoader(
+            X=self.X,
+            n_iterations=n_iterations,
+            n_realizations=n_realizations,
+            performance=performance,
+            data=data_selected,
+            config=config,
+            experimentdata=self.experimentdata,
+            data_samples=self.data_samples
+        )
+
+
+#                                                           Performance metrics
+# =============================================================================
+
 
     def performance_profile(
             self, strategies: Optional[Iterable[xr.DataArray]] = None
@@ -588,15 +648,6 @@ class DataLoader():
 
         if strategies is None:
             strategies = []
-
-        # # self.data = self.data.sortby('problem')
-        # best_perf_profile = self.query_t(
-        #     self.n_iterations-1).y.rename('best_perf_profile')
-        # worst_perf_profile = self.query_t(
-        #     self.n_iterations-1).performance.idxmax(
-        #         dim='optimizer').rename('worst_perf_profile')
-
-        # _strategies = [best_perf_profile, worst_perf_profile, *strategies]
 
         _strategies = [*strategies]
 
@@ -609,8 +660,7 @@ class DataLoader():
 
     def rtd_profile(
             self, strategies: Optional[Iterable[xr.DataArray]] = None,
-            targets: Optional[np.array] = None
-    ) -> xr.Dataset:
+            targets: Optional[np.array] = None) -> xr.Dataset:
 
         if strategies is None:
             strategies = []
@@ -631,8 +681,8 @@ class DataLoader():
 
         return rtd
 
-    #                                                                  Plotting
-    # =========================================================================
+#                                                                      Plotting
+# =============================================================================
 
     def plot_performance_labels(
             self,

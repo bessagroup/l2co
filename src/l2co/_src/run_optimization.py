@@ -25,7 +25,7 @@ from functools import lru_cache, wraps
 from itertools import product
 from multiprocessing import get_start_method, set_start_method
 from time import perf_counter
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # Third-party
 import numpy as np
@@ -34,7 +34,7 @@ from f3dasm import ExperimentData
 from f3dasm._src.datageneration.functions.function_factory import \
     _datagenerator_factory
 from f3dasm._src.optimization.optimizer_factory import OPTIMIZER_MAPPING
-from f3dasm.design import make_nd_continuous_domain
+from f3dasm.design import Domain, make_nd_continuous_domain
 from pathos.helpers import mp
 
 # Local
@@ -173,29 +173,119 @@ def run_multiple_realizations(
                 f"{name}: "
                 f"({perf_counter() - start_timer:.2f} s)")
 
-    xarr = _listexperimentdata_to_dataset(histories)
+    xarr_histories = _listexperimentdata_to_dataset(histories)
 
     # Add attributes
-    xarr.attrs['number_of_samples']: int = n_samples
-    xarr.attrs['realization_seeds']: List[int] = [
+    xarr_histories.attrs['number_of_samples'] = n_samples
+    xarr_histories.attrs['realization_seeds'] = [
         seed + index for index in range(realizations)]
 
     # Benchmark functions
-    xarr.attrs['function_seed']: int = seed
-    xarr.attrs['function_name']: str = data_generator
-    xarr.attrs['function_noise']: str = noise
-    xarr.attrs['function_dimensionality']: int = dimensionality
+    xarr_histories.attrs['function_seed'] = seed
+    xarr_histories.attrs['function_name'] = data_generator
+    xarr_histories.attrs['function_noise'] = noise
+    xarr_histories.attrs['function_dimensionality'] = dimensionality
 
     # Global minimum function
     func = _datagenerator_factory(data_generator, domain=domain, kwargs=kwargs)
     _, g = func.get_global_minimum(d=dimensionality)
-    xarr.attrs['function_global_minimum']: float = float(
+    xarr_histories.attrs['function_global_minimum'] = float(
         np.array(g if not isinstance(g, list) else g[0])[0, 0])
 
     # Add another dimension with coordinate to xarr
-    xarr = xarr.assign_coords({'optimizer': [name]})
+    xarr_histories = xarr_histories.assign_coords({'optimizer': [name]})
 
-    return xarr
+    return xarr_histories
+
+
+def run_multiple_realizations_continuing_from_file(
+    optimizer_scheduler: OptimizerScheduler,
+    data_generator: str,
+    sampler: str,
+    realizations: int,
+    dimensionality: int,
+    noise: float,
+    offset: bool,
+    n_samples: int,
+    parallelization: bool,
+    seed: int,
+    best_solutions: xr.Dataset,
+    histories: xr.Dataset,
+    results: xr.Dataset,
+) -> xr.Dataset:
+
+    start_timer = perf_counter()
+
+    name = _get_name_from_scheduler(optimizer_scheduler)
+
+    _optimizer_scheduler = deepcopy(optimizer_scheduler)
+
+    first_optimizer, first_iterations, _ = _optimizer_scheduler.pop(0)
+
+    domain = make_nd_continuous_domain(bounds=np.tile(
+        [0., 1.], (dimensionality, 1)), dimensionality=dimensionality)
+
+    domain.add_output(name='y', to_disk=False, exist_ok=True)
+
+    # open files and convert to List[ExperimentData]
+    list_results = _dataset_to_listexperimentdata(
+        dataset=results, domain=domain)
+
+    list_best_solutions = _dataset_to_listexperimentdata(
+        dataset=best_solutions, domain=domain)
+
+    list_histories = _dataset_to_listexperimentdata(
+        dataset=histories, domain=domain, has_input=False)
+
+    # SECOND OPTIMIZER
+
+    kwargs = {'seed': seed,
+              'scale_bounds': domain.get_bounds(),
+              'noise': noise,
+              'offset': offset}
+
+    for optimizer, n_iterations, x0_selection in _optimizer_scheduler:
+        (list_results, list_histories,
+         list_best_solutions) = run_second_multiple_realizations(
+            results=list_results, optimizer=optimizer,
+            data_generator=data_generator,
+            kwargs=kwargs, n_iterations=n_iterations,
+            x0_selection=x0_selection,
+            parallelization=parallelization,
+            sampler=sampler,
+            best_solutions=list_best_solutions,
+            histories=list_histories,
+        )
+
+    logger.info(f"Optimized {dimensionality}D {data_generator} function with "
+                f"{name}: "
+                f"({perf_counter() - start_timer:.2f} s)")
+
+    xarr_histories = _listexperimentdata_to_dataset(list_histories)
+    xarr_results = _listexperimentdata_to_dataset(list_results)
+    xarr_best_solutions = _listexperimentdata_to_dataset(list_best_solutions)
+
+    # Add attributes
+    xarr_histories.attrs['number_of_samples'] = n_samples
+    xarr_histories.attrs['realization_seeds'] = [
+        seed + index for index in range(realizations)]
+
+    # Benchmark functions
+    xarr_histories.attrs['function_seed'] = seed
+    xarr_histories.attrs['function_name'] = data_generator
+    xarr_histories.attrs['function_noise'] = noise
+    xarr_histories.attrs['function_dimensionality'] = dimensionality
+
+    # Global minimum function
+    func = _datagenerator_factory(data_generator, domain=domain, kwargs=kwargs)
+    _, g = func.get_global_minimum(d=dimensionality)
+    xarr_histories.attrs['function_global_minimum'] = float(
+        np.array(g if not isinstance(g, list) else g[0])[0, 0])
+
+    # Add another dimension with coordinate to xarr
+    xarr_histories = xarr_histories.assign_coords({'optimizer': [name]})
+
+    return xarr_results, xarr_histories, xarr_best_solutions
 
 
 def run_second_multiple_realizations(
@@ -321,6 +411,7 @@ def _run_second_optimizer(data: ExperimentData, index: int,
         nonlocal history
         nonlocal best_solution
         history += data.get_output_data()
+        # history += data
 
         trial_solution = data.get_n_best_output(1)
 
@@ -780,6 +871,7 @@ def _run_single_optimizer(
         nonlocal best_solution
         nonlocal experimentdata_callback
         experimentdata_callback += data.get_output_data()
+        # experimentdata_callback += data
 
         trial_solution = data.get_n_best_output(1)
 
@@ -814,80 +906,6 @@ def _run_single_optimizer(
         range(n_iterations + n_samples))
 
     return [data, experimentdata_callback, best_solution]
-
-
-# def experiment_two_optimizers(
-#     optimizers: List[str],
-#     data_generator: str,
-#     sampler: str,
-#     realizations: int,
-#     iterations: int,
-#     dimensionality: int,
-#     n_samples: int = 30,
-#     parallelization: bool = True,
-#     seed: Optional[int] = None,
-#     noise: float = 0.0,
-#     offset: bool = True,
-# ) -> xr.Dataset:
-#     """
-#     Experiment where we find all combinations of two optimizers and run them\
-#     each for half of the total budget over many realizations.
-
-#     Parameters
-#     ----------
-#     optimizers : List[str]
-#         list of optimizer names to use
-#     data_generator : str
-#         name of the benchmark function
-#     sampler : str
-#         name of the sampling technique
-#     realizations : int
-#         number of realizations
-#     iterations : int
-#         total number of iterations
-#     dimensionality : int
-#         number of input dimensions of the problem
-#     n_samples : int, optional
-#         number of initial samples, by default 30
-#     parallelization : bool, optional
-#         if True, run the realizations in parallel, by default True
-#     seed : int, optional
-#         seed for the pseudo-random number generator, by default None
-#     noise : float, optional
-#         standard deviation of Gaussian noise on the objective, by default 0.0
-#     offset : bool, optional
-#         if True, the function is offset by a random vector, by default True
-
-#     Returns
-#     -------
-#     xr.Dataset
-#         xarray Dataset containing the results of the experiment
-
-#     Notes
-#     -----
-#     Additional arguments of the benchmark function are stored in the xarray\
-#     Dataset as attributes.
-
-#     If no seed is given, a seed is randomly generator and stored between\
-#     0 and 1e5.
-#     """
-
-#     seed = seed if seed is not None else np.random.randint(0, 1e5)
-
-#     optimizer_schedulers = _get_all_combinations(optimizers, iterations)
-
-#     return xr.concat([run_multiple_realizations(
-#         optimizer_scheduler=optimizer_schedulers,
-#         data_generator=data_generator,
-#         sampler=sampler,
-#         realizations=realizations,
-#         dimensionality=dimensionality,
-#         noise=noise,
-#         offset=offset,
-#         n_samples=n_samples,
-#         parallelization=parallelization,
-#         seed=seed)
-#         for optimizer_schedulers in optimizer_schedulers], dim='optimizer')
 
 
 # =============================================================================
@@ -958,8 +976,6 @@ def _get_scheduler(
 
     i_0 = int(iterations // (1/switch))
     i_1 = iterations - i_0
-    # i_0 = (iterations // 2)
-    # i_1 = iterations // 2 + (iterations % 2)
 
     if optimizer_1 == optimizer_2:
         return [(optimizer_1, iterations, first_x0)]
@@ -1057,6 +1073,38 @@ def _listexperimentdata_to_dataset(
     return xr.concat([r.to_xarray() for r in results],
                      dim=xr.DataArray(np.arange(len(results)),
                                       dims='realization'))
+
+
+def _dataset_to_listexperimentdata(
+        dataset: xr.Dataset,
+        domain: Optional[Domain] = None,
+        has_input: bool = True) -> List[ExperimentData]:
+    """
+    Convert an xarray Dataset to a list of ExperimentData
+
+    Parameters
+    ----------
+    dataset : xr.Dataset
+        xarray Dataset
+
+    Returns
+    -------
+    List[f3dasm.ExperimentData]
+        List of optimization results in ExperimentData format
+    """
+    if has_input:
+        return [ExperimentData(
+            input_data=dataset.isel(realization=r).input.to_pandas(),
+            output_data=dataset.isel(
+                realization=r).output.to_pandas(),
+            domain=domain) for r in dataset.realization
+        ]
+    else:
+        return [ExperimentData(
+            output_data=dataset.isel(
+                realization=r).output.to_pandas(),
+        ) for r in dataset.realization
+        ]
 
 
 # =============================================================================

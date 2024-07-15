@@ -43,42 +43,6 @@ __credits__ = ['Martin van der Schelling']
 __status__ = 'Planning'
 # =============================================================================
 
-
-# def combine_stage0_stage1_predictions(
-#         stage0_predictions: pd.DataFrame,
-#         stage1_predictions: pd.DataFrame) -> xr.DataArray:
-#     """
-#     Combine the stage0 and stage1 predictions
-
-#     Parameters
-#     ----------
-#     stage0_predictions : pd.DataFrame
-#         The stage0 predictions
-#     stage1_predictions : pd.DataFrame
-#         The stage1 predictions
-
-#     Returns
-#     -------
-#     xr.DataArray
-#         The combined predictions
-#     """
-
-#     # Combine the stage0 and stage1 predictions
-#     df = pd.DataFrame({'stage0': stage0_predictions,
-#                        'stage1': stage1_predictions})
-
-#     # Custom function to apply to each row
-#     def string_concatenation(row):
-#         if row['stage0'] == row['stage1']:
-#             return row['stage0']  # Return the first column name
-#         else:
-#             # Concatenate values with a + sign
-#             return f"{row['stage0']}+{row['stage1']}"
-
-#     # Apply the custom function to each row
-#     result_series = df.apply(string_concatenation, axis=1)
-#     return xr.DataArray(result_series)
-
 #                                                                Protocol class
 # =============================================================================
 
@@ -138,33 +102,20 @@ class Stage1Model:
         self.t_switch = t_switch
         self.rel_tolerance = rel_tolerance
 
-    def preprocess_data(
-        self, data: DataLoader, optimizer: str, seed: Optional[int] = None
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def preprocess_data(self, data: DataLoader, optimizer: str
+                        ) -> Tuple[np.ndarray, np.ndarray]:
+        da_X = data.select_optimizer(optimizer).select_t(
+            self.t_switch, t_start=self.t_start).X_trajectory(
+            self.t_switch, t_start=self.t_start).dropna('problem')
+        da_y = data.query_optimizer(optimizer).select_problems(
+            da_X.problem).y_binary(self.rel_tolerance)
 
-        data_train, data_val = data.train_test_split(
-            test_size=0.2, random_state=seed)
+        X = np.atleast_3d(da_X)
+        X = np.transpose(X, (2, 1, 0))
 
-        da_train = data_train.X_trajectory(
-            iterations=self.t_switch, t_start=self.t_start).dropna('problem')
+        y = np.atleast_2d(da_y.astype(int))
 
-        da_val = data_val.X_trajectory(
-            iterations=self.t_switch, t_start=self.t_start).dropna('problem')
-
-        X_train = np.atleast_3d(da_train)
-        X_val = np.atleast_3d(da_val)
-
-        X_train = np.transpose(X_train, (1, 0, 2))
-        X_val = np.transpose(X_val, (1, 0, 2))
-
-        y_train = np.atleast_2d(data_train.y_binary(
-            self.rel_tolerance).sel(
-                problem=da_train.problem.values).astype(int))
-        y_val = np.atleast_2d(data_val.y_binary(
-            self.rel_tolerance).sel(
-                problem=da_val.problem.values).astype(int))
-
-        return X_train, y_train, X_val, y_val
+        return X, y
 
     def train(self, data_train: DataLoader,
               batch_size: int, epochs: int,
@@ -181,13 +132,13 @@ class Stage1Model:
         epochs : int
             The number of epochs
         """
+        d_train, d_val = data_train.train_test_split(
+            test_size=0.2, random_state=42
+        )
 
         for optimizer in self.optimizers.values:
-            _d_train = data_train.query_optimizer(optimizer).query_t(
-                self.iterations)
-
-            X_train, y_train, X_val, y_val = self.preprocess_data(
-                _d_train, optimizer)
+            X_train, y_train = self.preprocess_data(d_train, optimizer)
+            X_val, y_val = self.preprocess_data(d_val, optimizer)
 
             self.models[optimizer].train(X_train, y_train, X_val, y_val,
                                          epochs=epochs, batch_size=batch_size,
@@ -212,18 +163,20 @@ class Stage1Model:
             problems = stage0_predictions.where(
                 stage0_predictions == optimizer, drop=True).problem
 
-            _d_test = data_test.query_optimizer(
-                optimizer).query_t(self.iterations).select_problems(problems)
+            data_selected = data_test.select_problems(problems)
 
-            X_test = np.atleast_3d(_d_test.X_trajectory(
-                iterations=self.t_switch, t_start=self.t_start))
-            X_test = np.transpose(X_test, (1, 0, 2))
+            da_X_train = data_selected.select_optimizer(optimizer).select_t(
+                self.t_switch, t_start=self.t_start).X_trajectory(
+                    self.t_switch, t_start=self.t_start)
+
+            X_test = np.atleast_3d(da_X_train)
+            X_test = np.transpose(X_test, (2, 1, 0))
 
             list_y_pred_stage1.append(xr.DataArray(
                 self.models[optimizer].predict(X_test),
                 dims=['problem', 'optimizer'],
-                coords={'optimizer': _d_test.optimizers,
-                        'problem': _d_test.problem})
+                coords={'optimizer': self.optimizers,
+                        'problem': data_selected.problem})
             )
 
         stage1_predictions = xr.concat(
@@ -414,8 +367,8 @@ class ELAClassifier(Stage1Model):
 
         X_train = X_train.sel(problem=data_train.problem)
 
-        y_train = data_train.select_single_optimizers().query_t(
-            self.iterations).y_binary(self.rel_tolerance)
+        y_train = data_train.select_single_optimizers().y_binary(
+            self.rel_tolerance)
 
         y_train = y_train.sel(problem=X_train.problem)
 
@@ -451,8 +404,7 @@ class ELAClassifier(Stage1Model):
         """
         Protocol method for predicting
         """
-        y_shape = data_test.select_single_optimizers().query_t(
-            self.iterations).y_binary()
+        y_shape = data_test.select_single_optimizers().y_binary()
 
         X_test = features.load().stack(problem=('realization', 'itemID'))
         X_test = xr.where(np.isinf(X_test), np.nan, X_test)

@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import xarray as xr
 from f3dasm import ExperimentData, logger
 from f3dasm.datageneration import DataGenerator
-from f3dasm.hydra import update_config_with_experiment_sample
+from f3dasm.hydra_tools import update_config_with_experiment_sample
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
@@ -54,29 +54,18 @@ class RecommendOptimizer(DataGenerator):
             config.data.testing_project_dir
         ) if config.data.testing_project_dir is not None else None
 
-        experimentdata_train = ExperimentData.from_file(training_project_dir)
-
-        _, df_output = experimentdata_train.to_pandas()
-        experimentdata_train.select(
-            df_output.index[~(df_output == 'invalid').any(axis=1)])
-
-        data_train = xr.open_dataset(
-            training_project_dir / "entire_dataset.nc", chunks='auto')
-        data_samples_train = xr.open_dataset(
-            training_project_dir / 'entire_dataset_samples.nc', chunks='auto')
-
         t = perf_counter()
-        d_train = DataLoader.from_preprocessed_files(
-            config={'t_switch': config.t_switch},
-            experimentdata=experimentdata_train,
-            data=data_train,
-            data_samples=data_samples_train)
+
+        d_train = DataLoader.from_saved_files(
+            path=training_project_dir, config=config
+        )
 
         l2co_logger.info(
             f"Loaded training data from {training_project_dir} (took {perf_counter() - t} seconds")
 
+        t = perf_counter()
+
         if testing_project_dir is None:
-            t = perf_counter()
             d_train, d_test = d_train.train_test_split(
                 test_size=config.test_size, random_state=config.seed)
 
@@ -85,40 +74,27 @@ class RecommendOptimizer(DataGenerator):
                 f"(with a test size of {config.test_size} and seed {config.seed} (took {perf_counter() - t} seconds")
             )
         else:
-            experimentdata_test = ExperimentData.from_file(testing_project_dir)
-
-            _, df_output = experimentdata_test.to_pandas()
-            experimentdata_test.select(
-                df_output.index[~(df_output == 'invalid').any(axis=1)])
-
-            data_test = xr.open_dataset(
-                testing_project_dir / "entire_dataset.nc", chunks='auto')
-            data_samples_test = xr.open_dataset(
-                testing_project_dir / 'entire_dataset_samples.nc', chunks='auto')
-            t = perf_counter()
-            d_test = DataLoader.from_preprocessed_files(
-                config={'t_switch': config.t_switch},
-                experimentdata=experimentdata_test,
-                data=data_test,
-                data_samples=data_samples_test)
+            d_test = DataLoader.from_saved_files(
+                path=testing_project_dir, config=config
+            )
 
             l2co_logger.info(
                 f"Loaded testing data from {testing_project_dir} (took {perf_counter() - t} seconds")
 
-        # ELA benchmark
-        ela_test = xr.open_dataarray(
-            Path(config.data.ela_project_dir) / 'ela_test.nc', chunks='auto')
-        ela_train = xr.open_dataarray(
-            Path(config.data.ela_project_dir) / 'ela_train.nc', chunks='auto')
+        # # ELA benchmark
+        # ela_test = xr.open_dataarray(
+        #     Path(config.data.ela_project_dir) / 'ela_test.nc', chunks='auto')
+        # ela_train = xr.open_dataarray(
+        #     Path(config.data.ela_project_dir) / 'ela_train.nc', chunks='auto')
 
-        clf = ELAClassifier(
-            iterations=config.iterations-1,
-            rel_tolerance=config.rel_tolerance,
-            t_switch=config.t_switch)
+        # clf = ELAClassifier(
+        #     iterations=config.iterations-1,
+        #     rel_tolerance=config.rel_tolerance,
+        #     t_switch=config.t_switch)
 
-        clf.train(data_train=d_train, save_model=False, features=ela_train)
-        y_pred_ela = clf.predict(
-            data_test=d_test, features=ela_test).rename('ELA')
+        # clf.train(data_train=d_train, save_model=False, features=ela_train)
+        # y_pred_ela = clf.predict(
+        #     data_test=d_test, features=ela_test).rename('ELA')
 
         trainer = Trainer(
             data_train=d_train,
@@ -134,38 +110,46 @@ class RecommendOptimizer(DataGenerator):
             batch_size=config.batch_size,
             name='trainer')
 
-        print("Created trainer")
+        l2co_logger.info("Created trainer")
 
         # trainer.train()
-        trainer.train_stage0()
-
         t = perf_counter()
-        if config.stage1_clf.path is not None:
-            trainer.load_stage1(config.stage1_clf.path)
+        trainer.train()
+        # trainer.train_stage0()
 
-        else:
-            trainer.train_stage1(save_model=True)
+        # l2co_logger.info(f"Trained trainer (took {perf_counter() - t} seconds")
 
-        l2co_logger.info(f"Trained trainer (took {perf_counter() - t} seconds")
+        # t = perf_counter()
+        # if config.stage1_clf.path is not None:
+        #     trainer.load_stage1(config.stage1_clf.path)
+        #     l2co_logger.info(
+        #         f"Loaded stage1 model from {config.stage1_clf.path}")
 
-        t = perf_counter()
+        # else:
+        #     trainer.train_stage1(save_model=True)
+        #     l2co_logger.info(
+        #         f"Trained stage1 model (took {perf_counter() - t} seconds")
+
+        # # l2co_logger.info(f"Trained trainer (took {perf_counter() - t} seconds")
+
+        # t = perf_counter()
         trainer.predict()
         l2co_logger.info(
             f"Predicted trainer (took {perf_counter() - t} seconds")
 
-        accs = trainer.all_accuracies()
+        # accs = trainer.all_accuracies()
 
-        for key, acc in accs.items():
-            self.experiment_sample.store(object=acc, name=f"accuracy_{key}",
-                                         to_disk=False)
+        # for key, acc in accs.items():
+        #     self.experiment_sample.store(object=acc, name=f"accuracy_{key}",
+        #                                  to_disk=False)
 
-        acc = trainer.accuracy_func(
-            y_true=trainer.data_test.select_single_optimizers().query_t(
-                trainer.iterations).y_binary(config.rel_tolerance),
-            y_pred=trainer.stage0_prediction)
+        # acc = trainer.accuracy_func(
+        #     y_true=trainer.data_test.select_single_optimizers().query_t(
+        #         trainer.iterations).y_binary(config.rel_tolerance),
+        #     y_pred=trainer.stage0_prediction)
 
-        self.experiment_sample.store(
-            object=acc, name='accuracy_first', to_disk=False)
+        # self.experiment_sample.store(
+        #     object=acc, name='accuracy_first', to_disk=False)
 
         self.experiment_sample.store(
             object=trainer.stage0_prediction.reset_index('problem'),
@@ -177,41 +161,41 @@ class RecommendOptimizer(DataGenerator):
             name='stage1_prediction',
             to_disk=True)
 
-        self.experiment_sample.store(
-            object=trainer.data_test.select_single_optimizers().query_t(
-                trainer.iterations).y_binary(config.rel_tolerance).reset_index('problem'),
-            name='y_true_single', to_disk=True)
+        # self.experiment_sample.store(
+        #     object=trainer.data_test.select_single_optimizers().query_t(
+        #         trainer.iterations).y_binary(config.rel_tolerance).reset_index('problem'),
+        #     name='y_true_single', to_disk=True)
 
-        self.experiment_sample.store(
-            object=trainer.data_test.query_t(
-                trainer.iterations).y_binary(config.rel_tolerance).reset_index('problem'),
-            name='y_true_both', to_disk=True)
+        # self.experiment_sample.store(
+        #     object=trainer.data_test.query_t(
+        #         trainer.iterations).y_binary(config.rel_tolerance).reset_index('problem'),
+        #     name='y_true_both', to_disk=True)
 
-        trainer.create_performance_profile(
-            strategies=[trainer.stage1_prediction,
-                        trainer.stage0_prediction,
-                        y_pred_ela])
+        # trainer.create_performance_profile(
+        #     strategies=[trainer.stage1_prediction,
+        #                 trainer.stage0_prediction,
+        #                 y_pred_ela])
 
-        fig, axs = plt.subplots(
-            2, 1, gridspec_kw={'height_ratios': [3, 1]}, figsize=(10, 10))
+        # fig, axs = plt.subplots(
+        #     2, 1, gridspec_kw={'height_ratios': [3, 1]}, figsize=(10, 10))
 
-        _ = trainer.plot_performance_profile(
-            strategies=[trainer.stage1_prediction, trainer.stage0_prediction], strategy_names=['trainer_stage1', 'trainer_stage0'], axes=axs)
+        # _ = trainer.plot_performance_profile(
+        #     strategies=[trainer.stage1_prediction, trainer.stage0_prediction], strategy_names=['trainer_stage1', 'trainer_stage0'], axes=axs)
 
-        self.experiment_sample.store(object=trainer.performance_profile,
-                                     name='performance_profile',
-                                     to_disk=True)
+        # self.experiment_sample.store(object=trainer.performance_profile,
+        #                              name='performance_profile',
+        #                              to_disk=True)
 
-        self.experiment_sample.store(
-            object=float(
-                trainer.performance_profile['trainer_stage1'].sel(f=1.0).values),
-            name='pp_value', to_disk=False)
+        # self.experiment_sample.store(
+        #     object=float(
+        #         trainer.performance_profile['trainer_stage1'].sel(f=1.0).values),
+        #     name='pp_value', to_disk=False)
 
-        self.experiment_sample.store(object=fig, name='performance_profile_fig',
-                                     to_disk=True)
+        # self.experiment_sample.store(object=fig, name='performance_profile_fig',
+        #                              to_disk=True)
 
-        self.experiment_sample.store(
-            object=trainer, name='trainer', to_disk=True)
+        # self.experiment_sample.store(
+        #     object=trainer, name='trainer', to_disk=True)
 
 
 @hydra.main(config_path=".", config_name="config")

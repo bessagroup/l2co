@@ -1,42 +1,49 @@
 defaults:
   - override hydra/job_logging: custom
 
+# domain:
+#   stage0_clf.n_estimators:
+#     type: category
+#     categories: [200] #[10, 50, 100, 200, 500]
+
+#   stage0_clf.learning_rate:
+#     type: category
+#     categories: [0.1] #[0.1, 0.01, 0.5, 1.0]
+
+#   stage0_clf.max_depth:
+#     type: category
+#     categories: [10] #[3, 6, 10]
+
+#   stage0_clf.loss:
+#     type: category
+#     categories: ['log_loss'] #['log_loss', 'exponential']
+
+#   rel_tolerance:
+#     type: category
+#     categories: [0.005] #[0.0, 0.01, 0.1, 0.2]
+
+#   stage1_clf.latent_dim:
+#     type: category
+#     categories: [32] #[16, 32, 64, 128]
+
 domain:
-  stage0_clf.n_estimators:
-    type: category
-    categories: [200] #[10, 50, 100, 200, 500]
-
-  stage0_clf.learning_rate:
-    type: category
-    categories: [0.1] #[0.1, 0.01, 0.5, 1.0]
-
-  stage0_clf.max_depth:
-    type: category
-    categories: [10] #[3, 6, 10]
-
-  stage0_clf.loss:
-    type: category
-    categories: ['log_loss'] #['log_loss', 'exponential']
-
-  rel_tolerance:
-    type: category
-    categories: [0.005] #[0.0, 0.01, 0.1, 0.2]
-
-  stage1_clf.latent_dim:
-    type: category
-    categories: [32] #[16, 32, 64, 128]
+  seed:
+    type: int
+    low: 0
+    high: 1000000
+  
 
 experimentdata:
   from_sampling:
-    sampler: "grid"
+    sampler: random
     seed: 2023
-    n_samples:
+    n_samples: 1
     domain: ${domain}
 
 data:
-  training_project_dir: /media/martin/T7/data/benchmark_0.1
+  training_project_dir: /media/martin/T7/data/4155603
   testing_project_dir:
-  ela_project_dir: /media/martin/T7/data/benchmark_0.1
+  ela_project_dir: /media/martin/T7/data/4155603
 
 seed: 88
 
@@ -55,7 +62,7 @@ n_optimizers: 4
 stage0_clf:
   _target_: sklearn.ensemble.GradientBoostingClassifier
   loss: 'log_loss'
-  learning_rate: 0.1
+  learning_rate: 0.01
   n_estimators: 1000
   max_depth: 6
 

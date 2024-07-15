@@ -85,7 +85,7 @@ class BenchmarkOptimizationRoutine(DataGenerator):
                 continue
 
             if optimizer_scheduler in optimizer_schedulers_sample:
-                result: xr.Dataset = run_multiple_realizations(
+                histories = run_multiple_realizations(
                     optimizer_scheduler=optimizer_scheduler,
                     data_generator=function_name,
                     sampler=self.config.optimization.sampler_name,
@@ -97,21 +97,23 @@ class BenchmarkOptimizationRoutine(DataGenerator):
                     parallelization=self.config.optimization.parallelization,
                     seed=seed)
 
+                name = _get_name_from_scheduler(optimizer_scheduler)
+
                 # If there are nan values in the result, don't store it and log
                 # as invalid
-                if result.output.isnull().any():
+                if histories.output.isnull().any():
                     logger.info(
                         f"Function {function_name} with optimizer "
                         f"{optimizer_scheduler} has nan values. Writing "
                         f"'invalid'")
                     self.experiment_sample.store(
-                        name=_get_name_from_scheduler(optimizer_scheduler),
+                        name=name,
                         object='invalid', to_disk=False)
 
                 else:
                     self.experiment_sample.store(
-                        _get_name_from_scheduler(optimizer_scheduler),
-                        object=result, to_disk=True)
+                        name=name,
+                        object=histories, to_disk=True)
 
         if not isinstance(self.experiment_sample.output_data_with_references[
                 'random_samples'], str):

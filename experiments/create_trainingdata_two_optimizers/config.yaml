@@ -310,8 +310,8 @@ domain:
     value: 200
 
 noise_distribution:
-  - 0.80
-  - 0.20
+  - 0.60
+  - 0.40
 
 experimentdata:
   # from_file: /home/martin/Documents/GitHub/L2CO/experiments/create_trainingdata_two_optimizers/outputs/2024-03-06/16-11-02
