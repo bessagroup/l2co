@@ -43,7 +43,7 @@ class SimpleMLP(nn.Module):
 
         x = nn.Dense(features=self.n_labels, kernel_init=normal_initializer,
                      bias_init=normal_initializer)(x)
-        return nn.log_softmax(x)
+        return nn.sigmoid(x)
 
 
 class CNN(nn.Module):
