@@ -1,5 +1,10 @@
 domain:
-  model.features:
+  model.lstm_features:
+    type: category
+    categories:
+      - 16
+      - 32
+  model.mlp_features:
     type: category
     categories:
       - 16
@@ -25,11 +30,13 @@ optimizer:
   learning_rate: 0.001
 
 data:
-  training_project_dir: /media/martin/T7/data/benchmark_0.1
+  training_project_dir: /media/martin/T7/data/4155603
 
 model:
-  _target_: l2co._src.stage1_model_flax.SimpleLSTM
-  features: 32
+  _target_: l2co._src.stage1_model_flax.HybridModel
+  lstm_features: 32
+  mlp_features: 32
+  mlp_layers: 2
   n_labels: 4
 
 t_start: 0

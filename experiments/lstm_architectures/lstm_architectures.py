@@ -7,7 +7,8 @@ from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
 from l2co._src.computervision.data import Dataset
-from l2co._src.stage1_model_flax import loss_fn_regression, training_loop
+from l2co._src.stage1_model_flax import (loss_fn_regression_hybrid,
+                                         training_loop_hybrid)
 from l2co.data import DataLoader
 
 
@@ -25,18 +26,22 @@ class LSTMArchitectures(DataGenerator):
         model = instantiate(config.model)
         opt = instantiate(config.optimizer)
 
-        for optimizer in self.data.select_single_optimizers().optimizers.values:
-            data = Dataset.from_optimization_trajectory(
+        for optimizer in self.data.select_single_optimizers().optimizers\
+                .values:
+            data_trajectory = Dataset.from_optimization_trajectory(
                 d=self.data, optimizer=optimizer, t=config.t_switch,
-                t_start=config.t_start)
+                t_start=config.t_start, seed=config.seed)
+            data_features = Dataset.from_problem_features(
+                d=self.data, optimizer=optimizer, seed=config.seed)
 
-            state, metrics = training_loop(
+            state, metrics = training_loop_hybrid(
                 model=model,
-                data=data,
+                data_features=data_features,
+                data_trajectory=data_trajectory,
                 iterations=config.iterations,
                 seed=config.seed,
                 batch_size=config.batch_size,
-                loss_fn=loss_fn_regression,
+                loss_fn=loss_fn_regression_hybrid,
                 track_loss=True,
                 optimizer=opt,
             )

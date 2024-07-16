@@ -53,6 +53,60 @@ class SimpleLSTM(nn.Module):
 
         return nn.sigmoid(x)
 
+
+def normal_initializer(rng, shape, dtype):
+    return jax.random.normal(rng, shape, dtype) * 0.01
+
+
+class SimpleMLP(nn.Module):
+    n_features: int
+    n_layers: int
+    n_labels: int
+
+    @nn.compact
+    def __call__(self, x):
+        x = x.reshape((x.shape[0], -1))  # Flatten the input
+
+        for _ in range(self.n_layers):
+            x = nn.Dense(features=self.n_features,
+                         kernel_init=normal_initializer,
+                         bias_init=normal_initializer)(x)
+            x = nn.relu(x)
+
+        x = nn.Dense(features=self.n_labels, kernel_init=normal_initializer,
+                     bias_init=normal_initializer)(x)
+        return nn.sigmoid(x)
+
+
+class HybridModel(nn.Module):
+    lstm_features: int
+    mlp_features: int
+    mlp_layers: int
+    n_labels: int
+
+    def setup(self):
+        self.lstm = SimpleLSTM(
+            features=self.lstm_features, n_labels=self.n_labels)
+        self.mlp = SimpleMLP(n_features=self.mlp_features,
+                             n_layers=self.mlp_layers,
+                             n_labels=self.n_labels)
+
+    @nn.compact
+    def __call__(self, lstm_input, mlp_input):
+        # Pass through LSTM
+        lstm_output = self.lstm(lstm_input)
+
+        # Pass through MLP
+        mlp_output = self.mlp(mlp_input)
+
+        # Concatenate the outputs
+        combined = jnp.concatenate([lstm_output, mlp_output], axis=-1)
+
+        # Final dense layer to map to the desired number of labels
+        combined = nn.Dense(features=self.n_labels)(combined)
+
+        return nn.sigmoid(combined)
+
 # =============================================================================
 
 
@@ -61,6 +115,17 @@ def create_initial_params(rng: jax.random.KeyArray,
                           model: nn.Module) -> Dict[str, Any]:
     dummy_input = jnp.ones(input_shape, jnp.float32)
     variables = model.init({'params': rng}, dummy_input)
+    return variables['params']
+
+
+def create_initial_params_hyrid(rng: jax.random.KeyArray,
+                                input_shape_features: Tuple[int, int],
+                                input_shape_trajectory: Tuple[int, int],
+                                model: nn.Module) -> Dict[str, Any]:
+    dummy_input_features = jnp.ones(input_shape_features, jnp.float32)
+    dummy_input_trajectory = jnp.ones(input_shape_trajectory, jnp.float32)
+    variables = model.init({'params': rng}, dummy_input_features,
+                           dummy_input_trajectory)
     return variables['params']
 
 
@@ -85,6 +150,14 @@ def loss_fn_classification(params, model, batch_x, batch_y):
 
 def loss_fn_regression(params, model, batch_x, batch_y):
     logits = model.apply({'params': params}, batch_x)
+    loss = jnp.mean(softmax_cross_entropy(logits, batch_y))
+    return loss, logits
+
+
+def loss_fn_regression_hybrid(
+        params, model, batch_x_features, batch_x_trajectory, batch_y):
+    logits = model.apply({'params': params},
+                         batch_x_features, batch_x_trajectory)
     loss = jnp.mean(softmax_cross_entropy(logits, batch_y))
     return loss, logits
 
@@ -114,6 +187,38 @@ def evaluate_step(
         model: nn.Module) -> Dict[str, jnp.ndarray]:
 
     logits = model.apply({'params': state.params}, batch_x)
+    return compute_metrics(logits, batch_y, n_classes=model.n_labels)
+
+# =============================================================================
+
+
+def train_step_hybrid(
+    state: TrainState, batch_x_features: jnp.ndarray,
+        batch_x_trajectory: jnp.ndarray,
+        batch_y: jnp.ndarray,
+        model: nn.Module,
+        loss_fn=loss_fn_classification
+) -> Tuple[TrainState, Dict[str, jnp.ndarray]]:
+
+    _loss_fn = partial(loss_fn, model=model, batch_x_features=batch_x_features,
+                       batch_x_trajectory=batch_x_trajectory, batch_y=batch_y)
+
+    grad_fn = jax.value_and_grad(_loss_fn, has_aux=True)
+    (loss, logits), grads = grad_fn(state.params)
+    state = state.apply_gradients(grads=grads)
+    metrics = compute_metrics(logits, batch_y, n_classes=model.n_labels)
+    return state, metrics
+
+
+def evaluate_step_hybrid(
+        state: TrainState,
+        batch_x_features: jnp.ndarray,
+        batch_x_trajectory: jnp.ndarray,
+        batch_y: jnp.ndarray,
+        model: nn.Module) -> Dict[str, jnp.ndarray]:
+
+    logits = model.apply({'params': state.params},
+                         batch_x_features, batch_x_trajectory)
     return compute_metrics(logits, batch_y, n_classes=model.n_labels)
 
 # =============================================================================
@@ -181,6 +286,82 @@ def training_loop(
             metrics['testing_accuracy'].append(metrics_test['accuracy'])
 
     return state, metrics
+
+# =============================================================================
+
+
+def training_loop_hybrid(
+        optimizer: GradientTransformation,
+        model: nn.Module,
+        data_features: Dataset,
+        data_trajectory: Dataset,
+        iterations: int,
+        seed: Optional[int],
+        batch_size: int,
+        loss_fn: Callable,
+        track_loss: bool,
+) -> xr.Dataset:
+
+    if seed is None:
+        seed = np.random.randint(1e6)
+
+    rng = jax.random.PRNGKey(seed)
+    # (1, RESOLUTION, RESOLUTION, 1)
+    input_shape_features = data_features.x_train[0:1].shape
+    input_shape_trajectory = data_trajectory.x_train[0:1].shape
+    params = create_initial_params_hyrid(
+        rng, input_shape_features, input_shape_trajectory, model)
+
+    # Create the TrainState
+    state = TrainState.create(
+        apply_fn=model.apply,
+        params=params,
+        tx=optimizer,
+    )
+
+    # JIT-compiled versions with partial application
+    jit_train_step = jax.jit(
+        partial(train_step_hybrid, model=model, loss_fn=loss_fn))
+    jit_evaluate_step = jax.jit(partial(evaluate_step_hybrid, model=model))
+
+    if track_loss:
+        # List to store the losses
+        metrics = {'training_losses': [], 'training_accuracy': [],
+                   'testing_losses': [], 'testing_accuracy': []}
+
+    else:
+        metrics = None
+
+    for iteration, (
+        batch_x_features, batch_y_features), (
+            batch_x_trajectory, batch_y_trajectory) in zip(
+            range(iterations), data_features.get_batch(
+                batch_size=batch_size, seed=seed), data_trajectory.get_batch(
+                batch_size=batch_size, seed=seed)):
+        logging.debug(f"Epoch {iteration+1}/{iterations}")
+
+        state, metrics_train = jit_train_step(
+            state, batch_x_features, batch_x_trajectory, batch_y_trajectory)
+
+        if track_loss:
+            # Store the loss
+            metrics['training_losses'].append(metrics_train['loss'])
+            metrics['training_accuracy'].append(metrics_train['accuracy'])
+
+        # if iteration % 100 == 0:
+        #     logging.debug((
+        #         f"Step {iteration}: loss = {metrics_train['loss']:.4f}"
+        #         f", accuracy = {metrics_train['accuracy']:.4f}"))
+
+            metrics_test = jit_evaluate_step(
+                state, data_features.x_test,
+                data_trajectory.x_test, data_trajectory.y_test)
+
+            metrics['testing_losses'].append(metrics_test['loss'])
+            metrics['testing_accuracy'].append(metrics_test['accuracy'])
+
+    return state, metrics
+
 
 # =============================================================================
 
@@ -313,7 +494,7 @@ class LSTMFLax():
         self.state, self.metrics = training_loop(
             optimizer=self.optimizer,
             model=self.model,
-            data=data_train,
+            data_features=data_train,
             iterations=iterations,
             seed=seed,
             batch_size=batch_size,

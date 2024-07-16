@@ -134,6 +134,30 @@ class Dataset:
 
         return cls(X_train, X_test, y_train, y_test)
 
+    @classmethod
+    def from_problem_features(
+            cls, d: DataLoader, optimizer: str, seed: Optional[int] = None,
+            train_test_split: bool = True):
+
+        X_features = d.X
+        y_features = d.query_optimizer(
+            optimizer).performance.isel(iterations=-1)
+
+        X = np.expand_dims(X_features.values, axis=-1)
+        Y = y_features.values.T
+
+        # train test split
+        if train_test_split:
+            X_train, X_test, y_train, y_test = sklearn_train_test_split(
+                X, Y, test_size=0.2, random_state=seed)
+        else:
+            X_test = X
+            y_test = Y
+            X_train = None
+            y_train = None
+
+        return cls(X_train, X_test, y_train, y_test)
+
     #                                                   Shuffeling and batching
     # =========================================================================
 
