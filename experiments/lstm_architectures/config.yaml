@@ -1,0 +1,46 @@
+domain:
+  model.features:
+    type: category
+    categories:
+      - 16
+      - 32
+
+  optimizer.learning_rate:
+    type: category
+    categories:
+      - 0.001
+      - 0.01
+      - 0.1
+
+experimentdata:
+  # from_file: /home/martin/Documents/GitHub/L2CO/experiments/create_trainingdata_two_optimizers/outputs/2024-03-06/16-11-02
+  from_sampling:
+    sampler: "random"
+    seed: 2036
+    n_samples: 10
+    domain: ${domain}
+
+optimizer:
+  _target_: optax.adam
+  learning_rate: 0.001
+
+data:
+  training_project_dir: /media/martin/T7/data/benchmark_0.1
+
+model:
+  _target_: l2co._src.stage1_model_flax.SimpleLSTM
+  features: 32
+  n_labels: 4
+
+t_start: 0
+t_switch: 200
+
+iterations: 3000
+seed: 56
+batch_size: 32
+
+mode: cluster
+log_level: 20
+
+hpc:
+  jobid: -1
