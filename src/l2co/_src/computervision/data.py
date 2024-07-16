@@ -15,7 +15,9 @@ from typing import Generator, Iterable, Optional, Tuple
 import numpy as np
 from jax.random import KeyArray, PRNGKey, permutation
 from mnist1d.data import get_dataset_args, make_dataset
-from sklearn.model_selection import KFold, train_test_split
+from sklearn.model_selection import KFold
+from sklearn.model_selection import \
+    train_test_split as sklearn_train_test_split
 from tensorflow.keras.datasets import cifar10, fashion_mnist, mnist
 
 from ..data_loader import DataLoader
@@ -111,21 +113,24 @@ class Dataset:
     @classmethod
     def from_optimization_trajectory(
             cls, d: DataLoader, optimizer: str, t: int, t_start: int = 0,
-            seed: Optional[int] = None):
+            seed: Optional[int] = None, train_test_split: bool = True):
         X_traj = d.select_optimizer(optimizer).select_t(
-            t=t, t_start=t_start).X_trajectory(t, t_start=t_start).dropna(
-                'problem')
-        y_traj = d.query_optimizer(optimizer).select_problems(
-            X_traj.problem).performance.isel(
-            iterations=-1)  # .idxmin('optimizer')
+            t=t, t_start=t_start).X_trajectory(t, t_start=t_start)
+        y_traj = d.query_optimizer(optimizer).performance.isel(
+            iterations=-1)
 
         X = np.expand_dims(X_traj.values.transpose(2, 1, 0), axis=-1)
-        # Y = LabelEncoder().fit_transform(y_traj.values)
         Y = y_traj.values.T
 
         # train test split
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, Y, test_size=0.2, random_state=seed)
+        if train_test_split:
+            X_train, X_test, y_train, y_test = sklearn_train_test_split(
+                X, Y, test_size=0.2, random_state=seed)
+        else:
+            X_test = X
+            y_test = Y
+            X_train = None
+            y_train = None
 
         return cls(X_train, X_test, y_train, y_test)
 

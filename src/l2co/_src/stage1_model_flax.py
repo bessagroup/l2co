@@ -186,8 +186,8 @@ def training_loop(
 
 
 class SingleStage1Model(Protocol):
-    def train(self, data_train: Dataset, iterations: int, seed: int = 0,
-              batch_size: int = 32) -> None:
+    def train(self, data_train: Dataset, iterations: int, seed: int,
+              batch_size: int) -> None:
         ...
 
     def predict(self, data_test: Dataset) -> np.ndarray:
@@ -231,27 +231,33 @@ class Stage1Model_new():
 
             data_selected = data_test.select_problems(problems)
 
-            # da_X_train = data_selected.select_optimizer(optimizer).select_t(
-            #     self.t_switch, t_start=self.t_start).X_trajectory(
-            #         self.t_switch, t_start=self.t_start)
+            data = Dataset.from_optimization_trajectory(
+                d=data_selected, optimizer=optimizer,
+                t=self.t_switch, t_start=self.t_start,
+                train_test_split=False)
 
-            self.models[optimizer].predict(data_test=data_selected)
-
-            # X_test = np.atleast_3d(da_X_train)
-            # X_test = np.transpose(X_test, (2, 1, 0))
-
-            list_y_pred_stage1.append(xr.DataArray(
-                self.models[optimizer].predict(data_selected),
+            predictions = xr.DataArray(
+                self.models[optimizer].predict(data_test=data),
                 dims=['problem', 'optimizer'],
                 coords={'optimizer': self.optimizers,
-                        'problem': data_selected.problem})
+                        'problem': data_selected.problem}
             )
+
+            list_y_pred_stage1.append(predictions)
+
+            # list_y_pred_stage1.append(xr.DataArray(
+            #     self.models[optimizer].predict(data_selected),
+            #     dims=['problem', 'optimizer'],
+            #     coords={'optimizer': self.optimizers,
+            #             'problem': data_selected.problem})
+            # )
 
         stage1_predictions = xr.concat(
             list_y_pred_stage1, dim='problem').sortby('problem')
 
         # Select the optimizer with the highest probability
-        stage1_predictions = stage1_predictions.idxmax(
+        # Select the optimizer with the best performance value
+        stage1_predictions = stage1_predictions.idxmin(
             dim='optimizer').sortby('problem')
 
         def concat_with_plus(opt1, opt2):
@@ -318,4 +324,4 @@ class LSTMFLax():
         logits = self.model.apply(
             {'params': self.state.params}, data_test.x_test)
 
-        return np.array(logits.argmin(-1))
+        return np.array(logits)

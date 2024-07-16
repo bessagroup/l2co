@@ -404,7 +404,8 @@ class DataLoader():
         return performance.isel(
             output_dim=0, drop=True).rename(
                 'trajectory').transpose(
-                    'optimizer', 'iterations', 'problem')
+                    'optimizer', 'iterations', 'problem').fillna(
+                        INVALID_PERFORMANCE_VALUE)
 
 
 #                                                            Selecting problems
