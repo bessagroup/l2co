@@ -12,10 +12,9 @@ from f3dasm.design import make_nd_continuous_domain
 
 # Local
 from l2co import logger, run_multiple_realizations, run_sampling
-from l2co._src.run_optimization import (_get_all_combinations,
-                                        _get_all_combinations_no_switch,
-                                        _get_name_from_scheduler,
-                                        needs_gradient)
+from l2co._src.tasks.benchmarkfunctions.run_optimization import (
+    _get_all_combinations, _get_all_combinations_no_switch,
+    _get_name_from_scheduler, needs_gradient)
 
 #                                                          Authorship & Credits
 # =============================================================================

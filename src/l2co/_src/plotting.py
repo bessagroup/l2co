@@ -6,15 +6,27 @@ Functions
 set_size
     Set figure dimensions to avoid scaling in LaTeX.
 """
+#                                                                       Modules
+# =============================================================================
 
 from typing import List, Optional
 
+# Third-party
 import matplotlib.pyplot as plt
 import xarray as xr
 
-from .data_loader import DataLoader
+# Local
+from l2co.data import DataLoader
 
-#
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Stable'
+# =============================================================================
+
+
+#                                                                 Aspect ratios
 # =============================================================================
 
 
@@ -36,6 +48,8 @@ def set_size(width, fraction=1, subplots=(1, 1)):
     """
     if width == 'thesis':
         width_pt = 426.79135
+    elif width == 'paper':
+        width_pt = 345.0
     elif width == 'beamer':
         width_pt = 307.28987
     else:
@@ -57,6 +71,8 @@ def set_size(width, fraction=1, subplots=(1, 1)):
 
     return (fig_width_in, fig_height_in)
 
+# =============================================================================
+
 
 def plot_rtd_profile(d: DataLoader, ax: Optional[plt.Axes] = None,
                      strategies: Optional[List[xr.DataArray]] = None):
@@ -64,7 +80,7 @@ def plot_rtd_profile(d: DataLoader, ax: Optional[plt.Axes] = None,
 
     if ax is None:
         fig, ax = plt.subplots(
-            1, 1, figsize=set_size(width=345, subplots=(1, 1)))
+            1, 1, figsize=set_size(width='paper', subplots=(1, 1)))
     else:
         fig = ax.get_figure()
 
@@ -85,7 +101,7 @@ def plot_perf_profile(d: DataLoader, ax: Optional[plt.Axes] = None,
 
     if ax is None:
         fig, ax = plt.subplots(
-            1, 1, figsize=set_size(width=345, subplots=(1, 1)))
+            1, 1, figsize=set_size(width='paper', subplots=(1, 1)))
     else:
         fig = ax.get_figure()
 

@@ -6,13 +6,16 @@ Functions
 
 output_cummin
     Calculate the cumulative minimum of the given dataset.
-query_t
-    Query the performance dataset for the performance of the optimizers
-    after a given number of function evaluations.
+scale
+    Scale the given array using the minimum over realizations.
 scaling
     Create a performance value for each problem and iterations per optimizer.
 add_random_samples_combinations
     Add random samples as optimizers to the optimization dataset.
+calculate_performance_ratio
+    Calculate the performance ratio for the given dataset.
+create_performance_profile
+    Create a performance profile for the given experiment data and iterations.
 """
 
 #                                                                       Modules
@@ -20,6 +23,8 @@ add_random_samples_combinations
 
 # Standard
 from __future__ import annotations
+
+from typing import List, Optional
 
 # Third-party
 import numpy as np
@@ -65,45 +70,29 @@ def output_cummin(da: xr.DataArray):
     )
 
 
-# def query_t(da_performance: xr.DataArray, t: int) -> xr.DataArray:
-#     """
-#     Query the performance dataset for the performance of the optimizers
-#     after a given number of function evaluations.
+def scale(
+        arr: np.ndarray,
+        minimum_over_realizations: np.ndarray) -> np.ndarray:
+    """
+    Scale the given array using the minimum over realizations.
 
-#     Parameters
-#     ----------
+    Parameters
+    ----------
+    arr : np.ndarray
+        The array to scale.
+    minimum_over_realizations : np.ndarray
+        The minimum over realizations.
 
-#     performance_dataset : xarray.Dataset
-#         xarray Dataset object containing a floating point value for
-#         the performance of the optimizers on benchmark functions as a functio
-#         of the number of function evaluations.
-#     t : int
-#         number of function evaluations
-
-#     Returns
-#     -------
-#     xarray.DataArray
-#         xarray DataArray containing the performance of the optimizers
-#         after a given number of function evaluations.
-
-#     Raises
-#     ------
-#     ValueError
-#         If the number of iterations is larger than the maximum number of
-#         iterations in the performance dataset.
-#     """
-#     if t > da_performance.iterations.max():
-#         raise ValueError(
-#             f'Number of iterations {t} is larger than the maximum number of '
-#             f'iterations in the performance dataset '
-#             f'{da_performance.iterations.max().values}')
-
-#     da_performance: xr.DataArray = da_performance.sel(
-#         iterations=t, drop=True)
-
-#     logger.info(f"Query t={t} from performance dataset")
-
-#     return da_performance
+    Returns
+    -------
+    np.ndarray
+        The scaled array.
+    """
+    scaler = MinMaxScaler()
+    scaler.fit(minimum_over_realizations.reshape(-1, 1))
+    scaler.partial_fit(arr.flatten().reshape(-1, 1))
+    return np.reshape(
+        scaler.transform(arr.flatten().reshape(-1, 1)), arr.shape)
 
 
 def scaling(data: xr.Dataset) -> xr.DataArray:
@@ -149,14 +138,6 @@ def scaling(data: xr.Dataset) -> xr.DataArray:
     ds_log10_positive = np.log10(ds_positive)
 
     # 5. Scale the data
-    def scale(
-            arr: np.ndarray,
-            minimum_over_realizations: np.ndarray) -> np.ndarray:
-        scaler = MinMaxScaler()
-        scaler.fit(minimum_over_realizations.reshape(-1, 1))
-        scaler.partial_fit(arr.flatten().reshape(-1, 1))
-        return np.reshape(
-            scaler.transform(arr.flatten().reshape(-1, 1)), arr.shape)
 
     performance = xr.apply_ufunc(
         scale, ds_log10_positive,
@@ -214,3 +195,105 @@ def add_random_samples_combinations(
 
     return xr.concat(
         [data.output, random_combinations], dim='optimizer').to_dataset()
+
+
+#                                                           Performance profile
+# =============================================================================
+
+def calculate_performance_ratio(
+        ds_budget: xr.DataArray,
+        best_optimizer_each_problem: xr.DataArray,
+        max_f_value: float = 10.0) -> xr.DataArray:
+    """
+    Calculate the performance ratio for the given dataset.
+
+    Parameters
+    ----------
+
+    ds_budget : xr.DataArray
+        The dataset to calculate the performance ratio for.
+
+    best_optimizer_each_problem : xr.DataArray
+        The best optimizer for each problem.
+
+    max_f_value : float, optional
+        The maximum value of f, by default 10.0
+
+    Returns
+    -------
+    performance_profile : xr.DataArray
+        The performance profile for the given dataset.
+    """
+    # Calculate the performance ratio rij
+    rij = ds_budget / best_optimizer_each_problem
+
+    # Create a logarithmic scale for f
+    # combine rij and f in a dataset
+    ds_f = xr.Dataset({'rij': rij, 'f': xr.DataArray(
+        np.logspace(np.log10(1.0), np.log10(max_f_value), 1000), dims='f')})
+
+    performance_profile = np.less_equal(ds_f, ds_f.f+1e-4).where(
+        ~ds_f.isnull(), np.nan).mean(dim='problem').rij
+    return performance_profile
+
+
+def create_performance_profile(
+        ds_raw: xr.Dataset,
+        iterations: int,
+        strategies: Optional[List[xr.DataArray]] = None) -> xr.Dataset:
+    """
+    Create a performance profile for the given experiment data and iterations.
+
+    Parameters
+    ----------
+    ds_raw : xr.Dataset
+        The optimization dynamics data for the given experiment data.
+    iterations : int
+        The total budget for each of the optimization problems
+    strategies : List[xr.DataArray], optional
+        The strategies to include in the performance profile, by default None
+
+    Returns
+    -------
+    performance_profile : xr.Dataset
+        The performance profile for the given experiment data and iterations.
+        The variables are the different static optimizers, and the optional
+        added strategies.
+
+    Notes
+    -----
+    Strategies are optional, and can be added to the performance profile
+    by passing a list of xr.DataArray objects. The xr.DataArray objects
+    should have a 'problem' coordinate which is identical to the data provided
+    in the ds_raw parameter.
+    """
+    # Select only the output variable
+    ds_output = ds_raw.sel(output_dim='y', drop=True).output
+
+    # Calculat the best found value (cummin)
+    ds_output = output_cummin(ds_output)
+
+    ds_positive = ds_output - \
+        ds_output.min(dim=['optimizer', 'iterations']).where(
+            ds_output.min(dim=['optimizer', 'iterations']
+                          ) < 0, 0.0) + 1e-17
+
+    # Slice at the given total number of iterations
+    ds_budget = ds_positive.isel(iterations=iterations-1)
+    ds_budget = ds_budget.sortby('problem')
+
+    # Calculate the performance profile
+    performance_profile = calculate_performance_ratio(
+        ds_budget, ds_budget.min(dim='optimizer'))
+
+    pp_to_dataset = performance_profile.to_dataset('optimizer')
+
+    if strategies is not None:
+        for strategy in strategies:
+            _strategy = strategy.sortby('problem')
+            pp_to_dataset[strategy.name] = calculate_performance_ratio(
+                ds_budget.sel(optimizer=_strategy), ds_budget.min(
+                    dim='optimizer')
+            )
+
+    return pp_to_dataset

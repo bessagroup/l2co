@@ -35,8 +35,8 @@ from tqdm import tqdm
 # Local
 from ._logging import logger as l2co_logger
 from .content_based import get_labels, get_labels_arbitrary
-from .perf_profile import create_performance_profile
-from .performance import add_random_samples_combinations, scaling
+from .performance import (add_random_samples_combinations,
+                          create_performance_profile, scaling)
 
 #                                                          Authorship & Credits
 # =============================================================================

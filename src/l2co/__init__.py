@@ -17,7 +17,7 @@ Author: Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)
 
 # Local
 
-from . import classifier, data, performance, preprocessing
+from . import classifier, data, preprocessing
 from ._src._logging import logger
 from ._src.stage1_model import LSTMMultiOutputClassifier
 from ._src.tasks.benchmarkfunctions.run_optimization import \
@@ -38,7 +38,6 @@ __all__ = ["logger",
            "run_sampling",
            "classifier",
            "data",
-           "performance",
            "preprocessing",
            "LSTMAutoencoder",
            "LSTMMultiOutputClassifier",

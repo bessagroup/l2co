@@ -27,9 +27,8 @@ from l2co.data import DataLoader
 from ._logging import logger
 from .stage0_model import Stage0Model
 from .stage0_model import load as stage0_load
-from .stage1_model import SingleStage1Model
-from .stage1_model import load as stage1_load
-from .stage1_model_flax import Stage1Model
+from .stage1_model_flax import SingleStage1Model, Stage1Model
+from .stage1_model_flax import load as stage1_load
 
 #                                                          Authorship & Credits
 # =============================================================================

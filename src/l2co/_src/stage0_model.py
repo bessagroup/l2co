@@ -40,7 +40,7 @@ from sklearn.multioutput import MultiOutputClassifier
 from sklearn.pipeline import make_pipeline
 
 # Local
-from .data_loader import DataLoader
+from l2co.data import DataLoader
 
 #                                                          Authorship & Credits
 # =============================================================================
