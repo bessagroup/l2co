@@ -21,7 +21,7 @@ We propose a new approach called "Learning to Choose Optimizers" (L2CO). Our met
 
 In this study, we train our model offline on a diverse set of benchmark loss-functions and apply a range of gradient-based, population-based, and probabilistic model-based optimizers. The potential of this approach is demonstrated by comparing its performance to classical optimizers and established L2O-architectures on benchmark loss-functions and simple material design studies. The results suggest that L2CO can be a useful tool and exhibits better generalization.
 
-<div align="center"><img src="overview.png" width="800"/></div>
+<div align="center"><img src="img/overview.png" width="800"/></div>
 
 ## Authorship
 
