@@ -19,6 +19,7 @@ from sklearn.model_selection import KFold
 from sklearn.model_selection import \
     train_test_split as sklearn_train_test_split
 from tensorflow.keras.datasets import cifar10, fashion_mnist, mnist
+from torch.utils.data import Dataset as torchDataset
 
 from ..data_loader import DataLoader
 
@@ -224,3 +225,30 @@ class Dataset:
             y_train=self.y_train[self.y_train == label],
             x_test=self.x_test[self.y_test == label],
             y_test=self.y_test[self.y_test == label])
+
+# =============================================================================
+
+
+class OptimizationDynamics(torchDataset):
+    def __init__(
+            self, d: DataLoader, optimizer: str, t: int, t_start: int = 0):
+        X_traj = d.select_optimizer(optimizer).select_t(
+            t=t, t_start=t_start).X_trajectory(t, t_start=t_start)
+        X_features = d.X
+        y = d.query_optimizer(optimizer).performance.isel(
+            iterations=-1)
+
+        self.X_features = np.expand_dims(X_features.values, axis=-1)
+        self.X_trajectory = np.expand_dims(
+            X_traj.values.transpose(2, 1, 0), axis=-1)
+        self.Y = y.values.T
+
+        self.optimizer = optimizer
+        self.t = t
+        self.t_start = t_start
+
+    def __len__(self):
+        return len(self.X_features)
+
+    def __getitem__(self, idx):
+        return (self.X_features[idx], self.X_trajectory[idx]), self.Y[idx]

@@ -25,7 +25,7 @@ from f3dasm import ExperimentData
 from f3dasm.design import make_nd_continuous_domain
 
 # Local
-from ._logging import logger
+from l2co._src._logging import logger
 
 #                                                          Authorship & Credits
 # =============================================================================

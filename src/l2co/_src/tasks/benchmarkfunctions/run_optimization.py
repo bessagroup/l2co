@@ -38,7 +38,7 @@ from f3dasm.design import Domain, make_nd_continuous_domain
 from pathos.helpers import mp
 
 # Local
-from ._logging import logger
+from l2co._src._logging import logger
 
 #                                                          Authorship & Credits
 # =============================================================================

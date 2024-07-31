@@ -21,6 +21,9 @@ import optax
 import xarray as xr
 from flax.training import train_state
 from optax import GradientTransformation, softmax_cross_entropy
+from sklearn.model_selection import train_test_split
+from torch.utils.data import DataLoader as TorchDataLoader
+from torch.utils.data import Subset
 
 # Local
 from l2co.data import DataLoader, Dataset
@@ -206,8 +209,7 @@ def evaluate_step(
 def training_loop(
         optimizer: GradientTransformation,
         model: nn.Module,
-        data_features: Dataset,
-        data_trajectory: Dataset,
+        data_optimization: TorchDataLoader,
         iterations: int,
         seed: Optional[int],
         batch_size: int,
@@ -221,8 +223,8 @@ def training_loop(
     main_key = jax.random.PRNGKey(seed)
     rng, dropout_rng = jax.random.split(main_key, 2)
     # (1, RESOLUTION, RESOLUTION, 1)
-    input_shape_features = data_features.x_train[0:1].shape
-    input_shape_trajectory = data_trajectory.x_train[0:1].shape
+    input_shape_features = data_optimization.X_features[0:1].shape
+    input_shape_trajectory = data_optimization.X_trajectory[0:1].shape
     variables = create_initial_params(
         rng, input_shape_features, input_shape_trajectory, model)
 
@@ -251,16 +253,33 @@ def training_loop(
     else:
         metrics = None
 
-    for iteration, (
-        batch_x_features, batch_y_features), (
-            batch_x_trajectory, batch_y_trajectory) in zip(
-            range(iterations), data_features.get_batch(
-                batch_size=batch_size, seed=seed), data_trajectory.get_batch(
-                batch_size=batch_size, seed=seed)):
+    train_indices, validation_indices = train_test_split(
+        range(len(data_optimization)), test_size=0.2, random_state=42)
+
+    train_split = Subset(data_optimization, train_indices)
+    validation_split = Subset(data_optimization, validation_indices)
+
+    train_batches = TorchDataLoader(
+        train_split, batch_size=batch_size, shuffle=True)
+    validation_batches = TorchDataLoader(
+        validation_split, batch_size=len(validation_split), shuffle=False)
+
+    (eval_features, eval_trajectory), eval_y = next(
+        iter(validation_batches))
+
+    for iteration, ((batch_x_features, batch_x_trajectory), batch_y) \
+            in enumerate(train_batches):
+
+        # for iteration, (
+        #     batch_x_features, batch_y_features), (
+        #         batch_x_trajectory, batch_y_trajectory) in zip(
+        #         range(iterations), data_features.get_batch(
+        #             batch_size=batch_size, seed=seed), data_trajectory.get_batch(
+        #             batch_size=batch_size, seed=seed)):
         logging.debug(f"Epoch {iteration+1}/{iterations}")
 
         state, metrics_train = jit_train_step(
-            state, batch_x_features, batch_x_trajectory, batch_y_trajectory)
+            state, batch_x_features, batch_x_trajectory, batch_y)
 
         if track_loss:
             # Store the loss
@@ -268,8 +287,8 @@ def training_loop(
             metrics['training_accuracy'].append(metrics_train['accuracy'])
 
             metrics_test = jit_evaluate_step(
-                state, data_features.x_test,
-                data_trajectory.x_test, data_trajectory.y_test)
+                state, eval_features,
+                eval_trajectory, eval_y)
 
             metrics['testing_losses'].append(metrics_test['loss'])
             metrics['testing_accuracy'].append(metrics_test['accuracy'])

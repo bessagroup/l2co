@@ -29,7 +29,7 @@ from f3dasm._src.datageneration.functions.function_factory import \
     _datagenerator_factory
 
 # Local
-from l2co import logger
+from ._logging import logger
 
 #                                                          Authorship & Credits
 # =============================================================================
