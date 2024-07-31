@@ -1,23 +1,27 @@
-L2CO
+Learning to Choose Optimizers (L2CO)
 ------
-*Learning to Choose Optimizers*
+
+***
+[![GitHub license](https://img.shields.io/badge/license-BSD-blue)](https://github.com/bessagroup/l2co)
+
+
+**Docs**
+| [**GitHub**](https://github.com/bessagroup/l2co)
+| **PyPI**
+
+> Some links are not yet available, as the package is still under a private repository.
 
 ***
 
 ## Summary
 
-Welcome to `l2co`, a Python package for learning to choose optimizers.
-In this study, we investigate the use of machine learning to select the best optimizer for a given optimization problem problem.
+Optimization plays a central role in Computational Mechanics. However, selecting the right optimization algorithm for a particular task is usually not trivial, as that results from the nature of the optimization problem to be solved and constraints such as available resource budget and training data. In order to address this, there has been a transition from creating hand-designed optimization algorithms to learning how to optimize (L2O), i.e. an approach attempting to learn the optimization conditions themselves. While many studies in the field of L2O have demonstrated good performance on a specific task distribution, they often suffer from poor generalization to other distributions. In addition, established L2O methods are often limited to a specific class of optimization algorithms.
 
-## Statement of need
+We propose a new approach called "Learning to Choose Optimizers" (L2CO). Our method allows a meta-learner to select at test time from a range of static and well-established optimizers, also allowing to switch to a different optimizer during the optimization process itself. This enables the system to adapt to different task distributions and enhance generalization performance. The framework is set up to continuously incorporate new optimization algorithms and problems, inviting domain experts to contribute their insights and expertise for ongoing expansion.
 
-When solving a new optimization problem, we do not know what is the best optimization algorithm and its parameters that would quickly get us to the optimum. Unfortunately, the "one optimizer to rule them all" does not exist. According to the famous paper of Wolpert et al.[^1], algorithms tend to exploit certain problem-specific characteristics, and if this particular feature is not present in the optimization problem then the performance of the optimizer will be worse than random search, i.e. random sampling (random trial-and-error!).
+In this study, we train our model offline on a diverse set of benchmark loss-functions and apply a range of gradient-based, population-based, and probabilistic model-based optimizers. The potential of this approach is demonstrated by comparing its performance to classical optimizers and established L2O-architectures on benchmark loss-functions and simple material design studies. The results suggest that L2CO can be a useful tool and exhibits better generalization.
 
-However, what if we could train a machine learning model on many different optimization problems considering many different optimizers? The machine learning algorithm would start to learn when an optimizer should be used or not. If it is trained properly, then the next time we consider a new problem this algorithm could make an informed decision on which optimizer to use at a given iteration! This is the field of research called "learning to optimize".
-
-In this study, we will consider a discrete number of diverse and well-known optimization algorithms, and we will train a machine learning model to select the best optimizer for a given optimization problem. We will consider a wide range of optimization problems, including convex and non-convex problems, and we will consider a wide range of optimizers, including gradient-based, gradient-free, and meta-heuristic algorithms. Before and during the optimization, the model will choose an optimizer before the optimization starts and is able to switch during optimization.
-
-[^1]: Wolpert, D. H., & Macready, W. G. (1997). *No free lunch theorems for optimization*. IEEE transactions on evolutionary computation, **1**(1), 67-82.
+<div align="center"><img src="https://raw.githubusercontent.com/bessagroup/l2co/main/overview.png" width="800"/></div>
 
 ## Authorship
 
@@ -55,13 +59,7 @@ pip install -r requirements_dev.txt
 
 ## Experiments
 
-The following experiments are currently implemented:
-
-| Experiment | Description | Status |
-| ---------- | ----------- | ------ |
-| [`create_training_data_two_optimizers`](https://github.com/bessagroup/L2CO/tree/main/experiments/create_trainingdata_two_optimizers) | Creates the training data for the two-optimizer experiments. | Stable |
-| [`recommend_optimizer`](https://github.com/bessagroup/L2CO/tree/main/experiments/recommend_optimizer) | Train and test the recommender system model to recommend optimizers. | Planning |
-| [`investigate_stage0`](https://github.com/bessagroup/L2CO/tree/main/experiments/investigate_stage0) | Hyperparameter optimization of classification models for 'stage 0' in the recommendation process | Planning |
+This package includes a collection of illustrative benchmark studies that demonstrate the capabilities of the framework. These studies are available in the `/experiments/` folder.
 
 ## Community Support
 
@@ -72,7 +70,7 @@ Please refer to L2CO's [Code of Conduct](https://github.com/bessagroup/L2CO/blob
 
 ## License
 
-Copyright 2023, Martin van der Schelling
+Copyright 2024, Martin van der Schelling
 
 All rights reserved.
 
