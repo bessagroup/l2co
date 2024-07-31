@@ -210,7 +210,7 @@ def training_loop(
         optimizer: GradientTransformation,
         model: nn.Module,
         data_optimization: TorchDataLoader,
-        iterations: int,
+        num_epochs: int,
         seed: Optional[int],
         batch_size: int,
         loss_fn: Callable,
@@ -261,25 +261,25 @@ def training_loop(
 
     train_batches = TorchDataLoader(
         train_split, batch_size=batch_size, shuffle=True)
+
     validation_batches = TorchDataLoader(
         validation_split, batch_size=len(validation_split), shuffle=False)
 
     (eval_features, eval_trajectory), eval_y = next(
         iter(validation_batches))
 
-    for iteration, ((batch_x_features, batch_x_trajectory), batch_y) \
-            in enumerate(train_batches):
+    for epoch in range(num_epochs):
+        logging.debug(f"Epoch {epoch+1}/{num_epochs}")
+        for (batch_x_features, batch_x_trajectory), batch_y in train_batches:
+            state, metrics_train = jit_train_step(
+                state, batch_x_features, batch_x_trajectory, batch_y)
 
-        # for iteration, (
-        #     batch_x_features, batch_y_features), (
-        #         batch_x_trajectory, batch_y_trajectory) in zip(
-        #         range(iterations), data_features.get_batch(
-        #             batch_size=batch_size, seed=seed), data_trajectory.get_batch(
-        #             batch_size=batch_size, seed=seed)):
-        logging.debug(f"Epoch {iteration+1}/{iterations}")
-
-        state, metrics_train = jit_train_step(
-            state, batch_x_features, batch_x_trajectory, batch_y)
+            # for iteration, (
+            #     batch_x_features, batch_y_features), (
+            #         batch_x_trajectory, batch_y_trajectory) in zip(
+            #         range(iterations), data_features.get_batch(
+            #             batch_size=batch_size, seed=seed), data_trajectory.get_batch(
+            #             batch_size=batch_size, seed=seed)):
 
         if track_loss:
             # Store the loss
