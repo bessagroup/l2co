@@ -8,7 +8,7 @@ from omegaconf import OmegaConf
 
 from l2co._src.computervision.data import Dataset
 from l2co._src.stage1_model_flax import (loss_fn_regression_hybrid,
-                                         training_loop_hybrid)
+                                         training_loop)
 from l2co.data import DataLoader
 
 
@@ -34,7 +34,7 @@ class LSTMArchitectures(DataGenerator):
             data_features = Dataset.from_problem_features(
                 d=self.data, optimizer=optimizer, seed=config.seed)
 
-            state, metrics = training_loop_hybrid(
+            state, metrics = training_loop(
                 model=model,
                 data_features=data_features,
                 data_trajectory=data_trajectory,

@@ -53,16 +53,18 @@ INVALID_PERFORMANCE_VALUE = 1.0
 # =============================================================================
 
 
-class DataLoader():
-    def __init__(self, X: xr.DataArray,
-                 n_iterations: int,
-                 n_realizations: int,
-                 performance: xr.DataArray,
-                 data: xr.Dataset,
-                 config: DictConfig,
-                 experimentdata: ExperimentData,
-                 data_samples: xr.Dataset
-                 ):
+class DataLoader:
+    def __init__(
+        self,
+        X: xr.DataArray,
+        n_iterations: int,
+        n_realizations: int,
+        performance: xr.DataArray,
+        data: xr.Dataset,
+        config: DictConfig,
+        experimentdata: ExperimentData,
+        data_samples: xr.Dataset
+    ):
         """
         A data loader class for stage0 of the L2CO framework.
 

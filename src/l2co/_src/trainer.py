@@ -14,6 +14,7 @@ Trainer
 # Standard
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 
 # Third-party
@@ -21,10 +22,14 @@ import xarray as xr
 from sklearn.base import BaseEstimator
 
 # Local
+from l2co.data import DataLoader
+
 from ._logging import logger
-from .data_loader import DataLoader
 from .stage0_model import Stage0Model
-from .stage1_model import SingleStage1Model, Stage1Model
+from .stage0_model import load as stage0_load
+from .stage1_model import SingleStage1Model
+from .stage1_model import load as stage1_load
+from .stage1_model_flax import Stage1Model
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -37,8 +42,8 @@ __status__ = 'Planning'
 class Trainer:
     def __init__(self, data_train: DataLoader,
                  data_test: DataLoader,
-                 stage0_clf: BaseEstimator,
-                 stage1_clf: SingleStage1Model,
+                 stage0_clf: BaseEstimator | str,
+                 stage1_clf: SingleStage1Model | str,
                  iterations: int,
                  t_switch: int,
                  t_start: int,
@@ -91,29 +96,28 @@ class Trainer:
 
         self.y_pred_stage0 = None
         self.y_pred = None
-        self.stage1_clf = None
 
-        self.precision = None
-        self.f1 = None
-        self.recall = None
-        self.support = None
-        self.accuracy = None
-        self.confusion_matrix = None
-        self.performance_profile = None
+        if isinstance(stage0_clf, str):
+            self.stage0_model = self.load_stage0(stage0_clf)
 
-        self.stage0_model = Stage0Model(
-            model_name='stage0_model',
-            preprocessing_step=preprocessing_step,
-            clf=stage0_clf)
+        else:
+            self.stage0_model = Stage0Model(
+                model_name='stage0_model',
+                preprocessing_step=preprocessing_step,
+                clf=stage0_clf)
 
-        self.stage1_model = Stage1Model(
-            optimizers=self.data_train.select_single_optimizers().optimizers,
-            model=stage1_clf,
-            iterations=iterations,
-            t_start=t_start,
-            t_switch=t_switch,
-            rel_tolerance=rel_tolerance,
-            name='stage0_model')
+        if isinstance(stage1_clf, str):
+            self.stage1_model = self.load_stage1(stage1_clf)
+
+        else:
+            self.stage1_model = Stage1Model(
+                optimizers=self.data_train.select_single_optimizers()
+                .optimizers,
+                model=stage1_clf,
+                t_start=t_start,
+                t_switch=t_switch,
+                rel_tolerance=rel_tolerance,
+                name='stage0_model')
 
     def train(
             self, overwrite_performance_values: Optional[xr.DataArray] = None):
@@ -135,11 +139,11 @@ class Trainer:
 
         logger.info(f"Trained stage0 model: {self.stage0_model.name}")
 
-    def load_stage1(self, path: str):
-        """
-        Load the stage1 model
-        """
-        self.stage1_model.load(path)
+    # def load_stage1(self, path: str):
+    #     """
+    #     Load the stage1 model
+    #     """
+    #     self.stage1_model.load(path)
 
     def train_stage1(self, save_model: bool = False):
         """
@@ -193,3 +197,32 @@ class Trainer:
                 f"{self.name}_stage1")
 
         return predictions
+
+    def save(self, path: str):
+        """
+        Save the models to a file
+
+        Parameters
+        ----------
+        path : str
+            The path to the model
+        """
+
+        _path = Path(path)
+
+        _path.mkdir(parents=True, exist_ok=True)
+
+        self.stage0_model.save(_path)
+        self.stage1_model.save(_path)
+
+    def load_stage0(self, path: str):
+        """
+        Load the stage0 model
+        """
+        self.stage0_model = stage0_load(path)
+
+    def load_stage1(self, path: str):
+        """
+        Load the stage1 model
+        """
+        self.stage1_model = stage1_load(path)

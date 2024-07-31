@@ -37,10 +37,11 @@ from run_opt import BenchmarkOptimizationRoutine
 
 # Local
 from l2co import logger
-from l2co._src.opfunu_functions import CEC_FUNCTIONS, NAMED_FUNCTIONS
 from l2co._src.run_optimization import (_get_all_combinations,
                                         _get_all_combinations_no_switch,
                                         _get_name_from_scheduler)
+from l2co._src.tasks.benchmarkfunctions.opfunu_functions import (
+    CEC_FUNCTIONS, NAMED_FUNCTIONS)
 
 #                                                          Authorship & Credits
 # =============================================================================

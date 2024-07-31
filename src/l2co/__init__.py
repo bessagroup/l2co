@@ -19,9 +19,10 @@ Author: Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)
 
 from . import classifier, data, performance, preprocessing
 from ._src._logging import logger
-from ._src.run_optimization import run_multiple_realizations
-from ._src.run_sampling import run_sampling
 from ._src.stage1_model import LSTMMultiOutputClassifier
+from ._src.tasks.benchmarkfunctions.run_optimization import \
+    run_multiple_realizations
+from ._src.tasks.benchmarkfunctions.run_sampling import run_sampling
 
 #                                                          Authorship & Credits
 # =============================================================================

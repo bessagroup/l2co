@@ -23,7 +23,7 @@ from optax import softmax_cross_entropy
 from optax._src.base import GradientTransformation
 
 # Local
-from .data import Dataset
+from ..data import Dataset
 from .models import SimpleMLP
 
 #                                                          Authorship & Credits

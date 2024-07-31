@@ -4,10 +4,6 @@ input features of the benchmark functions
 
 Functions
 ---------
-ordinal_encoder_factory
-    Returns an OrdinalEncoder
-standard_scaler_factory
-    Returns a StandardScaler
 transformer_factory
     Factory function that returns a Pipeline for preprocessing the data.
 preprocessing_factory
@@ -37,33 +33,6 @@ FEATURE_TYPES = {'convex': 'categorical', 'multimodal': 'categorical',
 # =============================================================================
 
 
-def ordinal_encoder_factory() -> OrdinalEncoder:
-    """
-    Returns an OrdinalEncoder
-
-    Returns
-    -------
-    OrdinalEncoder
-        An ordinal encoder
-    """
-    return OrdinalEncoder(handle_unknown='use_encoded_value',
-                          unknown_value=-1)
-
-
-def standard_scaler_factory() -> StandardScaler:
-    """
-    Returns a standard scaler
-
-    Returns
-    -------
-    StandardScaler
-        A standard scaler
-    """
-    return StandardScaler()
-
-# =============================================================================
-
-
 def transformer_factory(dtype: str) -> Pipeline:
     """
     Factory function that returns a Pipeline for preprocessing the data.
@@ -79,13 +48,20 @@ def transformer_factory(dtype: str) -> Pipeline:
         A pipeline for preprocessing the data.
     """
     if dtype == 'categorical':
-        return Pipeline(steps=[("encoder", ordinal_encoder_factory())])
+        return Pipeline(
+            steps=[("encoder", OrdinalEncoder(
+                handle_unknown='use_encoded_value',
+                unknown_value=-1))])
 
     elif dtype == 'ordinal':
-        return Pipeline(steps=[("encoder", ordinal_encoder_factory())])
+        return Pipeline(
+            steps=[("encoder", OrdinalEncoder(
+                handle_unknown='use_encoded_value',
+                unknown_value=-1))])
 
     elif dtype == 'scaler':
-        return Pipeline(steps=[("scaler", standard_scaler_factory())])
+        return Pipeline(
+            steps=[("scaler", StandardScaler())])
 
     else:
         raise ValueError(f'Unknown dtype {dtype}')

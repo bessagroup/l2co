@@ -26,9 +26,6 @@ import numpy as np
 import xarray as xr
 from sklearn.preprocessing import MinMaxScaler
 
-# Local
-from ._logging import logger
-
 #                                                          Authorship & Credits
 # =============================================================================
 __author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
@@ -68,45 +65,45 @@ def output_cummin(da: xr.DataArray):
     )
 
 
-def query_t(da_performance: xr.DataArray, t: int) -> xr.DataArray:
-    """
-    Query the performance dataset for the performance of the optimizers
-    after a given number of function evaluations.
+# def query_t(da_performance: xr.DataArray, t: int) -> xr.DataArray:
+#     """
+#     Query the performance dataset for the performance of the optimizers
+#     after a given number of function evaluations.
 
-    Parameters
-    ----------
+#     Parameters
+#     ----------
 
-    performance_dataset : xarray.Dataset
-        xarray Dataset object containing a floating point value for
-        the performance of the optimizers on benchmark functions as a function
-        of the number of function evaluations.
-    t : int
-        number of function evaluations
+#     performance_dataset : xarray.Dataset
+#         xarray Dataset object containing a floating point value for
+#         the performance of the optimizers on benchmark functions as a functio
+#         of the number of function evaluations.
+#     t : int
+#         number of function evaluations
 
-    Returns
-    -------
-    xarray.DataArray
-        xarray DataArray containing the performance of the optimizers
-        after a given number of function evaluations.
+#     Returns
+#     -------
+#     xarray.DataArray
+#         xarray DataArray containing the performance of the optimizers
+#         after a given number of function evaluations.
 
-    Raises
-    ------
-    ValueError
-        If the number of iterations is larger than the maximum number of
-        iterations in the performance dataset.
-    """
-    if t > da_performance.iterations.max():
-        raise ValueError(
-            f'Number of iterations {t} is larger than the maximum number of '
-            f'iterations in the performance dataset '
-            f'{da_performance.iterations.max().values}')
+#     Raises
+#     ------
+#     ValueError
+#         If the number of iterations is larger than the maximum number of
+#         iterations in the performance dataset.
+#     """
+#     if t > da_performance.iterations.max():
+#         raise ValueError(
+#             f'Number of iterations {t} is larger than the maximum number of '
+#             f'iterations in the performance dataset '
+#             f'{da_performance.iterations.max().values}')
 
-    da_performance: xr.DataArray = da_performance.sel(
-        iterations=t, drop=True)
+#     da_performance: xr.DataArray = da_performance.sel(
+#         iterations=t, drop=True)
 
-    logger.info(f"Query t={t} from performance dataset")
+#     logger.info(f"Query t={t} from performance dataset")
 
-    return da_performance
+#     return da_performance
 
 
 def scaling(data: xr.Dataset) -> xr.DataArray:

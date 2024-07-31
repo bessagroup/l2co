@@ -67,9 +67,17 @@ stage0_clf:
   max_depth: 6
 
 stage1_clf:
-  path: #/home/martin/Documents/GitHub/L2CO/experiments/recommend_optimizer/outputs/2024-03-28/16-23-34
-  latent_dim: 32
-  optimizer: adam
+  _target_: l2co._src.stage1_model_flax.Stage1Model_new
+  model:
+    _target_: l2co._src.stage1_model_flax.HybridModel
+    lstm_features: 32
+    mlp_features: 32
+    mlp_layers: 2
+    n_labels: ${n_optimizers}
+  t_start: ${t_start}
+  t_switch: ${t_switch}
+  rel_tolerance: ${rel_tolerance}
+
 
 feature_types:
   convex: categorical

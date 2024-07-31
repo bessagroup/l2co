@@ -4,14 +4,10 @@ Module containing functions that compute the performance of optimizers
 Functions
 ---------
 
-load_all_data
-    Load all the optimization dynamics data for the given experiment data.
 calculate_performance_ratio
     Calculate the performance ratio for the given dataset.
 create_performance_profile
     Create a performance profile for the given experiment data and iterations.
-plot_performance_profile
-    Plot the performance profile for the given dataset.
 """
 
 #                                                                       Modules
@@ -20,15 +16,11 @@ plot_performance_profile
 # Standard
 from __future__ import annotations
 
-from itertools import cycle
-from typing import Iterable, List, Optional
+from typing import List, Optional
 
 # Third-party
-import matplotlib.patches as mpatches
-import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
-from f3dasm import ExperimentData
 
 from .performance import output_cummin
 
@@ -40,41 +32,41 @@ __status__ = 'Stable'
 # =============================================================================
 
 
-def load_all_data(experiment_data: ExperimentData) -> xr.Dataset:
-    """
-    Load all the optimization dynamics data for the given experiment data.
+# def load_all_data(experiment_data: ExperimentData) -> xr.Dataset:
+#     """
+#     Load all the optimization dynamics data for the given experiment data.
 
-    Parameters
-    ----------
-    experiment_data : ExperimentData
-        The experiment data to load the optimization dynamics data for.
+#     Parameters
+#     ----------
+#     experiment_data : ExperimentData
+#         The experiment data to load the optimization dynamics data for.
 
-    Returns
-    -------
-    ds_raw : xr.Dataset
-        The optimization dynamics data for the given experiment data.
+#     Returns
+#     -------
+#     ds_raw : xr.Dataset
+#         The optimization dynamics data for the given experiment data.
 
-    Notes
-    -----
+#     Notes
+#     -----
 
-    The ExperimentData object contains output columns representing the
-    different optimizers. Each of these columns contains a list of files
-    containing the optimization dynamics data for the different problems.
+#     The ExperimentData object contains output columns representing the
+#     different optimizers. Each of these columns contains a list of files
+#     containing the optimization dynamics data for the different problems.
 
-    We combine all these files into a single dataset, where the itemID (rows
-    in ExperimentData) and optimizer (columnname in output data) are used
-    as coordinates.
-    """
-    _, df_output = experiment_data.to_pandas()
-    # for every element in df_output, preceed it with project_dir
-    df_output = df_output.loc[:, df_output.columns != 'random_samples']
-    df_output = df_output.apply(lambda x: experiment_data.project_dir / x)
-    files = df_output.values.tolist()
-    # files
+#     We combine all these files into a single dataset, where the itemID (rows
+#     in ExperimentData) and optimizer (columnname in output data) are used
+#     as coordinates.
+#     """
+#     _, df_output = experiment_data.to_pandas()
+#     # for every element in df_output, preceed it with project_dir
+#     df_output = df_output.loc[:, df_output.columns != 'random_samples']
+#     df_output = df_output.apply(lambda x: experiment_data.project_dir / x)
+#     files = df_output.values.tolist()
+#     # files
 
-    # Open all files in ds_raw
-    return xr.open_mfdataset(
-        files, concat_dim=['itemID', 'optimizer'], combine='nested')
+#     # Open all files in ds_raw
+#     return xr.open_mfdataset(
+#         files, concat_dim=['itemID', 'optimizer'], combine='nested')
 
 
 def calculate_performance_ratio(
@@ -176,73 +168,73 @@ def create_performance_profile(
     return pp_to_dataset
 
 
-def plot_performance_profile(
-    performance_profile: xr.Dataset,
-        strategy_names: Optional[List[str]] = None,
-        axes: Optional[Iterable[plt.Axes, plt.Axes]] = None,
-        show_combinations: bool = True):
-    """
-    Plot the performance profile for the given dataset.
+# def plot_performance_profile(
+#     performance_profile: xr.Dataset,
+#         strategy_names: Optional[List[str]] = None,
+#         axes: Optional[Iterable[plt.Axes, plt.Axes]] = None,
+#         show_combinations: bool = True):
+#     """
+#     Plot the performance profile for the given dataset.
 
-    Parameters
-    ----------
-    performance_profile : xr.Dataset
-        The performance profile to plot
-    strategy_names : List[str], optional
-        The strategies to highlight in the plot, by default None
-    axes : List[plt.Axes], optional
-        The axes to plot the performance profile on, by default None
-    show_combinations : bool, optional
-        If combinations of optimizers should be shown, by default True
+#     Parameters
+#     ----------
+#     performance_profile : xr.Dataset
+#         The performance profile to plot
+#     strategy_names : List[str], optional
+#         The strategies to highlight in the plot, by default None
+#     axes : List[plt.Axes], optional
+#         The axes to plot the performance profile on, by default None
+#     show_combinations : bool, optional
+#         If combinations of optimizers should be shown, by default True
 
-    Returns
-    -------
-    axes : List[plt.Axes]
-        The axes the performance profile was plotted on.
-    """
+#     Returns
+#     -------
+#     axes : List[plt.Axes]
+#         The axes the performance profile was plotted on.
+#     """
 
-    if strategy_names is None:
-        strategy_names = []
+#     if strategy_names is None:
+#         strategy_names = []
 
-    legend_patches = []
-    color_cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
-    color_cycle_iter = cycle(color_cycle)
+#     legend_patches = []
+#     color_cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
+#     color_cycle_iter = cycle(color_cycle)
 
-    if axes is None:
-        fig, axes = plt.subplots(2, 1, gridspec_kw={'height_ratios': [
-            4, 1]}, figsize=(10, 7))
+#     if axes is None:
+#         fig, axes = plt.subplots(2, 1, gridspec_kw={'height_ratios': [
+#             4, 1]}, figsize=(10, 7))
 
-    x = performance_profile.f * 100 - 100
-    for optimizer in performance_profile.data_vars:
-        linewidth = 1
-        linestyle = '-'
+#     x = performance_profile.f * 100 - 100
+#     for optimizer in performance_profile.data_vars:
+#         linewidth = 1
+#         linestyle = '-'
 
-        if optimizer in strategy_names:
-            # make the line thicker
-            linewidth = 3
+#         if optimizer in strategy_names:
+#             # make the line thicker
+#             linewidth = 3
 
-        # check if optimizer has a + in the name
-        if '+' in optimizer:
-            if show_combinations is False:
-                continue
-            else:
-                linestyle = '--'
+#         # check if optimizer has a + in the name
+#         if '+' in optimizer:
+#             if show_combinations is False:
+#                 continue
+#             else:
+#                 linestyle = '--'
 
-        legend_patches.append(mpatches.Patch(
-            color=next(color_cycle_iter),
-            label=optimizer, linestyle=linestyle))
+#         legend_patches.append(mpatches.Patch(
+#             color=next(color_cycle_iter),
+#             label=optimizer, linestyle=linestyle))
 
-        axes[0].plot(x,
-                     performance_profile[optimizer],
-                     label=optimizer, linewidth=linewidth,
-                     linestyle=linestyle)
+#         axes[0].plot(x,
+#                      performance_profile[optimizer],
+#                      label=optimizer, linewidth=linewidth,
+#                      linestyle=linestyle)
 
-    axes[1].legend(handles=legend_patches, loc='center',
-                   ncol=len(legend_patches) // 3, fontsize='small')
+#     axes[1].legend(handles=legend_patches, loc='center',
+#                    ncol=len(legend_patches) // 3, fontsize='small')
 
-    axes[1].axis('off')
+#     axes[1].axis('off')
 
-    axes[0].set_ylabel('Relative error [%]')
-    axes[0].set_xlabel('Performance ratio')
+#     axes[0].set_ylabel('Relative error [%]')
+#     axes[0].set_xlabel('Performance ratio')
 
-    return axes
+#     return axes

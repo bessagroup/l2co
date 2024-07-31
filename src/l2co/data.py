@@ -8,7 +8,7 @@ Submodule for data loading
 
 # Local
 from ._src.data_loader import DataLoader
-from ._src.perf_profile import load_all_data
+from ._src.tasks.data import Dataset
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -20,4 +20,4 @@ __status__ = 'Planning'
 # =============================================================================
 
 __all__ = ["DataLoader",
-           "load_all_data"]
+           "Dataset"]

@@ -26,6 +26,8 @@ create_gradientboostingclassifier
 # =============================================================================
 
 # Standard
+import pickle
+from pathlib import Path
 from typing import Iterable, Optional
 
 # Third-party
@@ -33,14 +35,9 @@ import numpy as np
 import xarray as xr
 from sklearn.base import BaseEstimator
 from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import GradientBoostingClassifier
-from sklearn.gaussian_process import GaussianProcessClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.multioutput import MultiOutputClassifier
-from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import make_pipeline
-from sklearn.svm import SVC
-from sklearn.tree import DecisionTreeClassifier
 
 # Local
 from .data_loader import DataLoader
@@ -95,37 +92,6 @@ class Stage0Model():
                 self.clf = make_pipeline(preprocessing_step,
                                          MultiOutputClassifier(clf))
 
-    @classmethod
-    def from_name(cls, model_name: str,
-                  preprocessing_step: Optional[ColumnTransformer] = None,
-                  **parameters):
-        """
-        Create a stage0 model from the name of a model
-
-        Parameters
-        ----------
-        model_name : str
-            The name of the model
-        preprocessing_step : Optional[ColumnTransformer], optional
-            Optional preprocessing step for the features, by default None
-        parameters : dict
-            Optional parameters for the classifier
-
-        Returns
-        -------
-        Stage0Model
-            A stage0 model object
-
-        Notes
-        -----
-
-        Internally, there is a mapping from strings to scikit-learn classifiers
-        """
-        return cls(clf=sklearn_classifier_factory(model_name, **parameters),
-                   model_name=model_name,
-                   preprocessing_step=preprocessing_step,
-                   parameters=parameters)
-
     @property
     def name(self) -> str:
         """
@@ -173,17 +139,6 @@ class Stage0Model():
         y = y.loc[:, y.any()]
         self.clf.fit(X, y)
 
-    def load(self, path: str):
-        """
-        Load the model from a file
-
-        Parameters
-        ----------
-        path : str
-            The path to the model
-        """
-        ...
-
     def predict_proba(self, X: Iterable) -> Iterable[float]:
         """
         Method for predicting the probabilities
@@ -215,134 +170,31 @@ class Stage0Model():
 
         return y_pred_proba.idxmax(dim='optimizer').sortby('problem')
 
-# =============================================================================
+    def save(self, path: Path) -> None:
+        """
+        Save the model to a file
+
+        Parameters
+        ----------
+        path : Path
+            The path to the model
+        """
+        filename = (path / 'stage0_model').with_suffix('.pkl')
+        with open(filename, 'wb') as f:
+            pickle.dump(self, f)
 
 
-def sklearn_classifier_factory(
-        self, model_name: str, **parameters) -> BaseEstimator:
+def load(path: Path) -> Stage0Model:
     """
-    Function for creating a classifier from a string
+    Load the model from a file
 
     Parameters
     ----------
-    model_name : str
-        The name of the model
-    parameters : dict
-        Optional parameters for the classifier
-
-    Returns
-    -------
-    BaseEstimator
-        The sklearn estimator
+    path : Path
+        The path to the model
     """
-    if model_name == 'DecisionTree':
-        return create_decisiontree(parameters)
+    filename = (path / 'stage0_model').with_suffix('.pkl')
+    with open(filename, 'rb') as f:
+        model = pickle.load(f)
 
-    elif model_name == 'SVC':
-        return create_svc(parameters)
-
-    elif model_name == 'KNN':
-        return create_knn(parameters)
-
-    elif model_name == 'GPC':
-        return create_gpc(parameters)
-
-    elif model_name == 'GradientBoostingClassifier':
-        return create_gradientboostingclassifier(parameters)
-
-
-def create_gradientboostingclassifier(parameters) -> BaseEstimator:
-    """
-    Function for creating a gradient boosting classifier
-
-    Parameters
-    ----------
-    parameters : dict
-        Hyperparameters for the classifier
-
-    Returns
-    -------
-    BaseEstimator
-        The sklearn estimator
-    """
-    learning_rate = parameters['learning_rate']
-    n_estimators = parameters['n_estimators']
-    min_samples_leaf = parameters['min_samples_leaf']
-    max_depth = parameters['max_depth']
-    return GradientBoostingClassifier(
-        n_estimators=n_estimators,
-        learning_rate=learning_rate,
-        min_samples_leaf=min_samples_leaf,
-        max_depth=max_depth,)
-
-
-def create_decisiontree(parameters) -> BaseEstimator:
-    """
-    Function for creating a decision tree classifier
-
-    Parameters
-    ----------
-    parameters : dict
-        Hyperparameters for the classifier
-
-    Returns
-    -------
-    BaseEstimator
-        The sklearn estimator
-    """
-    criterion = parameters['criterion']
-    return DecisionTreeClassifier(criterion=criterion)
-
-
-def create_gpc(parameters) -> BaseEstimator:
-    """
-    Function for creating a Gaussian Process classifier
-
-    Parameters
-    ----------
-    parameters : dict
-        Hyperparameters for the classifier
-
-    Returns
-    -------
-    BaseEstimator
-        The sklearn estimator
-    """
-    return GaussianProcessClassifier()
-
-
-def create_knn(parameters) -> BaseEstimator:
-    """
-    Function for creating a k-NN classifier
-
-    Parameters
-    ----------
-    parameters : dict
-        Hyperparameters for the classifier
-
-    Returns
-    -------
-    BaseEstimator
-        The sklearn estimator
-    """
-    n_neighbors = parameters['n_neighbors']
-    weights = parameters['weights']
-    return KNeighborsClassifier(n_neighbors=n_neighbors, weights=weights)
-
-
-def create_svc(parameters) -> BaseEstimator:
-    """
-    Function for creating SVC classifier
-
-    Parameters
-    ----------
-    parameters : dict
-        Hyperparameters for the classifier
-
-    Returns
-    -------
-    BaseEstimator
-        The sklearn estimator
-    """
-    kernel = parameters['kernel']
-    return SVC(kernel=kernel)
+    return model

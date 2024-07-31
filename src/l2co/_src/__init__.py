@@ -5,12 +5,13 @@ Source code for the l2co package.
 #                                                                       Modules
 # =============================================================================
 
+# Third-party
 from f3dasm._src.datageneration.functions.function_factory import \
     FUNCTION_MAPPING
-# Third-party
 from matplotlib import pyplot as plt
 
-from l2co._src.opfunu_functions import CEC_FUNCTIONS, NAMED_FUNCTIONS
+from l2co._src.tasks.benchmarkfunctions.opfunu_functions import (
+    CEC_FUNCTIONS, NAMED_FUNCTIONS)
 
 #                                                          Authorship & Credits
 # =============================================================================

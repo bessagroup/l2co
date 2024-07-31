@@ -40,15 +40,6 @@ class RecommendOptimizer(DataGenerator):
         config = update_config_with_experiment_sample(
             config=self.config, experiment_sample=self.experiment_sample)
 
-        # Construct the classifiers
-        stage0_clf = instantiate(config.stage0_clf)
-        stage1_clf = LSTMMultiOutputClassifier(
-            n_outputs=config.n_optimizers, length_sequence=config.t_switch,
-            **config.stage1_clf)
-
-        preprocessing_step = preprocessing_factory(
-            feature_types=config.feature_types)
-
         training_project_dir = Path(config.data.training_project_dir)
         testing_project_dir = Path(
             config.data.testing_project_dir
@@ -80,6 +71,14 @@ class RecommendOptimizer(DataGenerator):
 
             l2co_logger.info(
                 f"Loaded testing data from {testing_project_dir} (took {perf_counter() - t} seconds")
+
+        # Construct the classifiers
+        stage0_clf = instantiate(config.stage0_clf)
+        stage1_clf = instantiate(
+            {**config.stage1_clf, 'optimizers': d_train.select_single_optimizers().optimizers})
+
+        preprocessing_step = preprocessing_factory(
+            feature_types=config.feature_types)
 
         # # ELA benchmark
         # ela_test = xr.open_dataarray(

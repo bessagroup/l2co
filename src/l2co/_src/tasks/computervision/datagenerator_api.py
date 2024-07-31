@@ -12,7 +12,7 @@ from f3dasm.hydra_tools import update_config_with_experiment_sample
 from hydra.utils import instantiate
 
 # Local
-from .data import Dataset
+from ..data import Dataset
 from .training import training_multiple_realizations
 
 #                                                          Authorship & Credits
