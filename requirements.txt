@@ -11,3 +11,4 @@ pflacco
 NetCDF4
 tqdm
 imbalanced-learn
+torch

@@ -17,12 +17,15 @@ Author: Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)
 
 # Local
 
-from . import classifier, data, preprocessing
+from . import plotting
 from ._src._logging import logger
-from ._src.stage1_model import LSTMMultiOutputClassifier
+from ._src.data_loader import DataLoader
+from ._src.preprocessing import preprocessing_factory
+from ._src.stage0_model import Stage0Model
 from ._src.tasks.benchmarkfunctions.run_optimization import \
     run_multiple_realizations
 from ._src.tasks.benchmarkfunctions.run_sampling import run_sampling
+from ._src.trainer import Trainer
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -33,13 +36,13 @@ __status__ = 'Planning'
 #
 # =============================================================================
 
-__all__ = ["logger",
-           "run_multiple_realizations",
-           "run_sampling",
-           "classifier",
-           "data",
-           "preprocessing",
-           "LSTMAutoencoder",
-           "LSTMMultiOutputClassifier",
-           "set_size",
-           ]
+__all__ = [
+    "plotting",
+    "logger",
+    "DataLoader",
+    "preprocessing_factory",
+    "Stage0Model",
+    "run_multiple_realizations",
+    "run_sampling",
+    "Trainer",
+]

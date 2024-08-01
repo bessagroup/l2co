@@ -41,6 +41,37 @@ def run_sampling(
         seed: int, n_samples: int,
         parallelization: bool,
         realizations: int) -> xr.Dataset:
+    """
+    Sample from the search-space of a benchmark function using a given
+    sampling technique.
+
+    Parameters
+    ----------
+    data_generator : str
+        Name of the benchmark function to use
+    sampler : str
+        Sampling technique to use
+    dimensionality : int
+        dimensionality of the benchmark function
+    noise : float
+        noise added to the benchmark function
+    offset : bool, optional
+        if the benchmark function is offset
+    seed : int
+        Seed for the pseudo-random number generator
+    n_samples : int
+        number of samples to generate
+    parallelization : bool
+        if the evaluation of the samples should be parallelized by
+        multiprocessing
+    realizations : int
+        number of realizations
+
+    Returns
+    -------
+    xarray.Dataset
+        xarray Dataset object containg the results of the sampling
+    """
 
     return xr.concat(
         [run_sampling_one_realization(

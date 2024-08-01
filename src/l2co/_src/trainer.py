@@ -22,13 +22,12 @@ import xarray as xr
 from sklearn.base import BaseEstimator
 
 # Local
-from l2co.data import DataLoader
-
 from ._logging import logger
+from .data_loader import DataLoader
 from .stage0_model import Stage0Model
 from .stage0_model import load as stage0_load
-from .stage1_model_flax import SingleStage1Model, Stage1Model
-from .stage1_model_flax import load as stage1_load
+from .stage1_model import SingleStage1Model, Stage1Model
+from .stage1_model import load as stage1_load
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -149,8 +148,9 @@ class Trainer:
         Train the stage1 model with the training data
         """
         self.stage1_model.train(self.data_train, batch_size=self.batch_size,
-                                epochs=self.epochs,
-                                save_model=save_model)
+                                num_epochs=self.epochs,
+                                save_model=save_model,
+                                seed=42)
 
         logger.info(f"Trained stage1 model: {self.stage1_model.name}")
 

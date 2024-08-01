@@ -7,8 +7,7 @@ from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
 from l2co._src.computervision.data import Dataset
-from l2co._src.stage1_model_flax import (loss_fn_regression_hybrid,
-                                         training_loop)
+from l2co._src.stage1_model import loss_fn_regression_hybrid, training_loop
 from l2co.data import DataLoader
 
 

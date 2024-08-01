@@ -1,11 +1,15 @@
 """
-Module containing a data loader class for stage0 of the L2CO framework.
+Module containing a data loader class of the L2CO framework.
 
 Classes
 -------
 
 DataLoader
-    A data loader class for optimization dynamics data
+    A data loader class for optimization dynamics data. Used for analysing the
+    performances of various optimizers as well as creating learning data
+OptimizationDynamics
+    Learning dataset inherited from pytorch Dataset. Used for learning the
+    machine learning models
 """
 
 #                                                                       Modules
@@ -19,10 +23,7 @@ from pathlib import Path
 from typing import Iterable, Optional, Tuple
 
 # Third-party
-import matplotlib.patches as mpatches
-import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import xarray as xr
 from f3dasm import ExperimentData
 from imblearn.under_sampling import RandomUnderSampler
@@ -30,6 +31,7 @@ from omegaconf import DictConfig
 from sklearn.cluster import KMeans
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
+from torch.utils.data import Dataset as torchDataset
 from tqdm import tqdm
 
 # Local
@@ -45,11 +47,13 @@ __credits__ = ['Martin van der Schelling']
 __status__ = 'Stable'
 # =============================================================================
 
-# create a logger
-logger = l2co_logger.getChild(__name__)
+
+#                                                                     Constants
+# =============================================================================
+
 INVALID_PERFORMANCE_VALUE = 1.0
 
-
+#                                                                   Data Loader
 # =============================================================================
 
 
@@ -246,7 +250,7 @@ class DataLoader:
                    data_samples=data_samples_stacked
                    )
 
-#                                                                       Storing
+#                                                         Storing and exporting
 # =============================================================================
 
     def store(self, path: str, store_samples: bool = False):
@@ -269,6 +273,25 @@ class DataLoader:
 
         self.data.reset_index('problem').to_netcdf(_path / 'entire_dataset.nc')
 
+    def to_learning_data(
+            self, optimizer: str,
+            t: int, t_start: int) -> OptimizationDynamics:
+        X_traj = self.select_optimizer(optimizer).select_t(
+            t=t, t_start=t_start).X_trajectory(t, t_start=t_start)
+        X_features = self.X
+        y = self.query_optimizer(optimizer).performance.isel(
+            iterations=-1)
+
+        X_features = np.expand_dims(X_features.values, axis=-1)
+        X_trajectory = np.expand_dims(
+            X_traj.values.transpose(2, 1, 0), axis=-1)
+        Y = y.values.T
+
+        return OptimizationDynamics(
+            X_features=X_features,
+            X_trajectory=X_trajectory,
+            Y=Y)
+
 #                                                                    Properties
 # =============================================================================
 
@@ -285,11 +308,6 @@ class DataLoader:
             The resulting DataArray with dimensions 'problem',
             'realization', and 'itemID'.
         """
-        logger.debug("Creating labels")
-
-        # return self.performance.sel(problem=self.problem, drop=True).idxmin(
-        #     dim='optimizer')
-
         return self.performance.idxmin('optimizer')
 
     @property
@@ -412,6 +430,7 @@ class DataLoader:
 
 #                                                            Selecting problems
 # =============================================================================
+
 
     def select_problems(self, problem_indices: xr.DataArray) -> DataLoader:
         """
@@ -536,6 +555,7 @@ class DataLoader:
 #                                                          Selecting optimizers
 # =============================================================================
 
+
     def select_single_optimizers(
             self, include_random_search: bool = False) -> DataLoader:
         """
@@ -644,7 +664,6 @@ class DataLoader:
 #                                                           Performance metrics
 # =============================================================================
 
-
     def performance_profile(
             self, strategies: Optional[Iterable[xr.DataArray]] = None
     ) -> xr.Dataset:
@@ -684,109 +703,27 @@ class DataLoader:
 
         return rtd
 
-#                                                                      Plotting
+#                                                          OptimizationDynamics
 # =============================================================================
 
-    def plot_performance_labels(
+
+class OptimizationDynamics(torchDataset):
+    def __init__(
             self,
-            y_pred: Optional[xr.DataArray] = None,
-            rel_tolerance: float = 0.0,
-            return_df: bool = False,
-            axes: Optional[Iterable[plt.Axes, plt.Axes]] = None,
-            set_yticklabels: bool = True
-    ) -> Tuple[plt.Axes, plt.Axes]:
-        """
-        Plot the performance labels.
+            X_features: np.ndarray,
+            X_trajectory: np.ndarray,
+            Y: np.ndarray):
+        self.X_features = X_features
+        self.X_trajectory = X_trajectory
+        self.Y = Y
 
-        Parameters
-        ----------
-        y_pred : Optional[xr.DataArray], optional
-            The predicted labels, by default None
-        rel_tolerance : float, optional
-            The relative tolerance, by default 0.0
-        return_df : bool, optional
-            Whether to return the dataframe, by default False
-        axes : Optional[Tuple[plt.Axes, plt.Axes]], optional
-            The axes to plot on, by default None
-        set_yticklabels : bool, optional
-            Whether to set the yticklabels, by default True
+    def __len__(self):
+        return len(self.X_features)
 
-        Returns
-        -------
-        Tuple[plt.Axes, plt.Axes]
-            The axes.
-        """
+    def __getitem__(self, idx):
+        return (self.X_features[idx], self.X_trajectory[idx]), self.Y[idx]
 
-        if y_pred is None:
-            _y = self.y_binary(rel_tolerance=rel_tolerance)
-
-        else:
-            _y = (y_pred == self.performance.optimizer).T
-
-        y_pandas = _y.to_pandas()
-        x_pandas = self.X.to_pandas()
-
-        y_pandas.index = y_pandas.index.set_names(['realization', 'itemID'])
-        x_pandas.index = x_pandas.index.set_names(['realization', 'itemID'])
-
-        grouped_Xy = pd.concat([x_pandas, y_pandas], axis=1)
-
-        df = grouped_Xy.groupby(
-            list(self.features.values)).mean().reset_index()
-
-        num_rows = len(df)
-        n_features = len(self.features)
-
-        col_optimizers = list(self.performance.optimizer.values)
-        df[col_optimizers] = df[col_optimizers].div(
-            df[col_optimizers].sum(axis=1), axis=0)
-
-        if axes is None:
-            fig, axes = plt.subplots(
-                2, 1, gridspec_kw={'height_ratios': [
-                    4, 1]}, figsize=(10, 0.5 * num_rows))
-
-        colors = ['skyblue', 'salmon', 'lightgreen',
-                  'gold', 'red']  # Define colors for each label
-
-        yticklabels = []
-
-        legend_patches = [mpatches.Patch(
-            color=colors[i], label=label) for i, label in enumerate(
-                df.columns[n_features:])]
-
-        for i, (_, row) in enumerate(df.iterrows()):
-            labels = row.index[n_features:]  # Excluding the feature columns
-            freq = row.values[n_features:]  # Excluding the feature values
-            if set_yticklabels:
-                yticklabels.append(
-                    ", ".join([f"{feature}: {value}" for
-                               feature, value in row[:n_features].items()]))
-            left = 0
-            for j, (label, value) in enumerate(zip(labels, freq)):
-                axes[0].barh(i, width=value, height=0.3, left=left,
-                             color=colors[j], label=label)
-                left += value
-
-        axes[0].set_yticks(np.arange(num_rows))
-        axes[0].set_yticklabels(yticklabels)
-        axes[0].set_xlabel('Frequency')
-        axes[1].legend(handles=legend_patches, loc='center',
-                       ncol=len(legend_patches))
-
-        axes[1].axis('off')
-        text = f"Relative tolerance: {rel_tolerance}"
-        if y_pred is None:
-            text += "- Test data"
-
-        else:
-            text += "- Predicted data"
-        axes[0].set_title(text)
-
-        if return_df:
-            return axes, df
-
-        return axes
+# =============================================================================
 
 
 def create_entire_dataset(experiment_data: ExperimentData):

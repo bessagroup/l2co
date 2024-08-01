@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import xarray as xr
 
 # Local
-from l2co.data import DataLoader
+from l2co._src.data_loader import DataLoader
 
 #                                                          Authorship & Credits
 # =============================================================================

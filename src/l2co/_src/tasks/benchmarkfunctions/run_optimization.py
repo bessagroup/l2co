@@ -1,6 +1,6 @@
 """
-Module containing functions that can be used to compare the performance of
-different optimizers.
+Module containing functions that can be used to generate a dataset for the 
+optimization dynamics of various parametrized benchmark functions
 
 Functions
 ---------
