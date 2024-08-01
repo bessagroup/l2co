@@ -39,6 +39,7 @@ For every optimization problem, we solve the problems with a fraction of the tot
 | File/Folder | Description |
 |-------------|-------------|
 | `main.py` | Main script to run the experiment |
+| `run_opt.py` | Custom `f3dasm.DataGenerator` to run the optimization process |
 | `config.yaml` | Configuration file for the experiment |
 | `config.py` | Configuration file type-hints for the experiment |
 | `README.md` | Explanation of this experiment |
@@ -68,10 +69,13 @@ For every optimization problem, we solve the problems with a fraction of the tot
 
 | Cluster | Command |
 |---------|---------|
-| TORQUE  | `qsub pbsjob.sh` |
-| DelftBlue | `sbatch slurmjob.sh` |
-| OSCAR | `sbatch slurmjob_brown.sh` |
+| [TUD Delft HPC](https://hpcwiki.tudelft.nl/index.php?title=Main_Page)  | `qsub pbsjob.sh` |
+| [DelftBlue](https://www.tudelft.nl/dhpc/system) | `sbatch slurmjob.sh` |
+| [OSCAR](https://docs.ccv.brown.edu/oscar) | `sbatch slurmjob_brown.sh` |
 
+You can run this experiment on multiple nodes by submitting an arrayjob (e.g. `qsub -t 0-10 pbsjob.sh` or `sbatch --array=0-10 slurmjob.sh`):
+- The first node will (`jobid=0`) handle the creation of the `f3dasm.ExperimentData` object.
+- The other nodes will (`jobid=1,2,...`) handle the `f3dasm.DataGenerator` process specified in `run_opt.py`.
 
 ## Results
 

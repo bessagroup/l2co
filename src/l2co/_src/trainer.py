@@ -17,8 +17,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-# Third-party
+import optax
 import xarray as xr
+# Third-party
+from optax import GradientTransformation
 from sklearn.base import BaseEstimator as SingleStage0Model
 
 # Local
@@ -49,6 +51,7 @@ class Trainer:
                  preprocessing_step,
                  epochs: int = 3,
                  batch_size: int = 32,
+                 optimizer: GradientTransformation = optax.adam(1e-3),
                  name: str = 'trainer'):
         """
         Trainer class combining the models and the data for the data-driven
@@ -80,6 +83,8 @@ class Trainer:
             Number of epochs, by default 3
         batch_size : int, optional
             Batch size, by default 32
+        optimizer : GradientTransformation, optional
+            Optimizer, by default optax.adam(1e-3)
         """
 
         self.data_train = data_train
@@ -91,6 +96,7 @@ class Trainer:
         self.name = name
         self.epochs = epochs
         self.batch_size = batch_size
+        self.optimizer = optimizer
 
         self.y_pred_stage0 = None
         self.y_pred = None
@@ -115,6 +121,7 @@ class Trainer:
                 t_start=t_start,
                 t_switch=t_switch,
                 rel_tolerance=rel_tolerance,
+                optimizer=optimizer,
                 name='stage0_model')
 
     def train(
@@ -147,10 +154,14 @@ class Trainer:
         """
         Train the stage1 model with the training data
         """
-        self.stage1_model.train(self.data_train, batch_size=self.batch_size,
-                                num_epochs=self.epochs,
-                                save_model=save_model,
-                                seed=42)
+        self.stage1_model.train(
+            data_train=self.data_train,
+            batch_size=self.batch_size,
+            num_epochs=self.epochs,
+            optimizer=self.optimizer,
+            seed=42,
+            save_model=save_model,
+        )
 
         logger.info(f"Trained stage1 model: {self.stage1_model.name}")
 

@@ -9,9 +9,10 @@
 | File/Folder | Description |
 |-------------|-------------|
 | `main.py` | Main script to run the experiment |
+| `recommendoptimizer.py` | Custom `f3dasm.DataGenerator` routing to recommend the optimizer for a testing set |
 | `pbsjob.sh` | TORQUE job file to run the experiment on the [TUD Delft HPC](https://hpcwiki.tudelft.nl/index.php?title=Main_Page) cluster |
 | `slurmjob.sh` | SLURM job file to run the experiment on the [DelftBlue](https://www.tudelft.nl/dhpc/system) cluster|
-| `slurmjob.sh` | SLURM job file to run the experiment on the [OSCAR](https://docs.ccv.brown.edu/oscar) cluster|
+| `slurmjob_brown.sh` | SLURM job file to run the experiment on the [OSCAR](https://docs.ccv.brown.edu/oscar) cluster|
 | `README.md` | Explanation of this experiment |
 | `outputs/` | Folder with the results of running this experiment |
 | `img/` | Folder with images used in this file |
@@ -38,9 +39,61 @@
 
 | Cluster | Command |
 |---------|---------|
-| TORQUE  | `qsub pbsjob.sh` |
-| DelftBlue | `sbatch slurmjob.sh` |
-| OSCAR | `sbatch slurmjob_brown.sh` |
+| [TUD Delft HPC](https://hpcwiki.tudelft.nl/index.php?title=Main_Page)  | `qsub pbsjob.sh` |
+| [DelftBlue](https://www.tudelft.nl/dhpc/system) | `sbatch slurmjob.sh` |
+| [OSCAR](https://docs.ccv.brown.edu/oscar) | `sbatch slurmjob_brown.sh` |
+
+You can run this experiment on multiple nodes by submitting an arrayjob (e.g. `qsub -t 0-10 pbsjob.sh` or `sbatch --array=0-10 slurmjob.sh`):
+- The first node will (`jobid=0`) handle the creation of the `f3dasm.ExperimentData` object.
+- The other nodes will (`jobid=1,2,...`) handle the `f3dasm.DataGenerator` process specified in `recommendoptimizer.py`.
+
+### Performing parameter sweeps
+
+You can do parameter sweeps by changing the `config.yaml` file. For example, you can change the `seed` parameter to a list of seeds to run the experiment with multiple seeds. The same can be done for any (hyper)parameter that is present in the `config.yaml` file.
+
+```yaml
+domain:
+  stage0_clf.n_estimators:
+    type: category
+    categories: [10, 50, 100, 200, 500]
+
+  stage0_clf.learning_rate:
+    type: category
+    categories: [0.1, 0.01, 0.5, 1.0]
+
+  stage0_clf.max_depth:
+    type: category
+    categories: [3, 6, 10]
+
+  stage0_clf.loss:
+    type: category
+    categories: ['log_loss', 'exponential']
+
+  rel_tolerance:
+    type: category
+    categories: [0.0, 0.01, 0.1, 0.2]
+
+  stage1_clf.latent_dim:
+    type: category
+    categories: [16, 32, 64, 128]
+```
+
+> If you want to change nested parameters, you can use the `.` separator ([more information](https://omegaconf.readthedocs.io/en/2.3_branch/usage.html#omegaconf-update)). For example, to change the `learning_rate` of the `stage0_clf` you can use `stage0_clf.learning_rate`.
+
+The ExperimentData object can be created by specifying the amount of samples and the sampling strategy:
+
+```yaml
+experimentdata:
+  from_sampling:
+    sampler: random
+    seed: 2023
+    n_samples: 5
+    domain: ${domain}
+```
+
+The parameters of the currently run sample of the `f3dasm.ExperimentData` object will overwrite the parameter in the `config.yaml` file. 
+
+
 
 ## Results
 
@@ -55,8 +108,9 @@ The following subdirectories are created:
 
 * `experiment_data`: Contains the input, output, domain and jobs to construct the [`f3dasm.ExperimentData`](https://f3dasm.readthedocs.io/en/latest/rst_doc_files/classes/design/experimentdata.html) object.
 * `.hydra`: Contains the `config.yaml` file used to run the experiment.
-
-Lastly, a log file `main` is created.
+* `stage0_prediction`: Contains the predictions of the `stage0_clf` for the testing data.
+* `stage1_prediction`: Contains the predictions of the `stage1_clf` for the testing data.
+* `main.log`: Log file of the experiment.
 
 The folder structure is as follows:
 
@@ -70,6 +124,12 @@ outputs/
         │   ├── input.csv
         │   ├── output.csv
         │   └── jobs.pkl
+        ├── stage0_prediction/
+        │   ├── 0.nc
+        │   └── 1.nc
+        ├── stage1_prediction/
+        │   ├── 0.nc
+        │   └── 1.nc
         └── main.log
 ```
 
@@ -86,7 +146,10 @@ outputs/
 | rel_tolerance | `float` | Relative tolerance for the targets |
 | epochs | `int` | Number of epochs for training the `stage1_clf` |
 | batch_size | `int` | Batch size for training the `stage1_clf` |
+| optimizer | `optax.GradientTransformation` | Optimizer for training the `stage1_clf` |
 | n_optimizers | `int` | Number of optimization algorithms to choose from |
+
+> The `optimizer` key is initialized with the [`instantiate` method of `hydra`](https://hydra.cc/docs/advanced/instantiate_objects/overview/). Therefore the key should be a dictionary with the `_target_` key pointing to a `optax.GradientTransformation` function and the other keys pointing to the arguments of this function (e.g. the `learning_rate`).
 
 ### Data
 
@@ -97,6 +160,8 @@ Specifying the directories of the training, testing and ELA data.
 | training_project_dir  | `str`  | Path to the `ExperimentData` project directory for the training data |
 | test_project_dir | `str`  | Path to the `ExperimentData` project directory for the testing data |
 | ela_project_dir | `str`  | Path to the directory for the ELA data |
+
+> If no `test_project_dir` is given, the testing data is created by random splitting from the training data with the `test_size` parameter as the fraction of problems that are reserved for testing.
 
 ### Stage0 Model
 

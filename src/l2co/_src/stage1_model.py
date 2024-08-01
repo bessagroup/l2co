@@ -308,19 +308,19 @@ class SingleStage1Model(Protocol):
 class Stage1Model():
     def __init__(self, optimizers: xr.DataArray, model: SingleStage1Model,
                  t_start: int, t_switch: int, rel_tolerance: float,
-                 name: str = 'stage1_model', **kwargs):
+                 name: str = 'stage1_model',
+                 **kwargs):
         self.optimizers = optimizers
         self.models = self.create_models(model)
         self.states = self.create_states()
         self.name = name
-
         self.t_start = t_start
         self.t_switch = t_switch
         # self.rel_tolerance = rel_tolerance
 
     def train(self, data_train: DataLoader, batch_size: int, num_epochs: int,
-              seed: int, optimizer: GradientTransformation = optax.adam(1e-3),
-              save_model: bool = False):
+              optimizer: GradientTransformation,
+              seed: int, save_model: bool = False):
 
         for opt in self.optimizers.values:
             # d_features = Dataset.from_problem_features(

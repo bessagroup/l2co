@@ -51,11 +51,13 @@ test_size: 0.2
 rel_tolerance: 0.01
 epochs: 3
 batch_size: 16
-
+optimizer:
+  _target_: optax.adam
+  learning_rate: 1e-3
 n_optimizers: 4
 
 data:
-  training_project_dir: /media/martin/T7/data/4155603
+  training_project_dir: /media/martin/T7/data/benchmark_0.1
   testing_project_dir:
   ela_project_dir: /media/martin/T7/data/4155603
 
