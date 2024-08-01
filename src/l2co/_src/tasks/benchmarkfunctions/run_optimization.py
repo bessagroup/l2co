@@ -1,5 +1,5 @@
 """
-Module containing functions that can be used to generate a dataset for the 
+Module containing functions that can be used to generate a dataset for the
 optimization dynamics of various parametrized benchmark functions
 
 Functions

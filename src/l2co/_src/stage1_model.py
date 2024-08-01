@@ -17,7 +17,6 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import numpy as np
-import optax
 import xarray as xr
 from flax.training import train_state
 from optax import GradientTransformation, softmax_cross_entropy

@@ -145,7 +145,7 @@ class OpfunuFunc(PyBenchFunction):
         Returns
         -------
         bool
-            True if the dimensionality is supported, False otherwise            
+            True if the dimensionality is supported, False otherwise
         """
         if dim_supported is None:
             return d < dim_max
