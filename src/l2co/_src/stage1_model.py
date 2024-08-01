@@ -32,10 +32,16 @@ from .data_loader import DataLoader
 
 
 class SimpleLSTM(nn.Module):
+    """
+    Simple LSTM model
+    """
     features: int
     n_labels: int
 
     def setup(self):
+        """
+        Setup function, initializes the LSTM cell
+        """
         self.scan_cell = nn.transforms.scan(
             nn.OptimizedLSTMCell,
             variable_broadcast='params',
@@ -61,11 +67,33 @@ class SimpleLSTM(nn.Module):
         return nn.sigmoid(x)
 
 
-def normal_initializer(rng, shape, dtype):
+def normal_initializer(
+        rng: jax.random.KeyArray, shape: Tuple[int, int],
+        dtype: jnp.dtype) -> jax.Array:
+    """
+    Normal initializer for weights and biases
+
+    Parameters
+    ----------
+    rng : jax.random.KeyArray
+        Random key
+    shape : Tuple
+        Shape of the weights or biases
+    dtype : jnp.dtype
+        Data type
+
+    Returns
+    -------
+    jax.Array
+        The initialized weights or biases
+    """
     return jax.random.normal(rng, shape, dtype) * 0.01
 
 
 class SimpleMLP(nn.Module):
+    """
+    Simple Multi-Layer Perceptron model
+    """
     n_features: int
     n_layers: int
     n_labels: int
@@ -90,6 +118,9 @@ class SimpleMLP(nn.Module):
 
 
 class HybridModel(nn.Module):
+    """
+    Hybrid model combining an LSTM and an MLP model
+    """
     lstm_features: int
     mlp_features: int
     mlp_layers: int
@@ -133,6 +164,25 @@ def create_initial_params(rng: jax.random.KeyArray,
                           input_shape_features: Tuple[int, int],
                           input_shape_trajectory: Tuple[int, int],
                           model: nn.Module) -> Dict[str, Any]:
+    """
+    Create initial parameters for the model
+
+    Parameters
+    ----------
+    rng : jax.random.KeyArray
+        Random key
+    input_shape_features : Tuple[int, int]
+        Shape of the input features
+    input_shape_trajectory : Tuple[int, int]
+        Shape of the input trajectory
+    model : nn.Module
+        The model
+
+    Returns
+    -------
+    Dict[str, Any]
+        Initial parameters
+    """
     dummy_input_features = jnp.ones(input_shape_features, jnp.float32)
     dummy_input_trajectory = jnp.ones(input_shape_trajectory, jnp.float32)
     variables = model.init({'params': rng}, dummy_input_features,
@@ -144,6 +194,28 @@ def compute_metrics(
         logits: jnp.ndarray,
         labels: jnp.ndarray,
         n_classes: int) -> Dict[str, jnp.ndarray]:
+    """
+    Compute the softmax cross-entropy loss and accuracy
+
+    Parameters
+    ----------
+    logits : jnp.ndarray
+        The logits
+    labels : jnp.ndarray
+        The labels
+    n_classes : int
+        The number of classes
+
+    Returns
+    -------
+    Dict[str, jnp.ndarray]
+        The loss and accuracy in a dictionary
+
+    Notes
+    -----
+    The loss is computed as the mean softmax cross-entropy loss.
+    The accuracy is computed as the mean number of correct predictions
+    """
     loss = jnp.mean(softmax_cross_entropy(logits, labels))
     accuracy = jnp.mean(jnp.argmin(logits, -1) == jnp.argmin(labels, -1))
     return {'loss': loss, 'accuracy': accuracy}
@@ -155,9 +227,30 @@ def compute_metrics(
 def loss_fn_regression(
         params,
         state: TrainState,
-        batch_x_features: np.ndarray,
-        batch_x_trajectory: np.ndarray,
+        batch_x_features: jnp.ndarray,
+        batch_x_trajectory: jnp.ndarray,
         batch_y: np.ndarray) -> Tuple[jax.Array, Tuple[Any, Any]]:
+    """
+    Loss function for regression problems
+
+    Parameters
+    ----------
+    params : Any
+        The parameters
+    state : TrainState
+        The TrainState
+    batch_x_features : np.ndarray
+        The input features
+    batch_x_trajectory : np.ndarray
+        The input trajectories
+    batch_y : np.ndarray
+        The labels
+
+    Returns
+    -------
+    Tuple[jax.Array, Tuple[Any, Any]]
+        The loss and the logits and updates
+    """
     logits, updates = state.apply_fn(
         {'params': params, 'batch_stats': state.batch_stats},
         batch_x_features, batch_x_trajectory,
@@ -177,6 +270,29 @@ def train_step(
     model: nn.Module,
     loss_fn: Callable = loss_fn_regression,
 ) -> Tuple[TrainState, Dict[str, jnp.ndarray]]:
+    """
+    Training step function
+
+    Parameters
+    ----------
+    state : TrainState
+        The TrainState
+    batch_x_features : jnp.ndarray
+        The input features
+    batch_x_trajectory : jnp.ndarray
+        The input trajectory
+    batch_y : jnp.ndarray
+        The labels
+    model : nn.Module
+        The model
+    loss_fn : Callable, optional
+        The loss function, by default loss_fn_regression
+
+    Returns
+    -------
+    Tuple[TrainState, Dict[str, jnp.ndarray]]
+        The updated TrainState and the metrics
+    """
 
     _loss_fn = partial(loss_fn, state=state, batch_x_features=batch_x_features,
                        batch_x_trajectory=batch_x_trajectory, batch_y=batch_y)
@@ -195,7 +311,27 @@ def evaluate_step(
         batch_x_trajectory: jnp.ndarray,
         batch_y: jnp.ndarray,
         model: nn.Module) -> Dict[str, jnp.ndarray]:
+    """
+    Evaluation step function
 
+    Parameters
+    ----------
+    state : TrainState
+        The TrainState
+    batch_x_features : jnp.ndarray
+        The input features
+    batch_x_trajectory : jnp.ndarray
+        The input trajectory
+    batch_y : jnp.ndarray
+        The labels
+    model : nn.Module
+        The model
+
+    Returns
+    -------
+    Dict[str, jnp.ndarray]
+        The metrics of the evaluation on the testing set
+    """
     logits = state.apply_fn(
         {'params': state.params, 'batch_stats': state.batch_stats},
         batch_x_features, batch_x_trajectory, train=False)
@@ -215,7 +351,33 @@ def training_loop(
         loss_fn: Callable,
         track_loss: bool,
 ) -> Tuple[TrainState, Dict[str, jnp.ndarray]]:
+    """
+    Training loop
 
+    Parameters
+    ----------
+    optimizer : GradientTransformation
+        optimizer to use
+    model : nn.Module
+        neural network model
+    data_optimization : TorchDataLoader
+        learning data
+    num_epochs : int
+        number of epochs
+    seed : Optional[int]
+        seed for random number generation
+    batch_size : int
+        batch size
+    loss_fn : Callable
+        loss function
+    track_loss : bool
+        if True, track the loss
+
+    Returns
+    -------
+    Tuple[TrainState, Dict[str, jnp.ndarray]]
+        The final TrainState and the metrics
+    """
     if seed is None:
         seed = np.random.randint(1e6)
 
@@ -293,6 +455,10 @@ def training_loop(
 
 
 class SingleStage1Model(Protocol):
+    """
+    Protocol class for the learned model that is used in 'Stage 1'
+    """
+
     def train(self, data_train: DataLoader, iterations: int, seed: int,
               batch_size: int) -> None:
         ...
@@ -309,6 +475,24 @@ class Stage1Model():
                  t_start: int, t_switch: int, rel_tolerance: float,
                  name: str = 'stage1_model',
                  **kwargs):
+        """
+        Stage1 model
+
+        Parameters
+        ----------
+        optimizers : xr.DataArray
+            The optimizers
+        model : SingleStage1Model
+            The model
+        t_start : int
+            The start time
+        t_switch : int
+            The switch time
+        rel_tolerance : float
+            The relative tolerance
+        name : str, optional
+            The name of the model, by default 'stage1_model'
+        """
         self.optimizers = optimizers
         self.models = self.create_models(model)
         self.states = self.create_states()
@@ -320,20 +504,26 @@ class Stage1Model():
     def train(self, data_train: DataLoader, batch_size: int, num_epochs: int,
               optimizer: GradientTransformation,
               seed: int, save_model: bool = False):
+        """
+        Train the model
+
+        Parameters
+        ----------
+        data_train : DataLoader
+            The training data
+        batch_size : int
+            The batch size
+        num_epochs : int
+            The number of epochs
+        optimizer : GradientTransformation
+            The optimizer
+        seed : int
+            Seed for the random number generator
+        save_model : bool, optional
+            If True, save the model, by default False
+        """
 
         for opt in self.optimizers.values:
-            # d_features = Dataset.from_problem_features(
-            #     d=data_train, optimizer=opt, seed=seed,
-            # )
-
-            # d_trajectory = Dataset.from_optimization_trajectory(
-            #     d=data_train, optimizer=opt,
-            # t = self.t_switch, t_start = self.t_start, seed = seed,)
-
-            # data_optimization = OptimizationDynamics(
-            #     d=data_train, optimizer=opt,
-            #     t=self.t_switch, t_start=self.t_start)
-
             data_optimization = data_train.to_learning_data(
                 optimizer=opt, t=self.t_switch,
                 t_start=self.t_start)
@@ -351,6 +541,21 @@ class Stage1Model():
 
     def predict(self, data_test: DataLoader,
                 stage0_predictions: xr.DataArray) -> xr.DataArray:
+        """
+        Predict the best optimizer on the testing data
+
+        Parameters
+        ----------
+        data_test : DataLoader
+            The testing data
+        stage0_predictions : xr.DataArray
+            The predictions of the Stage0 model
+
+        Returns
+        -------
+        xr.DataArray
+            The predictions of the Stage
+        """
 
         list_y_pred_stage1 = []
         stage0_predictions = stage0_predictions.sortby('problem')
@@ -360,10 +565,6 @@ class Stage1Model():
                 stage0_predictions == optimizer, drop=True).problem
 
             data_selected = data_test.select_problems(problems)
-
-            # data_optimization = OptimizationDynamics(
-            #     d=data_selected, optimizer=optimizer,
-            #     t=self.t_switch, t_start=self.t_start)
 
             data_optimization = data_selected.to_learning_data(
                 optimizer=optimizer, t=self.t_switch,

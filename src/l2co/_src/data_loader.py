@@ -278,6 +278,28 @@ class DataLoader:
     def to_learning_data(
             self, optimizer: str,
             t: int, t_start: int) -> OptimizationDynamics:
+        """
+        Convert the data loader to learning data.
+
+        Parameters
+        ----------
+        optimizer : str
+            The optimizer to select.
+        t : int
+            The iteration to select.
+        t_start : int, optional
+            The starting iteration number of the requested trajectory,
+            by default 0
+
+        Returns
+        -------
+        OptimizationDynamics
+            The resulting optimization dynamics.
+
+        Notes
+        -----
+        OptimizationDynamics is a pytorch Dataset object.
+        """
         X_traj = self.select_optimizer(optimizer).select_t(
             t=t, t_start=t_start).X_trajectory(t, t_start=t_start)
         X_features = self.X

@@ -13,7 +13,7 @@ plot_perf_profile
 #                                                                       Modules
 # =============================================================================
 
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 # Third-party
 import matplotlib.pyplot as plt
@@ -79,7 +79,29 @@ def set_size(width, fraction=1, subplots=(1, 1)):
 
 
 def plot_rtd_profile(d: DataLoader, ax: Optional[plt.Axes] = None,
-                     strategies: Optional[List[xr.DataArray]] = None):
+                     strategies: Optional[List[xr.DataArray]] = None
+                     ) -> Tuple[plt.Figure, plt.Axes]:
+    """
+    Plot the run-time distribution for the given DataLoader.
+
+    Parameters
+    ----------
+    d: DataLoader
+        DataLoader instance
+    ax: plt.Axes, optional
+        Matplotlib axes
+    strategies: list of xr.DataArray, optional
+        List of strategies to plot, by default None
+
+    Returns
+    -------
+    Tuple[plt.Figure, plt.Axes]
+        Matplotlib figure and axes
+
+    Notes
+    -----
+    If no axes are provided, a new figure is created.
+    """
     _rtd = d.rtd_profile(strategies).to_array('optimizer').mean('problem')
 
     if ax is None:
@@ -98,8 +120,31 @@ def plot_rtd_profile(d: DataLoader, ax: Optional[plt.Axes] = None,
     return fig, ax
 
 
-def plot_perf_profile(d: DataLoader, ax: Optional[plt.Axes] = None,
-                      strategies: Optional[List[xr.DataArray]] = None):
+def plot_perf_profile(
+    d: DataLoader, ax: Optional[plt.Axes] = None,
+    strategies: Optional[List[xr.DataArray]] = None
+) -> Tuple[plt.Figure, plt.Axes]:
+    """
+    Plot the performance profile for the given DataLoader.
+
+    Parameters
+    ----------
+    d: DataLoader
+        DataLoader instance
+    ax: plt.Axes, optional
+        Matplotlib axes
+    strategies: list of xr.DataArray, optional
+        List of strategies to plot, by default None
+
+    Returns
+    -------
+    Tuple[plt.Figure, plt.Axes]
+        Matplotlib figure and axes
+
+    Notes
+    -----
+    If no axes are provided, a new figure is created.
+    """
     _perf = d.performance_profile(strategies).to_array('optimizer')
     rel_error = _perf.f * 100 - 100
 
