@@ -83,7 +83,7 @@ class Trainer:
             Number of epochs, by default 3
         batch_size : int, optional
             Batch size, by default 32
-        optimizer : GradientTransformation, optional
+        optimizer : optax.GradientTransformation, optional
             Optimizer, by default optax.adam(1e-3)
         """
 

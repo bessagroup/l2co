@@ -16,10 +16,6 @@ Contents of this folder
 `outputs/`      Folder with the results of running this experiment 
 =============== ======================================================
 
-.. note::
-    
-The `outputs/` folder is created when the experiment has been run for the first time.
-
 Summary
 -------
 

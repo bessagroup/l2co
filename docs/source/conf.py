@@ -22,7 +22,7 @@ for path in src_dir:
 # -- Project information ------------------------------------------------------
 # Source: https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = 'L2CO'
+project = 'l2co'
 author = 'Martin van der Schelling'
 copyright = '2024, Martin van der Schelling'
 version = '1.1.0'
@@ -42,8 +42,10 @@ extensions = ['sphinx.ext.duration',
               'sphinx.ext.autosummary',
               'sphinx.ext.intersphinx',
               'sphinx.ext.viewcode',
-              'sphinx_autodoc_typehints']
+              'sphinx_autodoc_typehints',
+              ]
 
+#
 # Source: https://www.sphinx-doc.org/en/master/usage/configuration.html#confval-source_suffix
 source_suffix = {'.rst': 'restructuredtext', }
 
@@ -88,7 +90,7 @@ napoleon_include_private_with_doc = True
 # autosummary: https://www.sphinx-doc.org/en/master/usage/extensions/autosummary.html#module-sphinx.ext.autosummary
 autosummary_generate = True
 autosummary_generate_overwrite = True
-autosummary_imported_members = False
+autosummary_imported_members = True
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3/", None),
@@ -98,6 +100,8 @@ intersphinx_mapping = {
     "pandas": ('https://pandas.pydata.org/docs/', None),
     "xarray": ('https://docs.xarray.dev/en/stable/', None),
     "f3dasm": ('https://f3dasm.readthedocs.io/en/latest/', None),
+    "optax": ('https://optax.readthedocs.io/en/latest/', None),
+    "sklearn": ('https://scikit-learn.org/stable/', None),
 }
 
 # -- Options for HTML output -------------------------------------------------
@@ -108,7 +112,9 @@ intersphinx_mapping = {
 # Source: https://www.sphinx-doc.org/en/master/usage/configuration.html#confval-html_theme_path
 on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
 if on_rtd:
-    html_theme = 'default'
+    import sphinx_rtd_theme
+    html_theme = 'sphinx_rtd_theme'
+    html_theme_path = [sphinx_rtd_theme.get_html_theme_path()]
 else:
     # Source: https://sphinx-rtd-theme.readthedocs.io/en/stable/index.html
     # Requires installation of Python package 'sphinx_rtd_theme'
@@ -123,4 +129,4 @@ html_static_path = ['_static', ]
 html_css_files = ['readthedocs-custom.css', 'theme_overrides.css', ]
 
 # Source: https://www.sphinx-doc.org/en/master/usage/configuration.html#confval-html_show_sourcelink
-html_show_sourcelink = True
+html_show_sourcelink = False
