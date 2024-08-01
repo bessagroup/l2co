@@ -61,6 +61,17 @@ To install the package for development, install the development dependencies aft
 pip install -r requirements_dev.txt
 ```
 
+#### Possible issues (FAQ)
+
+I have encountered problems with installing the `recommenders` package, especially with the LightFM dependency:
+
+[Light FM throwing an installation error: AttributeError: 'dict' object has no attribute '__LIGHTFM_SETUP__'
+](https://github.com/lyst/lightfm/issues/687)
+
+A possible solution can be found [here](https://github.com/LinkedInLearning/recommendation-systems-a-practical-introduction-2703578/pull/4)
+
+
+
 ## Experiments
 
 This package includes a collection of illustrative benchmark studies that demonstrate the capabilities of the framework. These studies are available in the `/experiments/` folder.
