@@ -4,7 +4,11 @@ Plotting module
 Functions
 ---------
 set_size
-    Set figure dimensions to avoid scaling in LaTeX.
+    Set figure dimensions
+plot_rtd_profile
+    Plot the RTD profile for the given DataLoader.
+plot_perf_profile
+    Plot the performance profile for the given DataLoader.
 """
 #                                                                       Modules
 # =============================================================================

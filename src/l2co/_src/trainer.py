@@ -19,7 +19,7 @@ from typing import Optional
 
 # Third-party
 import xarray as xr
-from sklearn.base import BaseEstimator
+from sklearn.base import BaseEstimator as SingleStage0Model
 
 # Local
 from ._logging import logger
@@ -40,7 +40,7 @@ __status__ = 'Planning'
 class Trainer:
     def __init__(self, data_train: DataLoader,
                  data_test: DataLoader,
-                 stage0_clf: BaseEstimator | str,
+                 stage0_clf: SingleStage0Model | str,
                  stage1_clf: SingleStage1Model | str,
                  iterations: int,
                  t_switch: int,

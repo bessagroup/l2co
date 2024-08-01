@@ -53,6 +53,26 @@ __status__ = 'Stable'
 # =============================================================================
 
 
+def sample(dim_filters, config, domain: Domain,
+           n_samples: int, seed: Optional[int] = None):
+    rng = np.random.default_rng(seed=seed)
+
+    dims = rng.choice(
+        domain.space['dimensionality'].categories, size=n_samples)
+    function_names = np.array([rng.choice(dim_filters[d]) for d in dims])
+    noise = rng.choice(domain.space['noise'].categories, size=n_samples,
+                       p=config.noise_distribution)
+    seed = rng.integers(
+        domain.space['seed'].lower_bound,
+        domain.space['seed'].upper_bound, size=n_samples)
+    budget = np.array([domain.space['budget'].value] * n_samples)
+    return pd.DataFrame(
+        [dims, function_names, noise, seed, budget],
+        index=[
+            'dimensionality', 'function_name', 'noise',
+            'seed', 'budget']).T
+
+
 def pre_processing(config: Config):
     logger.setLevel(logging.DEBUG)
 
@@ -66,26 +86,9 @@ def pre_processing(config: Config):
             domain.space['function_name'].categories)))
         for d in domain.space['dimensionality'].categories}
 
-    def sample(dim_filters, domain: Domain,
-               n_samples: int, seed: Optional[int] = None):
-        rng = np.random.default_rng(seed=seed)
-
-        dims = rng.choice(
-            domain.space['dimensionality'].categories, size=n_samples)
-        function_names = np.array([rng.choice(dim_filters[d]) for d in dims])
-        noise = rng.choice(domain.space['noise'].categories, size=n_samples,
-                           p=config.noise_distribution)
-        seed = rng.integers(
-            domain.space['seed'].lower_bound,
-            domain.space['seed'].upper_bound, size=n_samples)
-        budget = np.array([domain.space['budget'].value] * n_samples)
-        return pd.DataFrame(
-            [dims, function_names, noise, seed, budget],
-            index=['dimensionality', 'function_name', 'noise', 'seed', 'budget']).T
-
     data = f3dasm.ExperimentData.from_sampling(
         sampler=sample, domain=domain, n_samples=2000, seed=42,
-        dim_filters=dim_filters)
+        dim_filters=dim_filters, config=config)
 
     # OUTPUT DATA
     optimizers = [opt_config['name'] for

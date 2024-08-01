@@ -4,7 +4,7 @@ This module contains the functions to calculate Exploratory Landscape Analysis
 
 Functions
 ---------
-create_ela_feature_1
+create_ela_features
     Calculate ELA features for a single itemID in the performance DataArray.
 
 """
@@ -92,7 +92,7 @@ ELA_FEATURE_LABELS = {
     # 'nbc.costs_runtime': 'scaler',
 }
 
-empty_labels = {key: np.nan for key in ELA_FEATURE_LABELS}
+EMPTY_LABELS = {key: np.nan for key in ELA_FEATURE_LABELS}
 
 # =============================================================================
 
@@ -121,7 +121,7 @@ def create_ela_features(data_samples: xr.Dataset, itemID: int,
             pca = PCA(n_components=10)
             X = pca.fit_transform(X, y)
 
-        features = deepcopy(empty_labels)
+        features = deepcopy(EMPTY_LABELS)
 
         try:
             features.update(calculate_ela_distribution(X, y))

@@ -3,7 +3,6 @@
 
 # Third-party
 import numpy as np
-import xarray as xr
 from config import Config
 from f3dasm._src.datageneration.functions.function_factory import \
     _datagenerator_factory

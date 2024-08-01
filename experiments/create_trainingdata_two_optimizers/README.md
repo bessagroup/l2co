@@ -43,7 +43,9 @@ For every optimization problem, we solve the problems with a fraction of the tot
 | `config.py` | Configuration file type-hints for the experiment |
 | `README.md` | Explanation of this experiment |
 | `img/` | Folder with images used in this file |
-| `pbsjob.sh` | TORQUE job file to run the experiment in a cluster |
+| `pbsjob.sh` | TORQUE job file to run the experiment on the [TUD Delft HPC](https://hpcwiki.tudelft.nl/index.php?title=Main_Page) cluster |
+| `slurmjob.sh` | SLURM job file to run the experiment on the [DelftBlue](https://www.tudelft.nl/dhpc/system) cluster|
+| `slurmjob.sh` | SLURM job file to run the experiment on the [OSCAR](https://docs.ccv.brown.edu/oscar) cluster|
 | `outputs/` | Folder with the results of running this experiment |
 
 > The `outputs/` folder is created when the experiment has been run for the first time.
@@ -53,8 +55,7 @@ For every optimization problem, we solve the problems with a fraction of the tot
 ### Before running the experiment
 
 1. Install the `l2co` package. See [here](https://github.com/bessagroup/L2CO#getting-started) for instructions.
-2. Install `f3dasm_optimize` in your environment. See [here](https://bessagroup.github.io/f3dasm_optimize/rst_doc_files/getting_started.html) for instructions.
-3. Change the `config.yaml` file to your liking. See [here](#explanation-of-configyaml-parameters) for an explanation of the parameters.
+2. Change the `config.yaml` file to your liking. See [here](#explanation-of-configyaml-parameters) for an explanation of the parameters.
 
 ### Running the experiment on your local machine
 
@@ -63,7 +64,13 @@ For every optimization problem, we solve the problems with a fraction of the tot
 ### Running the experiment on a TORQUE cluster
 
 1. Make sure you have an `conda` environment named `f3dasm_env` with the packages installed in the first step
-2. Navigate to this folder and submit the job with i.e. 2 nodes: `qsub pbsjob.sh -t 0-2`
+2. Navigate to this folder and submit the job:
+
+| Cluster | Command |
+|---------|---------|
+| TORQUE  | `qsub pbsjob.sh` |
+| DelftBlue | `sbatch slurmjob.sh` |
+| OSCAR | `sbatch slurmjob_brown.sh` |
 
 
 ## Results

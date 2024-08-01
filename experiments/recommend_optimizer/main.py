@@ -8,19 +8,15 @@ from time import perf_counter, sleep
 # Third-party
 import hydra
 import matplotlib.pyplot as plt
-import xarray as xr
 from f3dasm import ExperimentData, logger
 from f3dasm.datageneration import DataGenerator
 from f3dasm.hydra_tools import update_config_with_experiment_sample
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
-from l2co import LSTMMultiOutputClassifier
+from l2co import DataLoader, Trainer
 from l2co import logger as l2co_logger
-from l2co._src.stage1_model import ELAClassifier
-from l2co.data import DataLoader
-from l2co.preprocessing import preprocessing_factory
-from l2co.trainer import Trainer
+from l2co import preprocessing_factory
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -75,7 +71,8 @@ class RecommendOptimizer(DataGenerator):
         # Construct the classifiers
         stage0_clf = instantiate(config.stage0_clf)
         stage1_clf = instantiate(
-            {**config.stage1_clf, 'optimizers': d_train.select_single_optimizers().optimizers})
+            {**config.stage1_clf,
+             'optimizers': d_train.select_single_optimizers().optimizers})
 
         preprocessing_step = preprocessing_factory(
             feature_types=config.feature_types)
@@ -100,7 +97,7 @@ class RecommendOptimizer(DataGenerator):
             data_test=d_test,
             stage0_clf=stage0_clf,
             stage1_clf=stage1_clf,
-            iterations=config.iterations-1,
+            iterations=config.iterations,  # config.iterations-1
             t_switch=config.t_switch,
             t_start=config.t_start,
             rel_tolerance=config.rel_tolerance,

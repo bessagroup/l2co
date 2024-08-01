@@ -1,5 +1,5 @@
 """
-Module containing various classifiers for stage0
+Module containing the model for the stage0 decision.
 
 Classes
 -------

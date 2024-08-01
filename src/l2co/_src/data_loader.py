@@ -10,6 +10,8 @@ DataLoader
 OptimizationDynamics
     Learning dataset inherited from pytorch Dataset. Used for learning the
     machine learning models
+create_entire_dataset
+    Create an entire dataset from a given experiment data object
 """
 
 #                                                                       Modules
@@ -713,20 +715,73 @@ class OptimizationDynamics(torchDataset):
             X_features: np.ndarray,
             X_trajectory: np.ndarray,
             Y: np.ndarray):
+        """
+        Learning dataset inherited from pytorch Dataset. Used for learning the
+        machine learning models
+
+        Parameters
+        ----------
+        X_features : np.ndarray
+            The features of the optimization problems.
+        X_trajectory : np.ndarray
+            The trajectories of the optimization problems.
+        Y : np.ndarray
+            The performance value (labels) of the optimization problems.
+        """
         self.X_features = X_features
         self.X_trajectory = X_trajectory
         self.Y = Y
 
     def __len__(self):
+        """
+        Return the length of the dataset. Needed for inheriting from pytorch
+        Dataset.
+
+        Returns
+        -------
+        int
+            The length of the dataset.
+        """
         return len(self.X_features)
 
     def __getitem__(self, idx):
+        """
+        Get an item from the dataset. Needed for inheriting from pytorch
+        Dataset.
+
+        Parameters
+        ----------
+        idx : int
+            The index of the item to get.
+        """
         return (self.X_features[idx], self.X_trajectory[idx]), self.Y[idx]
 
 # =============================================================================
 
 
 def create_entire_dataset(experiment_data: ExperimentData):
+    """
+    Create an entire dataset from a given experiment data object.
+
+    Parameters
+    ----------
+    experiment_data : f3dasm.ExperimentData
+        The experiment data object.
+
+    Returns
+    -------
+    xarray.Dataset
+        The resulting entire dataset.
+
+    Notes
+    -----
+    The entire dataset is created by concatenating all the optimization
+    trajectories (NetCDF files) of the experiment data object.
+
+    All of the files are checked on:
+    - if they are flagged as 'invalid' or 'ERROR'
+    - if they contain np.nan values
+    """
 
     experiment_data = experiment_data.select_with_status('finished')
 
