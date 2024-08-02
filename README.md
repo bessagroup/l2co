@@ -55,7 +55,7 @@ pip install -e .
 
 ### Installation instructions for developers
 
-To install the package for development, install the development dependencies after normal installation:
+To install the package for development (or for building the sphinx documentation), install the development dependencies after normal installation:
 
 ```bash
 pip install -r requirements_dev.txt
@@ -69,8 +69,6 @@ I have encountered problems with installing the `recommenders` package, especial
 ](https://github.com/lyst/lightfm/issues/687)
 
 A possible solution can be found [here](https://github.com/LinkedInLearning/recommendation-systems-a-practical-introduction-2703578/pull/4)
-
-
 
 ## Experiments
 

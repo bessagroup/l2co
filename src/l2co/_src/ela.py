@@ -100,7 +100,26 @@ EMPTY_LABELS = {key: np.nan for key in ELA_FEATURE_LABELS}
 def create_ela_features(data_samples: xr.Dataset, itemID: int,
                         iterations: Optional[int] = None) -> xr.DataArray:
     """
+    Calculate Exploratory Landscape Analysis (ELA) features for the performance
+    of optimizers on benchmark functions.
 
+    Parameters
+    ----------
+    data_samples : xarray.Dataset
+        The performance data samples.
+    itemID : int
+        The itemID of the performance data samples.
+    iterations : int, optional
+        The number of iterations to consider, by default None.
+
+    Returns
+    -------
+    xarray.DataArray
+        The ELA features for the performance data samples.
+
+    Notes
+    -----
+    If iterations is not given, all iterations are considered.
     """
 
     data_samples = data_samples.expand_dims(

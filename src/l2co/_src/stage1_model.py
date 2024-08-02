@@ -682,9 +682,6 @@ class Stage1Model():
         path : Path
             The path to the model
         """
-        # filename = (path / 'stage1_model').with_suffix('.pkl')
-        # with open(filename, 'wb') as f:
-        #     pickle.dump(self, f)
         for optimizer, model in self.models.items():
             model.save(Path(path) / f"stage1_{optimizer}")
 

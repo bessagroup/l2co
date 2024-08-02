@@ -17,9 +17,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+# Third-party
 import optax
 import xarray as xr
-# Third-party
 from optax import GradientTransformation
 from sklearn.base import BaseEstimator as SingleStage0Model
 
@@ -143,12 +143,6 @@ class Trainer:
         self.stage0_model.fit(X, Y)
 
         logger.info(f"Trained stage0 model: {self.stage0_model.name}")
-
-    # def load_stage1(self, path: str):
-    #     """
-    #     Load the stage1 model
-    #     """
-    #     self.stage1_model.load(path)
 
     def train_stage1(self, save_model: bool = False):
         """

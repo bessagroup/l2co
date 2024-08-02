@@ -84,8 +84,8 @@ def run_multiple_realizations(
     Parameters
     ----------
     optimizer_scheduler : List[Tuple[str, int, str]]
-        List of tuples. For each tuple, determine the optimization\
-        strategy used, the number of iterations\
+        List of tuples. For each tuple, determine the optimization
+        strategy used, the number of iterations
         and the handshake method
     data_generator : str
         Name of the benchmark function to use
@@ -102,7 +102,7 @@ def run_multiple_realizations(
     n_samples : int
         number of initial samples
     parallelization : bool, optional
-        if the optimizations are run in parallel on multiple cores\
+        if the optimizations are run in parallel on multiple cores
         , by default True
     seed : int
         seed for the pseudo-random number generator
