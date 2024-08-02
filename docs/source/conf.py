@@ -102,6 +102,7 @@ intersphinx_mapping = {
     "f3dasm": ('https://f3dasm.readthedocs.io/en/latest/', None),
     "optax": ('https://optax.readthedocs.io/en/latest/', None),
     "sklearn": ('https://scikit-learn.org/stable/', None),
+    "flax": ('https://flax.readthedocs.io/en/latest/', None),
 }
 
 # -- Options for HTML output -------------------------------------------------

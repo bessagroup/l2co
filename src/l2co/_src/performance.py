@@ -45,7 +45,7 @@ def output_cummin(da: xr.DataArray):
 
     Parameters
     ----------
-    da : xr.DataArray
+    da : xarray.DataArray
         The dataarray to calculate the cumulative minimum for.
 
     Returns
@@ -210,10 +210,10 @@ def calculate_performance_ratio(
     Parameters
     ----------
 
-    ds_budget : xr.DataArray
+    ds_budget : xarray.DataArray
         The dataset to calculate the performance ratio for.
 
-    best_optimizer_each_problem : xr.DataArray
+    best_optimizer_each_problem : xarray.DataArray
         The best optimizer for each problem.
 
     max_f_value : float, optional
@@ -221,7 +221,7 @@ def calculate_performance_ratio(
 
     Returns
     -------
-    performance_profile : xr.DataArray
+    performance_profile : xarray.DataArray
         The performance profile for the given dataset.
     """
     # Calculate the performance ratio rij
@@ -268,7 +268,7 @@ def create_performance_profile(
     in the ds_raw parameter.
     """
     # Select only the output variable
-    ds_output = ds_raw.sel(output_dim='y', drop=True).output
+    ds_output = ds_raw.isel(output_dim=0, drop=True).output
 
     # Calculat the best found value (cummin)
     ds_output = output_cummin(ds_output)

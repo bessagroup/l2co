@@ -1,5 +1,39 @@
 """
-Flax based neural network implementations
+Flax based neural network implementations for the Stage 1 model
+
+This module contains the Flax based neural network implementations for the
+Stage 1 model. The Stage 1 model is a neural network that predicts the best
+optimizer for a given problem based on the predictions of the Stage 0 model.
+
+Classes
+-------
+SimpleLSTM
+    Simple LSTM model
+SimpleMLP
+    Simple Multi-Layer Perceptron model
+HybridModel
+    Hybrid model combining an LSTM and an MLP model
+TrainState
+    Custom TrainState class
+Stage1Model
+    Stage 1 model
+SingleStage1Model
+    Protocol class for the learned model that is used in 'Stage 1'
+
+Functions
+---------
+create_initial_params
+    Create initial parameters for the model
+compute_metrics
+    Compute the softmax cross-entropy loss and accuracy
+loss_fn_regression
+    Loss function for regression problems
+train_step
+    Training step function
+evaluate_step
+    Evaluation step function
+training_loop
+    Training loop
 """
 
 #                                                                       Modules
@@ -480,7 +514,7 @@ class Stage1Model():
 
         Parameters
         ----------
-        optimizers : xr.DataArray
+        optimizers : xarray.DataArray
             The optimizers
         model : SingleStage1Model
             The model
@@ -548,12 +582,12 @@ class Stage1Model():
         ----------
         data_test : DataLoader
             The testing data
-        stage0_predictions : xr.DataArray
+        stage0_predictions : xarray.DataArray
             The predictions of the Stage0 model
 
         Returns
         -------
-        xr.DataArray
+        xarray.DataArray
             The predictions of the Stage
         """
 

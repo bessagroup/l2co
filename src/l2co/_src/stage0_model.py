@@ -8,18 +8,8 @@ Stage0Model
 
 Functions
 ---------
-create_classifier
-    Function for creating a classifier
-create_decisiontree
-    Function for creating a decision tree classifier
-create_gpc
-    Function for creating a Gaussian process classifier
-create_knn
-    Function for creating a k-nearest neighbors classifier
-create_svc
-    Function for creating a support vector classifier
-create_gradientboostingclassifier
-    Function for creating a gradient boosting classifier
+load
+    Function to load a Stage0Model from a file
 """
 
 #                                                                       Modules

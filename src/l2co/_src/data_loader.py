@@ -91,11 +91,11 @@ class DataLoader:
         experimentdata : ExperimentData
             The experiment data.
         """
-        self.X = X  # X.sortby('problem')
+        self.X = X
         self.n_iterations = n_iterations
         self.n_realizations = n_realizations
-        self.performance = performance  # performance.sortby('problem')
-        self.data = data  # data.sortby('problem')
+        self.performance = performance
+        self.data = data
         self.config = config
         self.experimentdata = experimentdata
         self.data_samples = data_samples
@@ -118,10 +118,20 @@ class DataLoader:
         -------
         DataLoader
             The resulting data loader.
+
+        Notes
+        -----
+        The saved files should be in the path provided, in the NetCDF format
+        and named 'entire_dataset.nc' for the optimization trajectories and
+        'entire_dataset_samples.nc' for the roll-outs of random search.
         """
         path = Path(path)
+
+        # Retrieve the ExperimentData
         experimentdata = ExperimentData.from_file(
             path).select_with_status('finished')
+
+        # Retrieve the optimization dynamics data
         data = xr.open_dataset(
             path / 'entire_dataset.nc',
             chunks='auto')
@@ -232,11 +242,6 @@ class DataLoader:
         data_samples_stacked = data_samples.stack(
             problem=('realization', 'itemID'))
 
-        # New performance idea
-        # performance = scaling(data).stack(
-        #     problem=('realization', 'itemID')).sel(
-        #     output_dim='y', drop=True)
-
         performance = scaling(data_stacked)
 
         performance_stacked = performance.where(
@@ -328,7 +333,7 @@ class DataLoader:
 
         Returns
         -------
-        xr.DataArray
+        xarray.DataArray
             The resulting DataArray with dimensions 'problem',
             'realization', and 'itemID'.
         """
@@ -376,18 +381,12 @@ class DataLoader:
             iterations=-1, drop=True)
 
         if rel_tolerance == 0.0:
-            # return (
-            #     self.performance.idxmin(
-            #         'optimizer') == self.performance.optimizer).T
             return (_performance_at_last_t.idxmin(
                 'optimizer') == self.performance.optimizer).T
 
         threshold = _performance_at_last_t.min(
             dim='optimizer') + abs(
                 _performance_at_last_t.min(dim='optimizer') * rel_tolerance)
-
-        # return (self.performance <= threshold).sel(
-        #     problem=self.problem, drop=True).T
 
         return (_performance_at_last_t <= threshold).T
 
@@ -406,7 +405,7 @@ class DataLoader:
 
         Returns
         -------
-        xr.DataArray
+        xarray.DataArray
             The selected trajectory.
         """
         X_d = self.data.isel(iterations=range(t_start, iterations), drop=True)
@@ -462,7 +461,7 @@ class DataLoader:
 
         Parameters
         ----------
-        problem_indices : xr.DataArray
+        problem_indices : xarray.DataArray
             The problem indices to select.
 
         Returns
@@ -476,7 +475,10 @@ class DataLoader:
         itemID.
         """
         _problem_indices = problem_indices.sortby('itemID')
+
+        # Select unique itemIDs to select the experiment data
         _unique_itemID = np.unique(problem_indices.itemID.values)
+
         return DataLoader(
             X=self.X.sel(problem=_problem_indices),
             n_iterations=self.n_iterations,
@@ -500,10 +502,10 @@ class DataLoader:
             X = rtd[rtd.std('optimizer').argsort().values]
 
         initial_centers = np.array([
-            [0., 0., 0., 1.],  # 1
-            [0., 0., 1., 0.],  # 2
-            [0., 1., 0., 0.],  # 4
-            [1., 0., 0., 0.],  # 8
+            [0., 0., 0., 1.],
+            [0., 0., 1., 0.],
+            [0., 1., 0., 0.],
+            [1., 0., 0., 0.],
         ])
 
         kmeans = KMeans(n_clusters=len(initial_centers), random_state=0,
@@ -559,8 +561,11 @@ class DataLoader:
         """
         data = self.data.isel(iterations=range(t_start, t))
         data_samples = self.data_samples.isel(iterations=range(t_start, t))
+
+        # Recalculate the performance since the budget has changed
         performance_t = scaling(data)
 
+        # Making sure that we mask NaN values
         performance_stacked_t = performance_t.where(
             ~performance_t.isnull(), other=INVALID_PERFORMANCE_VALUE)
 

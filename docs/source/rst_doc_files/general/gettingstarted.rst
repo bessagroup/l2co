@@ -1,145 +1,146 @@
-.. _installation-instructions:
+.. _getting_started:
 
-===============
-Getting Started
-===============
-
-Since the package is not released yet, there is one way to install f3dasm:
-
-  .. * :ref:`Install the latest official release <install_official_release>`. This
-  ..   is the best approach for most users that want to use the l2co package.
-
-  * :ref:`Building the package from source
-    <install_from_source>`. This is for users who wish to contribute to the
-    project.
+Getting started
+========
 
 
+.. image:: ../../img/overview.png
+    :align: center
+    :width: 70%
 
-.. .. _install_official_release:
+|
 
-.. Installing the latest release
-.. =============================
+Creating the optimization dynamics dataset: :class:`~l2co.DataLoader`
+---------------------------------------------------------------------
 
-.. :mod:`l2co` is purely Python code and compatible with: 
+Creating the :class:`~l2co.DataLoader` is done in the following steps:
 
-.. 1. Python 3.8 or higher.
-.. 2. Linux operating system. 
-.. 3. the `pip <https://pypi.org/>`_ package manager system.
+1. Perform an :mod:`f3dasm` experiment
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-.. ----
+1. Create an :class:`~f3dasm.ExperimentData` object with the problem-dependent and problem-independent features as design space parameters. For clarity now called the 'outer-experimentdata'.
+2. Each experiment inside the :class:`~f3dasm.ExperimentData` is an optimization problem itself (from clarity now called the 'inner-experimentdata'), and the objective values at every iteration are stored in the :class:`~f3dasm.ExperimentData` object
+3. We export the inner-experimentdata object to a :class:`~xarray.Dataset` object with the :meth:`~f3dasm.ExperimentData.to_xarray` method. You can remove the input parameters from the :class:`~xarray.Dataset` object to save memory.
+4. We store the inner-experimentdata :class:`~xarray.Dataset` object with as name the inner-experimentdata optimization algorithm for each outer-experimentdata experiment. We can repeat the inner-experimentdata loop for many optimizers.
 
-.. .. This quickstart installation is a hack of the awesome
-..    https://spacy.io/usage/#quickstart page.
-..    See the original javascript implementation
-..    https://github.com/ines/quickstart. 
-..    I took the implementation of scikit-learn 
-..    (https://scikit-learn.org/stable/_sources/install.rst.txt)
-
-.. .. raw:: html
-
-..   <div class="install">
-..        <strong>Operating System</strong>
-..           <input type="radio" name="os" id="quickstart-win" checked>
-..           <label for="quickstart-win">Windows</label>
-..           <input type="radio" name="os" id="quickstart-mac">
-..           <label for="quickstart-mac">macOS</label>
-..           <input type="radio" name="os" id="quickstart-lin">
-..           <label for="quickstart-lin">Linux</label><br />
-..        <strong>Packager</strong>
-..           <input type="radio" name="packager" id="quickstart-pip" checked>
-..           <label for="quickstart-pip">pip</label>
-..           <input type="radio" name="packager" id="quickstart-conda">
-..           <label for="quickstart-conda">conda</label><br />
-..        </span>
-
-.. ----
-
-.. .. raw:: html
-
-..        <div>
-..          <span class="sk-expandable" data-packager="pip" data-os="windows">Install the 64bit version of Python 3.8, for instance from <a href="https://www.python.org/">https://www.python.org</a>.</span
-..          ><span class="sk-expandable" data-packager="pip" data-os="mac">Install Python 3.8 using <a href="https://brew.sh/">homebrew</a> (<code>brew install python</code>) or by manually installing the package from <a href="https://www.python.org">https://www.python.org</a>.</span
-..          ><span class="sk-expandable" data-packager="pip" data-os="linux">Install python3 and python3-pip using the package manager of the Linux Distribution.</span
-..          ><span class="sk-expandable" data-packager="conda"
-..             >Install conda using the <a href="https://docs.conda.io/projects/conda/en/latest/user-guide/install/">Anaconda or miniconda</a>
-..              installers (no administrator permission required for any of those).</span>
-..        </div>
-
-.. |
-
-.. Then run:
-
-.. .. raw:: html
-
-..         <div class="highlight-console notranslate"><div class="highlight"><pre><span></span
-..           ><span class="sk-expandable" data-packager="pip" data-os="mac"><span class="gp">$ </span>pip install -U l2co</span
-..           ><span class="sk-expandable" data-packager="pip" data-os="windows"><span class="gp">$ </span>pip install -U l2co</span
-..           ><span class="sk-expandable" data-packager="pip" data-os="linux"><span class="gp">$ </span>pip install -U l2co</span
-..           ><span class="sk-expandable" data-packager="conda"><span class="gp">$ </span>conda create -n f3dasm_env python=3.8</span
-..           ><span class="sk-expandable" data-packager="conda"><span class="gp">$ </span>conda activate f3dasm_env</span
-..           ><span class="sk-expandable" data-packager="conda"><span class="gp">$ </span>conda install pip</span
-..           ><span class="sk-expandable" data-packager="conda"><span class="gp">$ </span>pip install -U l2co</span
-..           ></pre></div></div>
-
-.. ----
-
-.. .. note::
-
-..   :mod:`l2co` requires a few other packages as dependencies, which will be automatically installed when installing :mod:`l2co` using the above instructions. 
-..   If you prefer to install the dependencies manually, you can find a list of the required packages in the :file:`requirements.txt` file in the `GitHub repository <https://github.com/bessagroup/f3dasm>`_.
-
-.. _install_from_source:
-
-Installing from source
-======================
-
-Building from source is required to work on a contribution (bug fix, new feature, code or documentation improvement). We recommend using a `Linux distribution system <https://releases.ubuntu.com/focal/>`_.
-
-.. _git_repo:
-
-1. Use `Git <https://git-scm.com/>`_ to check out the latest source from the
-   `l2co repository <https://github.com/bessagroup/l2co>`_ on
-   Github.:
-
-   .. code-block:: console
-
-     git clone https://github.com/bessagroup/l2co.git  # add --depth 1 if your connection is slow
-     cd f3dasm
+This will result in an output-experimentdata (:class:`~f3dasm.ExperimentData`) object with as input space the problem-dependent and problem-independent features and output space NetCDF files of optimization dynamics for various optimizers.
 
 
-2. Install a recent version of Python (3.7, 3.8, 3.9 or 3.10)
-   for instance using `Miniconda3 <https://docs.conda.io/en/latest/miniconda.html>`_. or `Mamba <https://github.com/conda-forge/miniforge#install>`_.
-   If you installed Python with conda, we recommend to create a dedicated
-   conda environment with all the build dependencies of f3dasm:
+.. code::
 
-   .. code-block:: console
-
-     conda create -n f3dasm_env python=3.8
-     conda activate f3dasm_env
-
-3. If you run the development version, it is annoying to reinstall the package each time you update the sources.
-   Therefore it is recommended that you install the package from a local source, allowing you to edit the code in-place. 
-   This builds the extension in place and creates a link to the development directory (see `the pip docs <https://pip.pypa.io/en/stable/topics/local-project-installs/#editable-installs>`_).
-
-   .. code-block:: console
-
-     pip install --verbose --no-build-isolation --editable .
+    working_dir
+    ├── CMAES/
+    │   ├── 0.nc
+    │   ├── 1.nc
+    │   └── 2.nc
+    ├── Adam/
+    │   ├── 0.nc
+    │   ├── 1.nc
+    │   └── 2.nc    
+    ├── PSO/
+    │   ├── 0.nc
+    │   ├── 1.nc
+    │   └── 2.nc
+    ├── experiment_data/
+    │   ├── domain.pkl
+    │   ├── input.csv
+    │   ├── output.csv
+    │   └── jobs.pkl
+    └── main.log
 
 
 .. note::
 
-    You can check if the package is linked to your local clone of :mod:`l2co` by running :code:`pip show list` and look for l2co. 
+    L2CO requires single-objective optimization problems. If you have multi-objective optimization problems, you can use the :class:`~f3dasm.ExperimentData` object to create a single-objective optimization problem by aggregating the objectives into a single objective using a scalarization function.
 
+2. Validating and post-processing the data
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+After you have created the required data structure, you perform the `data_validation <https://github.com/bessagroup/L2CO/tree/main/experiments/data_validation>`_ experiment.
+It will validate all the optimization data and create a combined :class:`~xarray.Dataset` object that combines all optimizers and experiments (``entire_dataset.nc``) and all random sample trajectories and experiment (``entire_dataset_samples.nc``).
 
-5. If you want to use :mod:`l2co` for development purposes, install the additional developement requirements:
+3. Creating the :class:`~l2co.DataLoader` object
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-   .. code-block:: console
+The :class:`~l2co.DataLoader` hosts all the data from various optimizers on a set of problems. It is used to assess the performance of these optimizers as well as train the L2CO model.
+The :class:`~l2co.DataLoader` is created with the following parameters:
 
-     pip install -r requirements_dev.txt
+- ``data``: :class:`~xarray.Dataset` object (``entire_dataset.nc``) containing the objective values at every iterations of various problems and optimizers
+- ``data_samples``: :class:`~xarray.Dataset` (``entire_dataset_samples.nc``) object containing random sampling trajectories of every iterations of various problems, optional
+- ``experimentdata``: outer-experimentdata object (:class:`~f3dasm.ExperimentData`) object containing the problem dependent and problem independent features as input parameters.
 
-
+You can create this object with the :meth:`~l2co.DataLoader.from_preprocessed_files` or :meth:`~l2co.DataLoader.from_saved_files` methods.
 
 .. note::
-  If you want to contribute to this project, please read the 
-  `contributing guidelines <https://github.com/bessagroup/l2co/blob/main/CONTRIBUTING.md>`_
+    
+    The package has various plotting functions to visualize the data: :func:`~l2co.plotting.plot_perf_profile` and :func:`~l2co.plotting.plot_rtd_profile`
+
+Creating the L2CO model
+-----------------------
+
+Before optimization
+^^^^^^^^^^^^^^^^^^^
+
+The first part of the L2CO model is a supervised classification approach where
+we train a classifier to predict the optimizer to choose before starting the optimization process.
+
+- The features of the model are the problem dependent and problem independent features from the :class:`~f3dasm.ExperimentData` object.
+- THe labels are the :attr:`~l2co.DataLoader.performance` values at the last iteration of the different optimizers on the problem.
+
+A model will be fit for each of the different optimizers. We use the :class:`~sklearn.multioutput.MultiOutputClassifier` from scikit-learn to handle the multi-output classification problem.
+
+Preprocessing of the features
+"""""""""""""""""""""""""""""
+
+The preprocessing step is a scikit-learn :class:`~sklearn.compose.ColumnTransformer` that can be used to apply transformations to the input data before training the classifier. 
+
+The preprocessing_step can be created with the :func:`~l2co.preprocessing_factory` function. 
+It asks for a dictionary:
+
+- the keys are the problem dependent and problem independent features from the :class:`~f3dasm.ExperimentData` object.
+- values are one of the following:
+
+  - ``'ordinal'``: for ordinal features that do have an orderning
+  - ``'categorical'``: for categorical features that do not have a specific ranking
+
+Creating the model
+""""""""""""""""""
+
+We construct a :class:`~l2co.Stage0Model` with the following parameters:
+
+- ``clf``: The model requires a classifier from scikit-learn that can handle multi-output classification.
+- ``preprocessing_step``: A preprocessing step that is applied to the input data before training the classifier.
+- ``model_name``: string representing name of the model
+
+During optimization
+^^^^^^^^^^^^^^^^^^^
+
+The second part of the model will use the acquired training dynamics to predict which optimizer to choose during the optimization process.
+
+
+- The features of the model are the normalized objective values from training trajectories of the different optimizers.
+- The labels are the same as in the :class:`~l2co.Stage0Model`, but now conditioned on the first choice of each individual model
+
+For each optimizer, a separate model is trained with only optimization trajectories from that optimizer.
+Whenever we encounter a testing problem, we consult the trained model of the optimizer that was predicted from the :class:`~l2co.Stage0Model`.
+
+Creating the model
+""""""""""""""""""
+
+We construct a :class:`~l2co.Stage1Model` with the following parameters:
+
+- ``optimizer``: :class:`xarray.DataArray` with the names of the optimizers to continue with. A model will be fit for each of the different optimizers.
+- ``model``: Trainable model that inherits from :class:`~flax.linen.Module`
+- ``t_start``: From where in the optimization process to take the training trajectories
+- ``t_switch``: The function evaluation number of the switching preprocessing_step
+- ``rel_tolerance``: The relative tolerance for the fixed-target approach to determine which optimizers are succesful
+- ``name``: string representing name of the model
+
+.. note::
+
+    At the moment, it is not possible to configure your own hybridization conditions between the :class:`~l2co.Stage0Model` and the :class:`~l2co.Stage1Model`
+
+Combining data and model in the :class:`l2co.Trainer` class
+-----------------------------------------------------------
+
+We can combine the :class:`~l2co.DataLoader`, :class:`~l2co.Stage0Model` and :class:`~l2co.Stage1Model` in the :class:`~l2co.Trainer` class. The :class:`~l2co.Trainer` class is responsible for training the models and evaluating the performance of the models.

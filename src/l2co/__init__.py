@@ -22,6 +22,7 @@ from ._src._logging import logger
 from ._src.data_loader import DataLoader, create_entire_dataset
 from ._src.preprocessing import preprocessing_factory
 from ._src.stage0_model import Stage0Model
+from ._src.stage1_model import Stage1Model
 from ._src.tasks.benchmarkfunctions.run_optimization import \
     run_multiple_realizations
 from ._src.tasks.benchmarkfunctions.run_sampling import run_sampling
@@ -42,6 +43,7 @@ __all__ = [
     "DataLoader",
     "preprocessing_factory",
     "Stage0Model",
+    "Stage1Model",
     "run_multiple_realizations",
     "run_sampling",
     "Trainer",
