@@ -107,15 +107,15 @@ Building from source is required to work on a contribution (bug fix, new feature
      cd f3dasm
 
 
-2. Install a recent version of Python (3.8, 3.9 or 3.10)
+2. Install a recent version of Python (3.9 or 3.10)
    for instance using `Miniconda3 <https://docs.conda.io/en/latest/miniconda.html>`_. or `Mamba <https://github.com/conda-forge/miniforge#install>`_.
    If you installed Python with conda, we recommend to create a dedicated
    conda environment with all the build dependencies of f3dasm:
 
    .. code-block:: console
 
-     conda create -n f3dasm_env python=3.8
-     conda activate f3dasm_env
+     conda create -n l2co python=3.9
+     conda activate l2co
 
 3. If you run the development version, it is annoying to reinstall the package each time you update the sources.
    Therefore it is recommended that you install the package from a local source, allowing you to edit the code in-place. 
