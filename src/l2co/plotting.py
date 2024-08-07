@@ -6,7 +6,7 @@ Plotting module
 # =============================================================================
 
 # Local
-from ._src.plotting import plot_perf_profile, plot_rtd_profile, set_size
+from l2co._src.plotting import plot_perf_profile, plot_rtd_profile, set_size
 
 #                                                          Authorship & Credits
 # =============================================================================

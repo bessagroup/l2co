@@ -38,7 +38,7 @@ In this study, we train our model offline on a diverse set of benchmark loss-fun
 
 The package is currently not available on PyPI. To install the package, follow the steps below:
 
-1. Create a new virtual environment (optional) with Python 3.8+
+1. Create a new virtual environment (optional) with Python 3.9+
 
 
 2. Clone the repository:

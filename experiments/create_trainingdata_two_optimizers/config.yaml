@@ -329,7 +329,7 @@ optimization:
   sampler_name: "latin"
   number_of_samples: 0
   realizations: 3
-  parallelization: True
+  parallelization: False
   optimizers:
     - name: CMAES
     - name: PSO
