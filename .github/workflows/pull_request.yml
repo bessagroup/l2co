@@ -59,9 +59,9 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install --no-use-pep517 lightfm
           pip install -r requirements.txt
-      - name: Install Sphinx requirements
+      - name: Install all dependencies
         run: |
-          pip install -r docs/requirements.txt
+          pip install -r requirements_dev.txt
       - name: Build documentation
         run: |
           sphinx-build -b html ./docs/source ./docs/build/html
