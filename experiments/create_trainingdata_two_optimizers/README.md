@@ -87,7 +87,7 @@ indicating the current date (e.g. `2023-11-06`).
 
 The following subdirectories are created:
 
-* `experiment_data`: Contains the input, output, domain and jobs to construct the [`f3dasm.ExperimentData`](https://f3dasm.readthedocs.io/en/latest/rst_doc_files/classes/design/experimentdata.html) object.
+* `experiment_data`: Contains the input, output, domain and jobs to construct the `f3dasm.ExperimentData` object.
 * `random_samples`: Contains a [NetCDF](https://docs.xarray.dev/en/stable/user-guide/io.html#netcdf) (`.nc`) files with random samples for each optimization problem
 * `<opt_1>+<opt2>`: Contains a [NetCDF](https://docs.xarray.dev/en/stable/user-guide/io.html#netcdf) (`.nc`) files with the optimization results for each optimization problem. The folder name is the concatenation of the two optimization algorithms used.
 * `.hydra`: Contains the `config.yaml` file used to run the experiment.
@@ -126,7 +126,7 @@ outputs/
 #### Function Name
 | Name       | Type     | Description                |
 |------------|----------|----------------------------|
-| categories | `List[str]`     | List of benchmark functions ([reference](https://f3dasm.readthedocs.io/en/latest/rst_doc_files/classes/datageneration/functions.html)) |
+| categories | `List[str]`     | List of benchmark functions ([reference](https://f3dasm.readthedocs.io/en/latest/rst_doc_files/defaults.html#implemented-benchmark-functions)) |
 
 #### Dimensionality
 | Name       | Type     | Description                |
@@ -156,23 +156,23 @@ outputs/
 | sampler      | `str` | Sampler name            |
 | seed         | `int`    | Seed value              |
 | n_samples    | `int`    | Number of samples       |
-| domain       | `f3dasm.Domain` | `f3dasm` Domain object ([reference](https://f3dasm.readthedocs.io/en/latest/rst_doc_files/classes/design/domain.html))            |
+| domain       | `f3dasm.Domain` | `f3dasm` Domain object ([reference](https://f3dasm.readthedocs.io/en/latest/_autosummary/f3dasm.design.Domain.html#f3dasm.design.Domain))            |
 
 ### Mode
 | Name  | Type   | Description |
 |-------|--------|-------------|
-| mode  | string | Evaluation mode of `f3dasm` ([reference](https://f3dasm.readthedocs.io/en/latest/rst_doc_files/classes/datageneration/datagenerator.html#)) |
+| mode  | string | Evaluation mode of `f3dasm` ([reference](https://f3dasm.readthedocs.io/en/latest/_autosummary/f3dasm.datageneration.DataGenerator.html#f3dasm.datageneration.DataGenerator)) |
 
 ### Optimization
 | Name                       | Type     | Description               |
 |----------------------------|----------|---------------------------|
 | lower_bound                | `float`    | Box-constraint lower bound for every dimension |
 | upper_bound                | `float`    | Box-constraint upper bound for every dimension |
-| sampler_name               | `str`   | Name of the sampling strategy for the first iterations ([reference](https://f3dasm.readthedocs.io/en/latest/rst_doc_files/classes/sampling/sampling.html#id2)) |
+| sampler_name               | `str`   | Name of the sampling strategy for the first iterations ([reference](https://f3dasm.readthedocs.io/en/latest/rst_doc_files/defaults.html#implemented-samplers)) |
 | number_of_samples          | `int`      | Number of initial samples ($\vec{x}_0$)          |
 | realizations               | `int`      | Number of realizations with different initial conditions    |
 | parallelization            | `bool`  | True if realizations are computed on indivdiual cores, else for sequential |
-| optimizers                 | `List[str]`     | List of optimizers ([from `f3dasm`](https://f3dasm.readthedocs.io/en/latest/rst_doc_files/classes/optimization/optimizers.html#implemented-optimizers), [and `f3dasm_optimize`](https://bessagroup.github.io/f3dasm_optimize/rst_doc_files/optimizers.html#implemented-optimizers))        |
+| optimizers                 | `List[str]`     | List of optimizers ([from `f3dasm`](https://f3dasm.readthedocs.io/en/latest/rst_doc_files/defaults.html#implemented-optimizers), [and `f3dasm_optimize`](https://bessagroup.github.io/f3dasm_optimize/rst_doc_files/optimizers.html#implemented-optimizers))        |
 | fraction_of_all_combinations[^1] | `float`  | Fraction of combinations (optimizer + problem) to evaluate  |
 
 [^1]: At least one optimizer will be evaluated for each problem.
