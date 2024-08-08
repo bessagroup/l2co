@@ -180,7 +180,7 @@ The `stage1_clf` is a classifier that predicts the best optimizer to switch to a
 
 | Name   | Type | Description  |
 |--------|------|--------------|
-| stage0_clf | `l2co.SingleStage1Model` | Stage1 model |
+| stage1_clf | `l2co.SingleStage1Model` | Stage1 model |
 
 > The model is initialized with the [`instantiate` method of `hydra`](https://hydra.cc/docs/advanced/instantiate_objects/overview/). Therefore the `stage1_clf` key should be a dictionary with the `_target_` key pointing to the class name and the other keys pointing to the arguments of the class constructor.
 
