@@ -24,6 +24,7 @@ create_performance_profile
 # Standard
 from __future__ import annotations
 
+import time
 from typing import List, Optional
 
 # Third-party
@@ -95,6 +96,64 @@ def scale(
         scaler.transform(arr.flatten().reshape(-1, 1)), arr.shape)
 
 
+def scaling2(data: xr.Dataset) -> xr.DataArray:
+
+    # 1. Calculate cumulative minimum (quality indictor value)
+    ds_output = output_cummin(data.output).chunk('auto')
+
+    # 2. Make sure the loss is non-negative
+    group_by_realizations = ds_output.groupby('itemID')
+
+    def min_custom(x):
+        # t = time.perf_counter()
+        m = x.min(['optimizer', 'problem'])  # .broadcast_like(x.problem)
+        m_positive_zero = m.where(m < 0.0, 0.0)
+
+        # return x - m_positive_zero.min('iterations').broadcast_like(x.problem)
+
+        ds_positive = (x - 1.01*m_positive_zero.min('iterations')
+                       ).broadcast_like(x.problem)
+
+        # print(f"Time: {t - time.perf_counter()}")
+
+        # TODO: Some values are still 0.0, this could be because of underflow?
+        return ds_positive
+
+        # if ds_positive.min() > 0.0:
+        #     y_positive = (ds_positive.min() - ds_positive.min()
+        #                   ).broadcast_like(x.problem)
+
+        # else:
+        #     y_positive = ds_positive.where(
+        #         ds_positive > 0.0).min().broadcast_like(x.problem)
+
+        # return ds_positive + y_positive
+
+    ds_positive = group_by_realizations.map(min_custom).assign_coords({
+        'problem': ds_output.problem})
+    return ds_positive
+    # # ds_positive = ds_output - y_min
+
+    # # 3. Make sure the loss is non-zero
+    # group_positive_by_realizations = ds_positive.groupby('itemID')
+
+    # def get_positive_custom(x):
+    #     if x.min() > 0.0:
+    #         return (x.min() - x.min()).broadcast_like(x.problem)
+
+    #     return x.where(x > 0.0, drop=True).min().broadcast_like(x.problem)
+
+    # y_positive = group_positive_by_realizations.map(
+    #     get_positive_custom).assign_coords({'problem': ds_positive.problem})
+
+    # ds_positive += y_positive
+
+    # # 4. Take the base 10 logarithm of the data
+    # ds_log10_positive = np.log10(ds_positive)
+
+    # return ds_log10_positive
+
+
 def scaling(data: xr.Dataset) -> xr.DataArray:
     """
     Create a performance value for each problem and iterations per optimizer.
@@ -112,6 +171,13 @@ def scaling(data: xr.Dataset) -> xr.DataArray:
 
     # 0. unstack the data
     data_ = data.unstack('problem')
+
+    data_ = data_.chunk(
+        {'optimizer': len(data.optimizer),
+         'iterations': len(data.iterations),
+         'output_dim': len(data.output_dim),
+         'realization': len(data.realization),
+         'itemID': 1})
 
     # 1. Calculate cumulative minimum (quality indictor value)
     data_['output_cummin'] = output_cummin(data_.output)
@@ -149,7 +215,8 @@ def scaling(data: xr.Dataset) -> xr.DataArray:
         output_core_dims=[['optimizer', 'iterations', 'output_dim']],
         vectorize=True,
         dask='parallelized',
-        dask_gufunc_kwargs={'allow_rechunk': True}
+        dask_gufunc_kwargs={'allow_rechunk': False},
+        output_dtypes=[np.float32]
     )
 
     return performance.stack(

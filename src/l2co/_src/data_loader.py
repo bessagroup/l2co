@@ -138,7 +138,7 @@ class DataLoader:
 
         try:
             data = data.set_xindex(
-                ['realization', 'itemID']).stack('problem')
+                ['realization', 'itemID'])  # .stack('problem')
         except ValueError:
             data = data.stack(problem=('realization', 'itemID'))
 
@@ -278,7 +278,11 @@ class DataLoader:
             self.data_samples.reset_index('problem').to_netcdf(
                 _path / 'entire_dataset_samples.nc')
 
-        self.data.reset_index('problem').to_netcdf(_path / 'entire_dataset.nc')
+        # Writing dask arrays to disk is poorly optimized, so we compute
+        # the data before writing it to disk
+        # Source: https://github.com/pydata/xarray/issues/2912
+        self.data.reset_index('problem').compute(
+        ).to_netcdf(_path / 'entire_dataset.nc')
 
     def to_learning_data(
             self, optimizer: str,
