@@ -32,15 +32,14 @@ from imblearn.under_sampling import RandomUnderSampler
 from omegaconf import DictConfig
 from sklearn.cluster import KMeans
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import MinMaxScaler
 from torch.utils.data import Dataset as torchDataset
 from tqdm import tqdm
 
 # Local
 from ._logging import logger as l2co_logger
-from .content_based import get_labels, get_labels_arbitrary
+from .content_based import get_labels
 from .performance import (add_random_samples_combinations,
-                          create_performance_profile, scaling)
+                          create_performance_profile, scaling2)
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -65,7 +64,7 @@ class DataLoader:
         X: xr.DataArray,
         n_iterations: int,
         n_realizations: int,
-        performance: xr.DataArray,
+        # performance: xr.DataArray,
         data: xr.Dataset,
         config: DictConfig,
         experimentdata: ExperimentData,
@@ -82,8 +81,6 @@ class DataLoader:
             The number of training steps of each roll-out.
         n_realizations : int
             The number of realizations for each problem.
-        performance : xarray.Dataset
-            The performance dataset.
         data : xarray.Dataset
             The raw optimization trajectories.
         config : DictConfig
@@ -94,7 +91,7 @@ class DataLoader:
         self.X = X
         self.n_iterations = n_iterations
         self.n_realizations = n_realizations
-        self.performance = performance
+        # self.performance = performance
         self.data = data
         self.config = config
         self.experimentdata = experimentdata
@@ -132,17 +129,17 @@ class DataLoader:
             path).select_with_status('finished')
 
         # Retrieve the optimization dynamics data
-        data = xr.open_dataset(
+        _data = xr.open_dataset(
             path / 'entire_dataset.nc',
             chunks='auto')
 
-        try:
-            data = data.set_xindex(
-                ['realization', 'itemID'])  # .stack('problem')
-        except ValueError:
-            data = data.stack(problem=('realization', 'itemID'))
+        # try:
+        #     data = data.set_xindex(
+        #         ['realization', 'itemID'])  # .stack('problem')
+        # except ValueError:
+        #     data = data.stack(problem=('realization', 'itemID'))
 
-        _data = data.unstack('problem')
+        # _data = data.unstack('problem')
 
         if (path / 'entire_dataset_samples.nc').exists():
             data_samples = xr.open_dataset(
@@ -164,7 +161,7 @@ class DataLoader:
             **kwargs
         )
 
-        return _dataloader.select_problems(data.problem)
+        return _dataloader.select_problems(_data.problem)
 
     @classmethod
     def from_preprocessed_files(cls, config: DictConfig,
@@ -218,8 +215,8 @@ class DataLoader:
         _columns_to_drop = _df_output.columns[_df_output.isna().all()]
         experimentdata = experimentdata.drop_output(_columns_to_drop)
 
-        data = data.sel(itemID=experimentdata.index)
-        data_samples = data_samples.sel(itemID=experimentdata.index)
+        # data = data.sel(itemID=experimentdata.index)
+        # data_samples = data_samples.sel(itemID=experimentdata.index)
 
         if add_random_search:
             data = add_random_samples_combinations(
@@ -228,33 +225,43 @@ class DataLoader:
                 iterations=config.iterations,
                 t_switch=config.t_switch)
 
-        # Features
-        if arbitrary_labels:
-            X = get_labels_arbitrary(experimentdata=experimentdata,
-                                     n_realizations=n_realizations)
-        else:
-            X = get_labels(experimentdata=experimentdata,
-                           n_realizations=n_realizations)
-
         # # Performance
         # Stack dimensions realization and itemID
-        data_stacked = data.stack(problem=('realization', 'itemID'))
-        data_samples_stacked = data_samples.stack(
-            problem=('realization', 'itemID'))
+        # data_stacked = data.stack(problem=('realization', 'itemID'),
+        #                           create_index=False).assign_coords(
+        #                               problem=np.arange(data.problem.size)
+        # )
+        # data_samples_stacked = data_samples.stack(
+        #     problem=('realization', 'itemID'),
+        #     create_index=False).assign_coords(
+        #     problem=np.arange(data.problem.size)
+        # )
 
-        performance = scaling(data_stacked)
+        # PERFORMANCE
+        # performance = scaling2(data_stacked)
 
-        performance_stacked = performance.where(
-            ~performance.isnull(), other=INVALID_PERFORMANCE_VALUE)
+        # performance_stacked = performance.where(
+        #     ~performance.isnull(), other=INVALID_PERFORMANCE_VALUE)
+
+        # Features
+        if arbitrary_labels:
+            pass
+            # X = get_labels_arbitrary(experimentdata=experimentdata,
+            #                          n_realizations=n_realizations)
+        else:
+            # X = get_labels(experimentdata=experimentdata,
+            #                n_realizations=n_realizations)
+            X = get_labels(experimentdata=experimentdata,
+                           data=data)
 
         return cls(X=X,
                    n_iterations=n_iterations,
                    n_realizations=n_realizations,
-                   data=data_stacked,
-                   performance=performance_stacked.rename('performance'),
+                   data=data,
+                   #    performance=performance_stacked.rename('performance'),
                    config=config,
                    experimentdata=experimentdata,
-                   data_samples=data_samples_stacked
+                   data_samples=data_samples
                    )
 
 #                                                         Storing and exporting
@@ -310,7 +317,7 @@ class DataLoader:
         OptimizationDynamics is a pytorch Dataset object.
         """
         X_traj = self.select_optimizer(optimizer).select_t(
-            t=t, t_start=t_start).X_trajectory(t, t_start=t_start)
+            t=t, t_start=t_start).X_trajectory()
         X_features = self.X
         y = self.query_optimizer(optimizer).performance.isel(
             iterations=-1)
@@ -325,25 +332,32 @@ class DataLoader:
             X_trajectory=X_trajectory,
             Y=Y)
 
-#                                                                    Properties
-# =============================================================================
-
-    @property
-    def y(self) -> xr.DataArray:
+    def to_feature_data(self, rel_tolerance: float = 0.0) -> FeaturesDataSet:
         """
-        Returns the minimum performance index along the 'optimizer' dimension,
-        expanded with a new dimension 'realization' and stacked with 'itemID'
-        and 'realization' dimensions.
+        Convert the data loader to feature data.
 
         Returns
         -------
-        xarray.DataArray
-            The resulting DataArray with dimensions 'problem',
-            'realization', and 'itemID'.
-        """
-        return self.performance.idxmin('optimizer')
+        FeaturesDataSet
+            The resulting feature data.
 
-    @property
+        Notes
+        -----
+        FeaturesDataSet is a simple class containing the features and labels of
+        the optimization problems.
+        """
+
+        X_features = self.X
+        Y_features = self.select_single_optimizers().performance.isel(
+            iterations=-1, output_dim=0, drop=True).T
+
+        return FeaturesDataSet(X_features=X_features,
+                               Y_features=Y_features,
+                               rel_tolerance=rel_tolerance)
+#                                                                    Properties
+# =============================================================================
+
+    @ property
     def features(self) -> xr.DataArray:
         """
         Property method to return the features coordinate
@@ -355,7 +369,7 @@ class DataLoader:
         """
         return self.X.features
 
-    @property
+    @ property
     def problem(self) -> xr.DataArray:
         """
         Property method to return the problem coordinate
@@ -367,7 +381,7 @@ class DataLoader:
         """
         return self.X.problem
 
-    @property
+    @ property
     def optimizers(self) -> xr.DataArray:
         """
         Property method to return the optimizers coordinate
@@ -377,16 +391,24 @@ class DataLoader:
         xarray.DataArray
             The optimizers coordinate.
         """
-        return self.performance.optimizer
+        return self.data.optimizer
 
-    @lru_cache(maxsize=1)
+    @property
+    def performance(self) -> xr.DataArray:
+        print("Triggered performance")
+        performance = scaling2(self.data)
+
+        return performance.where(
+            ~performance.isnull(), other=INVALID_PERFORMANCE_VALUE)
+
+    @ lru_cache(maxsize=1)
     def y_binary(self, rel_tolerance: float = 0.1) -> xr.DataArray:
         _performance_at_last_t = self.performance.isel(
-            iterations=-1, drop=True)
+            iterations=-1, output_dim=0, drop=True)
 
         if rel_tolerance == 0.0:
             return (_performance_at_last_t.idxmin(
-                'optimizer') == self.performance.optimizer).T
+                'optimizer') == self.data.optimizer).T
 
         threshold = _performance_at_last_t.min(
             dim='optimizer') + abs(
@@ -394,8 +416,8 @@ class DataLoader:
 
         return (_performance_at_last_t <= threshold).T
 
-    @lru_cache(maxsize=1)
-    def X_trajectory(self, iterations: int, t_start: int = 0) -> xr.DataArray:
+    @ lru_cache(maxsize=1)
+    def X_trajectory(self) -> xr.DataArray:
         """
         Select the history of an optimization trajectory.
 
@@ -412,52 +434,81 @@ class DataLoader:
         xarray.DataArray
             The selected trajectory.
         """
-        X_d = self.data.isel(iterations=range(t_start, iterations), drop=True)
 
-        # 2. Make sure the loss is non-negative
-        y_min = X_d.output.min(dim=['iterations']).where(
-            X_d.output.min(dim=['iterations']) < 0.0, 0.0)
-        ds_positive = X_d.output - y_min
+        def scale(x: np.ndarray) -> np.ndarray:
+            # 3. Make sure the quality indicator value is non-negative
+            p = (x - x.min())
+            # 4. Add epsilon to make quality indicator value non-zero
+            eps = np.where(p > 0.0, p, p.max()+1e-16).min()
+            x_log10 = np.log10(p + eps)
 
-        # 3. Make sure the loss is non-zero
-        ds_add_to_become_non_zero = (
-            ds_positive.min(dim='iterations') == 0.0).where(
-            (~(ds_positive.min(dim='iterations') == 0.0)
-             ), other=ds_positive.where(
-                ds_positive > 0.0).min(
-                dim='iterations')
-        )
+            # 5. Min-max scaling of the data
+            x_min = x_log10.min()
+            x_max = x_log10.max()
+            return (x_log10 - x_min) / (x_max - x_min + 1e-16)
 
-        ds_positive += ds_add_to_become_non_zero
-
-        # 4. Take the base 10 logarithm of the data
-        ds_log10_positive = np.log10(ds_positive)
-
-        # 5. Scale the data
-        def scale(arr: np.ndarray) -> np.ndarray:
-            return np.reshape(MinMaxScaler().fit_transform(
-                arr.flatten().reshape(-1, 1)), arr.shape)
-
-        performance: xr.DataArray = xr.apply_ufunc(
-            scale, ds_log10_positive,
-            input_core_dims=[
-                ['iterations', 'output_dim']],
+        trajectory: xr.Dataset = xr.apply_ufunc(
+            scale,
+            self.data,
+            input_core_dims=[['iterations', 'output_dim']],
             output_core_dims=[['iterations', 'output_dim']],
             vectorize=True,
             dask='parallelized',
-            dask_gufunc_kwargs={'allow_rechunk': True}
+            dask_gufunc_kwargs={'allow_rechunk': False}
         )
 
-        return performance.isel(
+        return trajectory.output.isel(
             output_dim=0, drop=True).rename(
                 'trajectory').transpose(
                     'optimizer', 'iterations', 'problem').fillna(
                         INVALID_PERFORMANCE_VALUE)
 
+        # X_d = self.data.isel(iterations=range(
+        #     t_start, iterations), drop=True)  # needed?
+
+        # # 2. Make sure the loss is non-negative
+        # y_min = X_d.output.min(dim=['iterations']).where(
+        #     X_d.output.min(dim=['iterations']) < 0.0, 0.0)
+        # ds_positive = X_d.output - y_min
+
+        # # 3. Make sure the loss is non-zero
+        # ds_add_to_become_non_zero = (
+        #     ds_positive.min(dim='iterations') == 0.0).where(
+        #     (~(ds_positive.min(dim='iterations') == 0.0)
+        #      ), other=ds_positive.where(
+        #         ds_positive > 0.0).min(
+        #         dim='iterations')
+        # )
+
+        # ds_positive += ds_add_to_become_non_zero
+
+        # # 4. Take the base 10 logarithm of the data
+        # ds_log10_positive = np.log10(ds_positive)
+
+        # # 5. Scale the data
+        # def scale(arr: np.ndarray) -> np.ndarray:
+        #     return np.reshape(MinMaxScaler().fit_transform(
+        #         arr.flatten().reshape(-1, 1)), arr.shape)
+
+        # performance: xr.DataArray = xr.apply_ufunc(
+        #     scale, ds_log10_positive,
+        #     input_core_dims=[
+        #         ['iterations', 'output_dim']],
+        #     output_core_dims=[['iterations', 'output_dim']],
+        #     vectorize=True,
+        #     dask='parallelized',
+        #     dask_gufunc_kwargs={'allow_rechunk': True}
+        # )
+
+        # return performance.isel(
+        #     output_dim=0, drop=True).rename(
+        #         'trajectory').transpose(
+        #             'optimizer', 'iterations', 'problem').fillna(
+        #                 INVALID_PERFORMANCE_VALUE)
+
 
 #                                                            Selecting problems
 # =============================================================================
-
 
     def select_problems(self, problem_indices: xr.DataArray) -> DataLoader:
         """
@@ -487,8 +538,8 @@ class DataLoader:
             X=self.X.sel(problem=_problem_indices),
             n_iterations=self.n_iterations,
             n_realizations=self.n_realizations,
-            performance=self.performance.sel(
-                problem=_problem_indices),
+            # performance=self.performance.sel(
+            #     problem=_problem_indices),
             data=self.data.sel(problem=_problem_indices),
             config=self.config,
             experimentdata=self.experimentdata.select(_unique_itemID),
@@ -567,17 +618,17 @@ class DataLoader:
         data_samples = self.data_samples.isel(iterations=range(t_start, t))
 
         # Recalculate the performance since the budget has changed
-        performance_t = scaling(data)
+        # performance_t = scaling2(data)
 
-        # Making sure that we mask NaN values
-        performance_stacked_t = performance_t.where(
-            ~performance_t.isnull(), other=INVALID_PERFORMANCE_VALUE)
+        # # Making sure that we mask NaN values
+        # performance_stacked_t = performance_t.where(
+        #     ~performance_t.isnull(), other=INVALID_PERFORMANCE_VALUE)
 
         return DataLoader(
             X=self.X,
             n_iterations=t-t_start,
             n_realizations=self.n_realizations,
-            performance=performance_stacked_t,
+            # performance=performance_stacked_t,
             data=data,
             config=self.config,
             experimentdata=self.experimentdata,
@@ -587,7 +638,6 @@ class DataLoader:
 
 #                                                          Selecting optimizers
 # =============================================================================
-
 
     def select_single_optimizers(
             self, include_random_search: bool = False) -> DataLoader:
@@ -604,7 +654,7 @@ class DataLoader:
         DataLoader
             The data loader with only the single optimizers.
         """
-        single_optimizers = [o.values for o in self.performance.optimizer
+        single_optimizers = [o.values for o in self.data.optimizer
                              if '+' not in str(o.values)]
 
         if include_random_search:
@@ -631,13 +681,13 @@ class DataLoader:
             optimizers = [optimizers]
 
         data_selected = self.data.sel(optimizer=optimizers)
-        performance = self.performance.sel(optimizer=optimizers)
+        # performance = self.performance.sel(optimizer=optimizers)
 
         return DataLoader(
             X=self.X,
             n_iterations=self.n_iterations,
             n_realizations=self.n_realizations,
-            performance=performance,
+            # performance=performance,
             data=data_selected,
             config=self.config,
             experimentdata=self.experimentdata,
@@ -675,18 +725,18 @@ class DataLoader:
         # Config
         config = self.config
 
-        # Performance
-        performance = self.performance.sel(
-            optimizer=filtered_optimizer).assign_coords(
-            optimizer=np.array(
-                [o.split('+')[-1] if '+' in o else o
-                 for o in filtered_optimizer], dtype=object))
+        # # Performance
+        # performance = self.performance.sel(
+        #     optimizer=filtered_optimizer).assign_coords(
+        #     optimizer=np.array(
+        #         [o.split('+')[-1] if '+' in o else o
+        #          for o in filtered_optimizer], dtype=object))
 
         return DataLoader(
             X=self.X,
             n_iterations=n_iterations,
             n_realizations=n_realizations,
-            performance=performance,
+            # performance=performance,
             data=data_selected,
             config=config,
             experimentdata=self.experimentdata,
@@ -696,6 +746,7 @@ class DataLoader:
 
 #                                                           Performance metrics
 # =============================================================================
+
 
     def performance_profile(
             self, strategies: Optional[Iterable[xr.DataArray]] = None
@@ -732,9 +783,12 @@ class DataLoader:
 
         for strategy in strategies:
             rtd[strategy.name] = self.performance.sortby(
-                'problem').sel(optimizer=strategy).T
+                'problem').sel(optimizer=strategy.sortby('problem')).T
 
         return rtd
+
+    def load(self):
+        self.data.load()
 
 #                                                          OptimizationDynamics
 # =============================================================================
@@ -786,6 +840,88 @@ class OptimizationDynamics(torchDataset):
             The index of the item to get.
         """
         return (self.X_features[idx], self.X_trajectory[idx]), self.Y[idx]
+
+# =============================================================================
+
+
+class FeaturesDataSet:
+    def __init__(self, X_features: xr.DataArray, Y_features: xr.DataArray,
+                 rel_tolerance: float = 0.0):
+        """
+        A dataset containing the features and labels of the optimization
+        problems.
+
+        Parameters
+        ----------
+        X_features : pd.DataFrame
+            The features of the optimization problems.
+        Y_features : pd.DataFrame
+            The labels of the optimization problems.
+        rel_tolerance : float, optional
+            The relative tolerance to use, by default 0.0
+        """
+        self.X_features = X_features
+        self.Y_features = Y_features
+        self.rel_tolerance = rel_tolerance
+
+    def __len__(self):
+        """
+        Return the length of the dataset.
+
+        Returns
+        -------
+        int
+            The length of the dataset.
+        """
+        return len(self.X_features)
+
+    @property
+    def Y(self) -> xr.DataArray:
+        if self.rel_tolerance == 0.0:
+            return (self.Y_features.idxmin(
+                'optimizer') == self.Y_features.optimizer).T
+
+        threshold = self.Y_features.min(
+            dim='optimizer') + abs(
+                self.Y_features.min(dim='optimizer') * self.rel_tolerance)
+
+        return (self.Y_features <= threshold).T
+
+    def save(self, path: str):
+        """
+        Save the dataset to disk.
+
+        Parameters
+        ----------
+        path : str
+            The path to save the dataset.
+        """
+        _path = Path(path)
+        self.X_features.to_netcdf(_path / 'X_features.nc')
+        self.Y_features.to_netcdf(_path / 'Y_features.nc')
+
+    @classmethod
+    def load(self, path: str, rel_tolerance: float):
+        """
+        Load the dataset from disk.
+
+        Parameters
+        ----------
+        path : str
+            The path to load the dataset.
+
+        Returns
+        -------
+        FeaturesDataSet
+            The loaded dataset.
+        """
+        _path = Path(path)
+        X_features = xr.open_dataarray(_path / 'X_features.nc')
+        Y_features = xr.open_dataarray(_path / 'Y_features.nc')
+
+        return FeaturesDataSet(X_features=X_features,
+                               Y_features=Y_features,
+                               rel_tolerance=rel_tolerance)
 
 # =============================================================================
 
@@ -860,7 +996,14 @@ def create_entire_dataset(experiment_data: ExperimentData):
 
     experiment_data.mark(indices=faulty_experiments, status='error')
 
-    xarr_full = xr.concat(combined_rows, dim='itemID')
+    xarr_full: xr.Dataset = xr.concat(combined_rows, dim='itemID')
+
+    xarr_full = xarr_full.stack(
+        problem=('realization', 'itemID'), create_index=False
+    )
+
+    xarr_full = xarr_full.assign_coords(
+        {'problem': np.arange(xarr_full.problem.size)})
 
     if 'input_dim' in xarr_full.coords:
         return xarr_full.drop('input_dim'), experiment_data

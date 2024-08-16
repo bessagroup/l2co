@@ -1,6 +1,7 @@
 import argparse
 from pathlib import Path
 
+import numpy as np
 from f3dasm import ExperimentData
 
 from l2co import create_entire_dataset
@@ -13,5 +14,6 @@ args = parser.parse_args()
 path = Path(args.path)
 
 xarr, experimentdata = create_entire_dataset(ExperimentData.from_file(path))
+# xarr = xarr.astype(np.float32)
 xarr.to_netcdf(path / 'entire_dataset.nc')
 experimentdata.store()

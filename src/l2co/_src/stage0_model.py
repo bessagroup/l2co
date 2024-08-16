@@ -18,10 +18,11 @@ load
 # Standard
 import pickle
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Optional
 
 # Third-party
 import numpy as np
+import pandas as pd
 import xarray as xr
 from sklearn.base import BaseEstimator
 from sklearn.compose import ColumnTransformer
@@ -30,7 +31,7 @@ from sklearn.multioutput import MultiOutputClassifier
 from sklearn.pipeline import make_pipeline
 
 # Local
-from .data_loader import DataLoader
+from .data_loader import FeaturesDataSet
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -115,7 +116,7 @@ class Stage0Model():
 
         return name
 
-    def fit(self, X: Iterable, y: Iterable):
+    def train(self, feature_data: FeaturesDataSet):
         """
         Method for fitting the model
 
@@ -126,39 +127,20 @@ class Stage0Model():
         y : Any
             The labels in array-like structure
         """
-        y = y.loc[:, y.any()]
-        self.clf.fit(X, y)
+        y = feature_data.Y.to_pandas().loc[:, feature_data.Y.to_pandas().any()]
+        x = feature_data.X_features.to_pandas()
+        self.clf.fit(x, y)
 
-    def predict_proba(self, X: Iterable) -> Iterable[float]:
-        """
-        Method for predicting the probabilities
+    def predict(self, feature_data: FeaturesDataSet) -> xr.DataArray:
+        y = feature_data.Y.to_pandas()
+        x = feature_data.X_features.to_pandas()
+        df = pd.DataFrame(
+            np.array(self.clf.predict_proba(x))[:, :, 1].T, columns=y.columns,
+            index=x.index)
 
-        Parameters
-        ----------
-        X : Iterable
-            The features in array-like structure
-
-        Returns
-        -------
-        Iterable[float]
-            The probabilities
-        """
-        return self.clf.predict_proba(X)
-
-    def predict(self, data_test: DataLoader) -> xr.DataArray:
-        """
-        Predict the labels for stage 0 for the test data
-        """
-
-        # y = data_test.y_binary()
-
-        y_pred_proba = xr.DataArray(
-            np.array(self.predict_proba(data_test.X.to_pandas()))[
-                :, :, 1].T,
-            dims=data_test.y_binary().dims,
-            coords=data_test.y_binary().coords)
-
-        return y_pred_proba.idxmax(dim='optimizer').sortby('problem')
+        return xr.DataArray(df.idxmax(axis=1)).assign_coords(
+            {'itemID': feature_data.X_features.itemID}
+        ).rename('stage0_predictions')
 
     def save(self, path: Path) -> None:
         """

@@ -59,7 +59,7 @@ from torch.utils.data import DataLoader as TorchDataLoader
 from torch.utils.data import Subset
 
 # Local
-from .data_loader import DataLoader
+from .data_loader import DataLoader, OptimizationDynamics
 
 #                                                                        Models
 # =============================================================================
@@ -174,6 +174,37 @@ class HybridModel(nn.Module):
 
         # Pass through MLP
         mlp_output = self.mlp(mlp_input, train)
+
+        # Concatenate the outputs
+        combined = jnp.concatenate([lstm_output, mlp_output], axis=-1)
+
+        # Final dense layer to map to the desired number of labels
+        combined = nn.Dense(features=self.n_labels)(combined)
+
+        return nn.sigmoid(combined)
+
+
+class HybridModelWithClf(nn.Module):
+    """
+    Hybrid model combining an LSTM and an MLP model
+    """
+    lstm_features: int
+    mlp_features: int
+    mlp_layers: int
+    n_labels: int
+
+    def setup(self):
+        self.lstm = SimpleLSTM(
+            features=self.lstm_features, n_labels=self.n_labels)
+        self.stage0_model = ...
+
+    @nn.compact
+    def __call__(self, lstm_input, mlp_input, train: bool):
+        # Pass through LSTM
+        lstm_output = self.lstm(lstm_input, train)
+
+        # Pass through MLP
+        mlp_output = self.stage0_model(mlp_input, train)
 
         # Concatenate the outputs
         combined = jnp.concatenate([lstm_output, mlp_output], axis=-1)
@@ -493,7 +524,8 @@ class SingleStage1Model(Protocol):
     Protocol class for the learned model that is used in 'Stage 1'
     """
 
-    def train(self, data_train: DataLoader, iterations: int, seed: int,
+    def train(self, optimization_dynamics: Dict[str, OptimizationDynamics],
+              iterations: int, seed: int,
               batch_size: int) -> None:
         ...
 
@@ -535,7 +567,8 @@ class Stage1Model():
         self.t_switch = t_switch
         # self.rel_tolerance = rel_tolerance
 
-    def train(self, data_train: DataLoader, batch_size: int, num_epochs: int,
+    def train(self, optimization_dynamics: Dict[str, OptimizationDynamics],
+              batch_size: int, num_epochs: int,
               optimizer: GradientTransformation,
               seed: int, save_model: bool = False):
         """
@@ -558,13 +591,13 @@ class Stage1Model():
         """
 
         for opt in self.optimizers.values:
-            data_optimization = data_train.to_learning_data(
-                optimizer=opt, t=self.t_switch,
-                t_start=self.t_start)
+            # data_optimization = data_train.to_learning_data(
+            #     optimizer=opt, t=self.t_switch,
+            #     t_start=self.t_start)
 
             self.states[opt], _ = training_loop(
                 model=self.models[opt],
-                data_optimization=data_optimization,
+                data_optimization=optimization_dynamics[opt],
                 num_epochs=num_epochs,
                 seed=seed,
                 batch_size=batch_size,

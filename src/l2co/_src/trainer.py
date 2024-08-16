@@ -15,7 +15,7 @@ Trainer
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 # Third-party
 import optax
@@ -25,7 +25,7 @@ from sklearn.base import BaseEstimator as SingleStage0Model
 
 # Local
 from ._logging import logger
-from .data_loader import DataLoader
+from .data_loader import DataLoader, FeaturesDataSet, OptimizationDynamics
 from .stage0_model import Stage0Model
 from .stage0_model import load as stage0_load
 from .stage1_model import SingleStage1Model, Stage1Model
@@ -124,32 +124,40 @@ class Trainer:
                 optimizer=optimizer,
                 name='stage0_model')
 
-    def train(
-            self, overwrite_performance_values: Optional[xr.DataArray] = None):
+    def train(self):
         """
         Train the models with the training data
         """
-        self.train_stage0(performance=overwrite_performance_values)
+        self.train_stage0()
         self.train_stage1()
 
-    def train_stage0(self, performance: Optional[xr.DataArray] = None):
+    def train_stage0(self, feature_dataset: Optional[FeaturesDataSet] = None):
         """
         Train the stage0 model with the training data
         """
-        X = self.data_train.X.to_pandas()
-        Y = self.data_train.select_single_optimizers().y_binary(
-            self.rel_tolerance).to_pandas()
+        if feature_dataset is None:
+            feature_dataset = self.data_train.to_feature_data(
+                self.rel_tolerance)
 
-        self.stage0_model.fit(X, Y)
+        self.stage0_model.train(feature_dataset)
 
         logger.info(f"Trained stage0 model: {self.stage0_model.name}")
 
-    def train_stage1(self, save_model: bool = False):
+    def train_stage1(
+            self, save_model: bool = False, optimization_dynamics:
+            Optional[Dict[str, OptimizationDynamics]] = None):
         """
         Train the stage1 model with the training data
         """
+
+        if optimization_dynamics is None:
+            optimization_dynamics = {opt: self.data_train.to_learning_data(
+                optimizer=opt, t=self.t_switch,
+                t_start=self.t_start)
+                for opt in self.stage1_model.optimizers.values}
+
         self.stage1_model.train(
-            data_train=self.data_train,
+            optimization_dynamics=optimization_dynamics,
             batch_size=self.batch_size,
             num_epochs=self.epochs,
             optimizer=self.optimizer,
@@ -166,7 +174,9 @@ class Trainer:
         self.stage0_prediction = self.predict_stage0()
         self.stage1_prediction = self.predict_stage1()
 
-    def predict_stage0(self) -> xr.DataArray:
+    def predict_stage0(self,
+                       feature_dataset: Optional[FeaturesDataSet] = None)\
+            -> xr.DataArray:
         """
         Predict the labels for stage 0 for the test data
 
@@ -175,16 +185,18 @@ class Trainer:
         xarray.DataArray
             The predicted labels
         """
-        _d_test = self.data_test.select_single_optimizers()
 
-        predictions = self.stage0_model.predict(_d_test).rename(
-            f"{self.name}_stage0")
+        if feature_dataset is None:
+            feature_dataset = self.data_test.to_feature_data(
+                self.rel_tolerance)
 
+        predictions = self.stage0_model.predict(feature_dataset)
         logger.info("Predicted stage0 labels")
+        return predictions.rename("stage0_prediction")
 
-        return predictions
-
-    def predict_stage1(self) -> xr.DataArray:
+    def predict_stage1(self,
+                       optimization_dynamics: Optional[OptimizationDynamics]
+                       = None) -> xr.DataArray:
         """
         Predict the labels for stage 1 for the test data
 
