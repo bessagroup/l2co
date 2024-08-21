@@ -18,11 +18,12 @@ load
 # Standard
 import pickle
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 # Third-party
 import numpy as np
 import pandas as pd
+import torch
 import xarray as xr
 from sklearn.base import BaseEstimator
 from sklearn.compose import ColumnTransformer
@@ -47,6 +48,7 @@ class Stage0Model():
                  clf: BaseEstimator,
                  preprocessing_step: Optional[ColumnTransformer] = None,
                  impute_nans: bool = False,
+                 type: Literal['classifier', 'regressor'] = 'classifier',
                  **parameters):
         """
         Class for creating a stage0 model
@@ -61,8 +63,9 @@ class Stage0Model():
             Optional preprocessing step for the features, by default None
         impute_nans : bool, optional
             If True, impute NaNs in the data, by default False
-        parameters : dict
-            Optional parameters for the classifier
+        type : Literal['classifier', 'regressor'], optional
+            The type of model, by default 'classifier'
+
 
         Returns
         -------
@@ -71,17 +74,25 @@ class Stage0Model():
         """
         self.model_name = model_name
         self.parameters = parameters
+        self.type = type
+
+        if self.type == 'classifier':
+            model = MultiOutputClassifier(clf)
+
+        elif self.type == 'regressor':
+            model = clf
+
         if preprocessing_step is None:
-            self.clf = make_pipeline(MultiOutputClassifier(clf))
+            self.clf = make_pipeline(model)
 
         else:
             if impute_nans:
                 self.clf = make_pipeline(preprocessing_step,
                                          SimpleImputer(strategy='mean'),
-                                         MultiOutputClassifier(clf))
+                                         model)
             else:
                 self.clf = make_pipeline(preprocessing_step,
-                                         MultiOutputClassifier(clf))
+                                         model)
 
     @property
     def name(self) -> str:
@@ -127,20 +138,57 @@ class Stage0Model():
         y : Any
             The labels in array-like structure
         """
-        y = feature_data.Y.to_pandas().loc[:, feature_data.Y.to_pandas().any()]
+        if self.type == 'classifier':
+            y = feature_data.Y.to_pandas(
+            ).loc[:, feature_data.Y.to_pandas().any()]
+        elif self.type == 'regressor':
+            y = feature_data.Y_features.to_pandas()
+
         x = feature_data.X_features.to_pandas()
         self.clf.fit(x, y)
 
-    def predict(self, feature_data: FeaturesDataSet) -> xr.DataArray:
-        y = feature_data.Y.to_pandas()
-        x = feature_data.X_features.to_pandas()
-        df = pd.DataFrame(
-            np.array(self.clf.predict_proba(x))[:, :, 1].T, columns=y.columns,
-            index=x.index)
+    def predict_from_torch(self, X: torch.Tensor, columns) -> torch.Tensor:
+        df = pd.DataFrame(X, columns=columns)
+        if self.type == 'classifier':
+            y_pred = self.clf.predict_proba(df)
+            df_pred = pd.DataFrame(
+                np.array(y_pred)[:, :, 1].T, columns=df.columns)
 
-        return xr.DataArray(df.idxmax(axis=1)).assign_coords(
-            {'itemID': feature_data.X_features.itemID}
-        ).rename('stage0_predictions')
+            return torch.Tensor(df_pred.idxmax(axis=1).values)
+
+        elif self.type == 'regressor':
+            y_pred = self.clf.predict(df)
+            df_pred = pd.DataFrame(y_pred, columns=df.columns)
+
+            return torch.Tensor(df_pred.idxmin(axis=1).values)
+
+    def predict(self, feature_data: FeaturesDataSet) -> xr.DataArray:
+        if self.type == 'classifier':
+            y = feature_data.Y.to_pandas()
+
+        elif self.type == 'regressor':
+            y = feature_data.Y_features.to_pandas()
+
+        x = feature_data.X_features.to_pandas()
+
+        if self.type == 'classifier':
+            y_pred = self.clf.predict_proba(x)
+            df = pd.DataFrame(
+                np.array(y_pred)[
+                    :, :, 1].T, columns=y.columns,
+                index=x.index)
+
+            return xr.DataArray(df.idxmax(axis=1)).assign_coords(
+                {'itemID': feature_data.X_features.itemID}
+            ).rename('stage0_predictions')
+
+        elif self.type == 'regressor':
+            y_pred = self.clf.predict(x)
+            df = pd.DataFrame(y_pred, columns=y.columns, index=x.index)
+
+            return xr.DataArray(df.idxmin(axis=1)).assign_coords(
+                {'itemID': feature_data.X_features.itemID}
+            ).rename('stage0_predictions')
 
     def save(self, path: Path) -> None:
         """

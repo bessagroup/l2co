@@ -117,7 +117,7 @@ class Trainer:
             self.stage1_model = Stage1Model(
                 optimizers=self.data_train.select_single_optimizers()
                 .optimizers,
-                model=stage1_clf,
+                model_stage1=stage1_clf,
                 t_start=t_start,
                 t_switch=t_switch,
                 rel_tolerance=rel_tolerance,

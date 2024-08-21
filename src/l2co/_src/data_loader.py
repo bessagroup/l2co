@@ -215,9 +215,6 @@ class DataLoader:
         _columns_to_drop = _df_output.columns[_df_output.isna().all()]
         experimentdata = experimentdata.drop_output(_columns_to_drop)
 
-        # data = data.sel(itemID=experimentdata.index)
-        # data_samples = data_samples.sel(itemID=experimentdata.index)
-
         if add_random_search:
             data = add_random_samples_combinations(
                 data=data,
@@ -225,32 +222,11 @@ class DataLoader:
                 iterations=config.iterations,
                 t_switch=config.t_switch)
 
-        # # Performance
-        # Stack dimensions realization and itemID
-        # data_stacked = data.stack(problem=('realization', 'itemID'),
-        #                           create_index=False).assign_coords(
-        #                               problem=np.arange(data.problem.size)
-        # )
-        # data_samples_stacked = data_samples.stack(
-        #     problem=('realization', 'itemID'),
-        #     create_index=False).assign_coords(
-        #     problem=np.arange(data.problem.size)
-        # )
-
-        # PERFORMANCE
-        # performance = scaling2(data_stacked)
-
-        # performance_stacked = performance.where(
-        #     ~performance.isnull(), other=INVALID_PERFORMANCE_VALUE)
-
         # Features
         if arbitrary_labels:
             pass
-            # X = get_labels_arbitrary(experimentdata=experimentdata,
-            #                          n_realizations=n_realizations)
+
         else:
-            # X = get_labels(experimentdata=experimentdata,
-            #                n_realizations=n_realizations)
             X = get_labels(experimentdata=experimentdata,
                            data=data)
 
@@ -258,7 +234,6 @@ class DataLoader:
                    n_iterations=n_iterations,
                    n_realizations=n_realizations,
                    data=data,
-                   #    performance=performance_stacked.rename('performance'),
                    config=config,
                    experimentdata=experimentdata,
                    data_samples=data_samples
@@ -293,7 +268,8 @@ class DataLoader:
 
     def to_learning_data(
             self, optimizer: str,
-            t: int, t_start: int) -> OptimizationDynamics:
+            t: int, t_start: int,
+            rel_tolerance: float = 0.0) -> OptimizationDynamics:
         """
         Convert the data loader to learning data.
 
@@ -306,6 +282,8 @@ class DataLoader:
         t_start : int, optional
             The starting iteration number of the requested trajectory,
             by default 0
+        rel_tolerance : float, optional
+            The relative tolerance to use, by default 0.0
 
         Returns
         -------
@@ -316,25 +294,34 @@ class DataLoader:
         -----
         OptimizationDynamics is a pytorch Dataset object.
         """
-        X_traj = self.select_optimizer(optimizer).select_t(
+        X_trajectory = self.select_optimizer(optimizer).select_t(
             t=t, t_start=t_start).X_trajectory()
         X_features = self.X
-        y = self.query_optimizer(optimizer).performance.isel(
+        Y = self.query_optimizer(optimizer).performance.isel(
             iterations=-1)
 
-        X_features = np.expand_dims(X_features.values, axis=-1)
-        X_trajectory = np.expand_dims(
-            X_traj.values.transpose(2, 1, 0), axis=-1)
-        Y = y.values.T
+        # X_features = np.expand_dims(X_features.values, axis=-1)
+        # X_trajectory = np.expand_dims(
+        #     X_traj.values.transpose(2, 1, 0), axis=-1)
+        # Y = y.values.T
 
         return OptimizationDynamics(
             X_features=X_features,
             X_trajectory=X_trajectory,
-            Y=Y)
+            Y=Y,
+            rel_tolerance=rel_tolerance)
 
-    def to_feature_data(self, rel_tolerance: float = 0.0) -> FeaturesDataSet:
+    def to_feature_data(self, rel_tolerance: float = 0.0,
+                        optimizer: Optional[str] = None) -> FeaturesDataSet:
         """
         Convert the data loader to feature data.
+
+        Parameters
+        ----------
+        rel_tolerance : float, optional
+            The relative tolerance to use, by default 0.0
+        optimizer : str, optional
+            The optimizer to condition on, by default None
 
         Returns
         -------
@@ -348,8 +335,13 @@ class DataLoader:
         """
 
         X_features = self.X
-        Y_features = self.select_single_optimizers().performance.isel(
-            iterations=-1, output_dim=0, drop=True).T
+
+        if optimizer is None:
+            Y_features = self.select_single_optimizers().performance.isel(
+                iterations=-1, output_dim=0, drop=True).T
+        else:
+            Y_features = self.query_optimizer(optimizer).performance.isel(
+                iterations=-1, output_dim=0, drop=True).T
 
         return FeaturesDataSet(X_features=X_features,
                                Y_features=Y_features,
@@ -510,6 +502,7 @@ class DataLoader:
 #                                                            Selecting problems
 # =============================================================================
 
+
     def select_problems(self, problem_indices: xr.DataArray) -> DataLoader:
         """
         Select a subset of problems of the data loader.
@@ -639,6 +632,7 @@ class DataLoader:
 #                                                          Selecting optimizers
 # =============================================================================
 
+
     def select_single_optimizers(
             self, include_random_search: bool = False) -> DataLoader:
         """
@@ -747,7 +741,6 @@ class DataLoader:
 #                                                           Performance metrics
 # =============================================================================
 
-
     def performance_profile(
             self, strategies: Optional[Iterable[xr.DataArray]] = None
     ) -> xr.Dataset:
@@ -797,9 +790,10 @@ class DataLoader:
 class OptimizationDynamics(torchDataset):
     def __init__(
             self,
-            X_features: np.ndarray,
-            X_trajectory: np.ndarray,
-            Y: np.ndarray):
+            X_features: xr.DataArray,
+            X_trajectory: xr.DataArray,
+            Y: xr.DataArray,
+            rel_tolerance: float = 0.0):
         """
         Learning dataset inherited from pytorch Dataset. Used for learning the
         machine learning models
@@ -813,9 +807,10 @@ class OptimizationDynamics(torchDataset):
         Y : np.ndarray
             The performance value (labels) of the optimization problems.
         """
-        self.X_features = X_features
-        self.X_trajectory = X_trajectory
-        self.Y = Y
+        self._X_features = X_features
+        self._X_trajectory = X_trajectory
+        self._Y = Y
+        self.rel_tolerance = rel_tolerance
 
     def __len__(self):
         """
@@ -827,7 +822,26 @@ class OptimizationDynamics(torchDataset):
         int
             The length of the dataset.
         """
-        return len(self.X_features)
+        return len(self._X_features)
+
+    def to_feature_data(self):
+        return FeaturesDataSet(
+            X_features=self._X_features,
+            Y_features=self._Y.isel(output_dim=0, drop=True).T,
+            rel_tolerance=self.rel_tolerance)
+
+    @property
+    def X_features(self) -> np.ndarray:
+        return np.expand_dims(self._X_features.values, axis=-1)
+
+    @property
+    def X_trajectory(self) -> np.ndarray:
+        return np.expand_dims(
+            self._X_trajectory.values.transpose(2, 1, 0), axis=-1)
+
+    @property
+    def Y(self):
+        return self._Y.values.T
 
     def __getitem__(self, idx):
         """
@@ -840,6 +854,45 @@ class OptimizationDynamics(torchDataset):
             The index of the item to get.
         """
         return (self.X_features[idx], self.X_trajectory[idx]), self.Y[idx]
+
+    def save(self, path: str):
+        """
+        Save the dataset to disk.
+
+        Parameters
+        ----------
+        path : str
+            The path to save the dataset.
+        """
+        _path = Path(path)
+        self._X_features.to_netcdf(_path / 'X_features.nc')
+        self._X_trajectory.to_netcdf(_path / 'X_trajectory.nc')
+        self._Y.to_netcdf(_path / 'Y_features.nc')
+
+    @classmethod
+    def load(self, path: str, rel_tolerance: float) -> OptimizationDynamics:
+        """
+        Load the dataset from disk.
+
+        Parameters
+        ----------
+        path : str
+            The path to load the dataset.
+
+        Returns
+        -------
+        FeaturesDataSet
+            The loaded dataset.
+        """
+        _path = Path(path)
+        X_features = xr.open_dataarray(_path / 'X_features.nc')
+        X_trajectory = xr.open_dataarray(_path / 'X_trajectory.nc')
+        Y = xr.open_dataarray(_path / 'Y_features.nc')
+
+        return OptimizationDynamics(X_features=X_features,
+                                    X_trajectory=X_trajectory,
+                                    Y=Y,
+                                    rel_tolerance=rel_tolerance)
 
 # =============================================================================
 
@@ -901,7 +954,7 @@ class FeaturesDataSet:
         self.Y_features.to_netcdf(_path / 'Y_features.nc')
 
     @classmethod
-    def load(self, path: str, rel_tolerance: float):
+    def load(self, path: str, rel_tolerance: float) -> FeaturesDataSet:
         """
         Load the dataset from disk.
 

@@ -60,6 +60,7 @@ from torch.utils.data import Subset
 
 # Local
 from .data_loader import DataLoader, OptimizationDynamics
+from .stage0_model import Stage0Model
 
 #                                                                        Models
 # =============================================================================
@@ -188,26 +189,18 @@ class HybridModelWithClf(nn.Module):
     """
     Hybrid model combining an LSTM and an MLP model
     """
-    lstm_features: int
-    mlp_features: int
-    mlp_layers: int
-    n_labels: int
+    stage1_model: nn.Module
 
     def setup(self):
-        self.lstm = SimpleLSTM(
-            features=self.lstm_features, n_labels=self.n_labels)
-        self.stage0_model = ...
+        self.n_labels = self.stage1_model.n_labels
 
     @nn.compact
-    def __call__(self, lstm_input, mlp_input, train: bool):
+    def __call__(self, y_features, x_traj, train: bool):
         # Pass through LSTM
-        lstm_output = self.lstm(lstm_input, train)
-
-        # Pass through MLP
-        mlp_output = self.stage0_model(mlp_input, train)
+        lstm_output = self.stage1_model(x_traj, train)
 
         # Concatenate the outputs
-        combined = jnp.concatenate([lstm_output, mlp_output], axis=-1)
+        combined = jnp.concatenate([lstm_output, y_features], axis=-1)
 
         # Final dense layer to map to the desired number of labels
         combined = nn.Dense(features=self.n_labels)(combined)
@@ -292,7 +285,7 @@ def compute_metrics(
 def loss_fn_regression(
         params,
         state: TrainState,
-        batch_x_features: jnp.ndarray,
+        batch_y_features: jnp.ndarray,
         batch_x_trajectory: jnp.ndarray,
         batch_y: np.ndarray) -> Tuple[jax.Array, Tuple[Any, Any]]:
     """
@@ -318,7 +311,7 @@ def loss_fn_regression(
     """
     logits, updates = state.apply_fn(
         {'params': params, 'batch_stats': state.batch_stats},
-        batch_x_features, batch_x_trajectory,
+        batch_y_features, batch_x_trajectory,
         train=True, mutable=['batch_stats'],
         rngs={'dropout': state.key})
     loss = jnp.mean(softmax_cross_entropy(logits, batch_y))
@@ -329,7 +322,7 @@ def loss_fn_regression(
 
 def train_step(
     state: TrainState,
-    batch_x_features: jnp.ndarray,
+    batch_y_features: jnp.ndarray,
     batch_x_trajectory: jnp.ndarray,
     batch_y: jnp.ndarray,
     model: nn.Module,
@@ -359,7 +352,7 @@ def train_step(
         The updated TrainState and the metrics
     """
 
-    _loss_fn = partial(loss_fn, state=state, batch_x_features=batch_x_features,
+    _loss_fn = partial(loss_fn, state=state, batch_y_features=batch_y_features,
                        batch_x_trajectory=batch_x_trajectory, batch_y=batch_y)
 
     grad_fn = jax.value_and_grad(_loss_fn, has_aux=True)
@@ -408,7 +401,8 @@ def evaluate_step(
 
 def training_loop(
         optimizer: GradientTransformation,
-        model: nn.Module,
+        model_stage0: Stage0Model,
+        model_stage1: nn.Module,
         data_optimization: TorchDataLoader,
         num_epochs: int,
         seed: Optional[int],
@@ -452,14 +446,14 @@ def training_loop(
     input_shape_features = data_optimization.X_features[0:1].shape
     input_shape_trajectory = data_optimization.X_trajectory[0:1].shape
     variables = create_initial_params(
-        rng, input_shape_features, input_shape_trajectory, model)
+        rng, input_shape_features, input_shape_trajectory, model_stage1)
 
     params = variables['params']
     batch_stats = variables['batch_stats']
 
     # Create the TrainState
     state = TrainState.create(
-        apply_fn=model.apply,
+        apply_fn=model_stage1.apply,
         params=params,
         key=dropout_rng,
         batch_stats=batch_stats,
@@ -468,8 +462,8 @@ def training_loop(
 
     # JIT-compiled versions with partial application
     jit_train_step = jax.jit(
-        partial(train_step, model=model, loss_fn=loss_fn))
-    jit_evaluate_step = jax.jit(partial(evaluate_step, model=model))
+        partial(train_step, model=model_stage1, loss_fn=loss_fn))
+    jit_evaluate_step = jax.jit(partial(evaluate_step, model=model_stage1))
 
     if track_loss:
         # List to store the losses
@@ -497,9 +491,15 @@ def training_loop(
     for epoch in range(num_epochs):
         logging.debug(f"Epoch {epoch+1}/{num_epochs}")
         for (batch_x_features, batch_x_trajectory), batch_y in train_batches:
+
+            # Pass through the Stage0Model
+            batch_y_features = model_stage0.predict_from_torch(
+                batch_x_features, data_optimization._X_features.features)
+
             state, metrics_train = jit_train_step(
-                state, jnp.array(batch_x_features),
-                jnp.array(batch_x_trajectory), jnp.array(batch_y))
+                state, batch_y_features=jnp.array(batch_y_features),
+                batch_x_trajectory=jnp.array(batch_x_trajectory),
+                batch_y=jnp.array(batch_y))
 
         if track_loss:
             # Store the loss
@@ -537,7 +537,8 @@ class SingleStage1Model(Protocol):
 
 
 class Stage1Model():
-    def __init__(self, optimizers: xr.DataArray, model: SingleStage1Model,
+    def __init__(self, optimizers: xr.DataArray,
+                 model_stage1: SingleStage1Model, model_stage0: Stage0Model,
                  t_start: int, t_switch: int, rel_tolerance: float,
                  name: str = 'stage1_model',
                  **kwargs):
@@ -560,7 +561,8 @@ class Stage1Model():
             The name of the model, by default 'stage1_model'
         """
         self.optimizers = optimizers
-        self.models = self.create_models(model)
+        self.models_stage1 = self.create_models_stage1(model_stage1)
+        self.models_stage0 = self.create_models_stage0(model_stage0)
         self.states = self.create_states()
         self.name = name
         self.t_start = t_start
@@ -589,14 +591,15 @@ class Stage1Model():
         save_model : bool, optional
             If True, save the model, by default False
         """
+        for opt in self.optimizers.values:
+            self.models_stage0[opt].train(
+                feature_data=optimization_dynamics[opt].to_feature_data()
+            )
 
         for opt in self.optimizers.values:
-            # data_optimization = data_train.to_learning_data(
-            #     optimizer=opt, t=self.t_switch,
-            #     t_start=self.t_start)
-
             self.states[opt], _ = training_loop(
-                model=self.models[opt],
+                model_stage0=self.models_stage0[opt],
+                model_stage1=self.models_stage1[opt],
                 data_optimization=optimization_dynamics[opt],
                 num_epochs=num_epochs,
                 seed=seed,
@@ -638,10 +641,13 @@ class Stage1Model():
                 t_start=self.t_start
             )
 
+            y_features = self.models_stage0[optimizer].predict(
+                data_optimization.to_feature_data())
+
             logits = self.states[optimizer].apply_fn(
                 {'params': self.states[optimizer].params,
                  'batch_stats': self.states[optimizer].batch_stats},
-                data_optimization.X_features, data_optimization.X_trajectory,
+                y_features, data_optimization.X_trajectory,
                 train=False)
 
             predictions = xr.DataArray(
@@ -678,7 +684,20 @@ class Stage1Model():
 
         return combined_predictions.sortby('problem')
 
-    def create_models(
+    def create_models_stage0(
+            self, model: Stage0Model) -> Dict[str, Stage0Model]:
+        """
+        Create the Stage0 models
+
+        Returns
+        -------
+        Dict[str, Stage0Model]
+            The Stage0 models
+        """
+        return {optimizer: deepcopy(model)
+                for optimizer in self.optimizers.values}
+
+    def create_models_stage1(
             self, model: SingleStage1Model) -> Dict[str, SingleStage1Model]:
         """
         Create the Stage1 models
@@ -715,7 +734,7 @@ class Stage1Model():
         path : Path
             The path to the model
         """
-        for optimizer, model in self.models.items():
+        for optimizer, model in self.models_stage1.items():
             model.save(Path(path) / f"stage1_{optimizer}")
 
 
