@@ -23,7 +23,6 @@ from typing import Literal, Optional
 # Third-party
 import numpy as np
 import pandas as pd
-import torch
 import xarray as xr
 from sklearn.base import BaseEstimator
 from sklearn.compose import ColumnTransformer
@@ -143,24 +142,13 @@ class Stage0Model():
             ).loc[:, feature_data.Y.to_pandas().any()]
         elif self.type == 'regressor':
             y = feature_data.Y_features.to_pandas()
+            # Subtract the mean to emphasize the differences between
+            # the performances
+            y = y.subtract(y.mean(axis=1), axis=0)
 
         x = feature_data.X_features.to_pandas()
+
         self.clf.fit(x, y)
-
-    def predict_from_torch(self, X: torch.Tensor, columns) -> torch.Tensor:
-        df = pd.DataFrame(X, columns=columns)
-        if self.type == 'classifier':
-            y_pred = self.clf.predict_proba(df)
-            df_pred = pd.DataFrame(
-                np.array(y_pred)[:, :, 1].T, columns=df.columns)
-
-            return torch.Tensor(df_pred.idxmax(axis=1).values)
-
-        elif self.type == 'regressor':
-            y_pred = self.clf.predict(df)
-            df_pred = pd.DataFrame(y_pred, columns=df.columns)
-
-            return torch.Tensor(df_pred.idxmin(axis=1).values)
 
     def predict(self, feature_data: FeaturesDataSet) -> xr.DataArray:
         if self.type == 'classifier':

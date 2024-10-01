@@ -36,9 +36,6 @@ training_loop
     Training loop
 """
 
-#                                                                       Modules
-# =============================================================================
-# Standard
 import logging
 import pickle
 from copy import deepcopy
@@ -51,12 +48,19 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
+import torch
 import xarray as xr
+#                                                                       Modules
+# =============================================================================
+# Standard
+from flax import linen as nn
 from flax.training import train_state
 from optax import GradientTransformation, softmax_cross_entropy
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader as TorchDataLoader
 from torch.utils.data import Subset
+from tqdm import tqdm
 
 # Local
 from .data_loader import DataLoader, OptimizationDynamics
@@ -70,24 +74,34 @@ class SimpleLSTM(nn.Module):
     """
     Simple LSTM model
     """
-    features: int
+    hidden_size: int
     n_labels: int
+    n_layers: int = 1
 
     def setup(self):
         """
         Setup function, initializes the LSTM cell
         """
-        self.scan_cell = nn.transforms.scan(
+        self.lstm_cells = [nn.transforms.scan(
             nn.OptimizedLSTMCell,
             variable_broadcast='params',
             in_axes=1, out_axes=1,
-            split_rngs={'params': False})(self.features)
+            split_rngs={'params': False})(self.hidden_size)
+            for _ in range(self.n_layers)]
 
     @nn.compact
-    def __call__(self, x, train: bool):
-        carry = self.scan_cell.initialize_carry(
-            jax.random.key(0), x[:, 0].shape)
-        x = self.scan_cell(carry, x)[1]  # only return the output
+    def __call__(self, x, train: bool, return_latent: bool = False):
+        carry = [cell.initialize_carry(
+            jax.random.key(i), x[:, 0].shape)
+            for i, cell in enumerate(self.lstm_cells)]
+
+        # Pass the input through each LSTM layer
+        for i in range(self.n_layers):
+            carry[i], x = self.lstm_cells[i](carry[i], x)
+
+        # Optionally return the latent space directly after the LSTM layers
+        if return_latent:
+            return x
 
         # Flatten the output if needed (taking the last output in the sequence)
         x = x.reshape((x.shape[0], -1))  # flatten
@@ -152,63 +166,155 @@ class SimpleMLP(nn.Module):
         return nn.sigmoid(x)
 
 
-class HybridModel(nn.Module):
-    """
-    Hybrid model combining an LSTM and an MLP model
-    """
-    lstm_features: int
-    mlp_features: int
-    mlp_layers: int
-    n_labels: int
-
-    def setup(self):
-        self.lstm = SimpleLSTM(
-            features=self.lstm_features, n_labels=self.n_labels)
-        self.mlp = SimpleMLP(n_features=self.mlp_features,
-                             n_layers=self.mlp_layers,
-                             n_labels=self.n_labels)
-
-    @nn.compact
-    def __call__(self, lstm_input, mlp_input, train: bool):
-        # Pass through LSTM
-        lstm_output = self.lstm(lstm_input, train)
-
-        # Pass through MLP
-        mlp_output = self.mlp(mlp_input, train)
-
-        # Concatenate the outputs
-        combined = jnp.concatenate([lstm_output, mlp_output], axis=-1)
-
-        # Final dense layer to map to the desired number of labels
-        combined = nn.Dense(features=self.n_labels)(combined)
-
-        return nn.sigmoid(combined)
-
-
 class HybridModelWithClf(nn.Module):
     """
     Hybrid model combining an LSTM and an MLP model
     """
     stage1_model: nn.Module
-
-    def setup(self):
-        self.n_labels = self.stage1_model.n_labels
+    n_labels: int
+    n_layers: int = 1
 
     @nn.compact
     def __call__(self, y_features, x_traj, train: bool):
-        # Pass through LSTM
+
+        # Pass through stage 1 model
         lstm_output = self.stage1_model(x_traj, train)
 
         # Concatenate the outputs
         combined = jnp.concatenate([lstm_output, y_features], axis=-1)
 
-        # Final dense layer to map to the desired number of labels
-        combined = nn.Dense(features=self.n_labels)(combined)
+        for _ in range(self.n_layers):
+            # Final dense layer to map to the desired number of labels
+            combined = nn.Dense(features=self.n_labels)(combined)
+            combined = nn.sigmoid(combined)
 
-        return nn.sigmoid(combined)
+        return combined
 
 # =============================================================================
 
+
+class Encoder(nn.Module):
+    latent_dim: int
+    hidden_size: int
+    n_layers: int = 1
+
+    def setup(self):
+        self.lstm_cells = [
+            nn.transforms.scan(
+                nn.OptimizedLSTMCell,
+                variable_broadcast='params',
+                in_axes=1, out_axes=1,
+                split_rngs={'params': False})(self.hidden_size)
+            for _ in range(self.n_layers)
+        ]
+
+        self.latent_dense = nn.Dense(self.latent_dim)
+
+    @nn.compact
+    def __call__(self, x):
+        batch_size = x.shape[0]
+
+        # Initialize carry state with correct shape: (batch_size, hidden_size)
+        carry = [
+            cell.initialize_carry(
+                jax.random.PRNGKey(i), (batch_size, self.hidden_size))
+            for i, cell in enumerate(self.lstm_cells)
+        ]
+
+        # print(f"input shape x {x.shape=}")
+
+        for i in range(self.n_layers):
+            carry[i], x = self.lstm_cells[i](carry[i], x)
+
+        # Map the final LSTM output to the latent space
+        z = self.latent_dense(x)
+
+        # Pool over sequence length to get a single vector per batch
+        z = jnp.mean(x, axis=1)  # (batch_size, latent_dim)
+        return z
+
+
+class Decoder(nn.Module):
+    output_dim: int
+    latent_dim: int
+    hidden_size: int
+    n_layers: int = 1
+
+    def setup(self):
+        self.lstm_cells = [
+            nn.transforms.scan(
+                nn.OptimizedLSTMCell,
+                variable_broadcast='params',
+                in_axes=1, out_axes=1,
+                split_rngs={'params': False})(self.hidden_size)
+            for _ in range(self.n_layers)
+        ]
+
+        # Output projection layer
+        self.hidden_dense = nn.Dense(self.hidden_size)
+        self.output_layer = nn.Dense(self.output_dim)
+
+    @nn.compact
+    def __call__(self, z, seq_len):
+        batch_size = z.shape[0]
+        # print(f"{batch_size=}, {seq_len=}")
+
+        # Map latent vector to the LSTM's hidden size
+        z = self.hidden_dense(z)
+
+        carry = [
+            cell.initialize_carry(
+                jax.random.PRNGKey(i + 1), (batch_size, self.hidden_size))
+            for i, cell in enumerate(self.lstm_cells)
+        ]
+
+        # Use latent vector z as the initial input for the decoder
+        # (batch_size, seq_length, latent_dim)
+        x = jnp.tile(z[:, jnp.newaxis, :], (1, seq_len, 1))
+
+        # Initialize output storage
+        outputs = []
+
+        for i in range(seq_len):
+            for j in range(self.n_layers):
+                carry[j], x = self.lstm_cells[j](carry[j], x)
+
+            # Generate output at each time step
+            output = self.output_layer(x[:, i, :])  # (batch_size, output_dim)
+            outputs.append(output)
+
+        # Stack outputs to form the final sequence
+        # (batch_size, seq_length, output_dim)
+        return jnp.stack(outputs, axis=1)
+
+
+class LSTMAutoencoder(nn.Module):
+    output_dim: int
+    latent_dim: int
+    hidden_size: int
+    n_layers: int = 1
+
+    @nn.compact
+    def __call__(self, x, train: bool = True):
+        # input shape = (batch_size, sequence_length, output_dim)
+
+        sequence_length = x.shape[1]
+        encoder = Encoder(latent_dim=self.latent_dim,
+                          hidden_size=self.hidden_size,
+                          n_layers=self.n_layers)
+        decoder = Decoder(latent_dim=self.latent_dim,
+                          hidden_size=self.hidden_size,
+                          n_layers=self.n_layers,
+                          output_dim=self.output_dim)
+
+        x = nn.BatchNorm(use_running_average=not train)(x)
+
+        latent_space = encoder(x)
+        reconstruction = decoder(latent_space, sequence_length)
+        return reconstruction
+
+
+# =============================================================================
 
 class TrainState(train_state.TrainState):
     """
@@ -218,10 +324,39 @@ class TrainState(train_state.TrainState):
     key: jax.Array
 
 
+# def create_initial_params_old(rng: jax.random.KeyArray,
+#                               input_shape_features: Tuple[int, int],
+#                               input_shape_trajectory: Tuple[int, int],
+#                               model: nn.Module) -> Dict[str, Any]:
+#     """
+#     Create initial parameters for the model
+
+#     Parameters
+#     ----------
+#     rng : jax.random.KeyArray
+#         Random key
+#     input_shape_features : Tuple[int, int]
+#         Shape of the input features
+#     input_shape_trajectory : Tuple[int, int]
+#         Shape of the input trajectory
+#     model : nn.Module
+#         The model
+
+#     Returns
+#     -------
+#     Dict[str, Any]
+#         Initial parameters
+#     """
+#     dummy_input_features = jnp.ones(input_shape_features, jnp.float32)
+#     dummy_input_trajectory = jnp.ones(input_shape_trajectory, jnp.float32)
+#     variables = model.init({'params': rng}, dummy_input_features,
+#                            dummy_input_trajectory, train=False)
+#     return variables
+
+
 def create_initial_params(rng: jax.random.KeyArray,
-                          input_shape_features: Tuple[int, int],
-                          input_shape_trajectory: Tuple[int, int],
-                          model: nn.Module) -> Dict[str, Any]:
+                          model: nn.Module,
+                          **input_shapes) -> Dict[str, Any]:
     """
     Create initial parameters for the model
 
@@ -229,22 +364,19 @@ def create_initial_params(rng: jax.random.KeyArray,
     ----------
     rng : jax.random.KeyArray
         Random key
-    input_shape_features : Tuple[int, int]
-        Shape of the input features
-    input_shape_trajectory : Tuple[int, int]
-        Shape of the input trajectory
     model : nn.Module
         The model
-
-    Returns
-    -------
-    Dict[str, Any]
-        Initial parameters
+    input_shapes : Dict[str, Tuple[int, int]]
+        The shapes of the input tensors
     """
-    dummy_input_features = jnp.ones(input_shape_features, jnp.float32)
-    dummy_input_trajectory = jnp.ones(input_shape_trajectory, jnp.float32)
-    variables = model.init({'params': rng}, dummy_input_features,
-                           dummy_input_trajectory, train=False)
+
+    # Create dummy input tensors for each shape provided in input_shapes
+    dummy_inputs = [jnp.ones(shape, jnp.float32)
+                    for shape in input_shapes.values()]
+
+    # Initialize model parameters using the dummy inputs
+    variables = model.init({'params': rng}, *dummy_inputs, train=False)
+
     return variables
 
 
@@ -282,7 +414,7 @@ def compute_metrics(
 # =============================================================================
 
 
-def loss_fn_regression(
+def loss_fn(
         params,
         state: TrainState,
         batch_y_features: jnp.ndarray,
@@ -309,13 +441,15 @@ def loss_fn_regression(
     Tuple[jax.Array, Tuple[Any, Any]]
         The loss and the logits and updates
     """
-    logits, updates = state.apply_fn(
+    batch_y_pred, updates = state.apply_fn(
         {'params': params, 'batch_stats': state.batch_stats},
         batch_y_features, batch_x_trajectory,
         train=True, mutable=['batch_stats'],
         rngs={'dropout': state.key})
-    loss = jnp.mean(softmax_cross_entropy(logits, batch_y))
-    return loss, (logits, updates)
+    # loss = jnp.mean(softmax_cross_entropy(y_pred, batch_y))
+    # MSE Error
+    loss = jnp.mean(jnp.square(batch_y_pred - batch_y))
+    return loss, (batch_y_pred, updates)
 
 # =============================================================================
 
@@ -326,7 +460,7 @@ def train_step(
     batch_x_trajectory: jnp.ndarray,
     batch_y: jnp.ndarray,
     model: nn.Module,
-    loss_fn: Callable = loss_fn_regression,
+    loss_fn: Callable = loss_fn,
 ) -> Tuple[TrainState, Dict[str, jnp.ndarray]]:
     """
     Training step function
@@ -356,16 +490,18 @@ def train_step(
                        batch_x_trajectory=batch_x_trajectory, batch_y=batch_y)
 
     grad_fn = jax.value_and_grad(_loss_fn, has_aux=True)
-    (loss, (logits, updates)), grads = grad_fn(state.params)
+    (loss, (batch_y_pred, updates)), grads = grad_fn(state.params)
     state = state.apply_gradients(grads=grads)
     state = state.replace(batch_stats=updates['batch_stats'])
-    metrics = compute_metrics(logits, batch_y, n_classes=model.n_labels)
+    # metrics = compute_metrics(batch_y_pred, batch_y, n_classes=model.n_labels)
+    metrics = {}
+    metrics['loss'] = loss
     return state, metrics
 
 
 def evaluate_step(
         state: TrainState,
-        batch_x_features: jnp.ndarray,
+        batch_y_features: jnp.ndarray,
         batch_x_trajectory: jnp.ndarray,
         batch_y: jnp.ndarray,
         model: nn.Module) -> Dict[str, jnp.ndarray]:
@@ -392,7 +528,7 @@ def evaluate_step(
     """
     logits = state.apply_fn(
         {'params': state.params, 'batch_stats': state.batch_stats},
-        batch_x_features, batch_x_trajectory, train=False)
+        batch_y_features, batch_x_trajectory, train=False)
 
     return compute_metrics(logits, batch_y, n_classes=model.n_labels)
 
@@ -409,6 +545,7 @@ def training_loop(
         batch_size: int,
         loss_fn: Callable,
         track_loss: bool,
+        verbose: bool = False
 ) -> Tuple[TrainState, Dict[str, jnp.ndarray]]:
     """
     Training loop
@@ -431,6 +568,8 @@ def training_loop(
         loss function
     track_loss : bool
         if True, track the loss
+    verbose : bool, optional
+        if True, show progress bar, by default False
 
     Returns
     -------
@@ -443,10 +582,15 @@ def training_loop(
     main_key = jax.random.PRNGKey(seed)
     rng, dropout_rng = jax.random.split(main_key, 2)
     # (1, RESOLUTION, RESOLUTION, 1)
-    input_shape_features = data_optimization.X_features[0:1].shape
+
+    input_shape_features = data_optimization.Y[0].shape
+    # input_shape_features = data_optimization.X_features[0:1].shape
     input_shape_trajectory = data_optimization.X_trajectory[0:1].shape
     variables = create_initial_params(
-        rng, input_shape_features, input_shape_trajectory, model_stage1)
+        rng=rng, model=model_stage1,
+        input_shape_features=input_shape_features,
+        input_shape_trajectory=input_shape_trajectory,
+    )
 
     params = variables['params']
     batch_stats = variables['batch_stats']
@@ -463,7 +607,7 @@ def training_loop(
     # JIT-compiled versions with partial application
     jit_train_step = jax.jit(
         partial(train_step, model=model_stage1, loss_fn=loss_fn))
-    jit_evaluate_step = jax.jit(partial(evaluate_step, model=model_stage1))
+    # jit_evaluate_step = jax.jit(partial(evaluate_step, model=model_stage1))
 
     if track_loss:
         # List to store the losses
@@ -488,33 +632,66 @@ def training_loop(
     (eval_features, eval_trajectory), eval_y = next(
         iter(validation_batches))
 
-    for epoch in range(num_epochs):
-        logging.debug(f"Epoch {epoch+1}/{num_epochs}")
-        for (batch_x_features, batch_x_trajectory), batch_y in train_batches:
+    # subtract the mean of eval_y over the second axis
+    eval_y = (eval_y - eval_y.mean(dim=2, keepdim=True))
 
-            # Pass through the Stage0Model
-            batch_y_features = model_stage0.predict_from_torch(
-                batch_x_features, data_optimization._X_features.features)
+    # eval_y_features = predict_from_stage0(
+    #     stage0_model=model_stage0,
+    #     batch_x_features=eval_features,
+    #     columns=data_optimization._X_features.features)
+
+    for epoch in range(num_epochs):
+        # logging.debug(f"Epoch {epoch+1}/{num_epochs}")
+
+        # Initialize tqdm for batches
+        batch_iterator = tqdm(
+            train_batches, desc=f"Epoch {epoch+1}/{num_epochs}",
+            disable=not verbose, leave=False, position=0)
+
+        for (batch_x_features, batch_x_trajectory), batch_y in batch_iterator:
+
+            batch_y_features = predict_from_stage0(
+                stage0_model=model_stage0,
+                batch_x_features=batch_x_features,
+                columns=data_optimization._X_features.features)
+
+            # substract the mean of batch_y over the second axis
+            batch_y = (batch_y - batch_y.mean(dim=2, keepdim=True))
 
             state, metrics_train = jit_train_step(
                 state, batch_y_features=jnp.array(batch_y_features),
                 batch_x_trajectory=jnp.array(batch_x_trajectory),
                 batch_y=jnp.array(batch_y))
 
-        if track_loss:
-            # Store the loss
-            metrics['training_losses'].append(metrics_train['loss'])
-            metrics['training_accuracy'].append(metrics_train['accuracy'])
+            if track_loss:
+                # Store the loss
+                metrics['training_losses'].append(metrics_train['loss'])
+                # metrics['training_accuracy'].append(metrics_train['accuracy'])
 
-            metrics_test = jit_evaluate_step(
-                state, eval_features,
-                eval_trajectory, eval_y)
+            # Update tqdm description with the current loss
+            batch_iterator.set_description((
+                f"Epoch {epoch+1}/{num_epochs} - "
+                f"Loss: {metrics_train['loss']: .4f} - "
+                # f"Accuracy: {metrics_train['accuracy']: .4f}"
+            ))
 
-            metrics['testing_losses'].append(metrics_test['loss'])
-            metrics['testing_accuracy'].append(metrics_test['accuracy'])
+            # metrics_test = jit_evaluate_step(
+            #     state, batch_y_features=jnp.array(eval_y_features),
+            #     batch_x_trajectory=jnp.array(eval_trajectory),
+            #     batch_y=jnp.array(eval_y))
+
+            # metrics['testing_losses'].append(metrics_test['loss'])
+            # metrics['testing_accuracy'].append(metrics_test['accuracy'])
 
     return state, metrics
 
+
+def predict_from_stage0(
+    stage0_model: Stage0Model, batch_x_features: torch.Tensor,
+        columns: np.array) -> torch.Tensor:
+    df = pd.DataFrame(batch_x_features.squeeze(), columns=columns)
+    y_pred = stage0_model.clf.predict(df)
+    return torch.Tensor(y_pred)  # shape = (batch_size, n_optimizers)
 
 # =============================================================================
 
@@ -567,12 +744,13 @@ class Stage1Model():
         self.name = name
         self.t_start = t_start
         self.t_switch = t_switch
-        # self.rel_tolerance = rel_tolerance
 
     def train(self, optimization_dynamics: Dict[str, OptimizationDynamics],
               batch_size: int, num_epochs: int,
               optimizer: GradientTransformation,
-              seed: int, save_model: bool = False):
+              seed: int, save_model: bool = False,
+              track_loss: bool = False,
+              verbose: bool = False):
         """
         Train the model
 
@@ -597,27 +775,31 @@ class Stage1Model():
             )
 
         for opt in self.optimizers.values:
-            self.states[opt], _ = training_loop(
+            self.states[opt], metrics = training_loop(
                 model_stage0=self.models_stage0[opt],
                 model_stage1=self.models_stage1[opt],
                 data_optimization=optimization_dynamics[opt],
                 num_epochs=num_epochs,
                 seed=seed,
                 batch_size=batch_size,
-                loss_fn=loss_fn_regression,
-                track_loss=False,
+                loss_fn=loss_fn,
+                track_loss=track_loss,
                 optimizer=optimizer,
+                verbose=verbose
             )
 
-    def predict(self, data_test: DataLoader,
+        if track_loss:
+            return metrics
+
+    def predict(self, data_test: Dict[str, OptimizationDynamics],
                 stage0_predictions: xr.DataArray) -> xr.DataArray:
         """
         Predict the best optimizer on the testing data
 
         Parameters
         ----------
-        data_test : DataLoader
-            The testing data
+        data_test : Dict[str, OptimizationDynamics]
+            The testing data optimizationdynamics
         stage0_predictions : xarray.DataArray
             The predictions of the Stage0 model
 
@@ -634,27 +816,30 @@ class Stage1Model():
             problems = stage0_predictions.where(
                 stage0_predictions == optimizer, drop=True).problem
 
-            data_selected = data_test.select_problems(problems)
+            if len(problems) == 0:
+                continue
 
-            data_optimization = data_selected.to_learning_data(
-                optimizer=optimizer, t=self.t_switch,
-                t_start=self.t_start
-            )
+            data_optimization = data_test[optimizer].select_problems(problems)
 
-            y_features = self.models_stage0[optimizer].predict(
-                data_optimization.to_feature_data())
+            # data_optimization = data_selected.to_learning_data(
+            #     optimizer=optimizer, t=self.t_switch,
+            #     t_start=self.t_start
+            # )
+
+            y_features = self.models_stage0[optimizer].clf.predict(
+                data_optimization._X_features.to_pandas())
 
             logits = self.states[optimizer].apply_fn(
                 {'params': self.states[optimizer].params,
                  'batch_stats': self.states[optimizer].batch_stats},
-                y_features, data_optimization.X_trajectory,
+                jnp.array(y_features), data_optimization.X_trajectory,
                 train=False)
 
             predictions = xr.DataArray(
                 np.array(logits),
                 dims=['problem', 'optimizer'],
                 coords={'optimizer': self.optimizers,
-                        'problem': data_selected.problem}
+                        'problem': data_optimization.problem}
             )
 
             list_y_pred_stage1.append(predictions)

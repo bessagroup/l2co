@@ -74,6 +74,7 @@ def scaling2(data: xr.Dataset) -> xr.DataArray:
     # 1. Calculate cumulative minimum (quality indictor value)
     ds_output = output_cummin(data.output)  # .chunk('auto')
 
+    # Cap the quality indicator value at 1e-8
     ds_output = ds_output.where(
         (ds_output > 1e-8) | ds_output.isnull(), other=1e-8)
 

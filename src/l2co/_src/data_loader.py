@@ -300,11 +300,6 @@ class DataLoader:
         Y = self.query_optimizer(optimizer).performance.isel(
             iterations=-1)
 
-        # X_features = np.expand_dims(X_features.values, axis=-1)
-        # X_trajectory = np.expand_dims(
-        #     X_traj.values.transpose(2, 1, 0), axis=-1)
-        # Y = y.values.T
-
         return OptimizationDynamics(
             X_features=X_features,
             X_trajectory=X_trajectory,
@@ -446,7 +441,7 @@ class DataLoader:
             output_core_dims=[['iterations', 'output_dim']],
             vectorize=True,
             dask='parallelized',
-            dask_gufunc_kwargs={'allow_rechunk': False}
+            dask_gufunc_kwargs={'allow_rechunk': True}  # False
         )
 
         return trajectory.output.isel(
@@ -531,8 +526,6 @@ class DataLoader:
             X=self.X.sel(problem=_problem_indices),
             n_iterations=self.n_iterations,
             n_realizations=self.n_realizations,
-            # performance=self.performance.sel(
-            #     problem=_problem_indices),
             data=self.data.sel(problem=_problem_indices),
             config=self.config,
             experimentdata=self.experimentdata.select(_unique_itemID),
@@ -824,6 +817,13 @@ class OptimizationDynamics(torchDataset):
         """
         return len(self._X_features)
 
+    def select_problems(self, problems: xr.DataArray) -> OptimizationDynamics:
+        return OptimizationDynamics(
+            X_features=self._X_features.sel(problem=problems),
+            X_trajectory=self._X_trajectory.sel(problem=problems),
+            Y=self._Y.sel(problem=problems),
+            rel_tolerance=self.rel_tolerance)
+
     def to_feature_data(self):
         return FeaturesDataSet(
             X_features=self._X_features,
@@ -842,6 +842,10 @@ class OptimizationDynamics(torchDataset):
     @property
     def Y(self):
         return self._Y.values.T
+
+    @property
+    def problem(self):
+        return self._X_features.problem
 
     def __getitem__(self, idx):
         """

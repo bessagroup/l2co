@@ -13,14 +13,15 @@ plot_perf_profile
 #                                                                       Modules
 # =============================================================================
 
-from typing import List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 # Third-party
 import matplotlib.pyplot as plt
+import numpy as np
 import xarray as xr
 
 # Local
-from l2co._src.data_loader import DataLoader
+from l2co._src.data_loader import DataLoader, OptimizationDynamics
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -32,6 +33,14 @@ __status__ = 'Stable'
 
 #                                                                 Aspect ratios
 # =============================================================================
+
+
+OPTIMIZER_COLORS = {
+    'Adam': plt.rcParams['axes.prop_cycle'].by_key()['color'][0],
+    'CMAES': plt.rcParams['axes.prop_cycle'].by_key()['color'][1],
+    'LBFGSB': plt.rcParams['axes.prop_cycle'].by_key()['color'][2],
+    'PSO': plt.rcParams['axes.prop_cycle'].by_key()['color'][3],
+}
 
 
 def set_size(width, fraction=1, subplots=(1, 1)):
@@ -163,3 +172,57 @@ def plot_perf_profile(
     ax.set_ylabel('Fraction of solved problems')
     ax.set_ylim(0.0, 1.0)
     return fig, ax
+
+
+def plot_trajectories(
+        optimization_dynamics: OptimizationDynamics, optimizer: str,
+        n_rows: int = 10, n_columns: int = 10,
+        seed: Optional[int] = None,
+        idx: Iterable[int] = None) -> Tuple[plt.Figure, np.ndarray]:
+
+    X_traj = optimization_dynamics._X_trajectory.isel(
+        optimizer=0).T
+    Y = optimization_dynamics._Y.isel(output_dim=0).T
+
+    fig, axes = plt.subplots(
+        n_rows, n_columns, figsize=(2*n_rows, 2*n_columns),
+        sharex=True, sharey=True)
+    axes = axes.flatten()
+    Y_substract_mean = Y - Y.mean('optimizer')
+
+    if idx is None:
+        # create numpy generator
+        rng = np.random.default_rng(seed)
+        idx = rng.integers(0, len(X_traj), size=len(axes))
+
+    idx = idx[:len(axes)]
+
+    # randomly select 100 trajectories
+    for ax, i in zip(axes, idx):
+
+        # Bar colors
+        bar_colors = [
+            'white' if opt == optimizer else OPTIMIZER_COLORS[opt]
+            for opt in Y_substract_mean.optimizer.values
+        ]
+
+        ax.plot(X_traj.isel(problem=i), color=OPTIMIZER_COLORS[optimizer])
+        ax.set_title(f'#{i}')
+        ax.set_xticks([])
+
+        # [left, bottom, width, height]
+        bar_ax = ax.inset_axes([0, -0.3, 1, 0.3])
+        bar_ax.bar(
+            range(Y_substract_mean.optimizer.size), Y_substract_mean.isel(
+                problem=i),
+            color=bar_colors,
+            edgecolor=[OPTIMIZER_COLORS[opt]
+                       for opt in Y_substract_mean.optimizer.values],
+            linewidth=1.5)
+
+        bar_ax.set_xticks([])
+        bar_ax.set_yticks([])
+
+    fig.tight_layout()
+
+    return fig, axes
