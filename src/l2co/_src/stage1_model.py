@@ -106,7 +106,7 @@ class SimpleLSTM(nn.Module):
         # Flatten the output if needed (taking the last output in the sequence)
         x = x.reshape((x.shape[0], -1))  # flatten
 
-        x = nn.BatchNorm(use_running_average=not train)(x)
+        # x = nn.BatchNorm(use_running_average=not train)(x)
 
         x = nn.Dropout(rate=0.3, deterministic=not train)(x)
 
@@ -307,7 +307,7 @@ class LSTMAutoencoder(nn.Module):
                           n_layers=self.n_layers,
                           output_dim=self.output_dim)
 
-        x = nn.BatchNorm(use_running_average=not train)(x)
+        # x = nn.BatchNorm(use_running_average=not train)(x)
 
         latent_space = encoder(x)
         reconstruction = decoder(latent_space, sequence_length)
@@ -322,7 +322,6 @@ class TrainState(train_state.TrainState):
     """
     batch_stats: Any
     key: jax.Array
-
 
 # def create_initial_params_old(rng: jax.random.KeyArray,
 #                               input_shape_features: Tuple[int, int],
