@@ -117,7 +117,7 @@ class SimpleLSTM(nn.Module):
 
 
 def normal_initializer(
-        rng: jax.random.KeyArray, shape: Tuple[int, int],
+        rng, shape: Tuple[int, int],
         dtype: jnp.dtype) -> jax.Array:
     """
     Normal initializer for weights and biases
@@ -353,7 +353,7 @@ class TrainState(train_state.TrainState):
 #     return variables
 
 
-def create_initial_params(rng: jax.random.KeyArray,
+def create_initial_params(rng,
                           model: nn.Module,
                           **input_shapes) -> Dict[str, Any]:
     """
