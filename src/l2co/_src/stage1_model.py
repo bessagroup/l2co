@@ -157,9 +157,9 @@ class SimpleMLP(nn.Module):
                          bias_init=normal_initializer)(x)
             x = nn.relu(x)
 
-        x = nn.BatchNorm(use_running_average=not train)(x)
+        # x = nn.BatchNorm(use_running_average=not train)(x)
 
-        x = nn.Dropout(rate=0.3, deterministic=not train)(x)
+        # x = nn.Dropout(rate=0.3, deterministic=not train)(x)
 
         x = nn.Dense(features=self.n_labels, kernel_init=normal_initializer,
                      bias_init=normal_initializer)(x)
@@ -196,35 +196,25 @@ class HybridModelWithClf(nn.Module):
 class Encoder(nn.Module):
     latent_dim: int
     hidden_size: int
-    n_layers: int = 1
 
     def setup(self):
-        self.lstm_cells = [
-            nn.transforms.scan(
-                nn.OptimizedLSTMCell,
-                variable_broadcast='params',
-                in_axes=1, out_axes=1,
-                split_rngs={'params': False})(self.hidden_size)
-            for _ in range(self.n_layers)
-        ]
+        self.lstm_cell = nn.transforms.scan(
+            nn.OptimizedLSTMCell,
+            variable_broadcast='params',
+            in_axes=1, out_axes=1,
+            split_rngs={'params': False})(self.hidden_size)
 
         self.latent_dense = nn.Dense(self.latent_dim)
 
     @nn.compact
-    def __call__(self, x):
+    def __call__(self, x, train: bool = True):
         batch_size = x.shape[0]
 
         # Initialize carry state with correct shape: (batch_size, hidden_size)
-        carry = [
-            cell.initialize_carry(
-                jax.random.PRNGKey(i), (batch_size, self.hidden_size))
-            for i, cell in enumerate(self.lstm_cells)
-        ]
+        carry = self.lstm_cell.initialize_carry(
+            jax.random.PRNGKey(0), (batch_size, self.hidden_size))
 
-        # print(f"input shape x {x.shape=}")
-
-        for i in range(self.n_layers):
-            carry[i], x = self.lstm_cells[i](carry[i], x)
+        carry, x = self.lstm_cell(carry, x)
 
         # Map the final LSTM output to the latent space
         z = self.latent_dense(x)
@@ -234,87 +224,177 @@ class Encoder(nn.Module):
         return z
 
 
+class Encoder2(nn.Module):
+    latent_dim: int
+    hidden_size: int
+
+    def setup(self):
+        self.lstm_cell = nn.transforms.scan(
+            nn.OptimizedLSTMCell,
+            variable_broadcast='params',
+            in_axes=0, out_axes=0,
+            split_rngs={'params': False})(self.hidden_size)
+
+        self.latent_dense = nn.Dense(self.latent_dim)
+
+    @nn.compact
+    def __call__(self, x, train: bool = True):
+
+        # Initialize carry state with correct shape: (batch_size, hidden_size)
+        carry = self.lstm_cell.initialize_carry(
+            jax.random.PRNGKey(0), (self.hidden_size,))
+
+        carry, x = self.lstm_cell(carry, x)
+
+        # Map the final LSTM output to the latent space
+        z = self.latent_dense(x)
+
+        # Pool over sequence length to get a single vector per batch
+        z = jnp.mean(x, axis=0)  # (batch_size, latent_dim)
+        return z
+
+
+class SimpleMLP2(nn.Module):
+    """
+    Simple Multi-Layer Perceptron model
+    """
+    n_features: int
+    n_layers: int
+    n_labels: int
+
+    @nn.compact
+    def __call__(self, x, train: bool = True):
+        # x = x.reshape((x.shape[0], -1))  # Flatten the input
+
+        for _ in range(self.n_layers):
+            x = nn.Dense(features=self.n_features,
+                         kernel_init=normal_initializer,
+                         bias_init=normal_initializer)(x)
+            x = nn.relu(x)
+
+        # x = nn.BatchNorm(use_running_average=not train)(x)
+
+        # x = nn.Dropout(rate=0.3, deterministic=not train)(x)
+
+        x = nn.Dense(features=self.n_labels, kernel_init=normal_initializer,
+                     bias_init=normal_initializer)(x)
+        return nn.sigmoid(x)
+
+
 class Decoder(nn.Module):
     output_dim: int
     latent_dim: int
     hidden_size: int
-    n_layers: int = 1
 
     def setup(self):
-        self.lstm_cells = [
-            nn.transforms.scan(
-                nn.OptimizedLSTMCell,
-                variable_broadcast='params',
-                in_axes=1, out_axes=1,
-                split_rngs={'params': False})(self.hidden_size)
-            for _ in range(self.n_layers)
-        ]
+        self.lstm_cell = nn.transforms.scan(
+            nn.OptimizedLSTMCell,
+            variable_broadcast='params',
+            in_axes=1, out_axes=1,
+            split_rngs={'params': False})(self.hidden_size)
 
         # Output projection layer
         self.hidden_dense = nn.Dense(self.hidden_size)
         self.output_layer = nn.Dense(self.output_dim)
 
     @nn.compact
-    def __call__(self, z, seq_len):
+    def __call__(self, z, seq_len: int, train: bool = True):
         batch_size = z.shape[0]
-        # print(f"{batch_size=}, {seq_len=}")
 
         # Map latent vector to the LSTM's hidden size
         z = self.hidden_dense(z)
 
-        carry = [
-            cell.initialize_carry(
-                jax.random.PRNGKey(i + 1), (batch_size, self.hidden_size))
-            for i, cell in enumerate(self.lstm_cells)
-        ]
+        carry = self.lstm_cell.initialize_carry(
+            jax.random.PRNGKey(1), (batch_size, self.hidden_size))
 
         # Use latent vector z as the initial input for the decoder
         # (batch_size, seq_length, latent_dim)
         x = jnp.tile(z[:, jnp.newaxis, :], (1, seq_len, 1))
 
-        # Initialize output storage
-        outputs = []
+        carry, x = self.lstm_cell(carry, x)
 
-        for i in range(seq_len):
-            for j in range(self.n_layers):
-                carry[j], x = self.lstm_cells[j](carry[j], x)
+        output = self.output_layer(x)
 
-            # Generate output at each time step
-            output = self.output_layer(x[:, i, :])  # (batch_size, output_dim)
-            outputs.append(output)
-
-        # Stack outputs to form the final sequence
-        # (batch_size, seq_length, output_dim)
-        return jnp.stack(outputs, axis=1)
+        return output
 
 
 class LSTMAutoencoder(nn.Module):
     output_dim: int
     latent_dim: int
     hidden_size: int
-    n_layers: int = 1
+
+    def setup(self):
+        self.encoder = Encoder(latent_dim=self.latent_dim,
+                               hidden_size=self.hidden_size)
+        self.decoder = Decoder(latent_dim=self.latent_dim,
+                               hidden_size=self.hidden_size,
+                               output_dim=self.output_dim)
 
     @nn.compact
     def __call__(self, x, train: bool = True):
         # input shape = (batch_size, sequence_length, output_dim)
 
         sequence_length = x.shape[1]
-        encoder = Encoder(latent_dim=self.latent_dim,
-                          hidden_size=self.hidden_size,
-                          n_layers=self.n_layers)
-        decoder = Decoder(latent_dim=self.latent_dim,
-                          hidden_size=self.hidden_size,
-                          n_layers=self.n_layers,
-                          output_dim=self.output_dim)
-
-        # x = nn.BatchNorm(use_running_average=not train)(x)
-
-        latent_space = encoder(x)
-        reconstruction = decoder(latent_space, sequence_length)
+        latent_space = self.encoder(x, train)
+        reconstruction = self.decoder(latent_space, sequence_length, train)
         return reconstruction
 
 
 # =============================================================================
+
+class LSTMAndMLP(nn.Module):
+    mlp_layers: int
+    mlp_neurons_per_layer: int
+    lstm_hidden_size: int
+    lstm_latent_dim: int
+    n_labels: int
+
+    def setup(self):
+        self.encoder = Encoder(latent_dim=self.lstm_latent_dim,
+                               hidden_size=self.lstm_hidden_size)
+
+        self.mlp = SimpleMLP(n_features=self.mlp_neurons_per_layer,
+                             n_layers=self.mlp_layers,
+                             n_labels=self.n_labels)
+
+    @nn.compact
+    def __call__(self, x_trajectory, x_features, train: bool = True):
+        # input shape = (batch_size, sequence_length, output_dim)
+
+        x_latent_trajectory = self.encoder(x_trajectory, train)
+        x_combined = jnp.concatenate(
+            [x_latent_trajectory, x_features], axis=-1)
+        y = self.mlp(x_combined, train)
+        return y
+
+
+class LSTMAndMLP2(nn.Module):
+    mlp_layers: int
+    mlp_neurons_per_layer: int
+    lstm_hidden_size: int
+    lstm_latent_dim: int
+    n_labels: int
+
+    def setup(self):
+        self.encoder = Encoder2(latent_dim=self.lstm_latent_dim,
+                                hidden_size=self.lstm_hidden_size)
+
+        self.mlp = SimpleMLP2(n_features=self.mlp_neurons_per_layer,
+                              n_layers=self.mlp_layers,
+                              n_labels=self.n_labels)
+
+    @nn.compact
+    def __call__(self, x_trajectory, x_features, train: bool = True):
+        # input shape = (batch_size, sequence_length, output_dim)
+
+        x_latent_trajectory = self.encoder(x_trajectory, train)
+        x_combined = jnp.concatenate(
+            [x_latent_trajectory, x_features], axis=-1)
+        y = self.mlp(x_combined, train)
+        return y
+
+# =============================================================================
+
 
 class TrainState(train_state.TrainState):
     """
