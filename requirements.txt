@@ -11,7 +11,7 @@ NetCDF4==1.6.4
 tqdm
 imbalanced-learn
 torch
-jaxlib==0.4.23
-jax==0.4.23
+jaxlib>=0.4.23
+jax>=0.4.23
 flax==0.8.2
 optax==0.1.7
