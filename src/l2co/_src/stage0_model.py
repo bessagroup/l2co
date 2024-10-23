@@ -178,6 +178,17 @@ class Stage0Model():
                 {'itemID': feature_data.X_features.itemID}
             ).rename('stage0_predictions')
 
+    def predict_raw(self, feature_dataset: FeaturesDataSet) -> xr.DataArray:
+        y = feature_dataset.Y_features.to_pandas()
+        x = feature_dataset.X_features.to_pandas()
+
+        y_pred = pd.DataFrame(self.clf.predict(
+            x), columns=y.columns, index=x.index)
+
+        y_pred = y_pred.add(y.mean(axis=1), axis=0)
+        return xr.DataArray(y_pred).assign_coords(
+            {'itemID': feature_dataset.X_features.itemID})
+
     def save(self, path: Path) -> None:
         """
         Save the model to a file
