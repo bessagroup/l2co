@@ -4,15 +4,12 @@
 # =============================================================================
 
 # Standard
-from pathlib import Path
 from typing import List
 
 # Third-party
 import equinox as eqx
-import hydra
 import jax
 import jax.numpy as jnp
-import optax
 from tqdm import tqdm
 
 #                                                          Authorship & Credits
@@ -146,16 +143,21 @@ def train_loop(model, X_trajectory, X_features, Y, optimizer, n_steps: int):
     params = eqx.filter(model, eqx.is_inexact_array)
     opt_state = optimizer.init(params)
 
-    # batch = batch_iterator(
-    #     (X_trajectory, X_features, Y), config.batch_size,
-    #     rng=jax.random.PRNGKey(config.seed))
+    progress_bar = tqdm(range(n_steps), desc="Loss: N/A", leave=True)
 
-    # batch_trajectory, batch_features, batch_y = next(batch)
+    try:
+        for step in progress_bar:
+            loss, model, opt_state = train_step(
+                model, opt_state, X_trajectory, X_features, Y, optimizer
+            )
 
-    print("Starting training")
-    for step in tqdm(range(n_steps)):
-        loss, model, opt_state = train_step(
-            model, opt_state, X_trajectory, X_features, Y, optimizer)
+            # Update tqdm description with the current loss
+            progress_bar.set_description(f"Loss: {loss:.4f}")
+    finally:
+        progress_bar.close()
+
+    return model
+
 
 # =============================================================================
 

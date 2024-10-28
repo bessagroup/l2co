@@ -1,0 +1,17 @@
+defaults:
+- model: lstmmlp
+
+seed: 42
+
+epochs: 500
+optimizer:
+  _target_: optax.adam
+  learning_rate: 1e-3
+
+n_optimizers: 4
+
+saved_parameters: "/home/martin/Documents/scratchbook/sep17/model.eqx"
+numpy_data: '/home/martin/Documents/scratchbook/sep17/'
+
+hpc:
+  jobid: -1

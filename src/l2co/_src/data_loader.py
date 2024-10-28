@@ -28,11 +28,8 @@ from typing import Iterable, Optional, Tuple
 import numpy as np
 import xarray as xr
 from f3dasm import ExperimentData
-from imblearn.under_sampling import RandomUnderSampler
 from omegaconf import DictConfig
-from sklearn.cluster import KMeans
 from sklearn.model_selection import train_test_split
-from torch.utils.data import Dataset as torchDataset
 from tqdm import tqdm
 
 # Local
@@ -532,30 +529,30 @@ class DataLoader:
             data_samples=self.data_samples.sel(problem=_problem_indices)
         )
 
-    def balance(self, remove_highest_std: Optional[int] = None) -> DataLoader:
-        rtd = self.rtd_profile().to_array(
-            dim='optimizer').T.isel(iterations=-1).compute()
+    # def balance(self, remove_highest_std: Optional[int] = None) -> DataLoader:
+    #     rtd = self.rtd_profile().to_array(
+    #         dim='optimizer').T.isel(iterations=-1).compute()
 
-        if remove_highest_std is not None:
-            X = rtd[rtd.std('optimizer').argsort().values][
-                remove_highest_std:]
-        else:
-            X = rtd[rtd.std('optimizer').argsort().values]
+    #     if remove_highest_std is not None:
+    #         X = rtd[rtd.std('optimizer').argsort().values][
+    #             remove_highest_std:]
+    #     else:
+    #         X = rtd[rtd.std('optimizer').argsort().values]
 
-        initial_centers = np.array([
-            [0., 0., 0., 1.],
-            [0., 0., 1., 0.],
-            [0., 1., 0., 0.],
-            [1., 0., 0., 0.],
-        ])
+    #     initial_centers = np.array([
+    #         [0., 0., 0., 1.],
+    #         [0., 0., 1., 0.],
+    #         [0., 1., 0., 0.],
+    #         [1., 0., 0., 0.],
+    #     ])
 
-        kmeans = KMeans(n_clusters=len(initial_centers), random_state=0,
-                        init=initial_centers, n_init=1, max_iter=1).fit(X)
-        kmeans.cluster_centers_ = initial_centers
-        new_x, new_y = RandomUnderSampler(replacement=True).fit_resample(
-            X.problem.values.reshape(-1, 1), kmeans.predict(X))
+    #     kmeans = KMeans(n_clusters=len(initial_centers), random_state=0,
+    #                     init=initial_centers, n_init=1, max_iter=1).fit(X)
+    #     kmeans.cluster_centers_ = initial_centers
+    #     new_x, new_y = RandomUnderSampler(replacement=True).fit_resample(
+    #         X.problem.values.reshape(-1, 1), kmeans.predict(X))
 
-        return self.select_problems(X.sel(problem=new_x.flatten()).problem)
+    #     return self.select_problems(X.sel(problem=new_x.flatten()).problem)
 
     def train_test_split(
             self,
@@ -780,7 +777,7 @@ class DataLoader:
 # =============================================================================
 
 
-class OptimizationDynamics(torchDataset):
+class OptimizationDynamics:
     def __init__(
             self,
             X_features: xr.DataArray,
