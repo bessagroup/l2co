@@ -1,5 +1,5 @@
-numpy >= 1.22
-scipy >= 1.9
+numpy
+scipy
 f3dasm >= 1.5.3
 scikit-learn
 xarray==2023.1.0
@@ -7,7 +7,5 @@ NetCDF4==1.6.4
 dask
 opfunu @ git+https://github.com/mpvanderschelling/opfunu@master
 tqdm
-jaxlib>=0.4.23
-jax>=0.4.23
-optax #==0.1.7
+optax
 equinox
