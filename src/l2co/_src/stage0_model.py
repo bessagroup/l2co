@@ -185,7 +185,7 @@ class Stage0Model():
         y_pred = pd.DataFrame(self.clf.predict(
             x), columns=y.columns, index=x.index)
 
-        y_pred = y_pred.add(y.mean(axis=1), axis=0)
+        # y_pred = y_pred.add(y.mean(axis=1), axis=0)
         return xr.DataArray(y_pred).assign_coords(
             {'itemID': feature_dataset.X_features.itemID})
 
