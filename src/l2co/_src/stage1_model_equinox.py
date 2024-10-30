@@ -41,12 +41,13 @@ def batch_iterator(data: tuple, batch_size: int, rng=None):
 class LSTMAndMLP(eqx.Module):
     encoder: eqx.Module
     mlp: eqx.Module
+    mlp_features: eqx.Module
 
     def __init__(self, mlp_layers, mlp_neurons_per_layer, lstm_hidden_size,
                  lstm_latent_dim, trajectory_size, features_size, n_labels,
                  key):
         # Split three random keys
-        key1, key2 = jax.random.split(key)
+        key1, key2, key3 = jax.random.split(key, 3)
 
         # Create the LSTM encoder
         self.encoder = LSTMEncoder(latent_dim=lstm_latent_dim,
@@ -61,11 +62,18 @@ class LSTMAndMLP(eqx.Module):
             depth=mlp_layers, activation=jax.nn.relu,
             key=key2)
 
+        self.mlp_features = eqx.nn.MLP(
+            in_size=features_size,
+            out_size=features_size, width_size=mlp_neurons_per_layer,
+            depth=mlp_layers, activation=jax.nn.relu,
+            key=key3)
+
     def __call__(self, x_trajectory, x_features, train: bool = True):
         x_latent_trajectory = self.encoder(x_trajectory, train)
+        x_latent_features = self.mlp_features(x_features)
 
         x = jnp.concatenate(
-            [x_latent_trajectory, x_features], axis=-1)
+            [x_latent_trajectory, x_latent_features], axis=-1)
 
         y = self.mlp(x)
         return y
