@@ -122,7 +122,7 @@ class SimpleMLP(eqx.Module):
 
     def __call__(self, x, train: bool = True):
         for layer in self.layers:
-            x = jax.nn.relu(layer(x))
+            x = jax.nn.tanh(layer(x))
         return x
 
 # =============================================================================
