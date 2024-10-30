@@ -46,16 +46,21 @@ class LSTMAndMLP(eqx.Module):
     def __init__(self, mlp_layers, mlp_neurons_per_layer, lstm_hidden_size,
                  lstm_latent_dim, trajectory_size, features_size, n_labels,
                  key):
+        # Split three random keys
         key1, key2, key3 = jax.random.split(key, num=3)
+
+        # Create the LSTM encoder
         self.encoder = LSTMEncoder(latent_dim=lstm_latent_dim,
                                    hidden_size=lstm_hidden_size,
                                    input_size=trajectory_size,
                                    key=key1)
 
+        # Create a linear layer to combine the LSTM output with the features
         self.linear_layer = eqx.nn.Linear(
             in_features=features_size+lstm_latent_dim,
             out_features=mlp_neurons_per_layer, key=key2)
 
+        # Create an MLP to predict the optimizer
         self.mlp = SimpleMLP(n_features=mlp_neurons_per_layer,
                              n_layers=mlp_layers,
                              n_labels=n_labels,
@@ -96,7 +101,6 @@ class LSTMEncoder(eqx.Module):
         (h, c), _ = jax.lax.scan(scan_fn, init_state, x)
 
         h = self.latent_dense(h)
-        # z = jnp.mean(self.latent_dense(h), axis=0)  # Average pooling
 
         return h
 
@@ -138,69 +142,36 @@ def train_step(model, opt_state, X_trajectory, X_features, Y, optimizer):
     return loss, model, opt_state
 
 
-def train_loop(model, X_trajectory, X_features, Y, optimizer, n_steps: int):
-    # Create optimizer and initialize state
-    params = eqx.filter(model, eqx.is_inexact_array)
-    opt_state = optimizer.init(params)
-
-    progress_bar = tqdm(range(n_steps), desc="Loss: N/A", leave=True)
-
-    try:
-        for step in progress_bar:
-            loss, model, opt_state = train_step(
-                model, opt_state, X_trajectory, X_features, Y, optimizer
-            )
-
-            # Update tqdm description with the current loss
-            progress_bar.set_description(f"Loss: {loss:.4f}")
-    finally:
-        progress_bar.close()
-
-    return model
-
+@eqx.filter_jit
+def eval_step(model, X_trajectory, X_features, Y):
+    y_pred = jax.vmap(model)(X_trajectory, X_features)
+    return jnp.mean((y_pred - Y) ** 2)
 
 # =============================================================================
 
 
-# @hydra.main(config_path=".", config_name="config")
-# def main(config):
+def train_loop(model, X_trajectory, X_features, Y, optimizer, n_steps: int,
+               verbose: bool = True):
+    # Create optimizer and initialize state
+    params = eqx.filter(model, eqx.is_inexact_array)
+    opt_state = optimizer.init(params)
 
-#     # Load data
-#     p = Path('/home/martin/Documents/scratchbook/sep17/')
-#     X_trajectory = jnp.load(p / 'X_trajectory.npz')['arr_0']
-#     X_features = jnp.load(p / 'X_features.npz')['arr_0']
-#     Y = jnp.load(p / 'Y.npz')['arr_0']
+    if verbose:
+        loop_iterator = tqdm(range(n_steps), desc="Loss: N/A", leave=True)
+    else:
+        loop_iterator = range(n_steps)
 
-#     rng = jax.random.PRNGKey(config.seed)
+    try:
+        for step in loop_iterator:
+            loss, model, opt_state = train_step(
+                model, opt_state, X_trajectory, X_features, Y, optimizer
+            )
 
-#     model = LSTMAndMLP(
-#         mlp_layers=2, mlp_neurons_per_layer=16,
-#         lstm_hidden_size=16, lstm_latent_dim=8,
-#         trajectory_size=1, features_size=len(config.feature_types),
-#         n_labels=config.n_optimizers, key=rng)
-#     print("Created model")
+            if verbose:
+                # Update tqdm description with the current loss
+                loop_iterator.set_description(f"Loss: {loss:.4f}")
+    finally:
+        if verbose:
+            loop_iterator.close()
 
-#     model = eqx.tree_deserialise_leaves(
-#         "/home/martin/Documents/scratchbook/sep17/model.eqx", model)
-
-#     # Create optimizer and initialize state
-#     params = eqx.filter(model, eqx.is_inexact_array)
-#     optimizer = optax.adam(1e-3)
-#     opt_state = optimizer.init(params)
-
-#     # batch = batch_iterator(
-#     #     (X_trajectory, X_features, Y), config.batch_size,
-#     #     rng=jax.random.PRNGKey(config.seed))
-
-#     # batch_trajectory, batch_features, batch_y = next(batch)
-
-#     print("Starting training")
-#     for step in tqdm(range(500)):
-#         loss, model, opt_state = train_step(
-#             model, opt_state, X_trajectory, X_features, Y, optimizer)
-
-#     # Save model
-#     eqx.tree_serialise_leaves("model.eqx", model)
-
-
-# main()
+    return model
