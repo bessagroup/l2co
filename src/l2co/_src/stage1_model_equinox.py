@@ -121,9 +121,9 @@ class SimpleMLP(eqx.Module):
                                          key=keys[-1]))
 
     def __call__(self, x, train: bool = True):
-        for layer in self.layers[:-1]:
+        for layer in self.layers:
             x = jax.nn.relu(layer(x))
-        return jax.nn.sigmoid(self.layers[-1](x))
+        return x
 
 # =============================================================================
 
