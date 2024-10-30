@@ -1,6 +1,40 @@
 defaults:
 - model: lstmmlp
 
+
+domain:
+  model.mlp_layers:
+    type: category
+    categories:
+      - 2
+      - 3
+      - 5
+  model.mlp_neurons_per_layer:
+    type: category
+    categories:
+      - 16
+      - 32
+      - 64
+  model.lstm_hidden_size:
+    type: category
+    categories:
+      - 16
+      - 32
+      - 64
+  model.lstm_latent_dim:
+    type: category
+    categories:
+      - 8
+      - 16
+      - 32
+
+experimentdata:
+  from_sampling:
+    sampler: "random"
+    seed: 2036
+    n_samples: 20
+    domain: ${domain}
+
 seed: 42
 rel_tolerance: 0.0
 
