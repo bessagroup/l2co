@@ -849,7 +849,7 @@ class OptimizationDynamics:
 
     @property
     def Y(self):
-        return self._Y.values.T
+        return (self._Y - self._Y.mean('optimizer')).values.T
 
     @property
     def problem(self):
