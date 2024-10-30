@@ -7,6 +7,7 @@ import hydra
 import jax.numpy as jnp
 from hydra.utils import instantiate
 
+from l2co._src.data_loader import load_all_trajectories
 from l2co._src.stage1_model_equinox import train_loop
 
 # =============================================================================
@@ -15,11 +16,21 @@ from l2co._src.stage1_model_equinox import train_loop
 @hydra.main(config_path="conf", config_name="config")
 def main(config):
 
+    opt_dyn = load_all_trajectories(
+        path=Path(config.path_opt_dyn), rel_tolerance=config.rel_tolerance)
+
+    # data_trajectory_train = {opt: OptimizationDynamics.load(
+    #     saved_traj_path_train / opt, rel_tolerance=config.rel_tolerance) for opt in ['CMAES', 'PSO', 'Adam', 'LBFGSB']}
+
     # Load data
-    p = Path(config.numpy_data)
-    X_trajectory = jnp.load(p / 'X_trajectory.npz')['arr_0']
-    X_features = jnp.load(p / 'X_features.npz')['arr_0']
-    Y = jnp.load(p / 'Y.npz')['arr_0']
+    # p = Path(config.numpy_data)
+    # X_trajectory = jnp.load(p / 'X_trajectory.npz')['arr_0']
+    # X_features = jnp.load(p / 'X_features.npz')['arr_0']
+    # Y = jnp.load(p / 'Y.npz')['arr_0']
+
+    X_trajectory = opt_dyn['Adam'].X_trajectory
+    X_features = opt_dyn['Adam'].X_features
+    Y = opt_dyn['Adam'].Y
 
     model = instantiate(config.model)
     logging.info("Created model")
@@ -33,8 +44,8 @@ def main(config):
     optimizer = instantiate(config.optimizer)
 
     logging.info("Starting training")
-    model = train_loop(model, X_trajectory, X_features, Y,
-                       optimizer, config.epochs)
+    model = train_loop(model, jnp.array(X_trajectory), jnp.array(X_features),
+                       jnp.array(Y), optimizer, config.epochs)
 
     # Save model
     eqx.tree_serialise_leaves("model.eqx", model)

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterable, Optional, Tuple
+from typing import Dict, Iterable, Optional, Tuple
 
 # Third-party
 import numpy as np
@@ -303,6 +303,14 @@ class DataLoader:
             Y=Y,
             rel_tolerance=rel_tolerance)
 
+    def to_all_learning_data(
+            self, t: int, t_start: int, rel_tolerance: float = 0.0
+    ) -> Dict[str, OptimizationDynamics]:
+        return {optimizer: self.to_learning_data(
+            optimizer=optimizer, t=t, t_start=t_start,
+            rel_tolerance=rel_tolerance) for
+            optimizer in self.select_single_optimizers().optimizers.values}
+
     def to_feature_data(self, rel_tolerance: float = 0.0,
                         optimizer: Optional[str] = None) -> FeaturesDataSet:
         """
@@ -494,7 +502,6 @@ class DataLoader:
 #                                                            Selecting problems
 # =============================================================================
 
-
     def select_problems(self, problem_indices: xr.DataArray) -> DataLoader:
         """
         Select a subset of problems of the data loader.
@@ -622,7 +629,6 @@ class DataLoader:
 #                                                          Selecting optimizers
 # =============================================================================
 
-
     def select_single_optimizers(
             self, include_random_search: bool = False) -> DataLoader:
         """
@@ -731,6 +737,7 @@ class DataLoader:
 #                                                           Performance metrics
 # =============================================================================
 
+
     def performance_profile(
             self, strategies: Optional[Iterable[xr.DataArray]] = None
     ) -> xr.Dataset:
@@ -829,12 +836,16 @@ class OptimizationDynamics:
 
     @property
     def X_features(self) -> np.ndarray:
-        return np.expand_dims(self._X_features.values, axis=-1)
+        # shape = (n_problems, n_features)
+        # return np.expand_dims(self._X_features.values, axis=-1)
+        return self._X_features.values
 
     @property
     def X_trajectory(self) -> np.ndarray:
-        return np.expand_dims(
-            self._X_trajectory.values.transpose(2, 1, 0), axis=-1)
+        # shape = (n_problems, t, 1)
+        # return np.expand_dims(
+        #     self._X_trajectory.values.transpose(2, 1, 0), axis=-1)
+        return self._X_trajectory.values.transpose(2, 1, 0)
 
     @property
     def Y(self):
@@ -866,6 +877,10 @@ class OptimizationDynamics:
             The path to save the dataset.
         """
         _path = Path(path)
+
+        # make sure _path exists
+        _path.mkdir(parents=True, exist_ok=True)
+
         self._X_features.to_netcdf(_path / 'X_features.nc')
         self._X_trajectory.to_netcdf(_path / 'X_trajectory.nc')
         self._Y.to_netcdf(_path / 'Y_features.nc')
@@ -894,6 +909,43 @@ class OptimizationDynamics:
                                     X_trajectory=X_trajectory,
                                     Y=Y,
                                     rel_tolerance=rel_tolerance)
+
+# =============================================================================
+
+
+def save_all_trajectories(data: Dict[str, OptimizationDynamics], path: str):
+    """
+    Save all trajectories to disk.
+
+    Parameters
+    ----------
+    data : Dict[str, OptimizationDynamics]
+        The optimization dynamics data.
+    path : str
+        The path to save the data.
+    """
+    for optimizer, trajectory in data.items():
+        trajectory.save(path / optimizer)
+        print(f"Saved {optimizer} to {path / optimizer}")
+
+
+def load_all_trajectories(path: str, rel_tolerance: float) -> Dict[str, OptimizationDynamics]:
+    """
+    Load all trajectories from disk.
+
+    Parameters
+    ----------
+    path : str
+        The path to load the data.
+
+    Returns
+    -------
+    Dict[str, OptimizationDynamics]
+        The loaded optimization dynamics data.
+    """
+    _path = Path(path)
+    return {optimizer.stem: OptimizationDynamics.load(_path / optimizer, rel_tolerance)
+            for optimizer in _path.iterdir()}
 
 # =============================================================================
 

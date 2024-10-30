@@ -2,6 +2,7 @@ defaults:
 - model: lstmmlp
 
 seed: 42
+rel_tolerance: 0.0
 
 epochs: 500
 optimizer:
@@ -11,7 +12,8 @@ optimizer:
 n_optimizers: 4
 
 saved_parameters: "/home/martin/Documents/scratchbook/sep17/model.eqx"
-numpy_data: '/home/martin/Documents/scratchbook/sep17/'
+# numpy_data: '/home/martin/Documents/scratchbook/sep17/'
+path_opt_dyn: '/home/martin/Documents/scratchbook/sep17/traj_data'
 
 hpc:
   jobid: -1
