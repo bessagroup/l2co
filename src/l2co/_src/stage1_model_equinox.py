@@ -40,14 +40,13 @@ def batch_iterator(data: tuple, batch_size: int, rng=None):
 
 class LSTMAndMLP(eqx.Module):
     encoder: eqx.Module
-    linear_layer: eqx.Module
     mlp: eqx.Module
 
     def __init__(self, mlp_layers, mlp_neurons_per_layer, lstm_hidden_size,
                  lstm_latent_dim, trajectory_size, features_size, n_labels,
                  key):
         # Split three random keys
-        key1, key2, key3 = jax.random.split(key, num=3)
+        key1, key2 = jax.random.split(key)
 
         # Create the LSTM encoder
         self.encoder = LSTMEncoder(latent_dim=lstm_latent_dim,
@@ -55,26 +54,20 @@ class LSTMAndMLP(eqx.Module):
                                    input_size=trajectory_size,
                                    key=key1)
 
-        # Create a linear layer to combine the LSTM output with the features
-        self.linear_layer = eqx.nn.Linear(
-            in_features=features_size+lstm_latent_dim,
-            out_features=mlp_neurons_per_layer, key=key2)
-
         # Create an MLP to predict the optimizer
-        self.mlp = SimpleMLP(n_features=mlp_neurons_per_layer,
-                             n_layers=mlp_layers,
-                             n_labels=n_labels,
-                             key=key3)
+        self.mlp = eqx.nn.MLP(
+            in_size=features_size+lstm_latent_dim,
+            out_size=n_labels, width_size=mlp_neurons_per_layer,
+            depth=mlp_layers, activation=jax.nn.relu,
+            key=key2)
 
     def __call__(self, x_trajectory, x_features, train: bool = True):
         x_latent_trajectory = self.encoder(x_trajectory, train)
 
-        x_combined = jnp.concatenate(
+        x = jnp.concatenate(
             [x_latent_trajectory, x_features], axis=-1)
 
-        x = self.linear_layer(x_combined)
-
-        y = self.mlp(x, train)
+        y = self.mlp(x)
         return y
 
 
