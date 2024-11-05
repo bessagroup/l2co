@@ -34,6 +34,46 @@ def batch_iterator(data: tuple, batch_size: int, rng=None):
 
 # =============================================================================
 
+class LSTMAndMLPStage0(eqx.Module):
+    encoder: eqx.Module
+    mlp: eqx.Module
+    # mlp_features: eqx.Module
+
+    def __init__(self, mlp_depth, mlp_width, lstm_hidden_size,
+                 lstm_latent_size, trajectory_size, n_labels,
+                 key):
+        # Split three random keys
+        key1, key2, key3 = jax.random.split(key, 3)
+
+        # Create the LSTM encoder
+        self.encoder = LSTMEncoder(latent_dim=lstm_latent_size,
+                                   hidden_size=lstm_hidden_size,
+                                   input_size=trajectory_size,
+                                   key=key1)
+
+        # # Create an MLP to predict the optimizer
+        self.mlp = eqx.nn.MLP(
+            in_size=n_labels+lstm_latent_size,
+            out_size=n_labels, width_size=mlp_width,
+            depth=mlp_depth, activation=jax.nn.relu,
+            key=key2)
+
+        # self.mlp_features = eqx.nn.MLP(
+        #     in_size=features_size+n_labels,
+        #     out_size=features_size, width_size=mlp_width,
+        #     depth=mlp_depth, activation=jax.nn.relu,
+        #     key=key3)
+
+    def __call__(self, x_trajectory, x_features):
+        x_latent_trajectory = self.encoder(x_trajectory)
+        # x_latent_features = self.mlp_features(x_features)
+
+        x = jnp.concatenate(
+            [x_latent_trajectory, x_features], axis=-1)
+
+        y = self.mlp(x)
+        return y
+
 
 # =============================================================================
 
@@ -43,33 +83,33 @@ class LSTMAndMLP(eqx.Module):
     mlp: eqx.Module
     mlp_features: eqx.Module
 
-    def __init__(self, mlp_layers, mlp_neurons_per_layer, lstm_hidden_size,
-                 lstm_latent_dim, trajectory_size, features_size, n_labels,
+    def __init__(self, mlp_depth, mlp_width, lstm_hidden_size,
+                 lstm_latent_size, trajectory_size, features_size, n_labels,
                  key):
         # Split three random keys
         key1, key2, key3 = jax.random.split(key, 3)
 
         # Create the LSTM encoder
-        self.encoder = LSTMEncoder(latent_dim=lstm_latent_dim,
+        self.encoder = LSTMEncoder(latent_dim=lstm_latent_size,
                                    hidden_size=lstm_hidden_size,
                                    input_size=trajectory_size,
                                    key=key1)
 
         # Create an MLP to predict the optimizer
         self.mlp = eqx.nn.MLP(
-            in_size=features_size+lstm_latent_dim,
-            out_size=n_labels, width_size=mlp_neurons_per_layer,
-            depth=mlp_layers, activation=jax.nn.relu,
+            in_size=features_size+lstm_latent_size,
+            out_size=n_labels, width_size=mlp_width,
+            depth=mlp_depth, activation=jax.nn.relu,
             key=key2)
 
         self.mlp_features = eqx.nn.MLP(
             in_size=features_size,
-            out_size=features_size, width_size=mlp_neurons_per_layer,
-            depth=mlp_layers, activation=jax.nn.relu,
+            out_size=features_size, width_size=mlp_width,
+            depth=mlp_depth, activation=jax.nn.relu,
             key=key3)
 
-    def __call__(self, x_trajectory, x_features, train: bool = True):
-        x_latent_trajectory = self.encoder(x_trajectory, train)
+    def __call__(self, x_trajectory, x_features):
+        x_latent_trajectory = self.encoder(x_trajectory)
         x_latent_features = self.mlp_features(x_features)
 
         x = jnp.concatenate(
@@ -92,7 +132,7 @@ class LSTMEncoder(eqx.Module):
             input_size=input_size, hidden_size=hidden_size, key=key1)
         self.latent_dense = eqx.nn.Linear(hidden_size, latent_dim, key=key2)
 
-    def __call__(self, x, train: bool = True):
+    def __call__(self, x):
         def scan_fn(state, input):
             return (self.lstm_cell(input, state), None)
 
@@ -104,27 +144,6 @@ class LSTMEncoder(eqx.Module):
         h = self.latent_dense(h)
 
         return h
-
-
-# =============================================================================
-
-
-class SimpleMLP(eqx.Module):
-    layers: List[eqx.Module]
-
-    def __init__(self, n_features, n_layers, n_labels, key):
-        keys = jax.random.split(key, n_layers+1)
-
-        self.layers = [eqx.nn.Linear(in_features=n_features, out_features=n_features,
-                                     key=key)
-                       for key in keys[:-1]]
-        self.layers.append(eqx.nn.Linear(in_features=n_features, out_features=n_labels,
-                                         key=keys[-1]))
-
-    def __call__(self, x, train: bool = True):
-        for layer in self.layers:
-            x = jax.nn.tanh(layer(x))
-        return x
 
 # =============================================================================
 
