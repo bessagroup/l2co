@@ -1,5 +1,6 @@
 # Third-party
 import logging
+import tracemalloc
 from pathlib import Path
 
 import equinox as eqx
@@ -17,18 +18,40 @@ from l2co._src.stage1_model_equinox import eval_step, train_loop
 # =============================================================================
 
 
+class CacheHandler:
+    def __enter__(self):
+        # Setup code if needed
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        # Clear caches regardless of success or failure
+        # eqx.clear_caches()
+        jax.clear_caches()
+        logging.info('Caches cleared')
+
+
+# =============================================================================
+
 class HyperParameterSearch(DataGenerator):
     def __init__(self, config, data: OptimizationDynamics):
-        self.X_trajectory = jnp.array(data.X_trajectory)
-        self.X_features = jnp.array(data.X_features)
-        self.Y = jnp.array(data.Y)
+        self.X_trajectory = jnp.array(data.X_trajectory)[:1000]
+        self.X_features = jnp.array(data.X_features)[:1000]
+        self.Y = jnp.array(data.Y)[:1000]
         self.cfg = config
 
     def execute(self):
+        # Take a snapshot and print current memory usage at the start of `execute()`
+        snapshot = tracemalloc.take_snapshot()
+        current_memory = sum(
+            stat.size for stat in snapshot.statistics('lineno'))
+        logging.info(
+            f"Memory usage at the start of execute(): {current_memory / (1024 * 1024):.2f} MB")
+
         config = update_config_with_experiment_sample(
             config=self.cfg,
             experiment_sample=self.experiment_sample,
-            force_add=True)
+            force_add=True
+        )
 
         # Context manager for cache clearing
         with CacheHandler():
@@ -46,54 +69,46 @@ class HyperParameterSearch(DataGenerator):
         del optimizer
         self.experiment_sample.store(name='loss', object=loss)
 
-
-class CacheHandler:
-    def __enter__(self):
-        # Setup code if needed
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        # Clear caches regardless of success or failure
-        # eqx.clear_caches()
-        jax.clear_caches()
-        logging.info('Caches cleared')
+        # Take another snapshot and print memory usage at the end of `execute()`
+        snapshot = tracemalloc.take_snapshot()
+        current_memory = sum(
+            stat.size for stat in snapshot.statistics('lineno'))
+        logging.info(
+            f"Memory usage at the end of execute(): {current_memory / (1024 * 1024):.2f} MB")
 
 
 @hydra.main(config_path="conf", config_name="config")
 def main(config):
+
     experimentdata = ExperimentData.from_yaml(config.experimentdata)
     opt_dyn = OptimizationDynamics.load(
         path=Path(config.path_opt_dyn) / 'Adam',
-        rel_tolerance=config.rel_tolerance)
+        rel_tolerance=config.rel_tolerance
+    )
     hyperparameter_search = HyperParameterSearch(config=config, data=opt_dyn)
 
-    experimentdata.evaluate(data_generator=hyperparameter_search,
-                            mode='cluster')
+    # Start tracemalloc to monitor memory before evaluation
+    tracemalloc.start()
 
-    # X_trajectory = jnp.array(opt_dyn.X_trajectory)
-    # X_features = jnp.array(opt_dyn.X_features)
-    # Y = jnp.array(opt_dyn.Y)
+    # Print initial memory usage before `experimentdata.evaluate()`
+    initial_snapshot = tracemalloc.take_snapshot()
+    initial_memory = sum(
+        stat.size for stat in initial_snapshot.statistics('lineno'))
+    logging.info(
+        f"Initial memory usage before evaluate(): {initial_memory / (1024 * 1024):.2f} MB")
 
-    # model = instantiate(config.model)
-    # logging.info("Created model")
+    experimentdata.evaluate(
+        data_generator=hyperparameter_search, mode='cluster')
 
-    # # check if config.saved_parameters exists
-    # if config.saved_parameters is not None:
-    #     model = eqx.tree_deserialise_leaves(
-    #         config.saved_parameters, model)
-    #     logging.info("Loaded saved parameters for model")
+    # Print memory usage after `experimentdata.evaluate()`
+    final_snapshot = tracemalloc.take_snapshot()
+    final_memory = sum(
+        stat.size for stat in final_snapshot.statistics('lineno'))
+    logging.info(
+        f"Final memory usage after evaluate(): {final_memory / (1024 * 1024):.2f} MB")
 
-    # optimizer = instantiate(config.optimizer)
-
-    # logging.info("Starting training")
-    # model = train_loop(model, jnp.array(X_trajectory), jnp.array(X_features),
-    #                    jnp.array(Y), optimizer, config.epochs)
-
-    # loss = eval_step(model=model, X_trajectory=X_trajectory,
-    #                  X_features=X_features, Y=Y)
-
-    # # Save model
-    # eqx.tree_serialise_leaves("model.eqx", model)
+    # Stop tracemalloc after evaluation
+    tracemalloc.stop()
 
 
 main()
