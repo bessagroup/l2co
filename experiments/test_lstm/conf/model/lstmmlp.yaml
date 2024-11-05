@@ -1,8 +1,8 @@
 _target_: l2co._src.stage1_model_equinox.LSTMAndMLP
-mlp_layers: 2
-mlp_neurons_per_layer: 16
+mlp_depth: 2
+mlp_width: 16
 lstm_hidden_size: 16
-lstm_latent_dim: 8
+lstm_latent_size: 8
 trajectory_size: 1
 features_size: 6
 n_labels: ${n_optimizers}

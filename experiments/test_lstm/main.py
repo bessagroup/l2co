@@ -7,12 +7,17 @@ import equinox as eqx
 import hydra
 import jax
 import jax.numpy as jnp
+import xarray as xr
 from f3dasm import ExperimentData
 from f3dasm.datageneration import DataGenerator
 from f3dasm.hydra_tools import update_config_with_experiment_sample
 from hydra.utils import instantiate
+from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.multioutput import MultiOutputRegressor
 
 from l2co._src.data_loader import OptimizationDynamics, load_all_trajectories
+from l2co._src.preprocessing import preprocessing_factory
+from l2co._src.stage0_model import Stage0Model
 from l2co._src.stage1_model_equinox import eval_step, train_loop
 
 # =============================================================================
@@ -33,10 +38,12 @@ class CacheHandler:
 # =============================================================================
 
 class HyperParameterSearch(DataGenerator):
-    def __init__(self, config, data: OptimizationDynamics):
-        self.X_trajectory = jnp.array(data.X_trajectory)[:1000]
-        self.X_features = jnp.array(data.X_features)[:1000]
-        self.Y = jnp.array(data.Y)[:1000]
+    def __init__(self, config, data_traj: OptimizationDynamics,
+                 data_features: xr.DataArray):
+        self.X_trajectory = jnp.array(data_traj.X_trajectory)
+        self.X_features = jnp.array(data_traj.X_features)
+        self.X_features = jnp.array(data_features.values)
+        self.Y = jnp.array(data_traj.Y)
         self.cfg = config
 
     def execute(self):
@@ -85,7 +92,31 @@ def main(config):
         path=Path(config.path_opt_dyn) / 'Adam',
         rel_tolerance=config.rel_tolerance
     )
-    hyperparameter_search = HyperParameterSearch(config=config, data=opt_dyn)
+
+    opt_features = opt_dyn.to_feature_data()
+
+    ####################################################################
+
+    preprocessing_step = preprocessing_factory(config.feature_types)
+
+    clf = MultiOutputRegressor(HistGradientBoostingRegressor())
+
+    stage0_model = Stage0Model(
+        model_name='stage0',
+        clf=clf,
+        preprocessing_step=preprocessing_step,
+        type='regressor',
+    )
+
+    stage0_model.train(opt_features)
+    data_features = stage0_model.predict_raw(
+        opt_features)  # Shape: (n_samples, n_labels)
+
+    ####################################################################
+
+    hyperparameter_search = HyperParameterSearch(
+        config=config, data_traj=opt_dyn,
+        data_features=data_features)
 
     # Start tracemalloc to monitor memory before evaluation
     tracemalloc.start()

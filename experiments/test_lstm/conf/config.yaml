@@ -1,15 +1,15 @@
 defaults:
-- model: lstmmlp
+- model: lstmmlpstage0
 
 
 domain:
-  model.mlp_layers:
+  model.mlp_depth:
     type: category
     categories:
       - 2
       - 3
       - 5
-  model.mlp_neurons_per_layer:
+  model.mlp_width:
     type: category
     categories:
       - 16
@@ -21,7 +21,7 @@ domain:
       - 16
       - 32
       - 64
-  model.lstm_latent_dim:
+  model.lstm_latent_size:
     type: category
     categories:
       - 8
@@ -51,3 +51,11 @@ path_opt_dyn: '/home/martin/Documents/scratchbook/sep17/traj_data'
 
 hpc:
   jobid: -1
+
+feature_types:
+  convex: categorical
+  multimodal: categorical
+  seperable: categorical
+  noise: categorical
+  dim: ordinal
+  differentiable: categorical
