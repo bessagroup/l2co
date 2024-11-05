@@ -40,6 +40,7 @@ class HyperParameterSearch(DataGenerator):
                          X_features=self.X_features, Y=self.Y)
 
         self.experiment_sample.store(name='loss', object=loss)
+        del model
 
         # # Save model
         # eqx.tree_serialise_leaves("model.eqx", model)
