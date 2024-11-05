@@ -4,6 +4,7 @@ from pathlib import Path
 
 import equinox as eqx
 import hydra
+import jax
 import jax.numpy as jnp
 from f3dasm import ExperimentData
 from f3dasm.datageneration import DataGenerator
@@ -29,21 +30,30 @@ class HyperParameterSearch(DataGenerator):
             experiment_sample=self.experiment_sample,
             force_add=True)
 
-        model = instantiate(config.model)
-        logging.info("Created model")
-        optimizer = instantiate(config.optimizer)
-        logging.info("Starting training")
-        model = train_loop(model, self.X_trajectory, self.X_features,
-                           self.Y, optimizer, config.epochs)
+        # Context manager for cache clearing
+        with CacheHandler():
+            model = instantiate(config.model)
+            logging.info("Created model")
+            optimizer = instantiate(config.optimizer)
+            logging.info("Starting training")
+            model = train_loop(model, self.X_trajectory, self.X_features,
+                               self.Y, optimizer, config.epochs)
 
-        loss = eval_step(model=model, X_trajectory=self.X_trajectory,
-                         X_features=self.X_features, Y=self.Y)
+            loss = eval_step(model=model, X_trajectory=self.X_trajectory,
+                             X_features=self.X_features, Y=self.Y)
 
-        self.experiment_sample.store(name='loss', object=loss)
-        del model
+            self.experiment_sample.store(name='loss', object=loss)
 
-        # # Save model
-        # eqx.tree_serialise_leaves("model.eqx", model)
+
+class CacheHandler:
+    def __enter__(self):
+        # Setup code if needed
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        # Clear caches regardless of success or failure
+        eqx.clear_caches()
+        jax.clear_caches()
 
 
 @hydra.main(config_path="conf", config_name="config")
