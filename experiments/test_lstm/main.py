@@ -52,8 +52,9 @@ class CacheHandler:
 
     def __exit__(self, exc_type, exc_value, traceback):
         # Clear caches regardless of success or failure
-        eqx.clear_caches()
+        # eqx.clear_caches()
         jax.clear_caches()
+        logging.info('Caches cleared')
 
 
 @hydra.main(config_path="conf", config_name="config")
