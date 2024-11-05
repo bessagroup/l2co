@@ -138,9 +138,14 @@ class Stage1Model():
             )
 
         for opt in self.optimizers.values:
+            pred0 = self.models_stage0[opt].predict(
+                optimization_dynamics[opt].to_feature_data()
+            )
+
             train_loop(model=self.models_stage1[opt],
                        X_trajectory=optimization_dynamics[opt].X_trajectory,
-                       X_features=optimization_dynamics[opt].X_features,
+                       #    X_features=optimization_dynamics[opt].X_features,
+                       X_features=pred0,
                        Y=optimization_dynamics[opt].Y,
                        optimizer=optimizer,
                        n_steps=num_epochs,
