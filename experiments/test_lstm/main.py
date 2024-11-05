@@ -41,7 +41,7 @@ class HyperParameterSearch(DataGenerator):
     def __init__(self, config, data_traj: OptimizationDynamics,
                  data_features: xr.DataArray):
         self.X_trajectory = jnp.array(data_traj.X_trajectory)
-        self.X_features = jnp.array(data_traj.X_features)
+        # self.X_features = jnp.array(data_traj.X_features)
         self.X_features = jnp.array(data_features.values)
         self.Y = jnp.array(data_traj.Y)
         self.cfg = config
