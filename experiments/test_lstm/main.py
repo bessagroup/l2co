@@ -8,7 +8,7 @@ import hydra
 import jax
 import jax.numpy as jnp
 import xarray as xr
-from f3dasm import ExperimentData
+from f3dasm import ExperimentData, StoreProtocol
 from f3dasm.datageneration import DataGenerator
 from f3dasm.hydra_tools import update_config_with_experiment_sample
 from hydra.utils import instantiate
@@ -21,6 +21,18 @@ from l2co._src.stage0_model import Stage0Model
 from l2co._src.stage1_model_equinox import eval_step, train_loop
 
 # =============================================================================
+
+
+class EquinoxStore(StoreProtocol):
+    suffix: str = '.eqx'
+
+    def store(self) -> None:
+        print("Stored eqx object!")
+        eqx.tree_serialise_leaves(
+            self.path.with_suffix(self.suffix), self.object)
+
+    def load(self) -> eqx.Module:
+        ...
 
 
 class CacheHandler:
@@ -40,10 +52,9 @@ class CacheHandler:
 class HyperParameterSearch(DataGenerator):
     def __init__(self, config, data_traj: OptimizationDynamics,
                  data_features: xr.DataArray):
-        self.X_trajectory = jnp.array(data_traj.X_trajectory)
-        # self.X_features = jnp.array(data_traj.X_features)
-        self.X_features = jnp.array(data_features.values)
-        self.Y = jnp.array(data_traj.Y)
+        self.X_trajectory = jnp.array(data_traj.X_trajectory)[:1000]
+        self.X_features = jnp.array(data_features.values)[:1000]
+        self.Y = jnp.array(data_traj.Y)[:1000]
         self.cfg = config
 
     def execute(self):
@@ -57,7 +68,7 @@ class HyperParameterSearch(DataGenerator):
         config = update_config_with_experiment_sample(
             config=self.cfg,
             experiment_sample=self.experiment_sample,
-            force_add=True
+            force_add=False
         )
 
         # Context manager for cache clearing
@@ -71,8 +82,11 @@ class HyperParameterSearch(DataGenerator):
 
             loss = eval_step(model=model, X_trajectory=self.X_trajectory,
                              X_features=self.X_features, Y=self.Y)
+            self.experiment_sample.store(
+                name='model_eqx', object=model,
+                store_method=EquinoxStore, to_disk=True)
 
-        del model
+        # del model
         del optimizer
         self.experiment_sample.store(name='loss', object=loss)
 
