@@ -24,8 +24,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Dict, Iterable, Optional, Tuple
 
+import matplotlib.pyplot as plt
 # Third-party
 import numpy as np
+import pandas as pd
 import xarray as xr
 from f3dasm import ExperimentData
 from omegaconf import DictConfig
@@ -909,6 +911,18 @@ class OptimizationDynamics:
                                     X_trajectory=X_trajectory,
                                     Y=Y,
                                     rel_tolerance=rel_tolerance)
+
+    def boxplot(self, ax: Optional[plt.Axes] = None,
+                subtract_mean: bool = True) -> plt.Axes:
+        if ax is None:
+            fig, ax = plt.subplots()
+
+        if subtract_mean:
+            data = (self._Y - self._Y.mean('optimizer')).squeeze().T
+        else:
+            data = self._Y.squeeze().T
+
+        return data.to_pandas().boxplot(ax=ax)
 
 # =============================================================================
 
