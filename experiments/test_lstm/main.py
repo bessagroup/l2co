@@ -42,7 +42,9 @@ class HyperParameterSearch(DataGenerator):
             loss = eval_step(model=model, X_trajectory=self.X_trajectory,
                              X_features=self.X_features, Y=self.Y)
 
-            self.experiment_sample.store(name='loss', object=loss)
+        del model
+        del optimizer
+        self.experiment_sample.store(name='loss', object=loss)
 
 
 class CacheHandler:
