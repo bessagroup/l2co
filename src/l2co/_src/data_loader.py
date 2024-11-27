@@ -823,11 +823,44 @@ class OptimizationDynamics:
         """
         return len(self._X_features)
 
+    def train_test_split(
+        self, test_size: float = 0.2,
+        random_state: Optional[int] = None
+    ) -> Tuple[OptimizationDynamics, OptimizationDynamics]:
+        """
+        Split the dataset into train and test sets.
+
+        Parameters
+        ----------
+        test_size : float, optional
+            The size of the test set, by default 0.2
+        random_state : int, optional
+            The random state, by default None
+
+        Returns
+        -------
+        Tuple[OptimizationDynamics, OptimizationDynamics]
+            The train and test datasets.
+        """
+        train_indices, test_indices = train_test_split(
+            range(len(self._X_features)), test_size=test_size,
+            random_state=random_state)
+
+        return (self.select_problems(train_indices),
+                self.select_problems(test_indices))
+
     def select_problems(self, problems: xr.DataArray) -> OptimizationDynamics:
         return OptimizationDynamics(
             X_features=self._X_features.sel(problem=problems),
             X_trajectory=self._X_trajectory.sel(problem=problems),
             Y=self._Y.sel(problem=problems),
+            rel_tolerance=self.rel_tolerance)
+
+    def isel(self, problems: Iterable[int]) -> OptimizationDynamics:
+        return OptimizationDynamics(
+            X_features=self._X_features.isel(problem=problems),
+            X_trajectory=self._X_trajectory.isel(problem=problems),
+            Y=self._Y.isel(problem=problems),
             rel_tolerance=self.rel_tolerance)
 
     def to_feature_data(self):
@@ -847,11 +880,11 @@ class OptimizationDynamics:
         # shape = (n_problems, t, 1)
         # return np.expand_dims(
         #     self._X_trajectory.values.transpose(2, 1, 0), axis=-1)
-        return self._X_trajectory.values.transpose(2, 1, 0)
+        return self._X_trajectory.values.transpose(2, 1, 0).squeeze()
 
     @property
     def Y(self):
-        return (self._Y - self._Y.mean('optimizer')).values.T
+        return (self._Y - self._Y.mean('optimizer')).values.T.squeeze()
 
     @property
     def problem(self):
@@ -995,6 +1028,12 @@ class FeaturesDataSet:
         """
         return len(self.X_features)
 
+    def isel(self, problems: Iterable[int]) -> FeaturesDataSet:
+        return FeaturesDataSet(
+            X_features=self.X_features.isel(problem=problems),
+            Y_features=self.Y_features.isel(problem=problems),
+            rel_tolerance=self.rel_tolerance)
+
     @property
     def Y(self) -> xr.DataArray:
         if self.rel_tolerance == 0.0:
@@ -1006,6 +1045,12 @@ class FeaturesDataSet:
                 self.Y_features.min(dim='optimizer') * self.rel_tolerance)
 
         return (self.Y_features <= threshold).T
+
+    def select_problems(self, problems: xr.DataArray) -> FeaturesDataSet:
+        return FeaturesDataSet(
+            X_features=self.X_features.sel(problem=problems),
+            Y_features=self.Y_features.sel(problem=problems),
+            rel_tolerance=self.rel_tolerance)
 
     def save(self, path: str):
         """
@@ -1042,6 +1087,36 @@ class FeaturesDataSet:
         return FeaturesDataSet(X_features=X_features,
                                Y_features=Y_features,
                                rel_tolerance=rel_tolerance)
+
+    def train_test_split(
+        self, test_size: float = 0.2,
+        random_state: Optional[int] = None
+    ) -> Tuple[FeaturesDataSet, FeaturesDataSet]:
+        """
+        Split the dataset into train and test sets.
+
+        Parameters
+        ----------
+        test_size : float, optional
+            The size of the test set, by default 0.2
+        random_state : int, optional
+            The random state, by default None
+
+        Returns
+        -------
+        Tuple[OptimizationDynamics, OptimizationDynamics]
+            The train and test datasets.
+        """
+        train_indices, test_indices = train_test_split(
+            range(len(self.X_features)), test_size=test_size,
+            random_state=random_state)
+
+        return (self.select_problems(train_indices),
+                self.select_problems(test_indices))
+
+
+def load_features(path: Path | str, rel_tolerance: float) -> FeaturesDataSet:
+    return FeaturesDataSet.load(path=path, rel_tolerance=rel_tolerance)
 
 # =============================================================================
 

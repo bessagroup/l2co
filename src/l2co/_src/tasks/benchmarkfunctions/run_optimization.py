@@ -54,7 +54,8 @@ set_start_method('forkserver')
 
 MAX_CACHE_SIZE = 20
 GRADIENT_BASED = [
-    key for key, value in OPTIMIZER_MAPPING.items() if value.require_gradients
+    key for key, value in OPTIMIZER_MAPPING.items()
+    if value().base_class.require_gradients
 ]
 
 #                                                                  Type aliases
