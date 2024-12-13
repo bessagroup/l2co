@@ -19,9 +19,10 @@ from typing import Iterable, List, Optional, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
+from matplotlib.colors import LinearSegmentedColormap, SymLogNorm
+
 # Local
 from l2co._src.data_loader import DataLoader, OptimizationDynamics
-from matplotlib.colors import LinearSegmentedColormap, SymLogNorm
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -286,7 +287,8 @@ def plot_quadric_curve(y: np.ndarray, coeffs, color: str,
         [0], [0], color='k', linewidth=2, label='Quadric surface')
 
     # Add text for coefficients
-    coeffs_text = f"Fitted Coefficients:\nA = {A:.3f}\nB = {B:.3f}\nC = {C:.3f}\nD = {D:.3f}\nE = {E:.3f}\nF = {F:.3f}"
+    coeffs_text = (f"Fitted Coefficients:\nA = {A:.3f}\nB = {B:.3f}\nC = "
+                   f"{C:.3f}\nD = {D:.3f}\nE = {E:.3f}\nF = {F:.3f}")
     ax.text(
         0.05, 0.95, coeffs_text,
         transform=ax.transAxes,

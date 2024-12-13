@@ -4,7 +4,6 @@
 # =============================================================================
 
 # Standard
-from typing import List
 
 # Third-party
 import equinox as eqx

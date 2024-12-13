@@ -40,12 +40,10 @@ training_loop
 import pickle
 from copy import deepcopy
 from pathlib import Path
-from typing import Dict, Protocol
+from typing import Dict
 
-import equinox as eqx
 # Third-party
-import jax.numpy as jnp
-import numpy as np
+import equinox as eqx
 import xarray as xr
 from optax import GradientTransformation
 
@@ -179,7 +177,7 @@ class Stage1Model():
         #     if len(problems) == 0:
         #         continue
 
-        #     data_optimization = data_test[optimizer].select_problems(problems)
+        #    data_optimization = data_test[optimizer].select_problems(problems)
 
         #     # data_optimization = data_selected.to_learning_data(
         #     #     optimizer=optimizer, t=self.t_switch,

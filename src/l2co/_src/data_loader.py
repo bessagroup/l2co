@@ -28,7 +28,6 @@ from typing import Dict, Iterable, Optional, Tuple
 import matplotlib.pyplot as plt
 # Third-party
 import numpy as np
-import pandas as pd
 import xarray as xr
 from f3dasm import ExperimentData
 from omegaconf import DictConfig
@@ -508,6 +507,7 @@ class DataLoader:
 #                                                            Selecting problems
 # =============================================================================
 
+
     def select_problems(self, problem_indices: xr.DataArray) -> DataLoader:
         """
         Select a subset of problems of the data loader.
@@ -579,7 +579,7 @@ class DataLoader:
 
         # return self.select_problems(self.problem.isel(problem=problems))
 
-    # def balance(self, remove_highest_std: Optional[int] = None) -> DataLoader:
+    # def balance(self, remove_highest_std: Optional[int] = None):
     #     rtd = self.rtd_profile().to_array(
     #         dim='optimizer').T.isel(iterations=-1).compute()
 
@@ -671,6 +671,7 @@ class DataLoader:
 
 #                                                          Selecting optimizers
 # =============================================================================
+
 
     def select_single_optimizers(
             self, include_random_search: bool = False) -> DataLoader:
@@ -779,7 +780,6 @@ class DataLoader:
 
 #                                                           Performance metrics
 # =============================================================================
-
 
     def performance_profile(
             self, strategies: Optional[Iterable[xr.DataArray]] = None,
@@ -1030,7 +1030,8 @@ def save_all_trajectories(data: Dict[str, OptimizationDynamics], path: str):
         print(f"Saved {optimizer} to {path / optimizer}")
 
 
-def load_all_trajectories(path: str, rel_tolerance: float) -> Dict[str, OptimizationDynamics]:
+def load_all_trajectories(path: str, rel_tolerance: float
+                          ) -> Dict[str, OptimizationDynamics]:
     """
     Load all trajectories from disk.
 
@@ -1045,7 +1046,8 @@ def load_all_trajectories(path: str, rel_tolerance: float) -> Dict[str, Optimiza
         The loaded optimization dynamics data.
     """
     _path = Path(path)
-    return {optimizer.stem: OptimizationDynamics.load(_path / optimizer, rel_tolerance)
+    return {optimizer.stem: OptimizationDynamics.load(_path / optimizer,
+                                                      rel_tolerance)
             for optimizer in _path.iterdir()}
 
 # =============================================================================
