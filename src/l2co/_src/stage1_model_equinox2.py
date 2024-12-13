@@ -1,23 +1,23 @@
+# Standard
 import pickle
 from copy import deepcopy
 from functools import partial
 from pathlib import Path
-from typing import Callable, Dict, Protocol, Tuple, Type
+from typing import Dict, Optional, Protocol, Tuple
 
+# Third-party
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import numpy as np
 import optax
 import xarray as xr
+from f3dasm.optimization import Optimizer
 from jax.tree_util import PyTreeDef
 from optax import GradientTransformation
-from sklearn.metrics import r2_score
-from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 
-from l2co._src.data_loader import OptimizationDynamics
-
+# Local
+from .data_loader import OptimizationDynamics
 from .stage0_model import Stage0Model
 
 #                                                            Feature extraction
@@ -30,7 +30,8 @@ class FeatureFn(Protocol):
 
 
 def convolute(X: jnp.ndarray, population: int = 1):
-    return jnp.convolve(X, jnp.ones(population) / float(population), mode='valid')
+    return jnp.convolve(X, jnp.ones(population) / float(population),
+                        mode='valid')
 
 
 def polynomial_features(X: jnp.ndarray, n_terms: int = 3) -> jnp.ndarray:
@@ -45,7 +46,7 @@ def polynomial_features(X: jnp.ndarray, n_terms: int = 3) -> jnp.ndarray:
     poly_features_vmap = jax.vmap(poly_features)
     X_poly = poly_features_vmap(X_)
 
-    # Fit linear regression using normal equations: w = (X.T @ X)^(-1) @ X.T @ y
+    # Fit linear regression using normal equations: w=(X.T @ X)^(-1) @ X.T @ y
     y = X  # Target is the original unscaled X
     XTX = jnp.dot(X_poly.T, X_poly)
     XTy = jnp.dot(X_poly.T, X)
@@ -69,64 +70,55 @@ def polynomial_features(X: jnp.ndarray, n_terms: int = 3) -> jnp.ndarray:
     return result
 
 
-def get_pca_features(X):
-    X_ = jnp.array([[i, value]
-                   for i, value in zip(jnp.linspace(0., 1., len(X)), X)])
-    # Step 1: Standardize the data (optional, but recommended for PCA)
-    X_mean = jnp.mean(X_, axis=0)
-    X_centered = X_ - X_mean
-
-    # Step 2: Compute the covariance matrix
-    covariance_matrix = jnp.cov(X_centered.T)
-
-    # Step 3: Compute the eigenvalues and eigenvectors of the covariance matrix
-    eigvals, eigvecs = jnp.linalg.eigh(covariance_matrix)
-
-    # Step 4: Sort the eigenvalues and eigenvectors in descending order
-    sorted_indices = jnp.argsort(eigvals)[::-1]
-    eigvals_sorted = eigvals[sorted_indices]
-    eigvecs_sorted = eigvecs[:, sorted_indices]
-
-    # Step 5: Get the explained variance ratio (eigenvalue / total sum of eigenvalues)
-    explained_variance_ratio = eigvals_sorted / jnp.sum(eigvals_sorted)
-
-    # Step 6: Return the explained variance ratio and the principal components (top 2)
-    return jnp.concatenate([explained_variance_ratio[:2], eigvecs_sorted[:, :2].flatten()])
-
-
-def fit_fourier_series(X, num_features, return_reconstructed=False):
+def quadric_curve(X):
     """
-    Process a single sequence, standardize, compute the FFT, and reconstruct with reduced dimensionality.
+    Fit a quadratic curve (Ax^2 + Bxy + Cy^2 + Dx + Ey + F = 0) to a set of
+    2D points using Eigenvalue Decomposition.
 
-    Args:
-    - X: Input array with shape (sequence_length,).
-    - num_features: Number of features to retain from the FFT.
+    Parameters
+    ----------
+    X : jnp.ndarray
+        The input data
 
-    Returns:
-    - Standardized FFT coefficients and optionally the reconstructed signal.
+    Returns
+    -------
+    jnp.ndarray
+        The coefficients of the quadratic curve
+
+    Notes
+    -----
+    The quadratic curve is fitted to the data using the following steps:
+    1. Construct the design matrix M
+    2. Compute the Gram matrix (M^T M)
+    3. Perform eigenvalue decomposition on the Gram matrix
+    4. The smallest eigenvalue corresponds to the quadratic coefficients
+    5. Normalize coefficients to ensure their sum is 1
     """
+    x = jnp.linspace(0., 1., len(X))
+    y = X
 
-    # Standardize the data: mean 0, variance 1
-    X_mean = jnp.mean(X)
-    X_std = jnp.std(X)
-    X_scaled = (X - X_mean) / (X_std + 1e-6)
+    # Construct the design matrix (as before)
+    M = jnp.column_stack([x**2, x*y, y**2, x, y, jnp.ones_like(x)])
 
-    # Compute the FFT
-    X_fft = jnp.fft.rfft(X_scaled)
+    # Compute the Gram matrix (M^T M), which is symmetric
+    Gram_matrix = jnp.dot(M.T, M)
 
-    # Truncate FFT coefficients
-    X_fft_truncated = X_fft[:num_features].real
+    # Perform eigenvalue decomposition on the Gram matrix
+    _, eigenvectors = jnp.linalg.eigh(Gram_matrix)
 
-    if return_reconstructed:
-        # Reconstruct the signal using inverse FFT
-        X_fft_reconstructed = jnp.fft.irfft(X_fft_truncated, n=X.shape[-1])
-        return X_fft_truncated, X_fft_reconstructed * X_std + X_mean
+    # The smallest eigenvalue corresponds to the quadratic coefficients
+    # The eigenvector corresponding to the smallest eigenvalue
+    # Take the eigenvector associated with the smallest eigenvalue
+    coeffs = eigenvectors[:, 0]
 
-    return X_fft_truncated
+    # Normalize coefficients to ensure their sum is 1
+    coeffs /= jnp.sum(coeffs)
 
+    return coeffs
 
 # Loss function
 # =============================================================================
+
 
 class LossFn(Protocol):
     def __call__(self, model: eqx.Module, *args, **kwargs) -> jnp.ndarray:
@@ -153,11 +145,53 @@ def mse(model: eqx.Module, X: jnp.ndarray, Y: jnp.ndarray) -> jnp.ndarray:
     return jnp.mean((y_pred - Y) ** 2)
 
 
+#                                                              MLP with dropout
+# =============================================================================
+
+class MLPWithDropout(eqx.Module):
+    layers: list
+    dropout: list
+    key: jax.random.KeyArray
+    dropout_key: jax.random.KeyArray
+
+    def __init__(self, in_size: int, out_size: int,
+                 width_size: int, depth: int,
+                 dropout_rate: float, key: jax.random.KeyArray):
+        self.key, * \
+            layer_keys, self.dropout_key = jax.random.split(key, depth + 2)
+        self.layers = []
+        self.dropout = []
+        for i in range(depth):
+            input_dim = in_size if i == 0 else width_size
+            output_dim = out_size if i == depth - 1 else width_size
+            self.layers.append(eqx.nn.Linear(
+                in_features=input_dim,
+                out_features=output_dim, key=layer_keys[i]))
+            if i < depth - 1:  # No dropout after the last layer
+                self.dropout.append(eqx.nn.Dropout(
+                    p=dropout_rate))
+
+    def __call__(self, x: jnp.ndarray, inference: bool = False,
+                 key: Optional[jax.random.KeyArray] = None) -> jnp.ndarray:
+        if key is None:
+            key = self.dropout_key
+
+        dropout_keys = jax.random.split(key, num=len(self.dropout))
+        for i, layer in enumerate(self.layers):
+            x = layer(x)
+            if i < len(self.layers) - 1:  # Apply activation and dropout
+                x = jax.nn.relu(x)
+                x = self.dropout[i](x, inference=inference,
+                                    key=dropout_keys[i])
+        return x
+
 #                                                                         Model
 # =============================================================================
 
+
 class MixedModel(eqx.Module):
-    mlp: eqx.nn.MLP
+    # mlp: eqx.nn.MLP
+    mlp: eqx.Module
     feature_fn: FeatureFn
     key: jax.random.KeyArray
 
@@ -165,14 +199,20 @@ class MixedModel(eqx.Module):
                  feature_fn: FeatureFn, key: jax.random.KeyArray,
                  ) -> None:
         self.key = key
-        self.feature_fn = partial(feature_fn, n_terms=n_terms)
-        self.mlp = eqx.nn.MLP(in_size=n_terms+2, out_size=n_optimizers,
-                              width_size=width, depth=depth,
-                              key=key)
+        # self.feature_fn = partial(feature_fn, n_terms=n_terms)
+        self.feature_fn = jax.jit(feature_fn)
+        self.mlp = MLPWithDropout(
+            in_size=n_terms, out_size=n_optimizers,
+            width_size=width, depth=depth,
+            dropout_rate=0.1, key=key)
+        # self.mlp = eqx.nn.MLP(in_size=n_terms, out_size=n_optimizers,
+        #                       width_size=width, depth=depth,
+        #                       key=key)
 
-    def __call__(self, X: jnp.ndarray) -> jnp.ndarray:
+    def __call__(self, X: jnp.ndarray,
+                 key: Optional[jax.random.KeyArray] = None) -> jnp.ndarray:
         X_features = self.feature_fn(X)
-        return self.mlp(X_features)
+        return self.mlp(x=X_features, inference=False, key=key)
 
 #                                                                 Training step
 # =============================================================================
@@ -222,7 +262,7 @@ def train_loop(
 
 
 class Stage1Model():
-    def __init__(self, optimizers: xr.DataArray,
+    def __init__(self, optimizers: Dict[str, Optimizer],
                  model_stage1: MixedModel, model_stage0: Stage0Model,
                  **kwargs):
         """
@@ -263,20 +303,24 @@ class Stage1Model():
 
         for opt_name, opt_data in optimization_dynamics.items():
             _X = jnp.array(opt_data.X_trajectory)
-            X = jax.vmap(partial(convolute, population=1))(_X)
+            X = jax.vmap(
+                partial(convolute,
+                        population=self.optimizers[opt_name]._population))(
+                jnp.atleast_2d(_X))
 
             Y = jnp.array(opt_data.Y)
 
-            self.models_stage1[opt_name] = train_loop(model=self.models_stage1[opt_name],
-                                                      optimizer=optimizer,
-                                                      X=X,
-                                                      Y=Y,
-                                                      n_epochs=n_epochs,
-                                                      loss_fn=partial(
-                                                          mse_l2_reg, lambda_reg=1e-3),
-                                                      key=jax.random.PRNGKey(
-                                                          seed),
-                                                      verbose=verbose)
+            self.models_stage1[opt_name] = train_loop(
+                model=self.models_stage1[opt_name],
+                optimizer=optimizer,
+                X=X,
+                Y=Y,
+                n_epochs=n_epochs,
+                loss_fn=partial(
+                    mse_l2_reg, lambda_reg=1e-3),
+                key=jax.random.PRNGKey(
+                    seed),
+                verbose=verbose)
 
     def predict(self, optimization_dynamics: Dict[str, OptimizationDynamics],
                 stage0_predictions: xr.DataArray) -> xr.DataArray:
@@ -296,65 +340,39 @@ class Stage1Model():
             The predictions of the Stage
         """
         ...
-        # list_y_pred_stage1 = []
-        # stage0_predictions = stage0_predictions.sortby('problem')
+        list_y_pred_stage1 = []
 
-        # for optimizer in self.optimizers.values:
-        #     problems = stage0_predictions.where(
-        #         stage0_predictions == optimizer, drop=True).problem
+        for opt_name, opt_data in optimization_dynamics.items():
+            problems = stage0_predictions.where(
+                stage0_predictions == opt_name, drop=True).problem
 
-        #     if len(problems) == 0:
-        #         continue
+            if len(problems) == 0:
+                continue
 
-        #     data_optimization = data_test[optimizer].select_problems(problems)
+            _X = jnp.array(opt_data.select_problems(problems).X_trajectory)
+            X = jax.vmap(
+                partial(convolute,
+                        population=self.optimizers[opt_name]._population))(
+                jnp.atleast_2d(_X))
 
-        #     # data_optimization = data_selected.to_learning_data(
-        #     #     optimizer=optimizer, t=self.t_switch,
-        #     #     t_start=self.t_start
-        #     # )
+            y_pred = jax.vmap(self.models_stage1[opt_name])(X)
 
-        #     y_features = self.models_stage0[optimizer].clf.predict(
-        #         data_optimization._X_features.to_pandas())
+            y_pred_arr = xr.DataArray(
+                y_pred, coords={'problem': problems,
+                                'optimizer': opt_data._Y.optimizer}
+            ).idxmin('optimizer')
 
-        #     logits = self.states[optimizer].apply_fn(
-        #         {'params': self.states[optimizer].params,
-        #          'batch_stats': self.states[optimizer].batch_stats},
-        #         jnp.array(y_features), data_optimization.X_trajectory,
-        #         train=False)
+            predictions = xr.apply_ufunc(
+                partial(concat_with_plus, first_opt=opt_name),
+                y_pred_arr,
+                vectorize=True,
+                dask='parallelized',
+                output_dtypes=[object],
+            )
 
-        #     predictions = xr.DataArray(
-        #         np.array(logits),
-        #         dims=['problem', 'optimizer'],
-        #         coords={'optimizer': self.optimizers,
-        #                 'problem': data_optimization.problem}
-        #     )
+            list_y_pred_stage1.append(predictions)
 
-        #     list_y_pred_stage1.append(predictions)
-
-        # stage1_predictions = xr.concat(
-        #     list_y_pred_stage1, dim='problem').sortby('problem')
-
-        # # Select the optimizer with the highest probability
-        # # Select the optimizer with the best performance value
-        # stage1_predictions = stage1_predictions.idxmin(
-        #     dim='optimizer').sortby('problem')
-
-        # def concat_with_plus(opt1, opt2):
-
-        #     if str(opt2) == 'nan':
-        #         return str(opt1)
-
-        #     if opt1 == opt2:
-        #         return str(opt1)
-        #     return str(opt1) + '+' + str(opt2)
-
-        # combined_predictions = xr.apply_ufunc(
-        #     concat_with_plus, stage0_predictions, stage1_predictions,
-        #     vectorize=True,
-        #     dask='parallelized',
-        #     output_dtypes=[object])
-
-        # return combined_predictions.sortby('problem')
+        return xr.concat(list_y_pred_stage1, dim='problem')
 
     def create_models_stage0(
             self, model: Stage0Model) -> Dict[str, Stage0Model]:
@@ -366,8 +384,8 @@ class Stage1Model():
         Dict[str, Stage0Model]
             The Stage0 models
         """
-        return {optimizer: deepcopy(model)
-                for optimizer in self.optimizers.values}
+        return {optimizer_name: deepcopy(model)
+                for optimizer_name in self.optimizers.keys()}
 
     def create_models_stage1(
             self, model: MixedModel) -> Dict[str, eqx.Module]:
@@ -384,31 +402,8 @@ class Stage1Model():
         The Stage1 models are created for each optimizer in the optimizers
         """
 
-        return {optimizer: deepcopy(model)
-                for optimizer in self.optimizers.values}
-
-    # def create_states(self) -> Dict[str, TrainState]:
-    #     """
-    #     Create the TrainStates for the models
-
-    #     Returns
-    #     -------
-    #     Dict[str, TrainState]
-    #         The TrainStates for the models
-    #     """
-    #     return {optimizer: None for optimizer in self.optimizers.values}
-
-    # def save(self, path: Path) -> None:
-    #     """
-    #     Save the model to a file
-
-    #     Parameters
-    #     ----------
-    #     path : Path
-    #         The path to the model
-    #     """
-    #     for optimizer, model in self.models_stage1.items():
-    #         model.save(Path(path) / f"stage1_{optimizer}")
+        return {optimizer_name: deepcopy(model)
+                for optimizer_name in self.optimizers.keys()}
 
 
 def load(path: Path) -> Stage1Model:
@@ -425,3 +420,12 @@ def load(path: Path) -> Stage1Model:
         model = pickle.load(f)
 
     return model
+
+
+def concat_with_plus(pred_value: str, first_opt: str):
+    if str(pred_value) == 'nan':
+        return str(first_opt)
+
+    if first_opt == pred_value:
+        return str(first_opt)
+    return str(first_opt) + '+' + str(pred_value)

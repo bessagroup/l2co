@@ -19,9 +19,9 @@ from typing import Iterable, List, Optional, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
-
 # Local
 from l2co._src.data_loader import DataLoader, OptimizationDynamics
+from matplotlib.colors import LinearSegmentedColormap, SymLogNorm
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -88,7 +88,9 @@ def set_size(width, fraction=1, subplots=(1, 1)):
 
 
 def plot_rtd_profile(d: DataLoader, ax: Optional[plt.Axes] = None,
-                     strategies: Optional[List[xr.DataArray]] = None
+                     strategies: Optional[List[xr.DataArray]] = None,
+                     include_best: bool = False,
+                     optimizers_to_plot: Optional[Iterable[str]] = None
                      ) -> Tuple[plt.Figure, plt.Axes]:
     """
     Plot the run-time distribution for the given DataLoader.
@@ -101,6 +103,10 @@ def plot_rtd_profile(d: DataLoader, ax: Optional[plt.Axes] = None,
         Matplotlib axes
     strategies: list of xr.DataArray, optional
         List of strategies to plot, by default None
+    include_best: bool, optional
+        Include the best strategy in the plot, by default False
+    optimizers_to_plot: list of str, optional
+        List of optimizers to plot, by default None
 
     Returns
     -------
@@ -111,7 +117,9 @@ def plot_rtd_profile(d: DataLoader, ax: Optional[plt.Axes] = None,
     -----
     If no axes are provided, a new figure is created.
     """
-    _rtd = d.rtd_profile(strategies).to_array('optimizer').mean('problem')
+    _rtd = d.rtd_profile(strategies=strategies,
+                         include_best=include_best).to_array(
+        'optimizer').mean('problem').isel(output_dim=0)
 
     if ax is None:
         fig, ax = plt.subplots(
@@ -119,8 +127,13 @@ def plot_rtd_profile(d: DataLoader, ax: Optional[plt.Axes] = None,
     else:
         fig = ax.get_figure()
 
-    for optimizer in _rtd.optimizer:
-        ax.plot((1-_rtd).sel(optimizer=optimizer), label=optimizer.values)
+    if optimizers_to_plot is None:
+        for optimizer in _rtd.optimizer:
+            ax.plot(_rtd.sel(optimizer=optimizer), label=optimizer.values)
+
+    else:
+        for optimizer in optimizers_to_plot:
+            ax.plot(_rtd.sel(optimizer=optimizer), label=optimizer)
 
     ax.legend()
     ax.set_xlabel('Function evaluations')
@@ -226,3 +239,63 @@ def plot_trajectories(
     fig.tight_layout()
 
     return fig, axes
+
+
+def plot_quadric_curve(y: np.ndarray, coeffs, color: str,
+                       ax: Optional[plt.Axes] = None, res: int = 500):
+    """
+    Plots the original points and the fitted quadratic curve.
+
+    Args:
+    - points: numpy array of shape (n, 2), the data points.
+    - coeffs: numpy array of shape (6,), the coefficients of the quadric curve.
+    """
+    if ax is None:
+        _, ax = plt.subplots()
+
+    A, B, C, D, E, F = coeffs
+    x = np.linspace(0., 1., len(y))
+    y = y
+
+    # Plot the original points
+    scatter = ax.scatter(x, y, color=color, label='Data Points', s=3, zorder=2)
+
+    # Create a grid for x and y values
+    x_range = np.linspace(x.min(), x.max(), res)
+    y_range = np.linspace(y.min(), y.max(), res)
+    X, Y = np.meshgrid(x_range, y_range)
+
+    # Calculate Z values for the quadratic curve equation
+    Z = A * X**2 + B * X * Y + C * Y**2 + D * X + E * Y + F
+
+    # Custom colormap: white for negative, black near 0, white for positive
+    colors = [(1, 1, 1), (0, 0, 0), (1, 1, 1)]  # RGB: white -> black -> white
+    custom_cmap = LinearSegmentedColormap.from_list(
+        'white_black_white', colors)
+    norm = SymLogNorm(linthresh=0.03, linscale=0.03, vmin=-0.3, vmax=0.3)
+
+    # Plot filled contour with custom colormap
+    _ = ax.contourf(X, Y, Z, levels=100,
+                    cmap=custom_cmap, norm=norm, zorder=1, alpha=0.8)
+
+    # Add the fitted curve as a contour line
+    ax.contour(X, Y, Z, levels=[0], colors='k', linewidths=2, zorder=3)
+
+    # Add a proxy artist for the contour to the legend
+    contour_proxy = plt.Line2D(
+        [0], [0], color='k', linewidth=2, label='Quadric surface')
+
+    # Add text for coefficients
+    coeffs_text = f"Fitted Coefficients:\nA = {A:.3f}\nB = {B:.3f}\nC = {C:.3f}\nD = {D:.3f}\nE = {E:.3f}\nF = {F:.3f}"
+    ax.text(
+        0.05, 0.95, coeffs_text,
+        transform=ax.transAxes,
+        fontsize=8,
+        verticalalignment='top',
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8)
+    )
+
+    ax.set_xlabel('normalized function evaluations (x)')
+    ax.set_ylabel('performance value (y)')
+    ax.legend(handles=[contour_proxy, scatter], loc='best')
+    ax.grid()

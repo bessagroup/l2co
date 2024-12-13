@@ -145,7 +145,7 @@ def add_random_samples_combinations(
 def calculate_performance_ratio(
         ds_budget: xr.DataArray,
         best_optimizer_each_problem: xr.DataArray,
-        max_f_value: float = 10.0) -> xr.DataArray:
+        max_f_value: float = 3.0) -> xr.DataArray:
     """
     Calculate the performance ratio for the given dataset.
 

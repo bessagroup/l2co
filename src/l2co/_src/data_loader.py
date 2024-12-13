@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from time import perf_counter
 from typing import Dict, Iterable, Optional, Tuple
 
 import matplotlib.pyplot as plt
@@ -389,11 +390,14 @@ class DataLoader:
 
     @property
     def performance(self) -> xr.DataArray:
+        t_start = perf_counter()
         print("Triggered performance")
         performance = scaling2(self.data)
 
-        return performance.where(
+        performance = performance.where(
             ~performance.isnull(), other=INVALID_PERFORMANCE_VALUE)
+        print(f"Performance calculation took: {perf_counter()-t_start:0.2f}")
+        return performance
 
     @ lru_cache(maxsize=1)
     def y_binary(self, rel_tolerance: float = 0.1) -> xr.DataArray:
@@ -538,6 +542,43 @@ class DataLoader:
             data_samples=self.data_samples.sel(problem=_problem_indices)
         )
 
+    def isel(self, problems: Iterable[int]) -> DataLoader:
+        """
+        Select a subset of problems of the data loader.
+
+        Parameters
+        ----------
+        problems : Iterable[int]
+            The problem indices to select.
+
+        Returns
+        -------
+        DataLoader
+            The selected data loader.
+
+        Notes
+        -----
+        Selects on the problem dimension. Also sorts the problem indices on
+        itemID.
+        """
+
+        _problem_indices = self.problem.isel(problem=problems).sortby('itemID')
+
+        # Select unique itemIDs to select the experiment data
+        _unique_itemID = np.unique(_problem_indices.itemID.values)
+
+        return DataLoader(
+            X=self.X.isel(problem=problems),
+            n_iterations=self.n_iterations,
+            n_realizations=self.n_realizations,
+            data=self.data.isel(problem=problems),
+            config=self.config,
+            experimentdata=self.experimentdata.select(_unique_itemID),
+            data_samples=self.data_samples.isel(problem=problems)
+        )
+
+        # return self.select_problems(self.problem.isel(problem=problems))
+
     # def balance(self, remove_highest_std: Optional[int] = None) -> DataLoader:
     #     rtd = self.rtd_profile().to_array(
     #         dim='optimizer').T.isel(iterations=-1).compute()
@@ -583,11 +624,11 @@ class DataLoader:
             The train and test data loaders.
         """
         _X_train_indices, _X_test_indices, = train_test_split(
-            self.X.problem, test_size=test_size,
+            range(len(self.X.problem)), test_size=test_size,
             random_state=random_state)
 
-        return (self.select_problems(_X_train_indices),
-                self.select_problems(_X_test_indices))
+        return (self.isel(_X_train_indices),
+                self.isel(_X_test_indices))
 
 #                                                          Selecting iterations
 # =============================================================================
@@ -741,11 +782,17 @@ class DataLoader:
 
 
     def performance_profile(
-            self, strategies: Optional[Iterable[xr.DataArray]] = None
+            self, strategies: Optional[Iterable[xr.DataArray]] = None,
+            include_best: bool = False
     ) -> xr.Dataset:
 
         if strategies is None:
             strategies = []
+
+        if include_best:
+            best_performance = self.performance.isel(
+                iterations=-1, drop=True).idxmin('optimizer').sortby('problem')
+            strategies.append(best_performance)
 
         _strategies = [*strategies]
 
@@ -758,7 +805,8 @@ class DataLoader:
 
     def rtd_profile(
             self, strategies: Optional[Iterable[xr.DataArray]] = None,
-            targets: Optional[np.array] = None) -> xr.Dataset:
+            targets: Optional[np.array] = None,
+            include_best: bool = False) -> xr.Dataset:
 
         if strategies is None:
             strategies = []
@@ -777,7 +825,13 @@ class DataLoader:
             rtd[strategy.name] = self.performance.sortby(
                 'problem').sel(optimizer=strategy.sortby('problem')).T
 
-        return rtd
+        if include_best:
+            best_performance = self.performance.isel(
+                iterations=-1, drop=True).idxmin('optimizer').sortby('problem')
+            rtd['best'] = self.performance.sortby(
+                'problem').sel(optimizer=best_performance)
+
+        return 1.0-rtd
 
     def load(self):
         self.data.load()
@@ -846,8 +900,8 @@ class OptimizationDynamics:
             range(len(self._X_features)), test_size=test_size,
             random_state=random_state)
 
-        return (self.select_problems(train_indices),
-                self.select_problems(test_indices))
+        return (self.isel(train_indices),
+                self.isel(test_indices))
 
     def select_problems(self, problems: xr.DataArray) -> OptimizationDynamics:
         return OptimizationDynamics(
@@ -1111,8 +1165,8 @@ class FeaturesDataSet:
             range(len(self.X_features)), test_size=test_size,
             random_state=random_state)
 
-        return (self.select_problems(train_indices),
-                self.select_problems(test_indices))
+        return (self.isel(train_indices),
+                self.isel(test_indices))
 
 
 def load_features(path: Path | str, rel_tolerance: float) -> FeaturesDataSet:
