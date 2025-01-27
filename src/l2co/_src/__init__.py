@@ -36,8 +36,8 @@ tasks
 # =============================================================================
 
 # Third-party
-from f3dasm._src.datageneration.functions.function_factory import \
-    FUNCTION_MAPPING
+from f3dasm._src.datageneration.datagenerator_factory import \
+    DATAGENERATOR_MAPPING as FUNCTION_MAPPING
 from matplotlib import pyplot as plt
 
 from l2co._src.tasks.benchmarkfunctions.opfunu_functions import (

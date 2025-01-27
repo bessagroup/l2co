@@ -63,7 +63,6 @@ class DataLoader:
         X: xr.DataArray,
         n_iterations: int,
         n_realizations: int,
-        # performance: xr.DataArray,
         data: xr.Dataset,
         config: DictConfig,
         experimentdata: ExperimentData,
@@ -90,7 +89,6 @@ class DataLoader:
         self.X = X
         self.n_iterations = n_iterations
         self.n_realizations = n_realizations
-        # self.performance = performance
         self.data = data
         self.config = config
         self.experimentdata = experimentdata

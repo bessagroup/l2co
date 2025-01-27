@@ -5,7 +5,7 @@ scikit-learn
 xarray==2023.1.0
 NetCDF4==1.6.4
 dask
-opfunu @ git+https://github.com/mpvanderschelling/opfunu@master
+opfunu @ git+https://github.com/mpvanderschelling/opfunu@jaxnumpy
 tqdm
 optax
 equinox

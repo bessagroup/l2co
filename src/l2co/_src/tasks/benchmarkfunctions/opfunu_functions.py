@@ -68,8 +68,7 @@ class OpfunuFunc(PyBenchFunction):
             seed for the random number generator, by default None
         """
         self.opfunu_function = self.opfunu_class(ndim=dimensionality)
-        super().__init__(dimensionality=dimensionality,
-                         scale_bounds=scale_bounds,
+        super().__init__(scale_bounds=scale_bounds,
                          noise=noise,
                          offset=offset,
                          seed=seed)
