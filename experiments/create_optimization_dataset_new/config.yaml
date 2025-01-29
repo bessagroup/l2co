@@ -308,13 +308,15 @@ noise_distribution:
   - 0.60
   - 0.40
 
-n_experiments: 20
-seed: 2365
+n_experiments: 5
+seed: 6548
 
 mode: cluster
 
 optimization:
   n_realizations: 3
+  lower_bound: 0.0
+  upper_bound: 1.0
 
 n_evals: 400
 switch: 0.3
@@ -326,3 +328,8 @@ optimizers:
   - optimizer: adam
     hyperparameters:
       learning_rate: 1e-3
+  - optimizer: pso
+    hyperparameters:
+      popsize: 30
+  - optimizer: lbfgsb
+  

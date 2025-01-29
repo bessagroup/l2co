@@ -1,10 +1,12 @@
 from typing import List
 
+import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 from f3dasm import Block, ExperimentData
 from f3dasm.datageneration import DataGenerator
 from omegaconf import DictConfig
+from opfunu import create_benchmark_loss_function
 
 from l2co._src.tasks.benchmarkfunctions.opfunu_functions import (
     CEC_FUNCTIONS, NAMED_FUNCTIONS)
@@ -70,14 +72,30 @@ class RunOptimization(DataGenerator):
     def execute(self):
         es = self.experiment_sample.input_data
 
+        bounds = jnp.tile(jnp.array(
+            [[self.config.optimization.lower_bound,
+              self.config.optimization.upper_bound]]),
+            (es['dimensionality'], 1))
+
+        loss_fn, model = create_benchmark_loss_function(
+            fn_name='griewank',
+            seed=es['seed'],
+            scale_bounds=bounds,
+            dimensionality=es['dimensionality'],
+            offset=True, noise=es['noise'],
+        )
+
         for optimizer_scheduler in self.optimizer_combinations:
             data_xarr = run_optimization_schedule_multiple_realizations(
-                function_name=es['function_name'],
+                model=model,
+                loss_fn=loss_fn,
                 optimizer_schedules=optimizer_scheduler,
-                dimensionality=es['dimensionality'],
-                noise=es['noise'],
                 seed=es['seed'],
+                learning_data=None,
                 n_realizations=self.config.optimization.n_realizations,
+                include_input=False,
+                bounded=(self.config.optimization.lower_bound,
+                         self.config.optimization.upper_bound),
             )
 
             self.experiment_sample.store(
