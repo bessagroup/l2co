@@ -1,7 +1,6 @@
 import argparse
 from pathlib import Path
 
-import numpy as np
 from f3dasm import ExperimentData
 
 from l2co import create_entire_dataset

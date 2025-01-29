@@ -8,10 +8,13 @@ from f3dasm.datageneration import DataGenerator
 from omegaconf import DictConfig
 from opfunu import create_benchmark_loss_function
 
+from l2co import logger
 from l2co._src.tasks.benchmarkfunctions.opfunu_functions import (
     CEC_FUNCTIONS, NAMED_FUNCTIONS)
+from l2co._src.tasks.benchmarkfunctions.optimizerschedule import \
+    get_all_combinations
 from l2co._src.tasks.benchmarkfunctions.run_optimization import (
-    OptimizerScheduler, get_all_combinations, name_from_schedule,
+    OptimizerScheduler, name_from_schedule,
     run_optimization_schedule_multiple_realizations)
 
 MY_FUNCTION_MAPPING = {**CEC_FUNCTIONS, **NAMED_FUNCTIONS}
@@ -77,8 +80,8 @@ class RunOptimization(DataGenerator):
               self.config.optimization.upper_bound]]),
             (es['dimensionality'], 1))
 
-        loss_fn, model = create_benchmark_loss_function(
-            fn_name='griewank',
+        task = create_benchmark_loss_function(
+            fn_name=es['function_name'],
             seed=es['seed'],
             scale_bounds=bounds,
             dimensionality=es['dimensionality'],
@@ -86,18 +89,20 @@ class RunOptimization(DataGenerator):
         )
 
         for optimizer_scheduler in self.optimizer_combinations:
-            data_xarr = run_optimization_schedule_multiple_realizations(
-                model=model,
-                loss_fn=loss_fn,
-                optimizer_schedules=optimizer_scheduler,
-                seed=es['seed'],
-                learning_data=None,
-                n_realizations=self.config.optimization.n_realizations,
-                include_input=False,
-                bounded=(self.config.optimization.lower_bound,
-                         self.config.optimization.upper_bound),
-            )
+            try:
+                data_xarr = run_optimization_schedule_multiple_realizations(
+                    task=task,
+                    optimizer_schedules=optimizer_scheduler,
+                    seed=es['seed'],
+                    n_realizations=self.config.optimization.n_realizations,
+                    include_input=False,
+                    bounded=(self.config.optimization.lower_bound,
+                             self.config.optimization.upper_bound),
+                )
 
-            self.experiment_sample.store(
-                name=name_from_schedule(optimizer_scheduler),
-                object=data_xarr, to_disk=True)
+                self.experiment_sample.store(
+                    name=name_from_schedule(optimizer_scheduler),
+                    object=data_xarr, to_disk=True)
+            except Exception as e:
+                logger.error(e)
+                continue

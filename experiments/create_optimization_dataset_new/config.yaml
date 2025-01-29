@@ -333,3 +333,5 @@ optimizers:
       popsize: 30
   - optimizer: lbfgsb
   
+
+log_level: 10

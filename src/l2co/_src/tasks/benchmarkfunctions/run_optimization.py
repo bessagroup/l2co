@@ -1,7 +1,8 @@
 # Standard
-import time
+# import time
 from typing import Callable, Iterable, Iterator, List, Optional, Tuple
 
+# Third-party
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,15 +12,13 @@ import numpy as onp
 import xarray as xr
 from f3dasm import Block, ExperimentData
 from f3dasm.design import Domain
-# Third-party
 from jaxtyping import PyTree
-from opfunu import create_benchmark_loss_function
 from SALib.sample import latin
 
 from ..._logging import logger
-from .dataloader import NoneIterator
 from .optimizers import OPT_MAPPING
 from .optimizerschedule import OptimizerScheduler, name_from_schedule
+from .task import Task
 from .tree_utils import tree_to_dict_list
 
 #                                                            Converter function
@@ -177,48 +176,33 @@ class EvaluateModel(Block):
 
 
 def run_optimization_schedule_multiple_realizations(
-        model: PyTree,
-        loss_fn: Callable,
+        task: Task,
         optimizer_schedules: Iterable[OptimizerScheduler],
         seed: int,
-        learning_data: Optional[Iterator] = None,
         n_realizations: int = 1,
         include_input: bool = False,
         bounded: Optional[Tuple[float, float]] = None,
 ) -> xr.DataArray:
-    if learning_data is None:
-        learning_data = NoneIterator()
-    # t1 = time.perf_counter()
-
-    # bounds = jnp.tile(jnp.array([[0.0, 1.0]]), (dimensionality, 1))
-
-    # Benchmark function
-    # loss_fn: Callable = create_benchmark_loss_function(
-    #     fn_name=function_name, dimensionality=dimensionality,
-    #     scale_bounds=bounds, seed=seed, offset=True, noise=noise)
-
-    # model = jnp.zeros(dimensionality)
-
     results_list: List[xr.DataArray] = []
 
     for s in range(n_realizations):
         if bounded is None:
             sampler = NormalWeightSampler(
-                model=model,
+                model=task.model,
                 seed=seed + s,
             )
         else:
             sampler = RandomWeightSampler(
-                model=model,
+                model=task.model,
                 seed=seed + s, lower_bound=bounded[0], upper_bound=bounded[1])
 
         data = run_optimization_schedule(
-            loss_fn=loss_fn,
+            loss_fn=task.loss_fn,
             optimizer_schedules=optimizer_schedules,
             seed=seed + s,
             bounded=bounded,
             sampler=sampler,
-            learning_data=learning_data,
+            learning_data=task.learning_data,
         )
 
         results_list.append(experimentdata_to_xarray(
@@ -312,6 +296,7 @@ def run_optimization(
 
     # Remove overiterations
     data.remove_rows_bottom(number_of_rows=popsize * n_updates - n_evals)
+    logger.debug(f"Optimization finished with {n_evals} evaluations")
 
     return data
 

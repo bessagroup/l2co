@@ -505,7 +505,6 @@ class DataLoader:
 #                                                            Selecting problems
 # =============================================================================
 
-
     def select_problems(self, problem_indices: xr.DataArray) -> DataLoader:
         """
         Select a subset of problems of the data loader.
@@ -670,7 +669,6 @@ class DataLoader:
 #                                                          Selecting optimizers
 # =============================================================================
 
-
     def select_single_optimizers(
             self, include_random_search: bool = False) -> DataLoader:
         """
@@ -778,6 +776,7 @@ class DataLoader:
 
 #                                                           Performance metrics
 # =============================================================================
+
 
     def performance_profile(
             self, strategies: Optional[Iterable[xr.DataArray]] = None,
@@ -1201,7 +1200,7 @@ def create_entire_dataset(experiment_data: ExperimentData):
 
     experiment_data = experiment_data.select_with_status('finished')
 
-    _, df_output = experiment_data.to_pandas()
+    _, df_output = experiment_data.to_pandas(keep_references=True)
 
     # remove all values that say 'ERROR' and 'invalid'
     df_output = df_output.replace('ERROR', np.nan)
@@ -1210,7 +1209,8 @@ def create_entire_dataset(experiment_data: ExperimentData):
 
     # preceed every entry of df_output with experimentdata.project_dir
     df_output = df_output.applymap(
-        lambda x: experiment_data.project_dir / x, na_action='ignore')
+        lambda x: experiment_data.project_dir / 'experiment_data' / x,
+        na_action='ignore')
     # df_output = df_output.apply(lambda x: experiment_data.project_dir / x)
 
     # don't include the column 'random_samples'

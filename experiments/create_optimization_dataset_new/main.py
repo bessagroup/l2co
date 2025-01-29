@@ -6,6 +6,8 @@ from f3dasm.design import Domain
 from omegaconf import DictConfig
 from utils import FunctionSampler, RunOptimization
 
+from l2co import logger
+
 
 def pre_process(config: DictConfig):
     domain = Domain.from_yaml(config.domain)
@@ -27,6 +29,9 @@ def process(config: DictConfig):
 
 @hydra.main(config_path=".", config_name="config")
 def main(config):
+
+    logger.setLevel(config.log_level)
+
     pre_process(config)
     process(config)
 

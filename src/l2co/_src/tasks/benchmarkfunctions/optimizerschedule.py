@@ -8,22 +8,7 @@ class OptimizerScheduler(NamedTuple):
     optimizer: str
     n_evals: int
     x0_strategy: str
-    hyperparameters: Dict[str, Any]
-
-    @classmethod
-    def from_yaml(cls, config):
-        if 'hyperparameters' in config:
-            hyperparameters = config.hyperparameters
-
-        else:
-            hyperparameters = {}
-
-        return cls(
-            optimizer=config.optimizer,
-            n_evals=config.n_evals,
-            x0_strategy=config.x0_strategy,
-            hyperparameters=hyperparameters
-        )
+    hyperparameters: Dict[str, Any] = {}
 
 
 def get_scheduler(
@@ -56,21 +41,25 @@ def get_scheduler(
     i_1 = total_evals - i_0
 
     if optimizer_1['optimizer'] == optimizer_2['optimizer']:
-        return [OptimizerScheduler(optimizer=optimizer_1['optimizer'],
-                                   n_evals=total_evals,
-                                   x0_strategy=first_x0,
-                hyperparameters=optimizer_1['hyperparameters'])]
+        return [OptimizerScheduler(
+            n_evals=total_evals,
+            x0_strategy=first_x0,
+            **optimizer_1
+        ),
+        ]
 
-    return [OptimizerScheduler(optimizer=optimizer_1['optimizer'],
-                               n_evals=i_0,
-                               x0_strategy=first_x0,
-                               hyperparameters=optimizer_1['hyperparameters']),
-            OptimizerScheduler(
-                optimizer=optimizer_2['optimizer'],
+    return [OptimizerScheduler(
+        n_evals=i_0,
+        x0_strategy=first_x0,
+        **optimizer_1
+    ),
+        OptimizerScheduler(
         n_evals=i_1,
         x0_strategy=get_handshake(
-                    optimizer_1['optimizer'], optimizer_2['optimizer']),
-        hyperparameters=optimizer_2['hyperparameters'])]
+            optimizer_1['optimizer'], optimizer_2['optimizer']),
+        **optimizer_2
+    )
+    ]
 
 
 def get_handshake(optimizer_1: str, optimizer_2: str) -> str:
