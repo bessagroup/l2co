@@ -20,7 +20,7 @@ create_entire_dataset
 # Standard
 from __future__ import annotations
 
-from functools import lru_cache
+from functools import lru_cache, partial
 from pathlib import Path
 from time import perf_counter
 from typing import Dict, Iterable, Optional, Tuple
@@ -28,6 +28,7 @@ from typing import Dict, Iterable, Optional, Tuple
 import matplotlib.pyplot as plt
 # Third-party
 import numpy as np
+import pandas as pd
 import xarray as xr
 from f3dasm import ExperimentData
 from omegaconf import DictConfig
@@ -39,6 +40,8 @@ from ._logging import logger as l2co_logger
 from .content_based import get_labels
 from .performance import (add_random_samples_combinations,
                           create_performance_profile, scaling2)
+from .tasks.benchmarkfunctions.optimizerschedule import OptimizationSchedule
+from .tasks.benchmarkfunctions.task import Task
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -505,6 +508,7 @@ class DataLoader:
 #                                                            Selecting problems
 # =============================================================================
 
+
     def select_problems(self, problem_indices: xr.DataArray) -> DataLoader:
         """
         Select a subset of problems of the data loader.
@@ -669,6 +673,7 @@ class DataLoader:
 #                                                          Selecting optimizers
 # =============================================================================
 
+
     def select_single_optimizers(
             self, include_random_search: bool = False) -> DataLoader:
         """
@@ -776,7 +781,6 @@ class DataLoader:
 
 #                                                           Performance metrics
 # =============================================================================
-
 
     def performance_profile(
             self, strategies: Optional[Iterable[xr.DataArray]] = None,
@@ -1172,90 +1176,3 @@ def load_features(path: Path | str, rel_tolerance: float) -> FeaturesDataSet:
     return FeaturesDataSet.load(path=path, rel_tolerance=rel_tolerance)
 
 # =============================================================================
-
-
-def create_entire_dataset(experiment_data: ExperimentData):
-    """
-    Create an entire dataset from a given experiment data object.
-
-    Parameters
-    ----------
-    experiment_data : f3dasm.ExperimentData
-        The experiment data object.
-
-    Returns
-    -------
-    xarray.Dataset
-        The resulting entire dataset.
-
-    Notes
-    -----
-    The entire dataset is created by concatenating all the optimization
-    trajectories (NetCDF files) of the experiment data object.
-
-    All of the files are checked on:
-    - if they are flagged as 'invalid' or 'ERROR'
-    - if they contain np.nan values
-    """
-
-    experiment_data = experiment_data.select_with_status('finished')
-
-    _, df_output = experiment_data.to_pandas(keep_references=True)
-
-    # remove all values that say 'ERROR' and 'invalid'
-    df_output = df_output.replace('ERROR', np.nan)
-    df_output = df_output.replace('invalid', np.nan)
-    df_output = df_output.replace('not working', np.nan)
-
-    # preceed every entry of df_output with experimentdata.project_dir
-    df_output = df_output.applymap(
-        lambda x: experiment_data.project_dir / 'experiment_data' / x,
-        na_action='ignore')
-    # df_output = df_output.apply(lambda x: experiment_data.project_dir / x)
-
-    # don't include the column 'random_samples'
-    if 'random_samples' in df_output.columns:
-        df_output = df_output.drop(columns=['random_samples'])
-
-    # remove all experiments where none of the optimizers have finished
-    df_output = df_output.dropna(how='all')
-
-    # Open the whole thing:
-    l2co_logger.info("Opening the whole thing")
-
-    combined_rows = []
-    faulty_experiments = []
-
-    for row, values in tqdm(df_output.iterrows(), total=len(df_output)):
-        try:
-            a = xr.open_mfdataset(values.dropna(), combine='by_coords')
-        except OSError as e:
-            l2co_logger.error(f"Error: {e}")
-            faulty_experiments.append(row)
-            continue
-
-        if 'input' in a.data_vars:
-            combined_rows.append(a.assign_coords(
-                {'itemID': [row]}).drop('input'))
-        else:
-            combined_rows.append(a.assign_coords(
-                {'itemID': [row]}))
-
-        l2co_logger.info(f"Entire dataset: {row}/{len(df_output)}")
-
-    experiment_data.mark(indices=faulty_experiments, status='error')
-
-    xarr_full: xr.Dataset = xr.concat(combined_rows, dim='itemID')
-
-    xarr_full = xarr_full.stack(
-        problem=('realization', 'itemID'), create_index=False
-    )
-
-    xarr_full = xarr_full.assign_coords(
-        {'problem': np.arange(xarr_full.problem.size)})
-
-    if 'input_dim' in xarr_full.coords:
-        return xarr_full.drop('input_dim'), experiment_data
-
-    else:
-        return xarr_full, experiment_data

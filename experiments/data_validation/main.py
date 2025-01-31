@@ -1,18 +1,176 @@
 import argparse
+from functools import partial
 from pathlib import Path
+from typing import Tuple
 
+import numpy as np
+import pandas as pd
+import xarray as xr
 from f3dasm import ExperimentData
 
-from l2co import create_entire_dataset
+from l2co import logger as l2co_logger
+from l2co._src.tasks.benchmarkfunctions.optimizerschedule import \
+    OptimizationSchedule
+from l2co._src.tasks.benchmarkfunctions.task import Task
 
-parser = argparse.ArgumentParser()
-parser.add_argument('-p', '--path', type=str,
-                    help="Path to the experiment data", required=True)
 
-args = parser.parse_args()
-path = Path(args.path)
+def main(path: Path):
+    xarr, experimentdata = create_entire_dataset(
+        ExperimentData.from_file(path))
 
-xarr, experimentdata = create_entire_dataset(ExperimentData.from_file(path))
-# xarr = xarr.astype(np.float32)
-xarr.to_netcdf(path / 'entire_dataset.nc')
-experimentdata.store()
+    experimentdata = ExperimentData.from_file(path)
+    labels, opt_data = create_entire_dataset(experiment_data=experimentdata)
+
+    # Store the files
+    opt_data.to_netcdf(path / 'entire_dataset.nc')
+    labels.to_csv(path / 'labels.csv')
+    experimentdata.store()
+
+
+def create_entire_dataset(
+    experiment_data: ExperimentData,
+    loss_column_name: str = 'loss history',
+        seed_column_name: str = 'seed',
+        optimizer_column_name: str = 'optimizer schedule',
+        task_column_name: str = 'task') -> Tuple[pd.DataFrame, xr.Dataset]:
+    """
+    Create an entire dataset from a given experiment data object.
+
+    Parameters
+    ----------
+    experiment_data : f3dasm.ExperimentData
+        The experiment data object.
+
+    Returns
+    -------
+    xarray.Dataset
+        The resulting entire dataset.
+
+    Notes
+    -----
+    The entire dataset is created by concatenating all the optimization
+    trajectories (NetCDF files) of the experiment data object.
+
+    All of the files are checked on:
+    - if they are flagged as 'invalid' or 'ERROR'
+    - if they contain np.nan values
+    """
+
+    # Only select finished experiments and reset the index
+    experiment_data = experiment_data.select_with_status(
+        'finished').reset_index()
+
+    df, df_output = experiment_data.to_pandas(keep_references=True)
+
+    df[loss_column_name] = df_output[loss_column_name]
+    # drop the seed column
+    df = df.drop(columns=[seed_column_name])
+
+    # preceed every entry of df_output with experimentdata.project_dir
+    df = df.map(
+        lambda x: experiment_data.project_dir / 'experiment_data' / x,
+        na_action='ignore')
+
+    # ============= Create the labels =============
+
+    labels = []
+    for task_path in df[task_column_name]:
+        task = Task.load(task_path)
+        labels.append(task.tag)
+        del task
+
+    df_labels = pd.DataFrame(labels)
+
+    schedules = []
+    for schedule_path in df[optimizer_column_name]:
+        schedule = OptimizationSchedule.load(schedule_path)
+        schedules.append(schedule.tag)
+        del schedule
+
+    df_schedules = pd.DataFrame(schedules)
+
+    df_loss = df[loss_column_name].to_frame()
+
+    # # Concatenate and create a MultiIndex
+    df_multiindex = pd.concat([df_labels, df_schedules, df_loss], axis=1)
+
+    pivot_table = df_multiindex.pivot_table(
+        index=[*df_labels.columns],  # These are the rows
+        columns=[*df_schedules.columns],  # This is the column
+        values=[*df_loss.columns],  # This is the value you want to aggregate
+        aggfunc='first'
+    )
+
+    # ============= Create the optimization data =============
+
+    labels = create_task_labels_df(pivot_table)
+    opt_data = create_optimization_data(pivot_table)
+
+    return labels, opt_data
+
+
+def create_task_labels_df(pivot_table: pd.DataFrame) -> pd.DataFrame:
+    return pivot_table.index.to_frame(index=False)
+
+
+def create_optimization_data(pivot_table: pd.DataFrame) -> xr.Dataset:
+
+    df = pivot_table.copy(deep=True)
+
+    df.index = range(len(df))
+    df.columns = df.columns.droplevel(0)
+
+    # Open first file to create placeholder
+    placeholder_path = Path.cwd() / 'placeholder.nc'
+    placeholder = xr.open_dataset(df.iloc[0, 0])
+
+    # Store placeholder to disk
+    placeholder.to_netcdf(placeholder_path)
+
+    # Fill al nans with the placeholder path
+    df: pd.DataFrame = df.fillna(placeholder_path)
+
+    def validation_fn(x, placeholder: xr.Dataset):
+        return x
+
+    xarr_full = xr.open_mfdataset(
+        df.to_numpy().tolist(),
+        combine='nested',
+        concat_dim=[xr.DataArray(df.index, coords=[df.index], dims=['itemID']),
+                    xr.DataArray(df.columns, coords=[
+                        df.columns], dims=['optimizer'])
+                    ],
+        parallel=True,
+        preprocess=partial(validation_fn,
+                           placeholder=placeholder),
+        coords='minimal',
+    )
+
+    # Remove the placeholder from disk
+    placeholder_path.unlink()
+
+    # Open the whole thing:
+    l2co_logger.info("Opening the whole thing")
+
+    xarr_full = xarr_full.stack(
+        problem=('realization', 'itemID'), create_index=False
+    )
+
+    xarr_full = xarr_full.assign_coords(
+        {'problem': np.arange(xarr_full.problem.size)})
+
+    if 'input_dim' in xarr_full.coords:
+        return xarr_full.drop('input_dim')
+
+    else:
+        return xarr_full
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-p', '--path', type=str,
+                        help="Path to the experiment data", required=True)
+
+    args = parser.parse_args()
+    path = Path(args.path)
+    main(path)

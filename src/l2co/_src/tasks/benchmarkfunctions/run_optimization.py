@@ -1,6 +1,6 @@
 # Standard
 # import time
-from typing import Callable, Iterable, Iterator, List, Optional, Tuple
+from typing import Callable, Iterator, List, Optional, Tuple
 
 # Third-party
 import equinox as eqx
@@ -17,7 +17,7 @@ from SALib.sample import latin
 
 from ..._logging import logger
 from .optimizers import OPT_MAPPING
-from .optimizerschedule import OptimizerScheduler, name_from_schedule
+from .optimizerschedule import OptimizationSchedule
 from .task import Task
 from .tree_utils import tree_to_dict_list
 
@@ -177,7 +177,7 @@ class EvaluateModel(Block):
 
 def run_optimization_schedule_multiple_realizations(
         task: Task,
-        optimizer_schedules: Iterable[OptimizerScheduler],
+        optimization_schedule: OptimizationSchedule,
         seed: int,
         n_realizations: int = 1,
         include_input: bool = False,
@@ -198,7 +198,7 @@ def run_optimization_schedule_multiple_realizations(
 
         data = run_optimization_schedule(
             loss_fn=task.loss_fn,
-            optimizer_schedules=optimizer_schedules,
+            optimization_schedule=optimization_schedule,
             seed=seed + s,
             bounded=bounded,
             sampler=sampler,
@@ -211,42 +211,46 @@ def run_optimization_schedule_multiple_realizations(
     results = xr.concat(results_list, xr.DataArray(range(n_realizations),
                                                    dims='realization'))
 
-    name = onp.array([name_from_schedule(optimizer_schedules)], dtype=object)
-    # logger.info((
-    #     f'Optimized {dimensionality}D {function_name} function '
-    #     f'with {name_from_schedule(optimizer_schedules)}'
-    #     f' (took {time.perf_counter() - t1:.2f} seconds)')
-    # )
-    return results.assign_coords({'optimizer': name})
+    return results
+
+    # name = onp.array(optimization_schedule.tag['name'], dtype=object)
+    # # logger.info((
+    # #     f'Optimized {dimensionality}D {function_name} function '
+    # #     f'with {name_from_schedule(optimizer_schedules)}'
+    # #     f' (took {time.perf_counter() - t1:.2f} seconds)')
+    # # )
+    # return results.assign_coords({'optimizer': name})
 
 
 def run_optimization_schedule(
         loss_fn: Callable,
-        optimizer_schedules: Iterable[OptimizerScheduler],
+        optimization_schedule: OptimizationSchedule,
         seed: int,
         bounded: Optional[Tuple[float, float]],
         sampler: Block,
         learning_data: Iterator,
+
+
 ) -> ExperimentData:
 
     # Start with empty ExperimentData
     data = None
 
-    for schedule in optimizer_schedules:
+    for step in optimization_schedule:
 
         evaluate_model = EvaluateModel(
             loss_fn=loss_fn, iter_data=learning_data)
-        update_step = OPT_MAPPING[schedule.optimizer](
-            **schedule.hyperparameters, seed=seed,
+        update_step = OPT_MAPPING[step.optimizer](
+            **step.hyperparameters, seed=seed,
             bounded=bounded)
 
         data = run_optimization(
             data_generator=evaluate_model,
             update_step=update_step,
             sampler=sampler,
-            n_evals=schedule.n_evals,
+            n_evals=step.n_evals,
             popsize=update_step.popsize,
-            x0_strategy=schedule.x0_strategy,
+            x0_strategy=step.x0_strategy,
             data=data,
             learning_data=learning_data,
 

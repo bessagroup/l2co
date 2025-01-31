@@ -9,3 +9,4 @@ opfunu @ git+https://github.com/mpvanderschelling/opfunu@jaxnumpy
 tqdm
 optax
 equinox
+cloudpickle

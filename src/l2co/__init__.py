@@ -19,7 +19,7 @@ Author: Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)
 
 from . import plotting
 from ._src._logging import logger
-from ._src.data_loader import DataLoader, create_entire_dataset
+from ._src.data_loader import DataLoader
 from ._src.preprocessing import preprocessing_factory
 from ._src.stage0_model import Stage0Model
 
@@ -45,5 +45,5 @@ __all__ = [
     "Stage0Model",
     # "Stage1Model",
     # "Trainer",
-    "create_entire_dataset"
+    # "create_entire_dataset"
 ]

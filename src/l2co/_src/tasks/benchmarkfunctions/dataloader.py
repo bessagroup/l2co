@@ -1,4 +1,4 @@
-from typing import Iterator
+from typing import Dict, Iterator, Optional
 
 import jax.numpy as jnp
 import jax.random as jrd
@@ -6,7 +6,11 @@ import jax.random as jrd
 # =============================================================================
 
 
-def batch_iter(dataset, batch_size: int, *, key: jrd.PRNGKey) -> Iterator:
+def batch_iter(dataset: Optional[Dict[str, jnp.ndarray]], batch_size: int, *,
+               key: jrd.PRNGKey) -> Iterator:
+    if dataset is None:
+        return NoneIterator()
+
     dataset_size = next(iter(dataset.values())).shape[0]
 
     def shuffle_data(dataset, key):
