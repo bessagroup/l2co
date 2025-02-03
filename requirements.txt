@@ -8,5 +8,6 @@ dask
 opfunu @ git+https://github.com/mpvanderschelling/opfunu@jaxnumpy
 tqdm
 optax
+evosax
 equinox
 cloudpickle
