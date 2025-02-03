@@ -23,4 +23,4 @@ optimization:
 seed: 6528
 mode: cluster
 
-log_level: 10
+log_level: 20
