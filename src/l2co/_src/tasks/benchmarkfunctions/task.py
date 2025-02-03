@@ -2,27 +2,36 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, TypedDict
 
 import cloudpickle
 import equinox as eqx
 import jax.numpy as jnp
-import jax.random as jr
+import jax.random as jrd
 import numpy as np
+import pandas as pd
+from f3dasm import Block, ExperimentData
 from jaxtyping import PyTree
 from opfunu import create_benchmark_loss_function
 
 from ... import FUNCTION_MAPPING as MY_FUNCTION_MAPPING
-from .dataloader import batch_iter
+from .dataloader import batch_iter, spiral_dataset
+from .loss_fn import mse_loss_fn
+from .models import rnn
 
 # =============================================================================
 
 
 def save_dataset(dataset: Dict[str, jnp.ndarray], path: str | Path):
+    _path = Path(path)
+    _path.parent.mkdir(parents=True, exist_ok=True)
+
     jnp.savez(path, **dataset)
 
 
-def load_dataset(path: str | Path) -> Dict[str, jnp.ndarray]:
+def load_dataset(path: Optional[str | Path]) -> Dict[str, jnp.ndarray]:
+    if path is None:
+        return None
     loaded_data = jnp.load(Path(path).with_suffix('.npz'))
     return {k: jnp.array(v) for k, v in loaded_data.items()}
 
@@ -61,44 +70,65 @@ def save_jnparray(model, path: str | Path) -> None:
 # =============================================================================
 
 
+class DatasetDict(TypedDict):
+    dataset_path: str
+    batch_size: int
+    seed: int
+
+
+TagDict = Dict[str, Any]
+
+# =============================================================================
+
+
 class Task:
     def __init__(
         self,
         model: PyTree,
         loss_fn: Callable,
-        dataset_path: Optional[str] = None,
-        batch_size: Optional[int] = None,
-        seed: Optional[int] = None,
+        dataset: Optional[DatasetDict] = None,
         tag: Optional[Dict[str, Any]] = None,
     ):
         if tag is None:
             tag = {}
 
-        if seed is None:
-            seed = 0
-
-        if dataset_path is not None:
-            dataset = load_dataset(dataset_path)
+        if dataset is None:
+            self.dataset = {'dataset_path': None,
+                            'batch_size': None, 'seed': 0}
         else:
-            dataset = None
 
-        self.dataset_path = dataset_path
+            self.dataset = dataset.copy()
+            # resolve relative path
+            self.dataset['dataset_path'] = str(Path(
+                self.dataset['dataset_path']).resolve())
 
         self.model = model
-
-        self.seed = seed
-        self.batch_size = batch_size
         self.loss_fn = loss_fn
         self.tag = tag
 
         self.learning_data = batch_iter(
-            dataset=dataset,
-            batch_size=self.batch_size,
-            key=jr.key(self.seed))
+            dataset=load_dataset(self.dataset['dataset_path']),
+            batch_size=self.dataset['batch_size'],
+            key=jrd.key(self.dataset['seed']))
 
     @property
     def name(self) -> str:
         return self.tag.get('task_name', '')
+
+    @property
+    def tag_hashable(self) -> tuple[tuple[str, Any]]:
+        def make_hashable(value):
+            """Recursively convert lists to tuples and dicts to frozensets."""
+            if isinstance(value, list):
+                return tuple(make_hashable(v) for v in value)
+            elif isinstance(value, dict):
+                return frozenset((k, make_hashable(v)) for k, v in value.items())
+            return value  # Leave other types unchanged
+
+        tag_hashable = {k: make_hashable(v) for k, v in self.tag.items()}
+
+        # Use frozenset for order independence
+        return frozenset(tag_hashable.items())
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Task:
@@ -113,12 +143,9 @@ class Task:
         loss_fn = cloudpickle.loads(
             bytes.fromhex(data['loss_fn']))
 
-        dataset_path = data.get('dataset_path', None)
-        batch_size = data.get('batch_size', None)
-        seed = data.get('seed', None)
+        dataset = data.get('dataset', None)
         tag = data.get('tag', None)
-        return cls(model=model, loss_fn=loss_fn, dataset_path=dataset_path,
-                   batch_size=batch_size, seed=seed, tag=tag)
+        return cls(model=model, loss_fn=loss_fn, dataset=dataset, tag=tag)
 
     def save_to_json(self, filepath: Path):
         with open(filepath.with_suffix('.json'), 'w') as f:
@@ -130,23 +157,31 @@ class Task:
         return Path(path).with_suffix('.json')
 
     def to_dict(self, path: Path) -> str:
+        path = path.resolve()  # Ensure absolute path
+
         # if model is eqx.Module, save as eqx.Module
         if isinstance(self.model, eqx.Module):
             save_model(self.model, path)
-            model_path = {'model': str(path.with_suffix('.eqx')),
-                          'shape': str(path.with_suffix('.pkl'))}
+            model_path = {'model': str(path.with_suffix('.eqx').resolve()),
+                          'shape': str(path.with_suffix('.pkl').resolve())}
         else:
             save_jnparray(self.model, path)
-            model_path = {'array': str(path.with_suffix('.npy'))}
+            model_path = {'array': str(path.with_suffix('.npy').resolve())}
 
         loss_fn = cloudpickle.dumps(self.loss_fn).hex()
+
+        if self.dataset['dataset_path'] is None:
+            dataset = None
+
+        else:
+            dataset = self.dataset.copy()
+            dataset['dataset_path'] = str(
+                Path(self.dataset['dataset_path']))
 
         return {
             'model_path': model_path,
             'loss_fn': loss_fn,
-            'dataset_path': self.dataset_path,
-            'batch_size': self.batch_size,
-            'seed': self.seed,
+            'dataset': dataset,
             'tag': self.tag
         }
 
@@ -158,16 +193,17 @@ class Task:
 
     def __repr__(self):
         return (
-            f"Task(tag={self.tag}, model={self.model}, loss_fn={self.loss_fn})"
+            f"Task(tag={self.tag}"
         )
 
     def __str__(self):
         return (
             f"Task:\n"
             f"  Tag: {self.tag}\n"
-            f"  Model: {self.model}\n"
-            f"  Loss Function: {self.loss_fn}"
         )
+
+    def __hash__(self):
+        return hash(self.tag_hashable)
 
     def __eq__(self, other):
         if not isinstance(other, Task):
@@ -175,37 +211,127 @@ class Task:
         return self.tag == other.tag
 
 
-def create_benchmark_tasks(
-    dims: List[int], fns: List[str],
-        noises: List[float], seed: int,
-        noise_distribution: List[float],
-        n_samples: int) -> List[Task]:
+# =============================================================================
 
-    dim_filters = {d: list(filter(
-        lambda f: MY_FUNCTION_MAPPING[f.lower()].is_dim_compatible(d)
-        and MY_FUNCTION_MAPPING[f.lower()].differentiable, list(fns)))
-        for d in dims}
 
-    rng = np.random.default_rng(seed=seed)
+class BenchmarkFuncSampler(Block):
+    def __init__(self, noise_distribution: List[float]):
+        self.noise_distribution = noise_distribution
 
-    dims_list = rng.choice(
-        dims,
-        size=n_samples)
-    function_names_list = [rng.choice(dim_filters[d]) for d in dims_list]
-    noise_list = rng.choice(noises,
-                            size=n_samples,
-                            p=noise_distribution)
-    seed_list = rng.integers(0, 2**30, size=n_samples)
+    def call(self, data: ExperimentData, n_samples: int,
+             seed: int) -> ExperimentData:
+        dims = data.domain.input_space['dimensionality'].categories
+        fns = data.domain.input_space['fn_name'].categories
+        noises = data.domain.input_space['noise'].categories
 
-    benchmark_list = [create_benchmark_loss_function(
+        dim_filters = {d: list(filter(
+            lambda f: MY_FUNCTION_MAPPING[f.lower()].is_dim_compatible(d)
+            and MY_FUNCTION_MAPPING[f.lower()].differentiable, list(fns)))
+            for d in dims}
+
+        rng = np.random.default_rng(seed=seed)
+
+        dims_list = rng.choice(
+            dims,
+            size=n_samples)
+        function_names_list = [rng.choice(dim_filters[d]) for d in dims_list]
+        noise_list = rng.choice(noises,
+                                size=n_samples,
+                                p=self.noise_distribution)
+        seed_list = rng.integers(0, 2**30, size=n_samples)
+
+        df = pd.DataFrame({
+            "dimensionality": dims_list,
+            "fn_name": function_names_list,
+            "noise": noise_list,
+            "seed": seed_list
+        })
+
+        return ExperimentData(domain=data.domain, input_data=df)
+
+
+# def create_benchmark_tasks(
+#     dims: List[int], fns: List[str],
+#         noises: List[float], seed: int,
+#         noise_distribution: List[float],
+#         n_samples: int) -> List[Task]:
+
+#     dim_filters = {d: list(filter(
+#         lambda f: MY_FUNCTION_MAPPING[f.lower()].is_dim_compatible(d)
+#         and MY_FUNCTION_MAPPING[f.lower()].differentiable, list(fns)))
+#         for d in dims}
+
+#     rng = np.random.default_rng(seed=seed)
+
+#     dims_list = rng.choice(
+#         dims,
+#         size=n_samples)
+#     function_names_list = [rng.choice(dim_filters[d]) for d in dims_list]
+#     noise_list = rng.choice(noises,
+#                             size=n_samples,
+#                             p=noise_distribution)
+#     seed_list = rng.integers(0, 2**30, size=n_samples)
+
+#     benchmark_list = [create_benchmark_loss_function(
+#         fn_name=str(fn_name),
+#         seed=int(s),
+#         scale_bounds=jnp.tile(
+#             jnp.array([0., 1.]), (d, 1)),
+#         dimensionality=int(d),
+#         noise=float(n),
+#         offset=True) for fn_name, d, n, s in zip(
+#             function_names_list, dims_list, noise_list, seed_list)]
+
+#     df = pd.DataFrame({
+#         "dims": dims_list,
+#         "function_name": function_names_list,
+#         "noise": noise_list,
+#         "seed": seed_list
+#     })
+
+#     # return [Task(model=model, loss_fn=loss_fn, tag=tag)
+#     #         for model, loss_fn, tag in benchmark_list]
+
+
+def create_benchmark_task(fn_name: str, seed: int, noise: float,
+                          dimensionality: int) -> Task:
+    model, loss_fn, tag = create_benchmark_loss_function(
         fn_name=str(fn_name),
-        seed=int(s),
+        seed=int(seed),
         scale_bounds=jnp.tile(
-            jnp.array([0., 1.]), (d, 1)),
-        dimensionality=int(d),
-        noise=float(n),
-        offset=True) for fn_name, d, n, s in zip(
-            function_names_list, dims_list, noise_list, seed_list)]
+            jnp.array([0., 1.]), (dimensionality, 1)),
+        dimensionality=int(dimensionality),
+        noise=float(noise),
+        offset=True)
 
-    return [Task(model=model, loss_fn=loss_fn, tag=tag)
-            for model, loss_fn, tag in benchmark_list]
+    return Task(model=model, loss_fn=loss_fn, tag=tag)
+
+
+def create_spiral_task(hidden_size: int, dataset_size: int,
+                       dataset_path: str, seed: int, batch_size: int) -> Task:
+    key = jrd.key(int(seed))
+
+    model_key, dataset_key, batch_key = jrd.split(key, 3)
+
+    tag = {'task_name': 'spiral'}
+
+    # model
+    model, model_tags = rnn(in_size=2, out_size=1, hidden_size=hidden_size,
+                            key=model_key)
+
+    tag.update(model_tags)
+
+    if not Path(dataset_path).with_suffix('.npz').exists():
+        dataset = spiral_dataset(dataset_size=dataset_size, key=key)
+        save_dataset(dataset, dataset_path)
+
+    # loss function
+    loss_fn = mse_loss_fn
+
+    tag.update({'loss_fn': 'mse'})
+
+    return Task(model=model, loss_fn=loss_fn,
+                dataset={'dataset_path': dataset_path,
+                         'batch_size': batch_size,
+                         'seed': seed},
+                tag=tag)

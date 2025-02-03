@@ -64,7 +64,7 @@ def create_entire_dataset(
 
     df[loss_column_name] = df_output[loss_column_name]
     # drop the seed column
-    df = df.drop(columns=[seed_column_name])
+    # df = df.drop(columns=[seed_column_name])
 
     # preceed every entry of df_output with experimentdata.project_dir
     df = df.map(
@@ -76,18 +76,20 @@ def create_entire_dataset(
     labels = []
     for task_path in df[task_column_name]:
         task = Task.load(task_path)
-        labels.append(task.tag)
+        labels.append(task.tag_hashable)
         del task
 
-    df_labels = pd.DataFrame(labels)
+    df_labels = pd.DataFrame(
+        labels, columns=[f"task_{i}" for i in range(len(labels[0]))])
 
     schedules = []
     for schedule_path in df[optimizer_column_name]:
         schedule = OptimizationSchedule.load(schedule_path)
-        schedules.append(schedule.tag)
+        schedules.append(schedule.tag_hashable)
         del schedule
 
-    df_schedules = pd.DataFrame(schedules)
+    df_schedules = pd.DataFrame(
+        schedules, columns=[f"schedule{i}" for i in range(len(schedules[0]))])
 
     df_loss = df[loss_column_name].to_frame()
 
@@ -110,7 +112,9 @@ def create_entire_dataset(
 
 
 def create_task_labels_df(pivot_table: pd.DataFrame) -> pd.DataFrame:
-    return pivot_table.index.to_frame(index=False)
+    df_labels = pivot_table.index.to_frame(index=False)
+    return pd.DataFrame([{v[0]: v[1] for v in row} for i,
+                         row in df_labels.iterrows()])
 
 
 def create_optimization_data(pivot_table: pd.DataFrame) -> xr.Dataset:
@@ -118,7 +122,8 @@ def create_optimization_data(pivot_table: pd.DataFrame) -> xr.Dataset:
     df = pivot_table.copy(deep=True)
 
     df.index = range(len(df))
-    df.columns = df.columns.droplevel(0)
+    df.columns = pd.DataFrame([{v[0]: v[1] for v in col}
+                              for col in df.columns.droplevel(0)])['opt_name']
 
     # Open first file to create placeholder
     placeholder_path = Path.cwd() / 'placeholder.nc'

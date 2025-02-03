@@ -11,6 +11,7 @@ import jax.tree as jt
 import numpy as onp
 import xarray as xr
 from f3dasm import Block, ExperimentData
+from f3dasm.datageneration import DataGenerator
 from f3dasm.design import Domain
 from jaxtyping import PyTree
 from SALib.sample import latin
@@ -309,7 +310,7 @@ def create_x0(data: ExperimentData, mode: str, n_samples: int,
               sampler: Block) -> ExperimentData:
 
     if mode == 'new':
-        data += sampler.call(data=data, num_samples=n_samples)
+        data = sampler.call(data=data, num_samples=n_samples)
 
     elif mode == 'last':
         data = data[-n_samples:]
@@ -320,3 +321,43 @@ def create_x0(data: ExperimentData, mode: str, n_samples: int,
             reverse=True)[-n_samples:].reset_index()
 
     return data
+
+
+class RunOptimization(DataGenerator):
+    def __init__(self,
+                 n_realizations: int,
+                 seed: int,
+                 bounded: Optional[Tuple[float, float]] = None,
+                 include_input: bool = False,
+                 clear_jax_cache: bool = True,
+                 ):
+        self.bounded = bounded
+        self.n_realizations = n_realizations
+        self.include_input = include_input
+        self.clear_jax_cache = clear_jax_cache
+        self.rng = onp.random.default_rng(seed=seed)
+
+    def execute(self):
+        es = self.experiment_sample.input_data
+        task: Task = es['task']
+        schedule: OptimizationSchedule = es['optimizer schedule']
+        seed: int = self.rng.integers(0, 2**30)
+
+        data_xarr = run_optimization_schedule_multiple_realizations(
+            task=task,
+            optimization_schedule=schedule,
+            seed=seed,
+            n_realizations=self.n_realizations,
+            include_input=self.include_input,
+            bounded=self.bounded,
+        )
+
+        self.experiment_sample.store(
+            name='loss history',
+            object=data_xarr, to_disk=True)
+
+        logger.info(
+            f"Finished optimization task {task.name} with {schedule.name} ")
+
+        if self.clear_jax_cache:
+            jax.clear_caches()
