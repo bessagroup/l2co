@@ -29,6 +29,7 @@ def pre_process(config: DictConfig):
         data_generator=task_fn, output_names=['task'],
         **task_kwargs)
 
+    # Schedule
     domain_schedules = Domain()
     steps = [OptimizationStep.from_yaml(c) for c in config.optimizers]
     domain_schedules.add_category(name='optimizer_1', categories=steps)
