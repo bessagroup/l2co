@@ -1,7 +1,9 @@
 from pathlib import Path
+from time import sleep
 
 import hydra
 from f3dasm import ExperimentData
+from f3dasm import logger as f3dasm_logger
 from f3dasm.design import Domain
 from hydra.utils import instantiate
 from omegaconf import DictConfig
@@ -84,6 +86,32 @@ def pre_process(config: DictConfig):
 
 
 def process(config: DictConfig):
+    logger.info("== PROCESS ==")
+
+    project_dir = Path().cwd()
+
+    # Retrieve the ExperimentData object
+    max_tries = 500
+    tries = 0
+
+    while tries < max_tries:
+        try:
+            logger.info(f"Open ExperimentData at {project_dir}")
+            experiment_data = ExperimentData.from_file(project_dir)
+            break  # Break out of the loop if successful
+        except FileNotFoundError:
+            tries += 1
+            logger.info(f"FileNotFoundError ({project_dir}), sleeping!")
+            sleep(10)
+
+    if tries == max_tries:
+        logger.error(
+            f"Could not open ExperimentData after {max_tries} attempts.")
+        raise FileNotFoundError(f"Could not open ExperimentData after "
+                                f"{max_tries} attempts.")
+
+    logger.debug("Loaded experiment_data")
+
     run_opt = RunOptimization(
         n_realizations=config.optimization.n_realizations,
         seed=config.seed,
@@ -93,17 +121,30 @@ def process(config: DictConfig):
         clear_jax_cache=True,
     )
 
-    experiment_data = ExperimentData.from_file(Path().cwd())
     experiment_data.evaluate(data_generator=run_opt, mode='cluster')
+
+    if config.mode == 'sequential':
+        # Store the ExperimentData to a csv file
+        experiment_data.store()
 
 
 @hydra.main(config_path="./conf", config_name="config")
 def main(config):
 
     logger.setLevel(config.log_level)
+    f3dasm_logger.setLevel(config.log_level)
 
-    pre_process(config)
-    process(config)
+    # Execute the initial_script for the first job
+    if config.hpc.jobid == 0:
+        pre_process(config)
+
+    elif config.hpc.jobid == -1:  # Sequential
+        pre_process(config)
+        process(config)
+
+    else:
+        sleep(0.1*config.hpc.jobid)  # Just to asynchronize the jobs
+        process(config)
 
 
 if __name__ == "__main__":
