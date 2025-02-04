@@ -2,6 +2,7 @@ from pathlib import Path
 from time import sleep
 
 import hydra
+import numpy as np
 from f3dasm import ExperimentData
 from f3dasm import logger as f3dasm_logger
 from f3dasm.design import Domain
@@ -64,7 +65,16 @@ def pre_process(config: DictConfig):
     experiment_data_combined = ExperimentData.from_sampling(
         sampler='grid', domain=domain_grid_sampling)
 
-    # Save everything
+    # if applicable, select a subset of all combinations
+    if config.fraction_combinations is not None:
+        rng = np.random.default_rng(42)
+        indices = rng.integers(
+            len(experiment_data_combined),
+            size=int(
+                len(experiment_data_combined) * config.fraction_combinations))
+        experiment_data_combined = experiment_data_combined[indices]
+
+        # Save everything
     domain_combined = Domain()
     domain_combined.add_parameter(
         name='task', to_disk=True,

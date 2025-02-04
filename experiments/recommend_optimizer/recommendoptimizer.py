@@ -45,7 +45,7 @@ class RecommendOptimizer(DataGenerator):
 
         t = perf_counter()
 
-        d_train = DataLoader.from_saved_files(
+        d_train = DataLoader.from_file(
             path=training_project_dir, config=config
         )
 
@@ -65,7 +65,7 @@ class RecommendOptimizer(DataGenerator):
                 f"{config.seed} (took {perf_counter() - t} seconds")
             )
         else:
-            d_test = DataLoader.from_saved_files(
+            d_test = DataLoader.from_file(
                 path=testing_project_dir, config=config
             )
 

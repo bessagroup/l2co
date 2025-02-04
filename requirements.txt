@@ -11,3 +11,4 @@ optax
 evosax
 equinox
 cloudpickle
+bottleneck

@@ -20,7 +20,12 @@ optimization:
   lower_bound: 0.0
   upper_bound: 1.0
 
+fraction_combinations: 0.05
+
 seed: 6528
 mode: cluster
 
 log_level: 20
+
+hpc:
+  jobid: -1

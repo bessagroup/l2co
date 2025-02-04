@@ -15,16 +15,17 @@ from l2co._src.tasks.benchmarkfunctions.task import Task
 
 
 def main(path: Path):
-    xarr, experimentdata = create_entire_dataset(
-        ExperimentData.from_file(path))
-
     experimentdata = ExperimentData.from_file(path)
-    labels, opt_data = create_entire_dataset(experiment_data=experimentdata)
+    labels, opt_data, placeholder_path = create_entire_dataset(
+        experiment_data=experimentdata)
 
     # Store the files
     opt_data.to_netcdf(path / 'entire_dataset.nc')
     labels.to_csv(path / 'labels.csv')
     experimentdata.store()
+
+    # Remove placeholder
+    placeholder_path.unlink()
 
 
 def create_entire_dataset(
@@ -32,7 +33,8 @@ def create_entire_dataset(
     loss_column_name: str = 'loss history',
         seed_column_name: str = 'seed',
         optimizer_column_name: str = 'optimizer schedule',
-        task_column_name: str = 'task') -> Tuple[pd.DataFrame, xr.Dataset]:
+        task_column_name: str = 'task'
+) -> Tuple[pd.DataFrame, xr.Dataset, Path]:
     """
     Create an entire dataset from a given experiment data object.
 
@@ -106,9 +108,9 @@ def create_entire_dataset(
     # ============= Create the optimization data =============
 
     labels = create_task_labels_df(pivot_table)
-    opt_data = create_optimization_data(pivot_table)
+    opt_data, placeholder_path = create_optimization_data(pivot_table)
 
-    return labels, opt_data
+    return labels, opt_data, placeholder_path
 
 
 def create_task_labels_df(pivot_table: pd.DataFrame) -> pd.DataFrame:
@@ -117,7 +119,8 @@ def create_task_labels_df(pivot_table: pd.DataFrame) -> pd.DataFrame:
                          row in df_labels.iterrows()])
 
 
-def create_optimization_data(pivot_table: pd.DataFrame) -> xr.Dataset:
+def create_optimization_data(
+        pivot_table: pd.DataFrame) -> Tuple[xr.Dataset, Path]:
 
     df = pivot_table.copy(deep=True)
 
@@ -127,7 +130,10 @@ def create_optimization_data(pivot_table: pd.DataFrame) -> xr.Dataset:
 
     # Open first file to create placeholder
     placeholder_path = Path.cwd() / 'placeholder.nc'
-    placeholder = xr.open_dataset(df.iloc[0, 0])
+    placeholder = xr.open_dataset(
+        df.dropna(axis=0, how='all').iloc[0].dropna().iloc[0])
+
+    placeholder = xr.full_like(placeholder, np.nan)
 
     # Store placeholder to disk
     placeholder.to_netcdf(placeholder_path)
@@ -151,9 +157,6 @@ def create_optimization_data(pivot_table: pd.DataFrame) -> xr.Dataset:
         coords='minimal',
     )
 
-    # Remove the placeholder from disk
-    placeholder_path.unlink()
-
     # Open the whole thing:
     l2co_logger.info("Opening the whole thing")
 
@@ -165,10 +168,10 @@ def create_optimization_data(pivot_table: pd.DataFrame) -> xr.Dataset:
         {'problem': np.arange(xarr_full.problem.size)})
 
     if 'input_dim' in xarr_full.coords:
-        return xarr_full.drop('input_dim')
+        return xarr_full.drop('input_dim'), placeholder_path
 
     else:
-        return xarr_full
+        return xarr_full, placeholder_path
 
 
 if __name__ == '__main__':
