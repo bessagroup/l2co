@@ -1,7 +1,8 @@
 import argparse
+import json
 from functools import partial
 from pathlib import Path
-from typing import Tuple
+from typing import Dict, Tuple
 
 import numpy as np
 import pandas as pd
@@ -9,20 +10,23 @@ import xarray as xr
 from f3dasm import ExperimentData
 
 from l2co import logger as l2co_logger
-from l2co._src.tasks.benchmarkfunctions.optimizerschedule import \
-    OptimizationSchedule
+from l2co._src.tasks.benchmarkfunctions.optimizerschedule import (
+    OptimizationSchedule, OptimizationStep)
 from l2co._src.tasks.benchmarkfunctions.task import Task
 
 
 def main(path: Path):
     experimentdata = ExperimentData.from_file(path)
-    labels, opt_data, placeholder_path = create_entire_dataset(
+    labels, opt_data, placeholder_path, step_dict = create_entire_dataset(
         experiment_data=experimentdata)
 
     # Store the files
     opt_data.to_netcdf(path / 'entire_dataset.nc')
     labels.to_csv(path / 'labels.csv')
     experimentdata.store()
+
+    with open(path / 'steps.json', 'w') as f:
+        json.dump(step_dict, f, indent=4)
 
     # Remove placeholder
     placeholder_path.unlink()
@@ -34,7 +38,7 @@ def create_entire_dataset(
         seed_column_name: str = 'seed',
         optimizer_column_name: str = 'optimizer schedule',
         task_column_name: str = 'task'
-) -> Tuple[pd.DataFrame, xr.Dataset, Path]:
+) -> Tuple[pd.DataFrame, xr.Dataset, Path, Dict[str, OptimizationStep]]:
     """
     Create an entire dataset from a given experiment data object.
 
@@ -85,10 +89,17 @@ def create_entire_dataset(
         labels, columns=[f"task_{i}" for i in range(len(labels[0]))])
 
     schedules = []
+    step_list = []
     for schedule_path in df[optimizer_column_name]:
         schedule = OptimizationSchedule.load(schedule_path)
+        step_list.append(schedule)
         schedules.append(schedule.tag_hashable)
         del schedule
+
+    # schedules_list = list(
+    #     filter(lambda obj: '+' not in obj.name, set(step_list)))
+    # schedule_list = list(step(step_list))
+    step_dict = {schedule.name: schedule.to_dict() for schedule in step_list}
 
     df_schedules = pd.DataFrame(
         schedules, columns=[f"schedule{i}" for i in range(len(schedules[0]))])
@@ -110,7 +121,7 @@ def create_entire_dataset(
     labels = create_task_labels_df(pivot_table)
     opt_data, placeholder_path = create_optimization_data(pivot_table)
 
-    return labels, opt_data, placeholder_path
+    return labels, opt_data, placeholder_path, step_dict
 
 
 def create_task_labels_df(pivot_table: pd.DataFrame) -> pd.DataFrame:

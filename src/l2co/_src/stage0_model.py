@@ -31,7 +31,7 @@ from sklearn.multioutput import MultiOutputClassifier
 from sklearn.pipeline import make_pipeline
 
 # Local
-from .data_loader import FeaturesDataSet
+# from .data_loader import FeaturesDataSet
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -126,7 +126,7 @@ class Stage0Model():
 
         return name
 
-    def train(self, feature_data: FeaturesDataSet):
+    def train(self, feature_data: object):
         """
         Method for fitting the model
 
@@ -150,7 +150,7 @@ class Stage0Model():
 
         self.clf.fit(x, y)
 
-    def predict(self, feature_data: FeaturesDataSet) -> xr.DataArray:
+    def predict(self, feature_data: object) -> xr.DataArray:
         if self.type == 'classifier':
             y = feature_data.Y.to_pandas()
 
@@ -178,7 +178,7 @@ class Stage0Model():
                 {'itemID': feature_data.X_features.itemID}
             ).rename('stage0_predictions')
 
-    def predict_raw(self, feature_dataset: FeaturesDataSet) -> xr.DataArray:
+    def predict_raw(self, feature_dataset: object) -> xr.DataArray:
         y = feature_dataset.Y_features.to_pandas()
         x = feature_dataset.X_features.to_pandas()
 

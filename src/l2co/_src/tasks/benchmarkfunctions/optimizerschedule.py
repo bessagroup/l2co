@@ -99,16 +99,21 @@ class OptimizationSchedule:
                     'steps': [step.tag for step in steps]}
 
         for i, (step, single_n_evals) in enumerate(zip(self.steps, n_evals)):
-            if i == 0:
-                step.x0_strategy = 'new'
-            else:
-                step.x0_strategy = get_handshake(
-                    self.steps[i-1].optimizer, step.optimizer)
+            if step.x0_strategy is None:
+                if i == 0:
+                    step.x0_strategy = 'new'
+                else:
+                    step.x0_strategy = get_handshake(
+                        self.steps[i-1].optimizer, step.optimizer)
             step.n_evals = single_n_evals
 
     @property
     def name(self) -> str:
         return self.tag['opt_name']
+
+    @name.setter
+    def name(self, new_name: str):
+        self.tag['opt_name'] = new_name  # Update the tag with the new name
 
     @property
     def tag_hashable(self) -> tuple[tuple[str, Any]]:
@@ -117,7 +122,8 @@ class OptimizationSchedule:
             if isinstance(value, list):
                 return tuple(make_hashable(v) for v in value)
             elif isinstance(value, dict):
-                return frozenset((k, make_hashable(v)) for k, v in value.items())
+                return frozenset(
+                    (k, make_hashable(v)) for k, v in value.items())
             return value  # Leave other types unchanged
 
         tag_hashable = {k: make_hashable(v) for k, v in self.tag.items()}
@@ -145,19 +151,10 @@ class OptimizationSchedule:
         return (self.tag == other.tag and self.steps == other.steps)
 
     def __hash__(self):
-        # def make_hashable(value):
-        #     """Recursively convert lists to tuples and dicts to frozensets."""
-        #     if isinstance(value, list):
-        #         return tuple(make_hashable(v) for v in value)
-        #     elif isinstance(value, dict):
-        #         return frozenset((k, make_hashable(v)) for k, v in value.items())
-        #     return value  # Leave other types unchanged
-
-        # tag_hashable = {k: make_hashable(v) for k, v in self.tag.items()}
-
-        # # Use frozenset for order independence
-        # return hash(frozenset(tag_hashable.items()))
         return hash(self.tag_hashable)
+
+    def __len__(self):
+        return len(self.steps)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -186,6 +183,9 @@ class OptimizationSchedule:
         with open(filepath, 'r') as f:
             data = json.load(f)
         return cls.from_dict(data)
+
+    def copy(self) -> OptimizationSchedule:
+        return deepcopy(self)
 
 
 def get_handshake(optimizer_1: str, optimizer_2: str) -> str:
