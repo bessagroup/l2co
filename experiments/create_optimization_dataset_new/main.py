@@ -87,6 +87,11 @@ def pre_process(config: DictConfig):
         store_function=OptimizationSchedule.save,
         load_function=OptimizationSchedule.load)
 
+    domain_combined.add_output(
+        name='loss history',
+        to_disk=True,
+    )
+
     experiment_data_combined.domain = domain_combined
 
     for id, es in experiment_data_combined:
