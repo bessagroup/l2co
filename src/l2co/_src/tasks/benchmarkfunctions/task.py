@@ -122,7 +122,8 @@ class Task:
             if isinstance(value, list):
                 return tuple(make_hashable(v) for v in value)
             elif isinstance(value, dict):
-                return frozenset((k, make_hashable(v)) for k, v in value.items())
+                return frozenset((k, make_hashable(v))
+                                 for k, v in value.items())
             return value  # Leave other types unchanged
 
         tag_hashable = {k: make_hashable(v) for k, v in self.tag.items()}

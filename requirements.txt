@@ -12,3 +12,4 @@ evosax
 equinox
 cloudpickle
 bottleneck
+joblib

@@ -10,7 +10,7 @@ import jax.random as jrd
 import jax.tree as jt
 import numpy as onp
 import xarray as xr
-from f3dasm import Block, ExperimentData
+from f3dasm import Block, ExperimentData, ExperimentSample
 from f3dasm.datageneration import DataGenerator
 from f3dasm.design import Domain
 from jaxtyping import PyTree
@@ -337,8 +337,8 @@ class RunOptimization(DataGenerator):
         self.clear_jax_cache = clear_jax_cache
         self.rng = onp.random.default_rng(seed=seed)
 
-    def execute(self):
-        es = self.experiment_sample.input_data
+    def execute(self, experiment_sample: ExperimentSample) -> ExperimentSample:
+        es = experiment_sample.input_data
         task: Task = es['task']
         schedule: OptimizationSchedule = es['optimizer schedule']
         seed: int = self.rng.integers(0, 2**30)
@@ -352,7 +352,7 @@ class RunOptimization(DataGenerator):
             bounded=self.bounded,
         )
 
-        self.experiment_sample.store(
+        experiment_sample.store(
             name='loss history',
             object=data_xarr, to_disk=True)
 
@@ -361,3 +361,5 @@ class RunOptimization(DataGenerator):
 
         if self.clear_jax_cache:
             jax.clear_caches()
+
+        return experiment_sample

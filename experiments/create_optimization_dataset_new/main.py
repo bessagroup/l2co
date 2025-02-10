@@ -92,10 +92,13 @@ def pre_process(config: DictConfig):
         to_disk=True,
     )
 
+    # TODO: here the individual es domains are not changed!
     experiment_data_combined.domain = domain_combined
 
     for id, es in experiment_data_combined:
-        experiment_data_combined.store_experimentsample(es, id)
+        es.store_experimentsample_references(idx=id)
+        # experiment_data_combined.store_experimentsample(
+        #     experiment_sample=es, idx=id)
 
     experiment_data_combined.store()
 
@@ -136,7 +139,18 @@ def process(config: DictConfig):
         clear_jax_cache=True,
     )
 
-    experiment_data.evaluate(data_generator=run_opt, mode='cluster')
+    experiment_data = ExperimentData.from_file(project_dir=project_dir,
+                                               wait_for_creation=True,
+                                               max_tries=500)
+
+    if config.mode == 'sequential':
+        experiment_data = run_opt.call(data=experiment_data, mode='cluster')
+
+    elif config.mode == 'cluster':
+        _ = run_opt.call(data=experiment_data, mode='cluster',
+                         wait_for_creation=True, max_tries=500)
+
+    # experiment_data.evaluate(data_generator=run_opt, mode='cluster')
 
     if config.mode == 'sequential':
         # Store the ExperimentData to a csv file

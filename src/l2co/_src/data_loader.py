@@ -213,15 +213,15 @@ class DataLoader:
 #                                                                    Properties
 # =============================================================================
 
-    @ property
+    @property
     def n_iterations(self) -> int:
         return self.data.iterations.size
 
-    @ property
+    @property
     def n_realization(self) -> int:
         return np.unique(self.data.realization).size
 
-    @ property
+    @property
     def features(self) -> xr.DataArray:
         """
         Property method to return the features coordinate
@@ -233,7 +233,7 @@ class DataLoader:
         """
         return self.task_labels.features
 
-    @ property
+    @property
     def problems(self) -> xr.DataArray:
         """
         Property method to return the problem coordinate
@@ -245,7 +245,7 @@ class DataLoader:
         """
         return self.task_labels.problem
 
-    @ property
+    @property
     def optimizers(self) -> xr.DataArray:
         """
         Property method to return the optimizers coordinate
@@ -257,7 +257,7 @@ class DataLoader:
         """
         return self.data.optimizer
 
-    @ property
+    @property
     def performance(self) -> xr.DataArray:
         t_start = perf_counter()
         print("Triggered performance")
@@ -379,6 +379,7 @@ class DataLoader:
 #                                                          Selecting optimizers
 # =============================================================================
 
+
     def select_single_optimizers(
             self, squash: bool = False) -> DataLoader:
         """
@@ -484,7 +485,6 @@ class DataLoader:
 #                                                           Performance metrics
 # =============================================================================
 
-
     def performance_profile(
             self, strategies: Optional[Iterable[xr.DataArray]] = None,
             include_best: bool = False
@@ -495,7 +495,10 @@ class DataLoader:
 
         if include_best:
             best_performance = self.performance.isel(
-                iterations=-1, drop=True).idxmin('optimizer').sortby('problem')
+                iterations=-1, output_dim=0, drop=True).idxmin(
+                    'optimizer').sortby(
+                    'problem').fillna(str(self.optimizers[0].values))
+
             strategies.append(best_performance)
 
         _strategies = [*strategies]
@@ -531,7 +534,9 @@ class DataLoader:
 
         if include_best:
             best_performance = self.performance.isel(
-                iterations=-1, drop=True).idxmin('optimizer').sortby('problem')
+                iterations=-1, drop=True).idxmin(
+                    'optimizer').sortby('problem').fillna(
+                        str(self.optimizers[0].values))
             rtd['best'] = self.performance.sortby(
                 'problem').sel(optimizer=best_performance)
 

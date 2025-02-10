@@ -19,10 +19,9 @@ from typing import Iterable, List, Optional, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
-from matplotlib.colors import LinearSegmentedColormap, SymLogNorm
-
 # Local
 from l2co._src.data_loader import DataLoader, OptimizationDynamics
+from matplotlib.colors import LinearSegmentedColormap, SymLogNorm
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -145,7 +144,8 @@ def plot_rtd_profile(d: DataLoader, ax: Optional[plt.Axes] = None,
 
 def plot_perf_profile(
     d: DataLoader, ax: Optional[plt.Axes] = None,
-    strategies: Optional[List[xr.DataArray]] = None
+    strategies: Optional[List[xr.DataArray]] = None,
+    include_best: bool = False,
 ) -> Tuple[plt.Figure, plt.Axes]:
     """
     Plot the performance profile for the given DataLoader.
@@ -168,7 +168,8 @@ def plot_perf_profile(
     -----
     If no axes are provided, a new figure is created.
     """
-    _perf = d.performance_profile(strategies).to_array('optimizer')
+    _perf = d.performance_profile(
+        strategies, include_best=include_best).to_array('optimizer')
     rel_error = _perf.f * 100 - 100
 
     if ax is None:

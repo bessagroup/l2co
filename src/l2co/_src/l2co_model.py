@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from collections import defaultdict
 from functools import partial
+from pathlib import Path
 from typing import Callable, Dict, Iterable, Optional
 
+import cloudpickle
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import joblib
 import numpy as np
 import optax
 import pandas as pd
@@ -151,26 +154,60 @@ class L2CO_model:
                  stage1_loss_fn: Optional[Callable] = None,
                  ):
         # Stage0 model initialization
-        preprocessor = preprocessing_factory(feature_types)
         self.stage0_model = make_pipeline(
-            preprocessor, MultiOutputRegressor(stage0_model))
+            preprocessing_factory(feature_types),
+            MultiOutputRegressor(stage0_model)
+        )
 
         # Stage1 model initialization
         self.stage1_models: Dict[str, eqx.Module] = defaultdict(
             stage1_model_class)
 
-        self.stage1_epochs = stage1_epochs
-        self.stage1_batch_size = stage1_batch_size
-        self.stage1_optimizer = stage1_optimizer
+    def save(self, path: str):
+        _path = Path(path)
 
-        if stage1_loss_fn is None:
-            self.stage1_loss_fn = mse_loss_fn
-        else:
-            self.stage1_loss_fn = stage1_loss_fn
+        _path.mkdir(parents=True, exist_ok=True)
 
-        self.seed = seed
+        # Stage0 model
+        joblib.dump(
+            self.stage0_model, (_path / 'stage0_model').with_suffix('.pkl'))
 
-    def train(self, data: OptimizationDynamics):
+        # Stage1 models
+        for name, model in self.stage1_models.items():
+            model_shape = eqx.filter_eval_shape(lambda x: model, None)
+
+            with open((_path / f"stage1_model_{name}").with_suffix(
+                    '.pkl'), 'wb') as f:
+                cloudpickle.dump(model_shape, f)
+
+            eqx.tree_serialise_leaves(
+                (_path / f"stage1_model_{name}").with_suffix('.eqx'), model)
+
+    @classmethod
+    def load(cls, path: str) -> L2CO_model:
+        _path = Path(path)
+
+        # Stage0 model
+        stage0_model = joblib.load(
+            (_path / 'stage0_model').with_suffix('.pkl'))
+
+        # Stage1 models
+        stage1_models = {}
+        for model_path in _path.glob('stage1_model_*'):
+            with open(model_path, 'rb') as f:
+                model_shape = cloudpickle.load(f)
+
+            model = eqx.tree_deserialise_leaves(
+                model_shape, model_path.with_suffix('.eqx'))
+
+            stage1_models[model_path.stem.split('_')[-1]] = model
+
+        return cls(stage0_model=stage0_model, stage1_models=stage1_models)
+
+    def train(self, data: OptimizationDynamics,
+              optimizer: optax.GradientTransformation,
+              epochs: int, batch_size: int, seed: int,
+              loss_fn: Callable):
         if data.previous_step is None:
             model = self.stage0_model
             model = train_stage0_model(model=self.stage0_model,
@@ -182,11 +219,11 @@ class L2CO_model:
             model = self.stage1_models[data.previous_step.name]
             model = train_stage1_model(
                 model=model, data=data.to_dict(),
-                optimizer=self.stage1_optimizer,
-                epochs=self.stage1_epochs,
-                batch_size=self.stage1_batch_size,
-                loss_fn=self.stage1_loss_fn,
-                seed=self.seed)
+                optimizer=optimizer,
+                epochs=epochs,
+                batch_size=batch_size,
+                loss_fn=loss_fn,
+                seed=seed)
 
             self.stage1_models[data.previous_step.name] = model
 
@@ -234,7 +271,7 @@ def train_stage1_model(model: eqx.Module, data: Dict[str, jnp.ndarray],
     data_iter = batch_iter(
         dataset=data, batch_size=batch_size, key=jr.key(seed))
 
-    @ jax.jit
+    @jax.jit
     def update_fn(params, opt_state, batch):
         loss, grads = eqx.filter_value_and_grad(loss_fn)(
             eqx.combine(params, static), **batch)
@@ -249,6 +286,7 @@ def train_stage1_model(model: eqx.Module, data: Dict[str, jnp.ndarray],
     return model
 
 
-def predict_stage1_model(model: eqx.Module, data: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+def predict_stage1_model(model: eqx.Module, data: Dict[str, jnp.ndarray]
+                         ) -> jnp.ndarray:
     print(f"Predicting with stage1 model {model}")
     return jax.vmap(model)(data['X_trajectory'])
