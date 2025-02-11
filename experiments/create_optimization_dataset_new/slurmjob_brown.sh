@@ -3,9 +3,7 @@
 #SBATCH --partition=batch
 #SBATCH --time=12:00:00
 #SBATCH --nodes=2
-#SBATCH --ntasks-per-node=4
-#SBATCH --cpus-per-task=12
-#SBATCH --mem-per-cpu=1GB
+#SBATCH --tasks-per-node=8
 #SBATCH --account=mbessa-condo
 #SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
 
@@ -28,15 +26,15 @@ module load hpcx-mpi
 module load miniconda3/23.11.0s
 source /oscar/runtime/software/external/miniconda3/23.11.0/etc/profile.d/conda.sh 
 
-# Set OpenMP threads
-export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+# # Set OpenMP threads
+# export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
 echo "======================================="
 echo " Environment Information"
 echo "======================================="
 echo "Loaded Modules:"
 module list 2>&1  # Redirect stderr to stdout to capture module list
-echo "OpenMP Threads:   $OMP_NUM_THREADS"
+# echo "OpenMP Threads:   $OMP_NUM_THREADS"
 echo "======================================="
 
 # Activate conda environment
