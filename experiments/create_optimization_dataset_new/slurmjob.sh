@@ -1,28 +1,48 @@
 #!/bin/bash
 #SBATCH --job-name="RunTaskOnSchedule"
+#SBATCH --partition=compute
 #SBATCH --time=12:00:00
 #SBATCH --nodes=2
-#SBATCH --ntasks=5
+#SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=12
-#SBATCH --mem-per-cpu=4GB
+#SBATCH --mem-per-cpu=1GB
 #SBATCH --account=research-ME-mse
-#SBATCH --partition=compute
 #SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
 
-# 2. Execute
-# ============================================
+echo "======================================="
+echo " Slurm Job Information"
+echo "======================================="
+echo "Job ID:          $SLURM_JOB_ID"
+echo "Job Name:        $SLURM_JOB_NAME"
+echo "Partition:       $SLURM_JOB_PARTITION"
+echo "Nodes Allocated: $SLURM_JOB_NODELIST"
+echo "Total Tasks:     $SLURM_NTASKS"
+echo "Tasks per Node:  $SLURM_NTASKS_PER_NODE"
+echo "CPUs per Task:   $SLURM_CPUS_PER_TASK"
+echo "Memory per CPU:  $SLURM_MEM_PER_CPU"
+echo "======================================="
 
 # Load necessary modules
 module load 2023r1
 module load openmpi
 module load miniconda3
 
+# Set OpenMP threads
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+
+echo "======================================="
+echo " Environment Information"
+echo "======================================="
+echo "Loaded Modules:"
+module list 2>&1  # Redirect stderr to stdout to capture module list
+echo "OpenMP Threads:   $OMP_NUM_THREADS"
+echo "======================================="
 
 # Activate conda environment
 unset CONDA_SHLVL
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate f3dasm_env
+echo "Conda Environment: $(conda info --envs | grep '*' | awk '{print $1}')"
 
 # Handle Slurm Array Job ID
 if ! [ -n "${SLURM_ARRAY_TASK_ID+1}" ]; then
@@ -30,6 +50,17 @@ if ! [ -n "${SLURM_ARRAY_TASK_ID+1}" ]; then
   SLURM_ARRAY_JOB_ID="${SLURM_JOB_ID}"
 fi
 
+# Get project folder
 projectfolder=$(basename $(pwd))
+run_dir="/scratch/${USER}/${projectfolder}/${SLURM_ARRAY_JOB_ID}"
 
-srun python main.py hydra.run.dir=/scratch/${USER}/${projectfolder}/${SLURM_ARRAY_JOB_ID}
+echo "======================================="
+echo " Execution Information"
+echo "======================================="
+echo "Project Folder:   $projectfolder"
+echo "Run Directory:    $run_dir"
+echo "Executing: srun python main.py ++hydra.run.dir=$run_dir"
+echo "======================================="
+
+# Run the Python script with MPI
+srun python main.py ++hydra.run.dir=$run_dir
