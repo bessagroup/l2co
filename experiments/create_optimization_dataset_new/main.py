@@ -1,6 +1,4 @@
 # Standard
-import logging
-import os
 import socket
 from pathlib import Path
 from time import sleep
@@ -32,9 +30,12 @@ from l2co._src.tasks.benchmarkfunctions.task import Task
 def main(config):
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
+    size = comm.Get_size()
 
     logger.setLevel(config.log_level)
     f3dasm_logger.setLevel(config.log_level)
+
+    f3dasm_logger.info(f"[{rank}/{size}] Running on {socket.gethostname()}")
 
     if rank == 0:
         pre_process(config)
@@ -170,14 +171,8 @@ rank = comm.Get_rank()
 size = comm.Get_size()
 hostname = socket.gethostname()
 
-
-# OpenMP threads per MPI process
-num_threads = os.environ.get("OMP_NUM_THREADS", "Not Set")
-
 print((
-    f"[Rank {rank}/{size}] Running on {hostname} with "
-    f"{num_threads} OpenMP threads")
+    f"[Rank {rank}/{size}] Running on {hostname}")
 )
 
-# if __name__ == "__main__":
 main()

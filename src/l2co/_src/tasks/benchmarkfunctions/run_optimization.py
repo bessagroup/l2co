@@ -1,5 +1,6 @@
 # Standard
 import gc
+from time import time
 from typing import Callable, Iterator, List, Optional, Tuple
 
 # Third-party
@@ -338,6 +339,7 @@ class RunOptimization(DataGenerator):
         self.rng = onp.random.default_rng(seed=seed)
 
     def execute(self, experiment_sample: ExperimentSample) -> ExperimentSample:
+        t1 = time()
         es = experiment_sample.input_data
         task: Task = es['task']
         schedule: OptimizationSchedule = es['optimizer schedule']
@@ -356,12 +358,14 @@ class RunOptimization(DataGenerator):
             name='loss history',
             object=data_xarr, to_disk=True)
 
-        logger.info(
-            f"Finished optimization task {task.name} with {schedule.name} ")
-
         if self.clear_jax_cache:
             eqx.clear_caches()
             jax.clear_caches()
             gc.collect()
+
+        logger.info((
+            f"Finished optimization task {task.name} with {schedule.name} "
+            f" (took {time() - t1:.2f} seconds)"
+        ))
 
         return experiment_sample

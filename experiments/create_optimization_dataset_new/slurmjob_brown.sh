@@ -2,11 +2,10 @@
 #SBATCH --job-name="RunTaskOnSchedule"
 #SBATCH --partition=batch
 #SBATCH --time=12:00:00
-#SBATCH --nodes=2
-#SBATCH --tasks-per-node=8
+#SBATCH --ntasks=64
+#SBATCH --cpus-per-task=4
 #SBATCH --account=mbessa-condo
 #SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
-
 
 echo "======================================="
 echo " Slurm Job Information"
@@ -26,15 +25,11 @@ module load hpcx-mpi
 module load miniconda3/23.11.0s
 source /oscar/runtime/software/external/miniconda3/23.11.0/etc/profile.d/conda.sh 
 
-# # Set OpenMP threads
-# export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
-
 echo "======================================="
 echo " Environment Information"
 echo "======================================="
 echo "Loaded Modules:"
 module list 2>&1  # Redirect stderr to stdout to capture module list
-# echo "OpenMP Threads:   $OMP_NUM_THREADS"
 echo "======================================="
 
 # Activate conda environment
@@ -59,8 +54,8 @@ echo " Execution Information"
 echo "======================================="
 echo "Project Folder:   $projectfolder"
 echo "Run Directory:    $run_dir"
-echo "Executing: srun --mpi=pmix python main.py ++hydra.run.dir=$run_dir"
+echo "Executing: mpirun python main.py ++hydra.run.dir=$run_dir"
 echo "======================================="
 
 # Run the Python script with MPI
-srun --mpi=pmix python main.py ++hydra.run.dir=$run_dir
+mpirun python main.py ++hydra.run.dir=$run_dir
