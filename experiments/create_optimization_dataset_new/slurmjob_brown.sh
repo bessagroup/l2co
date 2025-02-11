@@ -2,7 +2,8 @@
 #SBATCH --job-name="RunTaskOnSchedule"
 #SBATCH --partition=batch
 #SBATCH --time=12:00:00
-#SBATCH --ntasks=4
+#SBATCH --nodes=2
+#SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=12
 #SBATCH --mem-per-cpu=1GB
 #SBATCH --account=mbessa-condo
