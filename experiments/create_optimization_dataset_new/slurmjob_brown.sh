@@ -3,6 +3,8 @@
 #SBATCH --partition=batch
 #SBATCH --time=12:00:00
 #SBATCH --ntasks=64
+#SBATCH --nodes=8-20
+#SBATCH --ntasks-per-node=8
 #SBATCH --cpus-per-task=4
 #SBATCH --account=mbessa-condo
 #SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
