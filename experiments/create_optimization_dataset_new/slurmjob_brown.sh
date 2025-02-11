@@ -27,8 +27,6 @@ module load hpcx-mpi
 module load miniconda3/23.11.0s
 source /oscar/runtime/software/external/miniconda3/23.11.0/etc/profile.d/conda.sh 
 
-conda activate l2co
-
 # Set OpenMP threads
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
