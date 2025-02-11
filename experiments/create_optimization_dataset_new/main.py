@@ -1,5 +1,7 @@
 # Standard
+import logging
 import os
+import socket
 from pathlib import Path
 from time import sleep
 
@@ -22,32 +24,24 @@ from l2co._src.tasks.benchmarkfunctions.task import Task
 
 # =============================================================================
 
-comm = MPI.COMM_WORLD
-rank = comm.Get_rank()
-size = comm.Get_size()
 
 # =============================================================================
 
 
 @hydra.main(config_path="./conf", config_name="config")
 def main(config):
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
 
     logger.setLevel(config.log_level)
     f3dasm_logger.setLevel(config.log_level)
-
-    # OpenMP threads per MPI process
-    num_threads = os.environ.get("OMP_NUM_THREADS", "Not Set")
-
-    logger.info(
-        f"[Rank {rank}/{size}] Running with {num_threads} OpenMP threads")
 
     if rank == 0:
         pre_process(config)
         comm.bcast("ready", root=0)  # Signal other ranks to start
         process(config)
     else:
-        # Wait for rank 0 to finish preprocessing
-        signal = comm.bcast(None, root=0)
+        signal = comm.bcast(None, root=0)  # Ensure all ranks receive
         if signal == "ready":
             sleep(2)
             process(config)
@@ -171,5 +165,19 @@ def process(config: DictConfig):
                          )
 
 
-if __name__ == "__main__":
-    main()
+comm = MPI.COMM_WORLD
+rank = comm.Get_rank()
+size = comm.Get_size()
+hostname = socket.gethostname()
+
+
+# OpenMP threads per MPI process
+num_threads = os.environ.get("OMP_NUM_THREADS", "Not Set")
+
+print((
+    f"[Rank {rank}/{size}] Running on {hostname} with "
+    f"{num_threads} OpenMP threads")
+)
+
+# if __name__ == "__main__":
+main()
