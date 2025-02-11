@@ -1,5 +1,5 @@
 # Standard
-# import time
+import gc
 from typing import Callable, Iterator, List, Optional, Tuple
 
 # Third-party
@@ -360,6 +360,8 @@ class RunOptimization(DataGenerator):
             f"Finished optimization task {task.name} with {schedule.name} ")
 
         if self.clear_jax_cache:
+            eqx.clear_caches()
             jax.clear_caches()
+            gc.collect()
 
         return experiment_sample

@@ -23,7 +23,7 @@ optimization:
 fraction_combinations: 0.05
 
 seed: 6528
-mode: cluster
+mode: mpi
 
 log_level: 20
 

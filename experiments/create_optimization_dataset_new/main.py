@@ -1,23 +1,54 @@
+# Standard
 from pathlib import Path
 from time import sleep
 
+# Third-party
 import hydra
 import numpy as np
 from f3dasm import ExperimentData
 from f3dasm import logger as f3dasm_logger
 from f3dasm.design import Domain
 from hydra.utils import instantiate
+from mpi4py import MPI
 from omegaconf import DictConfig
 
+# Local
 from l2co import logger
 from l2co._src.tasks.benchmarkfunctions.optimizerschedule import (
     OptimizationSchedule, OptimizationStep, get_combination)
 from l2co._src.tasks.benchmarkfunctions.run_optimization import RunOptimization
 from l2co._src.tasks.benchmarkfunctions.task import Task
 
+# =============================================================================
+
+comm = MPI.COMM_WORLD
+rank = comm.Get_rank()
+size = comm.Get_size()
+
+# =============================================================================
+
+
+@hydra.main(config_path="./conf", config_name="config")
+def main(config):
+
+    logger.setLevel(config.log_level)
+    f3dasm_logger.setLevel(config.log_level)
+
+    if rank == 0:
+        logger.info(f"Running Hydra with MPI: {size} processes")
+        pre_process(config)
+        comm.bcast("ready", root=0)  # Signal other ranks to start
+        process(config)
+    else:
+        # Wait for rank 0 to finish preprocessing
+        signal = comm.bcast(None, root=0)
+        if signal == "ready":
+            sleep(2)
+            process(config)
+
 
 def pre_process(config: DictConfig):
-
+    logger.info("== PRE PROCESS ==")
     # Task
     experiment_data_tasks = ExperimentData.from_yaml(config.tasks)
 
@@ -92,13 +123,10 @@ def pre_process(config: DictConfig):
         to_disk=True,
     )
 
-    # TODO: here the individual es domains are not changed!
     experiment_data_combined.domain = domain_combined
 
     for id, es in experiment_data_combined:
         es.store_experimentsample_references(idx=id)
-        # experiment_data_combined.store_experimentsample(
-        #     experiment_sample=es, idx=id)
 
     experiment_data_combined.store()
 
@@ -107,26 +135,6 @@ def process(config: DictConfig):
     logger.info("== PROCESS ==")
 
     project_dir = Path().cwd()
-
-    # Retrieve the ExperimentData object
-    max_tries = 500
-    tries = 0
-
-    while tries < max_tries:
-        try:
-            logger.info(f"Open ExperimentData at {project_dir}")
-            experiment_data = ExperimentData.from_file(project_dir)
-            break  # Break out of the loop if successful
-        except FileNotFoundError:
-            tries += 1
-            logger.info(f"FileNotFoundError ({project_dir}), sleeping!")
-            sleep(10)
-
-    if tries == max_tries:
-        logger.error(
-            f"Could not open ExperimentData after {max_tries} attempts.")
-        raise FileNotFoundError(f"Could not open ExperimentData after "
-                                f"{max_tries} attempts.")
 
     logger.debug("Loaded experiment_data")
 
@@ -144,36 +152,17 @@ def process(config: DictConfig):
                                                max_tries=500)
 
     if config.mode == 'sequential':
-        experiment_data = run_opt.call(data=experiment_data, mode='cluster')
+        experiment_data = run_opt.call(data=experiment_data, mode='sequential')
+        experiment_data.store()
+
+    elif config.mode == 'mpi':
+        _ = run_opt.call(data=experiment_data, mode='mpi',
+                         comm=comm)
 
     elif config.mode == 'cluster':
         _ = run_opt.call(data=experiment_data, mode='cluster',
-                         wait_for_creation=True, max_tries=500)
-
-    # experiment_data.evaluate(data_generator=run_opt, mode='cluster')
-
-    if config.mode == 'sequential':
-        # Store the ExperimentData to a csv file
-        experiment_data.store()
-
-
-@hydra.main(config_path="./conf", config_name="config")
-def main(config):
-
-    logger.setLevel(config.log_level)
-    f3dasm_logger.setLevel(config.log_level)
-
-    # Execute the initial_script for the first job
-    if config.hpc.jobid == 0:
-        pre_process(config)
-
-    elif config.hpc.jobid == -1:  # Sequential
-        pre_process(config)
-        process(config)
-
-    else:
-        sleep(0.1*config.hpc.jobid)  # Just to asynchronize the jobs
-        process(config)
+                         wait_for_creation=True, max_tries=500,
+                         )
 
 
 if __name__ == "__main__":
