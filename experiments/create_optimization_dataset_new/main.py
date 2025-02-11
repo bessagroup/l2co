@@ -1,4 +1,5 @@
 # Standard
+import os
 from pathlib import Path
 from time import sleep
 
@@ -34,8 +35,13 @@ def main(config):
     logger.setLevel(config.log_level)
     f3dasm_logger.setLevel(config.log_level)
 
+    # OpenMP threads per MPI process
+    num_threads = os.environ.get("OMP_NUM_THREADS", "Not Set")
+
+    logger.info(
+        f"[Rank {rank}/{size}] Running with {num_threads} OpenMP threads")
+
     if rank == 0:
-        logger.info(f"Running Hydra with MPI: {size} processes")
         pre_process(config)
         comm.bcast("ready", root=0)  # Signal other ranks to start
         process(config)

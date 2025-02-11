@@ -4,7 +4,7 @@ from_sampling:
     noise_distribution:
       - 0.4
       - 0.6
-  n_samples: 100
+  n_samples: 1000
   seed: ${seed}
   domain:
     input:
