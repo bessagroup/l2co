@@ -29,12 +29,15 @@ from typing import Dict, Iterable, Optional, Tuple
 import numpy as np
 import pandas as pd
 import xarray as xr
+from f3dasm import ExperimentData
 from scipy.linalg import svd
 from sklearn.model_selection import train_test_split
 
 # Local
 from .performance import create_performance_profile, scaling2
-from .tasks.benchmarkfunctions.optimizerschedule import OptimizationSchedule
+from .tasks.benchmarkfunctions.optimizerschedule import (OptimizationSchedule,
+                                                         OptimizationStep)
+from .tasks.benchmarkfunctions.task import Task
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -180,13 +183,13 @@ class DataLoader:
             Y = Y_data.performance.isel(
                 iterations=t_end-1, output_dim=0, drop=True).sortby(
                     'optimizer')
-            previous_step = self.opt_steps[optimizer]
+            previous_step = self.opt_steps[optimizer].steps[0]
 
         return OptimizationDynamics.from_data(
             X_features=self.task_labels,
             X_trajectory=X_trajectory,
             Y=Y,
-            opt_steps=Y_data.opt_steps,
+            opt_steps={k: v.steps[0] for k, v in Y_data.opt_steps.items()},
             previous_step=previous_step,
         )
 
@@ -379,7 +382,6 @@ class DataLoader:
 #                                                          Selecting optimizers
 # =============================================================================
 
-
     def select_single_optimizers(
             self, squash: bool = False) -> DataLoader:
         """
@@ -485,6 +487,7 @@ class DataLoader:
 #                                                           Performance metrics
 # =============================================================================
 
+
     def performance_profile(
             self, strategies: Optional[Iterable[xr.DataArray]] = None,
             include_best: bool = False
@@ -554,8 +557,8 @@ class OptimizationDynamics:
                  X_features: pd.DataFrame,
                  X_trajectory: Optional[np.ndarray],
                  Y: np.ndarray,
-                 opt_steps: Dict[str, OptimizationSchedule],
-                 previous_step: Optional[OptimizationSchedule]):
+                 opt_steps: Dict[str, OptimizationStep],
+                 previous_step: Optional[OptimizationStep]):
 
         self.X_features = X_features
         self.X_trajectory = X_trajectory
@@ -581,8 +584,8 @@ class OptimizationDynamics:
         X_features: xr.DataArray,
         X_trajectory: Optional[xr.DataArray],
         Y: xr.DataArray,
-        opt_steps: Dict[str, OptimizationSchedule],
-        previous_step: Optional[OptimizationSchedule]
+        opt_steps: Dict[str, OptimizationStep],
+        previous_step: Optional[OptimizationStep]
     ):
         """
         Learning dataset inherited from pytorch Dataset. Used for learning the
@@ -601,7 +604,7 @@ class OptimizationDynamics:
         mask = ~Y.isnull().all('optimizer')
 
         if X_trajectory is not None:
-            mask_X_trajectory = ~X_trajectory.isnull().all('iterations').isel(
+            mask_X_trajectory = ~X_trajectory.isnull().any('iterations').isel(
                 optimizer=0, drop=True)
 
             mask = mask & mask_X_trajectory
@@ -622,6 +625,29 @@ class OptimizationDynamics:
                    opt_steps=opt_steps,
                    previous_step=previous_step
                    )
+
+    @classmethod
+    def from_task_and_run(
+            cls,
+            task: Task,
+            previous_step: Optional[OptimizationStep] = None,
+            data: Optional[ExperimentData] = None,
+    ) -> OptimizationDynamics:
+        X_features = pd.DataFrame([task.tag])
+        previous_step = previous_step
+
+        if data is None:
+            X_trajectory = None
+
+        else:
+            X_trajectory = np.atleast_2d([es.output_data['y']
+                                          for _, es in data])
+
+        return cls(X_features=X_features,
+                   X_trajectory=X_trajectory,
+                   Y=None,
+                   opt_steps=None,
+                   previous_step=previous_step)
 
     @classmethod
     def load(cls, path: Path | str) -> OptimizationDynamics:
@@ -656,9 +682,9 @@ class OptimizationDynamics:
         previous_step = opt_steps_dict.pop('previous_step', None)
 
         if previous_step is not None:
-            previous_step = OptimizationSchedule.from_dict(previous_step)
+            previous_step = OptimizationStep.from_dict(previous_step)
 
-        opt_steps = {k: OptimizationSchedule.from_dict(
+        opt_steps = {k: OptimizationStep.from_dict(
             v) for k, v in opt_steps_dict.items()}
 
         return cls(X_features=features,

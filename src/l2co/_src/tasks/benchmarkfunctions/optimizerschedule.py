@@ -56,6 +56,10 @@ class OptimizationStep:
 
         return hash(tag_hashable)
 
+    @property
+    def name(self) -> str:
+        return self.tag['opt_name']
+
     @classmethod
     def from_yaml(cls, config: Dict[str, Any]) -> OptimizationStep:
         if 'hyperparameters' not in config:
@@ -71,6 +75,10 @@ class OptimizationStep:
             'x0_strategy': self.x0_strategy,
             'n_evals': self.n_evals
         }
+
+    def save_to_json(self, filepath: Path | str):
+        with open(Path(filepath).with_suffix('.json'), 'w') as f:
+            json.dump(self.to_dict(), f, indent=4)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> OptimizationStep:

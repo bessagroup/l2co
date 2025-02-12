@@ -151,3 +151,4 @@ notebooks/
 
 # Ignore svg generated files
 *.svg
+*.eqx

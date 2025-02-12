@@ -25,8 +25,7 @@ __credits__ = ['Martin van der Schelling']
 __status__ = 'Stable'
 # =============================================================================
 
-FEATURE_TYPES = {'convex': 'categorical', 'multimodal': 'categorical',
-                 'seperable': 'categorical',
+FEATURE_TYPES = {'convex': 'categorical', 'separable': 'categorical',
                  'noise': 'categorical', 'dim': 'ordinal',
                  'differentiable': 'categorical'}
 

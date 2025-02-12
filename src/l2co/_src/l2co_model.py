@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
+# Standard
 from collections import defaultdict
 from functools import partial
 from pathlib import Path
 from typing import Callable, Dict, Iterable, Optional
 
+# Third-party
 import cloudpickle
 import equinox as eqx
 import jax
@@ -20,11 +23,13 @@ from sklearn.base import BaseEstimator
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline, make_pipeline
 
-from l2co import preprocessing_factory
-
+# Local
+from ._logging import logger
 from .data_loader import OptimizationDynamics
+from .preprocessing import preprocessing_factory
 from .tasks.benchmarkfunctions.dataloader import batch_iter
-from .tasks.benchmarkfunctions.optimizerschedule import OptimizationSchedule
+from .tasks.benchmarkfunctions.optimizerschedule import (OptimizationSchedule,
+                                                         OptimizationStep)
 
 #                                                                Basis function
 # =============================================================================
@@ -78,14 +83,13 @@ def fit_basis_function(y: jnp.ndarray, max_iter: int = 100, tol: float = 1e-6):
 class MLPWithDropout(eqx.Module):
     layers: list
     dropout: list
-    key: jnp.ndarray
-    dropout_key: jnp.ndarray
+    seed: int
 
     def __init__(self, in_size: int, out_size: int,
                  width_size: int, depth: int,
-                 dropout_rate: float, key: jnp.ndarray):
-        self.key, * \
-            layer_keys, self.dropout_key = jax.random.split(key, depth + 2)
+                 dropout_rate: float, key: int):
+        self.seed = key
+        layer_keys = jax.random.split(jr.key(key), depth)
         self.layers = []
         self.dropout = []
         for i in range(depth):
@@ -98,11 +102,10 @@ class MLPWithDropout(eqx.Module):
                 self.dropout.append(eqx.nn.Dropout(
                     p=dropout_rate))
 
-    def __call__(self, x: jnp.ndarray, inference: bool = False,
-                 key: Optional[jnp.ndarray] = None) -> jnp.ndarray:
+    def __call__(self, x: jnp.ndarray, key: Optional[jnp.ndarray] = None,
+                 inference: bool = False) -> jnp.ndarray:
         if key is None:
-            key = self.dropout_key
-
+            key = jax.random.PRNGKey(self.seed)
         dropout_keys = jax.random.split(key, num=len(self.dropout))
         for i, layer in enumerate(self.layers):
             x = layer(x)
@@ -116,12 +119,10 @@ class MLPWithDropout(eqx.Module):
 class MixedModel(eqx.Module):
     mlp: eqx.Module
     feature_fn: Callable
-    key: jnp.ndarray
 
     def __init__(self, width: int, depth: int, in_size: int, out_size: int,
-                 feature_fn: Callable, key: jnp.ndarray,
+                 feature_fn: Callable, key: int,
                  ) -> None:
-        self.key = key
         # self.feature_fn = partial(feature_fn, n_terms=n_terms)
         self.feature_fn = feature_fn
         self.mlp = MLPWithDropout(
@@ -141,27 +142,46 @@ def mse_loss_fn(model: PyTree, X_trajectory: jnp.ndarray, Y: jnp.ndarray):
     y_pred = jax.vmap(model)(X_trajectory)
     return jnp.mean((Y - y_pred) ** 2)
 
+# =============================================================================
+
 
 class L2CO_model:
-    def __init__(self,
-                 stage0_model: BaseEstimator,
-                 stage1_model_class: eqx.Module,
-                 feature_types: Dict[str, str],
-                 stage1_epochs: int,
-                 stage1_batch_size: int,
-                 stage1_optimizer: optax.GradientTransformation,
-                 seed: int,
-                 stage1_loss_fn: Optional[Callable] = None,
-                 ):
+    def __init__(
+        self,
+            stage0_model: Pipeline,
+            stage0_model_optimizers: Dict[str, OptimizationStep],
+            stage1_models: Dict[str, eqx.Module],
+            stage1_models_optimizers: Dict[str, Dict[str, OptimizationStep]]):
+        self.stage0_model = stage0_model
+        self.stage0_optimizers = stage0_model_optimizers
+        self.stage1_models = stage1_models
+        self.stage1_models_optimizers = stage1_models_optimizers
+
+    @classmethod
+    def init(
+        cls,
+        stage0_model: BaseEstimator,
+        stage1_model_class: eqx.Module,
+        feature_types: Dict[str, str],
+    ):
         # Stage0 model initialization
-        self.stage0_model = make_pipeline(
+        stage0_model = make_pipeline(
             preprocessing_factory(feature_types),
             MultiOutputRegressor(stage0_model)
         )
 
         # Stage1 model initialization
-        self.stage1_models: Dict[str, eqx.Module] = defaultdict(
+        stage1_models: Dict[str, eqx.Module] = defaultdict(
             stage1_model_class)
+
+        stage1_models_optimizers: \
+            Dict[str, Dict[str,
+                           OptimizationStep]] = defaultdict(dict)
+
+        return cls(stage0_model=stage0_model,
+                   stage0_model_optimizers=dict(),
+                   stage1_models=stage1_models,
+                   stage1_models_optimizers=stage1_models_optimizers,)
 
     def save(self, path: str):
         _path = Path(path)
@@ -172,16 +192,33 @@ class L2CO_model:
         joblib.dump(
             self.stage0_model, (_path / 'stage0_model').with_suffix('.pkl'))
 
+        # Stage0 model optimizers
+        with open(
+                (_path / 'stage0_optimizers').with_suffix('.json'), 'w') as f:
+            json.dump({k: v.to_dict()
+                      for k, v in self.stage0_optimizers.items()}, f, indent=4)
+
         # Stage1 models
         for name, model in self.stage1_models.items():
             model_shape = eqx.filter_eval_shape(lambda x: model, None)
 
+            # Stage1 model statics
             with open((_path / f"stage1_model_{name}").with_suffix(
                     '.pkl'), 'wb') as f:
                 cloudpickle.dump(model_shape, f)
 
+            # Stage1 model params
             eqx.tree_serialise_leaves(
                 (_path / f"stage1_model_{name}").with_suffix('.eqx'), model)
+
+            # Stage1 model optimizers
+            with open(
+                (_path / f"stage1_model_{name}").with_suffix('.json'),
+                    'w') as f:
+                json.dump(
+                    {k: v.to_dict()
+                     for k, v in self.stage1_models_optimizers[name].items()
+                     }, f, indent=4)
 
     @classmethod
     def load(cls, path: str) -> L2CO_model:
@@ -191,29 +228,68 @@ class L2CO_model:
         stage0_model = joblib.load(
             (_path / 'stage0_model').with_suffix('.pkl'))
 
+        # Stage0 model optimizers
+        with open(
+                (_path / 'stage0_optimizers').with_suffix('.json'), 'r') as f:
+            stage0_optimizers = {
+                k: OptimizationStep.from_dict(v)
+                for k, v in json.load(f).items()}
+
         # Stage1 models
         stage1_models = {}
-        for model_path in _path.glob('stage1_model_*'):
-            with open(model_path, 'rb') as f:
+        stage1_models_optimizers = {}
+        for model_path in {p.with_suffix('') for p
+                           in _path.glob('stage1_model_*')}:
+            with open(model_path.with_suffix('.pkl'), 'rb') as f:
                 model_shape = cloudpickle.load(f)
 
-            model = eqx.tree_deserialise_leaves(
-                model_shape, model_path.with_suffix('.eqx'))
+            model = eqx.tree_deserialise_leaves(model_path.with_suffix('.eqx'),
+                                                like=model_shape)
+
+            with open(model_path.with_suffix('.json'), 'r') as f:
+                optimizers = {
+                    k: OptimizationStep.from_dict(v)
+                    for k, v in json.load(f).items()}
+
+            stage1_models_optimizers[model_path.stem.split(
+                '_')[-1]] = optimizers
 
             stage1_models[model_path.stem.split('_')[-1]] = model
 
-        return cls(stage0_model=stage0_model, stage1_models=stage1_models)
+        return cls(stage0_model=stage0_model,
+                   stage0_model_optimizers=stage0_optimizers,
+                   stage1_models=stage1_models,
+                   stage1_models_optimizers=stage1_models_optimizers)
 
-    def train(self, data: OptimizationDynamics,
-              optimizer: optax.GradientTransformation,
-              epochs: int, batch_size: int, seed: int,
-              loss_fn: Callable):
+    def train(self, path: str, optimizer: optax.GradientTransformation,
+              epochs: int, batch_size: int, seed: int, loss_fn: Callable):
+        _path = Path(path)
+        data_files = set(p.stem for p in list(_path.glob('*')))
+
+        for i, file in enumerate(data_files):
+            logger.debug(
+                f"[{i+1}/{len(data_files)}] - Training model with data {file}")
+            data = OptimizationDynamics.load(_path / file)
+            self.train_model(
+                data=data,
+                optimizer=optimizer,
+                epochs=epochs,
+                batch_size=batch_size,
+                seed=seed,
+                loss_fn=loss_fn
+            )
+
+    def train_model(self, data: OptimizationDynamics,
+                    optimizer: optax.GradientTransformation,
+                    epochs: int, batch_size: int, seed: int,
+                    loss_fn: Callable):
         if data.previous_step is None:
             model = self.stage0_model
             model = train_stage0_model(model=self.stage0_model,
                                        x=data.X_features,
                                        y=data.Y_binary())
             self.stage0_model = model
+            self.stage0_optimizers = data.opt_steps
 
         else:
             model = self.stage1_models[data.previous_step.name]
@@ -223,47 +299,50 @@ class L2CO_model:
                 epochs=epochs,
                 batch_size=batch_size,
                 loss_fn=loss_fn,
-                seed=seed)
+                seed=seed
+            )
 
             self.stage1_models[data.previous_step.name] = model
+            self.stage1_models_optimizers[data.previous_step.name] \
+                = data.opt_steps
 
     def predict(self,
-                data: OptimizationDynamics) -> Iterable[OptimizationSchedule]:
+                data: OptimizationDynamics) -> Iterable[OptimizationStep]:
         if data.previous_step is None:
             y_pred = predict_stage0_model(
                 model=self.stage0_model, x=data.X_features)
-
+            optimizers = self.stage0_optimizers
         else:
             model = self.stage1_models[data.previous_step.name]
             y_pred = predict_stage1_model(
                 model=model, data=data.to_dict())
-
+            optimizers = self.stage1_models_optimizers[data.previous_step.name]
         xarr_y = xr.DataArray(
             np.array(y_pred), dims=['batch_id', 'optimizer'], coords={
                 'batch_id': range(y_pred.shape[0]),
-                'optimizer': list(data.opt_steps.keys())})
+                'optimizer': list(optimizers.keys())})
 
-        schedules = [data.opt_steps[str(i.values)]
-                     for i in xarr_y.idxmin('optimizer')]
+        steps = [optimizers[str(i.values)]
+                 for i in xarr_y.idxmin('optimizer')]
 
-        return schedules
+        return steps
 
 
 def train_stage0_model(model: Pipeline, x: pd.DataFrame, y: jnp.ndarray):
-    print(f"Training stage0 model {model}")
+    logger.debug(f"Training stage0 model {model}")
     model.fit(x, y)
     return model
 
 
 def predict_stage0_model(model: Pipeline, x: pd.DataFrame) -> jnp.ndarray:
-    print(f"Predicting with stage0 model {model}")
+    logger.debug(f"Predicting with stage0 model {model}")
     return model.predict(x)
 
 
 def train_stage1_model(model: eqx.Module, data: Dict[str, jnp.ndarray],
                        batch_size: int, loss_fn: Callable, epochs: int,
                        optimizer: optax.GradientTransformation, seed: int):
-    print(f"Training stage1 model {model}")
+    logger.debug(f"Training stage1 model {model}")
 
     params, static = eqx.partition(model, eqx.is_inexact_array)
     opt_state = optimizer.init(params)
@@ -288,5 +367,5 @@ def train_stage1_model(model: eqx.Module, data: Dict[str, jnp.ndarray],
 
 def predict_stage1_model(model: eqx.Module, data: Dict[str, jnp.ndarray]
                          ) -> jnp.ndarray:
-    print(f"Predicting with stage1 model {model}")
+    logger.debug(f"Predicting with stage1 model {model}")
     return jax.vmap(model)(data['X_trajectory'])

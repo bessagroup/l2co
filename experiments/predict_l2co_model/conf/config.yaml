@@ -1,0 +1,36 @@
+defaults:
+- tasks: benchmark
+
+optimizers:
+  - optimizer: cmaes
+    hyperparameters:
+      popsize: 30
+  - optimizer: adam
+    hyperparameters:
+      learning_rate: 1e-3
+  - optimizer: pso
+    hyperparameters:
+      popsize: 30
+  - optimizer: lbfgsb
+
+optimization:
+  switch: 0.1
+  n_evals: 2000
+  n_realizations: 3
+  lower_bound: 0.0
+  upper_bound: 1.0
+
+fraction_combinations: 0.75
+
+seed: 3001
+mode: cluster
+
+log_level: 20
+
+hpc:
+  jobid: -1
+
+n_evals_per_switch: 100
+n_switches: 3
+
+l2co_path: /home/martin/Documents/GitHub/L2CO/experiments/predict_l2co_model/model

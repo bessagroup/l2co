@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import jax.random as jrd
 import jax.tree as jt
 import optax
-from evosax import CMA_ES, PSO, Strategy
+from evosax import CMA_ES, PSO, EvoState, Strategy
 from f3dasm import Block, ExperimentData
 from jaxtyping import PyTree
 
@@ -30,6 +30,7 @@ class UpdateStep(Block):
         self.bounded = bounded
         self.update_fn = update_fn
         self.seed = jrd.key(seed)
+        self.opt_state = None
 
         self.optimizer = optimizer(**hyperparameters)
 
@@ -41,13 +42,16 @@ class UpdateStep(Block):
     def call(self, data: ExperimentData, fn: Callable, n_evals: int,
              data_iter: Iterator, **kwargs
              ) -> ExperimentData:
-        params_history, loss_history = self.update_fn(
+        params_history, loss_history, opt_state = self.update_fn(
             params=self.params, static=self.static,
             optimizer=self.optimizer, loss_fn=fn,
             inner_steps=n_evals, data_iter=data_iter,
             seed=self.seed,
             bounded=self.bounded,
+            opt_state=self.opt_state,
         )
+
+        self.opt_state = opt_state
 
         # Trim the first population from the histories
         params_history = tree_trim(tree=params_history, n=self.popsize)
@@ -69,9 +73,12 @@ def lbfgs_adapt(params: PyTree, static: PyTree,
                 inner_steps: int,
                 bounded: Optional[Tuple[float, float]],
                 data_iter: Iterator,
+                opt_state: Optional[optax.OptState],
                 **kwargs,
-                ):
-    opt_state = optimizer.init(params)
+                ) -> Tuple[PyTree, PyTree, optax.OptState]:
+
+    if opt_state is None:
+        opt_state = optimizer.init(params)
 
     def scan_fn(carry, _):
         inner_params, opt_state, sample = carry
@@ -93,7 +100,7 @@ def lbfgs_adapt(params: PyTree, static: PyTree,
 
         return (new_params, opt_state, next(data_iter)), (inner_params, loss)
 
-    (final_params, _, final_sample), (
+    (final_params, opt_state, final_sample), (
         history_params, history_losses) = jax.lax.scan(
         scan_fn,
         (params, opt_state, next(data_iter)),
@@ -108,7 +115,7 @@ def lbfgs_adapt(params: PyTree, static: PyTree,
     history_params = tree_extend(history_params, final_params)
     history_losses = tree_extend(history_losses, final_loss)
 
-    return history_params, history_losses
+    return history_params, history_losses, opt_state
 
 # =============================================================================
 
@@ -121,8 +128,10 @@ def optax_adapt(params: PyTree, static: PyTree,
                 inner_steps: int,
                 bounded: Optional[Tuple[float, float]],
                 data_iter: Iterator,
-                **kwargs):
-    opt_state = optimizer.init(params)
+                opt_state: Optional[optax.OptState],
+                **kwargs) -> Tuple[PyTree, PyTree, optax.OptState]:
+    if opt_state is None:
+        opt_state = optimizer.init(params)
 
     def scan_fn(carry, _):
         inner_params, opt_state, sample = carry
@@ -140,7 +149,7 @@ def optax_adapt(params: PyTree, static: PyTree,
 
         return (new_params, opt_state, next(data_iter)), (inner_params, loss)
 
-    (final_params, _, final_sample), (
+    (final_params, opt_state, final_sample), (
         history_params, history_losses) = jax.lax.scan(
         scan_fn,
         (params, opt_state, next(data_iter)),
@@ -155,7 +164,7 @@ def optax_adapt(params: PyTree, static: PyTree,
     history_params = tree_extend(history_params, final_params)
     history_losses = tree_extend(history_losses, final_loss)
 
-    return history_params, history_losses
+    return history_params, history_losses, opt_state
 
 
 # =============================================================================
@@ -167,12 +176,16 @@ def evosax_adapt(params: PyTree, static: PyTree,
                  seed,
                  bounded: Optional[Tuple[float, float]],
                  data_iter: Iterator,
-                 ):
+                 opt_state: Optional[EvoState],
+
+                 ) -> Tuple[PyTree, PyTree, EvoState]:
+
     es_params = optimizer.default_params
     if bounded is not None:
         es_params = es_params.replace(clip_min=bounded[0], clip_max=bounded[1])
 
-    opt_state = optimizer.initialize(rng=seed, params=es_params)
+    if opt_state is None:
+        opt_state = optimizer.initialize(rng=seed, params=es_params)
 
     def scan_fn(carry, _):
         inner_params, opt_state, sample, rng = carry
@@ -199,7 +212,7 @@ def evosax_adapt(params: PyTree, static: PyTree,
         return (new_params, opt_state, next(data_iter), rng), (
             inner_params, loss)
 
-    (final_params, _, final_sample, _), (
+    (final_params, opt_state, final_sample, _), (
         history_params, history_losses) = jax.lax.scan(
         scan_fn,
         (params, opt_state, next(data_iter), seed),
@@ -220,7 +233,7 @@ def evosax_adapt(params: PyTree, static: PyTree,
     history_losses = tree_extend(
         history_losses.flatten(), final_loss, expand_axis=False)
 
-    return history_params, history_losses
+    return history_params, history_losses, opt_state
 
 
 class EvoSaxUpdate(UpdateStep):
@@ -235,6 +248,7 @@ class EvoSaxUpdate(UpdateStep):
         self.bounded = bounded
         self.popsize = popsize
         self.hyperparameters = hyperparameters
+        self.opt_state = None
         self.seed = jrd.key(seed)
 
     def arm(self, data: ExperimentData) -> None:
