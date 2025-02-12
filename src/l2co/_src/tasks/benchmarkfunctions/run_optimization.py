@@ -534,11 +534,11 @@ class RunOptimizationL2CO(DataGenerator):
             )
 
         experiment_sample.store(
-            name='loss history',
+            name='l2co loss history',
             object=data_xarr, to_disk=True)
 
         experiment_sample.store(
-            name='optimizer schedules',
+            name='l2co schedules',
             object=schedule_list,
             to_disk=True,
             store_function=save_schedules,

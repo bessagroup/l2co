@@ -34,3 +34,5 @@ n_evals_per_switch: 100
 n_switches: 3
 
 l2co_path: /home/martin/Documents/GitHub/L2CO/experiments/predict_l2co_model/model
+
+task_path: /home/martin/Documents/GitHub/L2CO/experiments/create_optimization_dataset_new/outputs/2025-02-11/11-10-45/experiment_data/task

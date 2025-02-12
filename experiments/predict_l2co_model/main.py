@@ -5,7 +5,6 @@ from time import sleep
 
 # Third-party
 import hydra
-import numpy as np
 from f3dasm import ExperimentData
 from f3dasm import logger as f3dasm_logger
 from f3dasm.design import Domain
@@ -16,8 +15,6 @@ from omegaconf import DictConfig
 # Local
 from l2co import logger
 from l2co._src.l2co_model import L2CO_model
-from l2co._src.tasks.benchmarkfunctions.optimizerschedule import (
-    OptimizationSchedule, OptimizationStep, get_combination)
 from l2co._src.tasks.benchmarkfunctions.run_optimization import (
     RunOptimizationL2CO, load_schedules, save_schedules)
 from l2co._src.tasks.benchmarkfunctions.task import Task
@@ -53,22 +50,30 @@ def main(config):
 def pre_process(config: DictConfig):
     logger.info("== PRE PROCESS ==")
 
-    # Task
-    experiment_data_tasks = ExperimentData.from_yaml(config.tasks)
+    if config.task_path is None:
+        logger.info("Generating tasks")
+        # Task
+        experiment_data_tasks = ExperimentData.from_yaml(config.tasks)
 
-    task_fn = instantiate(config.tasks.data_generator, _partial_=True)
+        task_fn = instantiate(config.tasks.data_generator, _partial_=True)
 
-    if config.tasks.task_kwargs is None:
-        task_kwargs = {}
+        if config.tasks.task_kwargs is None:
+            task_kwargs = {}
+        else:
+            task_kwargs = config.tasks.task_kwargs
+
+        experiment_data_tasks.evaluate(
+            data_generator=task_fn, output_names=['task'],
+            **task_kwargs)
+
+        _, tasks = experiment_data_tasks.to_pandas(
+            keep_references=False)
+
     else:
-        task_kwargs = config.tasks.task_kwargs
-
-    experiment_data_tasks.evaluate(
-        data_generator=task_fn, output_names=['task'],
-        **task_kwargs)
-
-    _, df_task = experiment_data_tasks.to_pandas(
-        keep_references=False)
+        logger.info("Loading tasks from disk")
+        _path = Path(config.task_path)
+        tasks_set = {Task.load(p) for p in set(_path.glob('*.json'))}
+        tasks = [{'task': t} for t in tasks_set]
 
     # Save everything
     domain_combined = Domain()
@@ -77,17 +82,17 @@ def pre_process(config: DictConfig):
         store_function=Task.save,
         load_function=Task.load)
     domain_combined.add_output(
-        name='loss history',
+        name='l2co loss history',
         to_disk=True,
     )
     domain_combined.add_output(
-        name='optimizer schedules',
+        name='l2co schedules',
         to_disk=True,
         store_function=save_schedules,
         load_function=load_schedules,
     )
 
-    experiment_data_combined = ExperimentData(input_data=df_task,
+    experiment_data_combined = ExperimentData(input_data=tasks,
                                               domain=domain_combined)
 
     experiment_data_combined.store()
