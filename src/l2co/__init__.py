@@ -19,14 +19,11 @@ Author: Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)
 
 from . import plotting
 from ._src._logging import logger
-from ._src.data_loader import DataLoader
+from ._src.data_loader import DataLoader, OptimizationDynamics
 from ._src.preprocessing import preprocessing_factory
-from ._src.stage0_model import Stage0Model
-
-# from ._src.stage1_model import Stage1Model
-
-
-# from ._src.trainer import Trainer
+from ._src.tasks.benchmarkfunctions.optimizerschedule import (
+    OptimizationSchedule, OptimizationStep)
+from ._src.tasks.benchmarkfunctions.task import Task
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -42,8 +39,8 @@ __all__ = [
     "logger",
     "DataLoader",
     "preprocessing_factory",
-    "Stage0Model",
-    # "Stage1Model",
-    # "Trainer",
-    # "create_entire_dataset"
+    "OptimizationSchedule",
+    "OptimizationStep",
+    "OptimizationDynamics",
+    "Task",
 ]

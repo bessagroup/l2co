@@ -732,46 +732,6 @@ class OptimizationDynamics:
         return {'X_trajectory': self.X_trajectory,
                 'Y': self.Y}
 
-
-# =============================================================================
-
-
-def save_all_trajectories(data: Dict[str, OptimizationDynamics], path: str):
-    """
-    Save all trajectories to disk.
-
-    Parameters
-    ----------
-    data : Dict[str, OptimizationDynamics]
-        The optimization dynamics data.
-    path : str
-        The path to save the data.
-    """
-    for optimizer, trajectory in data.items():
-        trajectory.save(path / optimizer)
-        print(f"Saved {optimizer} to {path / optimizer}")
-
-
-def load_all_trajectories(path: str, rel_tolerance: float
-                          ) -> Dict[str, OptimizationDynamics]:
-    """
-    Load all trajectories from disk.
-
-    Parameters
-    ----------
-    path : str
-        The path to load the data.
-
-    Returns
-    -------
-    Dict[str, OptimizationDynamics]
-        The loaded optimization dynamics data.
-    """
-    _path = Path(path)
-    return {optimizer.stem: OptimizationDynamics.load(_path / optimizer,
-                                                      rel_tolerance)
-            for optimizer in _path.iterdir()}
-
 # =============================================================================
 
 
@@ -856,7 +816,3 @@ def compute_X_trajectory(data: xr.Dataset) -> xr.DataArray:
         output_dim=0, drop=True).rename(
             'trajectory').transpose(
                 'optimizer', 'iterations', 'problem')
-
-
-def preprocess_task_labels(task_labels: xr.DataArray, ) -> xr.DataArray:
-    ...

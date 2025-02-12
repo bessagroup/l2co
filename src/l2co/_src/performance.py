@@ -98,49 +98,9 @@ def scaling2(data: xr.Dataset) -> xr.DataArray:
 
     return ds_log10_positive
 
-
-def add_random_samples_combinations(
-        data: xr.Dataset, data_samples: xr.Dataset,
-        iterations: int, t_switch: int) -> xr.Dataset:
-    """
-    Add random samples as optimizers to the optimization dataset.
-
-    Parameters
-    ----------
-    data : xr.Dataset
-        The performance dataset.
-    data_samples : xr.Dataset
-        The dataset with the random samples.
-    iterations : int
-        The total number of iterations.
-    t_switch : int
-        The number of iterations to switch from random samples to the
-        optimization data.
-
-    Returns
-    -------
-    xr.Dataset
-        The performance dataset with the random samples optimizers added.
-    """
-    a = []
-
-    opts = [entry for entry in data.optimizer.values if '+' not in entry]
-
-    for opt in opts:
-        a.append(xr.concat([data_samples.sel(
-            iterations=np.arange(t_switch)).output, data.sel(
-            optimizer=opt, iterations=np.arange(iterations-t_switch)
-        ).assign_coords(iterations=np.arange(t_switch, iterations)).output],
-            dim='iterations').assign_coords(optimizer=f"random_samples+{opt}"))
-
-    random_combinations = xr.concat(a, dim='optimizer')
-
-    return xr.concat(
-        [data.output, random_combinations], dim='optimizer').to_dataset()
-
-
 #                                                           Performance profile
 # =============================================================================
+
 
 def calculate_performance_ratio(
         ds_budget: xr.DataArray,
