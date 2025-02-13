@@ -13,7 +13,7 @@ from mpi4py import MPI
 from omegaconf import DictConfig
 
 # Local
-from l2co import logger
+from l2co import OptimizationSchedule, OptimizationStep, logger
 from l2co._src.l2co_model import L2CO_model
 from l2co._src.tasks.benchmarkfunctions.run_optimization import (
     RunOptimizationL2CO, load_schedules, save_schedules)
@@ -69,11 +69,21 @@ def pre_process(config: DictConfig):
         _, tasks = experiment_data_tasks.to_pandas(
             keep_references=False)
 
+        tasks['optimizer schedule'] = [OptimizationSchedule(
+            steps=[OptimizationStep(optimizer='l2co')],
+            n_evals=config.n_evals_per_switch*config.n_switches)
+            for _ in range(len(tasks))]
+
     else:
         logger.info("Loading tasks from disk")
         _path = Path(config.task_path)
         tasks_set = {Task.load(p) for p in set(_path.glob('*.json'))}
-        tasks = [{'task': t} for t in tasks_set]
+        tasks = [
+            {'task': t,
+             'optimizer schedule': OptimizationSchedule(
+                 steps=[OptimizationStep(optimizer='l2co')],
+                 n_evals=config.n_evals_per_switch*config.n_switches)}
+            for t in tasks_set]
 
     # Save everything
     domain_combined = Domain()
@@ -81,8 +91,13 @@ def pre_process(config: DictConfig):
         name='task', to_disk=True,
         store_function=Task.save,
         load_function=Task.load)
+    domain_combined.add_parameter(
+        name='optimizer schedule',
+        to_disk=True,
+        store_function=OptimizationSchedule.save,
+        load_function=OptimizationSchedule.load)
     domain_combined.add_output(
-        name='l2co loss history',
+        name='loss history',
         to_disk=True,
     )
     domain_combined.add_output(

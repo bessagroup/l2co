@@ -92,6 +92,8 @@ class OptimizationStep:
     def copy(self) -> OptimizationStep:
         return deepcopy(self)
 
+# =============================================================================
+
 
 class OptimizationSchedule:
     def __init__(self, steps: OptimizationStep | list[OptimizationStep],

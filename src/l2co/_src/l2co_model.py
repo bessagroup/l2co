@@ -28,7 +28,7 @@ from ._logging import logger
 from .data_loader import OptimizationDynamics
 from .preprocessing import preprocessing_factory
 from .tasks.benchmarkfunctions.dataloader import batch_iter
-from .tasks.benchmarkfunctions.optimizerschedule import OptimizationStep
+from .optimizerschedule import OptimizationStep
 
 #                                                                Basis function
 # =============================================================================

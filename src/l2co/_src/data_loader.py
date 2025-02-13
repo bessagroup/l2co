@@ -35,7 +35,7 @@ from sklearn.model_selection import train_test_split
 
 # Local
 from .performance import create_performance_profile, scaling2
-from .tasks.benchmarkfunctions.optimizerschedule import (OptimizationSchedule,
+from .optimizerschedule import (OptimizationSchedule,
                                                          OptimizationStep)
 from .tasks.benchmarkfunctions.task import Task
 

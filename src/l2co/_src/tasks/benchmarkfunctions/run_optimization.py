@@ -22,8 +22,8 @@ from SALib.sample import latin
 from ..._logging import logger
 from ...data_loader import OptimizationDynamics
 from ...l2co_model import L2CO_model
+from ...optimizerschedule import OptimizationSchedule, OptimizationStep
 from .optimizers import OPT_MAPPING
-from .optimizerschedule import OptimizationSchedule, OptimizationStep
 from .task import Task
 from .tree_utils import tree_to_dict_list
 
@@ -534,7 +534,7 @@ class RunOptimizationL2CO(DataGenerator):
             )
 
         experiment_sample.store(
-            name='l2co loss history',
+            name='loss history',
             object=data_xarr, to_disk=True)
 
         experiment_sample.store(

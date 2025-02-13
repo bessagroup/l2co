@@ -10,7 +10,7 @@ import xarray as xr
 from f3dasm import ExperimentData
 
 from l2co import logger as l2co_logger
-from l2co._src.tasks.benchmarkfunctions.optimizerschedule import (
+from l2co._src.optimizerschedule import (
     OptimizationSchedule, OptimizationStep)
 from l2co._src.tasks.benchmarkfunctions.task import Task
 

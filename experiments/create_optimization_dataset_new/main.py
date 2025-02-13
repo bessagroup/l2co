@@ -15,7 +15,7 @@ from omegaconf import DictConfig
 
 # Local
 from l2co import logger
-from l2co._src.tasks.benchmarkfunctions.optimizerschedule import (
+from l2co._src.optimizerschedule import (
     OptimizationSchedule, OptimizationStep, get_combination)
 from l2co._src.tasks.benchmarkfunctions.run_optimization import RunOptimization
 from l2co._src.tasks.benchmarkfunctions.task import Task

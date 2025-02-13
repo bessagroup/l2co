@@ -251,49 +251,6 @@ class BenchmarkFuncSampler(Block):
         return ExperimentData(domain=data.domain, input_data=df)
 
 
-# def create_benchmark_tasks(
-#     dims: List[int], fns: List[str],
-#         noises: List[float], seed: int,
-#         noise_distribution: List[float],
-#         n_samples: int) -> List[Task]:
-
-#     dim_filters = {d: list(filter(
-#         lambda f: MY_FUNCTION_MAPPING[f.lower()].is_dim_compatible(d)
-#         and MY_FUNCTION_MAPPING[f.lower()].differentiable, list(fns)))
-#         for d in dims}
-
-#     rng = np.random.default_rng(seed=seed)
-
-#     dims_list = rng.choice(
-#         dims,
-#         size=n_samples)
-#     function_names_list = [rng.choice(dim_filters[d]) for d in dims_list]
-#     noise_list = rng.choice(noises,
-#                             size=n_samples,
-#                             p=noise_distribution)
-#     seed_list = rng.integers(0, 2**30, size=n_samples)
-
-#     benchmark_list = [create_benchmark_loss_function(
-#         fn_name=str(fn_name),
-#         seed=int(s),
-#         scale_bounds=jnp.tile(
-#             jnp.array([0., 1.]), (d, 1)),
-#         dimensionality=int(d),
-#         noise=float(n),
-#         offset=True) for fn_name, d, n, s in zip(
-#             function_names_list, dims_list, noise_list, seed_list)]
-
-#     df = pd.DataFrame({
-#         "dims": dims_list,
-#         "function_name": function_names_list,
-#         "noise": noise_list,
-#         "seed": seed_list
-#     })
-
-#     # return [Task(model=model, loss_fn=loss_fn, tag=tag)
-#     #         for model, loss_fn, tag in benchmark_list]
-
-
 def create_benchmark_task(fn_name: str, seed: int, noise: float,
                           dimensionality: int) -> Task:
     model, loss_fn, tag = create_benchmark_loss_function(
@@ -308,31 +265,3 @@ def create_benchmark_task(fn_name: str, seed: int, noise: float,
     return Task(model=model, loss_fn=loss_fn, tag=tag)
 
 
-def create_spiral_task(hidden_size: int, dataset_size: int,
-                       dataset_path: str, seed: int, batch_size: int) -> Task:
-    key = jrd.key(int(seed))
-
-    model_key, dataset_key, batch_key = jrd.split(key, 3)
-
-    tag = {'task_name': 'spiral'}
-
-    # model
-    model, model_tags = rnn(in_size=2, out_size=1, hidden_size=hidden_size,
-                            key=model_key)
-
-    tag.update(model_tags)
-
-    if not Path(dataset_path).with_suffix('.npz').exists():
-        dataset = spiral_dataset(dataset_size=dataset_size, key=key)
-        save_dataset(dataset, dataset_path)
-
-    # loss function
-    loss_fn = mse_loss_fn
-
-    tag.update({'loss_fn': 'mse'})
-
-    return Task(model=model, loss_fn=loss_fn,
-                dataset={'dataset_path': dataset_path,
-                         'batch_size': batch_size,
-                         'seed': seed},
-                tag=tag)
