@@ -34,11 +34,12 @@ def main(config):
     rank = comm.Get_rank()
     size = comm.Get_size()
 
+    logger.setLevel(config.log_level)
+    f3dasm_logger.setLevel(config.log_level)
+
     if 'SLURM_JOB_ID' in os.environ:
         jax.distributed.initialize()
 
-    logger.setLevel(config.log_level)
-    f3dasm_logger.setLevel(config.log_level)
     f3dasm_logger.info(f"{jax.device_count()=} - {jax.local_device_count()=}")
 
     f3dasm_logger.info(f"[{rank}/{size}] Running on {socket.gethostname()}")

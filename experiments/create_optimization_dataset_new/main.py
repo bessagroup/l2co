@@ -1,10 +1,12 @@
 # Standard
+import os
 import socket
 from pathlib import Path
 from time import sleep
 
 # Third-party
 import hydra
+import jax
 import numpy as np
 from f3dasm import ExperimentData
 from f3dasm import logger as f3dasm_logger
@@ -15,8 +17,8 @@ from omegaconf import DictConfig
 
 # Local
 from l2co import logger
-from l2co._src.optimizerschedule import (
-    OptimizationSchedule, OptimizationStep, get_combination)
+from l2co._src.optimizerschedule import (OptimizationSchedule,
+                                         OptimizationStep, get_combination)
 from l2co._src.tasks.benchmarkfunctions.run_optimization import RunOptimization
 from l2co._src.tasks.benchmarkfunctions.task import Task
 
@@ -34,6 +36,11 @@ def main(config):
 
     logger.setLevel(config.log_level)
     f3dasm_logger.setLevel(config.log_level)
+
+    if 'SLURM_JOB_ID' in os.environ:
+        jax.distributed.initialize()
+
+    f3dasm_logger.info(f"{jax.device_count()=} - {jax.local_device_count()=}")
 
     f3dasm_logger.info(f"[{rank}/{size}] Running on {socket.gethostname()}")
 
