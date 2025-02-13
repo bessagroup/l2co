@@ -2,8 +2,10 @@ import math
 from pathlib import Path
 from typing import Dict
 
+import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jrd
+import jax.tree_util as jtu
 
 from l2co import Task
 from l2co._src.tasks.benchmarkfunctions.loss_fn import mse_loss_fn
@@ -43,6 +45,11 @@ def create_spiral_task(hidden_size: int, dataset_size: int,
     # model
     model, model_tags = rnn(in_size=2, out_size=1, hidden_size=hidden_size,
                             key=model_key)
+
+    # Count trainable parameters
+    num_params = sum(p.size for p in jtu.tree_leaves(
+        model) if isinstance(p, jnp.ndarray))
+    tag["dimensionality"] = num_params
 
     tag.update(model_tags)
 

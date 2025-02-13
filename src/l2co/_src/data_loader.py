@@ -20,6 +20,7 @@ create_entire_dataset
 # Standard
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from time import perf_counter
@@ -33,10 +34,9 @@ from f3dasm import ExperimentData
 from scipy.linalg import svd
 from sklearn.model_selection import train_test_split
 
+from .optimizerschedule import OptimizationSchedule, OptimizationStep
 # Local
 from .performance import create_performance_profile, scaling2
-from .optimizerschedule import (OptimizationSchedule,
-                                                         OptimizationStep)
 from .tasks.benchmarkfunctions.task import Task
 
 #                                                          Authorship & Credits
@@ -117,7 +117,7 @@ class DataLoader:
             index_col=0, header=0)
 
         task_labels = xr.DataArray(df_task_labels.values,
-                                   coords={'itemID': df_task_labels.index,
+                                   coords={'itemID': df_task_labels['itemID'],
                                            'features': df_task_labels.columns},
                                    dims=['itemID', 'features'],
                                    )
@@ -382,6 +382,7 @@ class DataLoader:
 #                                                          Selecting optimizers
 # =============================================================================
 
+
     def select_single_optimizers(
             self, squash: bool = False) -> DataLoader:
         """
@@ -486,7 +487,6 @@ class DataLoader:
 
 #                                                           Performance metrics
 # =============================================================================
-
 
     def performance_profile(
             self, strategies: Optional[Iterable[xr.DataArray]] = None,

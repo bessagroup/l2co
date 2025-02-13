@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import json
 from functools import partial
 from pathlib import Path
@@ -10,8 +11,7 @@ import xarray as xr
 from f3dasm import ExperimentData
 
 from l2co import logger as l2co_logger
-from l2co._src.optimizerschedule import (
-    OptimizationSchedule, OptimizationStep)
+from l2co._src.optimizerschedule import OptimizationSchedule, OptimizationStep
 from l2co._src.tasks.benchmarkfunctions.task import Task
 
 
@@ -126,8 +126,23 @@ def create_entire_dataset(
 
 def create_task_labels_df(pivot_table: pd.DataFrame) -> pd.DataFrame:
     df_labels = pivot_table.index.to_frame(index=False)
-    return pd.DataFrame([{v[0]: v[1] for v in row} for i,
-                         row in df_labels.iterrows()])
+
+    df = pd.DataFrame([{v[0]: v[1] for v in row} for i,
+                       row in df_labels.iterrows()])
+
+    df = df.reindex(
+        sorted(df.columns), axis=1)
+
+    def hash_row_with_columns(row):
+        # Include column names
+        row_str = "_".join(f"{col}:{row[col]}" for col in row.index)
+        # Truncate for readability
+        return hashlib.sha256(row_str.encode()).hexdigest()[:16]
+
+    df.index = df.apply(
+        hash_row_with_columns, axis=1)
+
+    return df
 
 
 def create_optimization_data(
@@ -135,7 +150,10 @@ def create_optimization_data(
 
     df = pivot_table.copy(deep=True)
 
-    df.index = range(len(df))
+    # Hashing
+    df_labels = create_task_labels_df(df)
+
+    df.index = df_labels.index
     df.columns = pd.DataFrame([{v[0]: v[1] for v in col}
                               for col in df.columns.droplevel(0)])['opt_name']
 
