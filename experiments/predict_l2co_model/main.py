@@ -1,10 +1,12 @@
 # Standard
+import os
 import socket
 from pathlib import Path
 from time import sleep
 
 # Third-party
 import hydra
+import jax
 from f3dasm import ExperimentData
 from f3dasm import logger as f3dasm_logger
 from f3dasm.design import Domain
@@ -27,12 +29,17 @@ from l2co._src.tasks.benchmarkfunctions.task import Task
 
 @hydra.main(config_path="./conf", config_name="config")
 def main(config):
+
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     size = comm.Get_size()
 
+    if 'SLURM_JOB_ID' in os.environ:
+        jax.distributed.initialize()
+
     logger.setLevel(config.log_level)
     f3dasm_logger.setLevel(config.log_level)
+    f3dasm_logger.info(f"{jax.device_count()=} - {jax.local_device_count()=}")
 
     f3dasm_logger.info(f"[{rank}/{size}] Running on {socket.gethostname()}")
 
