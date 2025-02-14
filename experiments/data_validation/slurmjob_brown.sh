@@ -9,7 +9,7 @@
 # Parse arguments
 while [[ "$#" -gt 0 ]]; do
     case $1 in
-        --path) SLURM_ARRAY_JOB_ID="$2"; shift ;;  # Capture --path argument
+        --path) DATASET="$2"; shift ;;  # Capture --path argument
     esac
     shift
 done
@@ -18,7 +18,7 @@ done
 projectfolder="create_optimization_dataset_new"
 
 # Set run directory using provided --path
-run_dir="${HOME}/scratch/${projectfolder}/${SLURM_ARRAY_JOB_ID}"
+run_dir="${HOME}/scratch/${projectfolder}/${DATASET}"
 
 echo "======================================="
 echo " Slurm Job Information"
@@ -52,7 +52,7 @@ conda activate l2co
 echo "Conda Environment: $(conda info --envs | grep '*' | awk '{print $1}')"
 
 # Handle default SLURM_ARRAY_JOB_ID if not provided
-if [ -z "$SLURM_ARRAY_JOB_ID" ]; then
+if [ -z "$DATASET" ]; then
     echo "Error: --path argument not provided."
     exit 1
 fi
