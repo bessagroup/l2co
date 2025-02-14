@@ -83,6 +83,7 @@ def create_entire_dataset(
     for task_path in df[task_column_name]:
         task = Task.load(task_path)
         labels.append(task.tag_hashable)
+
         del task
 
     df_labels = pd.DataFrame(
@@ -178,23 +179,27 @@ def create_optimization_data(
         combine='nested',
         concat_dim=[xr.DataArray(df.index, coords=[df.index], dims=['itemID']),
                     xr.DataArray(df.columns, coords=[
-                        df.columns], dims=['optimizer'])
+                        df.columns], dims=['optimizer']),
                     ],
         parallel=True,
         preprocess=partial(validation_fn,
                            placeholder=placeholder),
         coords='minimal',
+        join='outer',
     )
+
+    xarr_full = xarr_full.stack(
+        problem=('realization', 'itemID'), create_index=False)
 
     # Open the whole thing:
     l2co_logger.info("Opening the whole thing")
 
-    xarr_full = xarr_full.stack(
-        problem=('realization', 'itemID'), create_index=False
-    )
+    # xarr_full = xarr_full.stack(
+    #     problem=('realization', 'itemID'), create_index=False
+    # )
 
-    xarr_full = xarr_full.assign_coords(
-        {'problem': np.arange(xarr_full.problem.size)})
+    # xarr_full = xarr_full.assign_coords(
+    #     {'problem': np.arange(xarr_full.problem.size)})
 
     if 'input_dim' in xarr_full.coords:
         return xarr_full.drop('input_dim'), placeholder_path

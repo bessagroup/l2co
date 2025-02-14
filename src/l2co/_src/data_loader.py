@@ -20,7 +20,6 @@ create_entire_dataset
 # Standard
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 from time import perf_counter
@@ -36,7 +35,7 @@ from sklearn.model_selection import train_test_split
 
 from .optimizerschedule import OptimizationSchedule, OptimizationStep
 # Local
-from .performance import create_performance_profile, scaling2
+from .performance import scaling2
 from .tasks.benchmarkfunctions.task import Task
 
 #                                                          Authorship & Credits
@@ -77,6 +76,14 @@ class DataLoader:
         self.task_labels = task_labels
         self.opt_steps = opt_steps
 
+    def __add__(self, __o: DataLoader) -> DataLoader:
+        data = xr.concat([self.data, __o.data], dim='problem')
+        task_labels = xr.concat([self.task_labels, __o.task_labels],
+                                dim='problem')
+        opt_steps = {**self.opt_steps, **__o.opt_steps}
+        return DataLoader(data=data, task_labels=task_labels,
+                          opt_steps=opt_steps)
+
 #                                                      Alternative Constructors
 # =============================================================================
 
@@ -109,15 +116,14 @@ class DataLoader:
 
         # Retrieve the optimization dynamics data
         data = xr.open_dataset(
-            (_path / data_filename).with_suffix('.nc'),
-            chunks='auto')
+            (_path / data_filename).with_suffix('.nc'))
 
         df_task_labels = pd.read_csv(
             (_path / labels_filename).with_suffix('.csv'),
             index_col=0, header=0)
 
         task_labels = xr.DataArray(df_task_labels.values,
-                                   coords={'itemID': df_task_labels['itemID'],
+                                   coords={'itemID': df_task_labels.index,
                                            'features': df_task_labels.columns},
                                    dims=['itemID', 'features'],
                                    )
@@ -260,16 +266,40 @@ class DataLoader:
         """
         return self.data.optimizer
 
-    @property
-    def performance(self) -> xr.DataArray:
+    def _performance(self, include_best: bool,
+                     exclude_optimizer: Optional[str] = None) -> xr.DataArray:
         t_start = perf_counter()
         print("Triggered performance")
         performance = scaling2(self.data)
 
         performance = performance.ffill(dim='iterations')
 
+        if include_best:
+
+            if exclude_optimizer is not None:
+                check_sbs = performance.where(
+                    performance.optimizer != exclude_optimizer, drop=True)
+            else:
+                check_sbs = performance
+
+            sbs = check_sbs.groupby('itemID').map(
+                lambda x: x.isel(iterations=-1, drop=True).idxmin(
+                    'optimizer')).assign_coords(
+                {'problem': performance.problem}).isel(
+                        output_dim=0, drop=True)
+            sbs = sbs.fillna(performance.optimizer.values[0])
+            perf_sbs = performance.sel(optimizer=sbs, drop=True).reset_coords(
+                'optimizer', drop=True).expand_dims(optimizer=['sbs'])
+            performance = xr.merge([performance, perf_sbs]).output
+
         print(f"Performance calculation took: {perf_counter()-t_start:0.2f}")
         return performance
+
+    @property
+    def performance(self) -> xr.DataArray:
+        return self._performance(include_best=False,
+                                 exclude_optimizer=None)
+
 
 #                                                            Selecting problems
 # =============================================================================
@@ -489,61 +519,35 @@ class DataLoader:
 # =============================================================================
 
     def performance_profile(
-            self, strategies: Optional[Iterable[xr.DataArray]] = None,
-            include_best: bool = False
-    ) -> xr.Dataset:
+            self, max_f_value: int = 2.0, include_best: bool = False,
+            exclude_optimizer: Optional[str] = None,
+    ) -> xr.DataArray:
 
-        if strategies is None:
-            strategies = []
+        # Trigger performance
+        p = self._performance(
+            include_best=include_best,
+            exclude_optimizer=exclude_optimizer).isel(iterations=-1)
+        rij = (p + 1.0) / 1.0
 
-        if include_best:
-            best_performance = self.performance.isel(
-                iterations=-1, output_dim=0, drop=True).idxmin(
-                    'optimizer').sortby(
-                    'problem').fillna(str(self.optimizers[0].values))
+        ds_f = xr.Dataset(
+            {'performance_profile': rij, 'relative_error': xr.DataArray(
+                np.logspace(np.log10(1.0), np.log10(max_f_value), 1000),
+                dims='relative_error')})
 
-            strategies.append(best_performance)
+        performance_profile = np.less_equal(
+            ds_f, ds_f.relative_error+1e-4).where(
+            ~ds_f.isnull(), np.nan).mean(dim='problem').performance_profile
 
-        _strategies = [*strategies]
+        rel_error = (performance_profile.relative_error * 100) - 100
 
-        performance_profile = create_performance_profile(
-            ds_raw=self.data,
-            iterations=self.n_iterations,
-            strategies=_strategies)
+        return performance_profile.assign_coords(relative_error=rel_error)
 
-        return performance_profile
-
-    def rtd_profile(
-            self, strategies: Optional[Iterable[xr.DataArray]] = None,
-            targets: Optional[np.array] = None,
-            include_best: bool = False) -> xr.Dataset:
-
-        if strategies is None:
-            strategies = []
-
-        if targets is None:
-            rtd = self.performance
-        else:
-            # TODO: This cannot be computed due to memory errors
-            _targets = xr.DataArray(targets, dims=['targets'])
-            rtd = (self.performance.expand_dims(
-                {'targets': len(_targets)}) > _targets).mean('targets')
-
-        rtd = rtd.sortby('problem').to_dataset('optimizer')
-
-        for strategy in strategies:
-            rtd[strategy.name] = self.performance.sortby(
-                'problem').sel(optimizer=strategy.sortby('problem')).T
-
-        if include_best:
-            best_performance = self.performance.isel(
-                iterations=-1, drop=True).idxmin(
-                    'optimizer').sortby('problem').fillna(
-                        str(self.optimizers[0].values))
-            rtd['best'] = self.performance.sortby(
-                'problem').sel(optimizer=best_performance)
-
-        return 1.0-rtd
+    def rtd_profile(self, include_best: bool = False,
+                    exclude_optimizer: Optional[str] = None,) -> xr.DataArray:
+        p = self._performance(
+            include_best=include_best,
+            exclude_optimizer=exclude_optimizer)
+        return (1.0-p).mean('problem')
 
     def load(self):
         self.data.load()

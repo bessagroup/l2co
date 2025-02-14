@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TypedDict
@@ -15,9 +16,7 @@ from jaxtyping import PyTree
 from opfunu import create_benchmark_loss_function
 
 from ... import FUNCTION_MAPPING as MY_FUNCTION_MAPPING
-from .dataloader import batch_iter, spiral_dataset
-from .loss_fn import mse_loss_fn
-from .models import rnn
+from .dataloader import batch_iter
 
 # =============================================================================
 
@@ -130,6 +129,11 @@ class Task:
 
         # Use frozenset for order independence
         return frozenset(tag_hashable.items())
+
+    @property
+    def hash(self) -> str:
+        t = sorted(self.tag_hashable)
+        return hashlib.sha256(str(t).encode()).hexdigest()[:16]
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Task:
@@ -263,5 +267,3 @@ def create_benchmark_task(fn_name: str, seed: int, noise: float,
         offset=True)
 
     return Task(model=model, loss_fn=loss_fn, tag=tag)
-
-
