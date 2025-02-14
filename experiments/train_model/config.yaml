@@ -1,0 +1,41 @@
+dataset_path: /media/martin/T7/data/data_bench/opts
+
+seed: 42
+
+t_start: 0
+t: 100
+t_end: 300
+
+stage0_model:
+  _target_: sklearn.ensemble.HistGradientBoostingRegressor
+  learning_rate: 0.1
+
+stage1_model:
+  _target_: l2co._src.l2co_model.MixedModel
+  _partial_: True
+  width: 3
+  depth: 2
+  in_size: 3
+  out_size: 4
+  feature_fn:
+    _target_: l2co._src.l2co_model.fit_basis_function
+    _partial_: True
+  key: ${seed}
+
+feature_types:
+  convex: 'categorical'
+  separable: 'categorical'
+  noise: 'categorical'
+  dim: 'ordinal'
+  differentiable: 'categorical'
+
+
+optimizer:
+  _target_: optax.adam
+  learning_rate: 1e-3
+
+epochs: 100
+batch_size: 32
+loss_fn:
+  _target_: l2co._src.l2co_model.mse_loss_fn
+  _partial_: True

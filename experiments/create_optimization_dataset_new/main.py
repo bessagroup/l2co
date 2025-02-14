@@ -17,8 +17,7 @@ from omegaconf import DictConfig
 
 # Local
 from l2co import logger
-from l2co._src.optimizerschedule import (OptimizationSchedule,
-                                         OptimizationStep, get_combination)
+from l2co._src.optimizerschedule import OptimizationSchedule
 from l2co._src.tasks.benchmarkfunctions.run_optimization import RunOptimization
 from l2co._src.tasks.benchmarkfunctions.task import Task
 
@@ -72,19 +71,21 @@ def pre_process(config: DictConfig):
         **task_kwargs)
 
     # Schedule
-    domain_schedules = Domain()
-    steps = [OptimizationStep.from_yaml(c) for c in config.optimizers]
-    domain_schedules.add_category(name='optimizer_1', categories=steps)
-    domain_schedules.add_category(name='optimizer_2', categories=steps)
+    domain_schedule = Domain()
+    for k, v in config.schedules.schedules.items():
+        domain_schedule.add_category(name=k, categories=instantiate(v))
 
     experiment_data_schedules = ExperimentData.from_sampling(
-        sampler='grid', domain=domain_schedules)
+        sampler='grid', domain=domain_schedule)
+
+    schedule_fn = instantiate(
+        config.schedules.data_generation.data_generator, _partial_=True)
 
     experiment_data_schedules.evaluate(
-        data_generator=get_combination,
+        data_generator=schedule_fn,
         output_names=['optimizer schedule'],
-        switch=config.optimization.switch,
-        total_evals=config.optimization.n_evals)
+        **config.schedules.data_generation.kwargs
+    )
 
     # Grid sample tasks + schedules
     domain_grid_sampling = Domain()
@@ -105,8 +106,8 @@ def pre_process(config: DictConfig):
         sampler='grid', domain=domain_grid_sampling)
 
     # if applicable, select a subset of all combinations
-    if config.fraction_combinations is not None:
-        rng = np.random.default_rng(42)
+    if 'fraction_combinations' in config.schedules:
+        rng = np.random.default_rng(config.seed)
         indices = rng.integers(
             len(experiment_data_combined),
             size=int(
@@ -147,10 +148,9 @@ def process(config: DictConfig):
     logger.debug("Loaded experiment_data")
 
     run_opt = RunOptimization(
-        n_realizations=config.optimization.n_realizations,
+        n_realizations=config.n_realizations,
         seed=config.seed,
-        bounded=(config.optimization.lower_bound,
-                 config.optimization.upper_bound),
+        bounded=config.bounded,
         include_input=False,
         clear_jax_cache=True,
     )

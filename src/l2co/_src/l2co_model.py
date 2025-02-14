@@ -5,6 +5,7 @@ import json
 from collections import defaultdict
 from functools import partial
 from pathlib import Path
+from time import time
 from typing import Callable, Dict, Iterable, Optional
 
 # Third-party
@@ -26,9 +27,9 @@ from sklearn.pipeline import Pipeline, make_pipeline
 # Local
 from ._logging import logger
 from .data_loader import OptimizationDynamics
+from .optimizerschedule import OptimizationStep
 from .preprocessing import preprocessing_factory
 from .tasks.benchmarkfunctions.dataloader import batch_iter
-from .optimizerschedule import OptimizationStep
 
 #                                                                Basis function
 # =============================================================================
@@ -266,9 +267,13 @@ class L2CO_model:
         data_files = set(p.stem for p in list(_path.glob('*')))
 
         for i, file in enumerate(data_files):
-            logger.debug(
-                f"[{i+1}/{len(data_files)}] - Training model with data {file}")
+            t1 = time()
+            logger.info((
+                f"[{i+1}/{len(data_files)}] - Start training model "
+                f"with data {file}"))
+
             data = OptimizationDynamics.load(_path / file)
+
             self.train_model(
                 data=data,
                 optimizer=optimizer,
@@ -277,6 +282,10 @@ class L2CO_model:
                 seed=seed,
                 loss_fn=loss_fn
             )
+            logger.info((f"[{i+1}/{len(data_files)}] - "
+                        f"Trained model with data {file} in "
+                         f"{time() - t1:.2f}s")
+                        )
 
     def train_model(self, data: OptimizationDynamics,
                     optimizer: optax.GradientTransformation,

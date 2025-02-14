@@ -1,31 +1,14 @@
 defaults:
 - tasks: benchmark
+- schedules: single
 
-optimizers:
-  # - optimizer: cmaes
-  #   hyperparameters:
-  #     popsize: 30
-  - optimizer: adam
-    hyperparameters:
-      learning_rate: 1e-3
-  - optimizer: pso
-    hyperparameters:
-      popsize: 30
-  # - optimizer: lbfgsb
+n_realizations: 10
 
-optimization:
-  switch: 0.1
-  n_evals: 300
-  n_realizations: 2
-  lower_bound: 0.0
-  upper_bound: 1.0
+bounded:
+  - 0.0
+  - 1.0
 
-fraction_combinations: 0.75
-
-seed: 465
+seed: 467
 mode: mpi
 
 log_level: 20
-
-hpc:
-  jobid: -1

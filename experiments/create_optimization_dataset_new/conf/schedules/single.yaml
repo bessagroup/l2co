@@ -1,0 +1,33 @@
+optimizers:
+  cmaes:
+    optimizer: cmaes
+    hyperparameters:
+      popsize: 30
+  adam:
+    optimizer: adam
+    hyperparameters:
+      learning_rate: 1e-3
+  pso:
+    optimizer: pso
+    hyperparameters:
+      popsize: 30
+  lbfgsb:
+    optimizer: lbfgsb
+
+schedules:
+  optimizer_1:
+    - _target_: l2co.OptimizationStep.from_yaml
+      config: ${schedules.optimizers.cmaes}
+    - _target_: l2co.OptimizationStep.from_yaml
+      config: ${schedules.optimizers.adam}
+    - _target_: l2co.OptimizationStep.from_yaml
+      config: ${schedules.optimizers.pso}
+    - _target_: l2co.OptimizationStep.from_yaml
+      config: ${schedules.optimizers.lbfgsb}
+
+data_generation:
+  data_generator:
+    _target_: l2co._src.optimizerschedule.get_single
+    _partial_: True
+  kwargs:
+    total_evals: 400

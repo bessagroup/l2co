@@ -298,3 +298,18 @@ def get_combination(optimizer_1: OptimizationStep,
         n_evals = [optimizer_1.n_evals, optimizer_2.n_evals]
 
     return OptimizationSchedule(steps=steps, n_evals=n_evals)
+
+
+def get_single(optimizer_1: OptimizationStep,
+               total_evals: int) -> OptimizationSchedule:
+    # create copies
+    optimizer_1 = optimizer_1.copy()
+
+    # set the number of evaluations
+    optimizer_1.n_evals = total_evals
+    optimizer_1.x0_strategy = 'new'
+
+    steps = [optimizer_1]
+    n_evals = total_evals
+
+    return OptimizationSchedule(steps=steps, n_evals=n_evals)

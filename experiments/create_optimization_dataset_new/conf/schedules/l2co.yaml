@@ -1,0 +1,22 @@
+optimizers:
+  l2co:
+    optimizer: l2co
+    hyperparameters:
+      n_evals_per_switch: 100
+      n_switches: 10
+      l2co_path: /home/martin/Documents/GitHub/L2CO/experiments/predict_l2co_model/model
+
+schedules:
+  optimizer_1:
+    - _target_: l2co.OptimizationStep.from_yaml
+      config: ${schedules.optimizers.l2co}
+  
+data_generation:
+  data_generator:
+    _target_: l2co._src.optimizerschedule.get_single
+    _partial_: True
+  kwargs:
+    total_evals: 1000
+
+
+fraction_combinations:

@@ -1,7 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name="DataValidation"
 #SBATCH --partition=batch
-#SBATCH --time=12:00:00
+#SBATCH --nodes=1
+#SBATCH --time=01:00:00
 #SBATCH --account=mbessa-condo
 #SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
 

@@ -20,9 +20,9 @@ Author: Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)
 from . import plotting
 from ._src._logging import logger
 from ._src.data_loader import DataLoader, OptimizationDynamics
+from ._src.l2co_model import L2CO_model
+from ._src.optimizerschedule import OptimizationSchedule, OptimizationStep
 from ._src.preprocessing import preprocessing_factory
-from ._src.optimizerschedule import (
-    OptimizationSchedule, OptimizationStep)
 from ._src.tasks.benchmarkfunctions.task import Task
 
 #                                                          Authorship & Credits
@@ -43,4 +43,5 @@ __all__ = [
     "OptimizationStep",
     "OptimizationDynamics",
     "Task",
+    "L2CO_model",
 ]

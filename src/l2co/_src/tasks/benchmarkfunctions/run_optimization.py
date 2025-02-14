@@ -343,6 +343,53 @@ class RunOptimization(DataGenerator):
         schedule: OptimizationSchedule = es['optimizer schedule']
         seed: int = self.rng.integers(0, 2**30)
 
+        if schedule.name.startswith('l2co'):
+            n_evals_per_switch = schedule.steps[0]\
+                .hyperparameters['n_evals_per_switch']
+            n_switches = schedule.steps[0].hyperparameters['n_switches']
+            l2co_path = schedule.steps[0].hyperparameters['l2co_path']
+            trained_l2co_model = L2CO_model.load(l2co_path)
+
+            experiment_sample = self.run_optimization_l2co(
+                experiment_sample=experiment_sample,
+                task=task,
+                trained_l2co_model=trained_l2co_model,
+                seed=seed,
+                n_evals_per_switch=n_evals_per_switch,
+                n_switches=n_switches,
+                include_input=self.include_input,
+                bounded=self.bounded,
+            )
+
+        else:
+            experiment_sample = self.run_optimization(
+                experiment_sample=experiment_sample,
+                task=task,
+                schedule=schedule,
+                seed=seed,
+                n_realizations=self.n_realizations,
+                include_input=self.include_input,
+                bounded=self.bounded,
+            )
+
+        if self.clear_jax_cache:
+            eqx.clear_caches()
+            jax.clear_caches()
+            gc.collect()
+
+        logger.info((
+            f"Finished optimization task {task.name} with {schedule.name} "
+            f" (took {time() - t1:.2f} seconds)"
+        ))
+
+        return experiment_sample
+
+    def run_optimization(
+        self, experiment_sample: ExperimentSample, task: Task,
+        schedule: OptimizationSchedule,
+            seed: int, n_realizations: int, include_input: bool,
+            bounded: Optional[Tuple[float, float]]) -> ExperimentSample:
+        # t1 = time()
         data_xarr = run_optimization_schedule_multiple_realizations(
             task=task,
             optimization_schedule=schedule,
@@ -356,15 +403,36 @@ class RunOptimization(DataGenerator):
             name='loss history',
             object=data_xarr, to_disk=True)
 
-        if self.clear_jax_cache:
-            eqx.clear_caches()
-            jax.clear_caches()
-            gc.collect()
+        return experiment_sample
 
-        logger.info((
-            f"Finished optimization task {task.name} with {schedule.name} "
-            f" (took {time() - t1:.2f} seconds)"
-        ))
+    def run_optimization_l2co(
+        self, experiment_sample: ExperimentSample,
+            task: Task, trained_l2co_model: L2CO_model, seed: int,
+            n_evals_per_switch: int, n_switches: int, include_input: bool,
+            bounded: Optional[Tuple[float, float]]) -> ExperimentSample:
+        data_xarr, schedule_list = \
+            run_optimization_no_schedule_multiple_realizations(
+                task=task,
+                seed=seed,
+                trained_l2co_model=trained_l2co_model,
+                n_evals_per_switch=n_evals_per_switch,
+                n_switches=n_switches,
+                n_realizations=self.n_realizations,
+                include_input=self.include_input,
+                bounded=self.bounded,
+            )
+
+        experiment_sample.store(
+            name='loss history',
+            object=data_xarr, to_disk=True)
+
+        experiment_sample.store(
+            name='l2co schedules',
+            object=schedule_list,
+            to_disk=True,
+            store_function=save_schedules,
+            load_function=load_schedules,
+        )
 
         return experiment_sample
 
@@ -493,71 +561,6 @@ def run_optimization_no_schedule(
     logger.debug(f"Optimization finished with {n_evals_per_switch*n_switches}")
 
     return data, schedule
-
-
-class RunOptimizationL2CO(DataGenerator):
-    def __init__(self,
-                 trained_l2co_model: L2CO_model,
-                 n_realizations: int,
-                 seed: int,
-                 n_evals_per_switch: int,
-                 n_switches: int,
-                 bounded: Optional[Tuple[float, float]] = None,
-                 include_input: bool = False,
-                 clear_jax_cache: bool = True,
-
-                 ):
-        self.bounded = bounded
-        self.n_realizations = n_realizations
-        self.include_input = include_input
-        self.clear_jax_cache = clear_jax_cache
-        self.rng = onp.random.default_rng(seed=seed)
-        self.n_evals_per_switch = n_evals_per_switch
-        self.n_switches = n_switches
-        self.trained_l2co_model = trained_l2co_model
-
-    def execute(self, experiment_sample: ExperimentSample) -> ExperimentSample:
-        t1 = time()
-        es = experiment_sample.input_data
-        task: Task = es['task']
-        # schedule: OptimizationSchedule = es['optimizer schedule']
-        seed: int = self.rng.integers(0, 2**30)
-
-        data_xarr, schedule_list = \
-            run_optimization_no_schedule_multiple_realizations(
-                task=task,
-                seed=seed,
-                trained_l2co_model=self.trained_l2co_model,
-                n_evals_per_switch=self.n_evals_per_switch,
-                n_switches=self.n_switches,
-                n_realizations=self.n_realizations,
-                include_input=self.include_input,
-                bounded=self.bounded,
-            )
-
-        experiment_sample.store(
-            name='loss history',
-            object=data_xarr, to_disk=True)
-
-        experiment_sample.store(
-            name='l2co schedules',
-            object=schedule_list,
-            to_disk=True,
-            store_function=save_schedules,
-            load_function=load_schedules,
-        )
-
-        if self.clear_jax_cache:
-            eqx.clear_caches()
-            jax.clear_caches()
-            gc.collect()
-
-        logger.info((
-            f"Finished optimization task {task.name} with L2CO"
-            f" (took {time() - t1:.2f} seconds)"
-        ))
-
-        return experiment_sample
 
 
 def save_schedules(object: List[OptimizationSchedule], path: str):
