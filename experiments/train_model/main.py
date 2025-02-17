@@ -19,10 +19,10 @@ def main(config):
     logger.info(f"{config=}")
 
     # Data loading
-    data = DataLoader.from_file(config.dataset_path)
+    data = DataLoader.from_file(config.path)
 
     logger.info((
-        f"Loaded data from {config.dataset_path}: {len(data.data)} "
+        f"Loaded data from {config.path}: {len(data.data)} "
         f"data points"))
 
     data.export_all_and_store(path=Path.cwd() / "data",
