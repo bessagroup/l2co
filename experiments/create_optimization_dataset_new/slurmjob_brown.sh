@@ -60,4 +60,4 @@ echo "Executing: mpirun python main.py ++hydra.run.dir=$run_dir"
 echo "======================================="
 
 # Run the Python script with MPI
-mpirun python main.py ++hydra.run.dir=$run_dir
+mpirun python main.py ++hydra.run.dir=$run_dir "$@"
