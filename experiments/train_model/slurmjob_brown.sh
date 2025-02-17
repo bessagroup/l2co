@@ -1,13 +1,12 @@
 #!/bin/bash
 #SBATCH --job-name="TrainL2CO"
 #SBATCH --partition=batch
-#SBATCH --time=12:00:00
-#SBATCH --ntasks=64
-#SBATCH --nodes=8-20
-#SBATCH --ntasks-per-node=8
-#SBATCH --cpus-per-task=4
+#SBATCH --nodes=1
+#SBATCH --time=01:00:00
 #SBATCH --account=mbessa-condo
 #SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
+
+opt_dir="${HOME}/scratch/create_optimization_dataset_new/"
 
 echo "======================================="
 echo " Slurm Job Information"
@@ -25,7 +24,7 @@ echo "======================================="
 # Load necessary modules
 module load hpcx-mpi
 module load miniconda3/23.11.0s
-source /oscar/runtime/software/external/miniconda3/23.11.0/etc/profile.d/conda.sh 
+source /oscar/runtime/software/external/miniconda3/23.11.0/etc/profile.d/conda.sh
 
 echo "======================================="
 echo " Environment Information"
@@ -41,23 +40,23 @@ conda activate l2co
 
 echo "Conda Environment: $(conda info --envs | grep '*' | awk '{print $1}')"
 
-# Handle Slurm Array Job ID
-if ! [ -n "${SLURM_ARRAY_TASK_ID+1}" ]; then
-  SLURM_ARRAY_TASK_ID=-1
-  SLURM_ARRAY_JOB_ID="${SLURM_JOB_ID}"
-fi
+# # Handle Slurm Array Job ID
+# if ! [ -n "${SLURM_ARRAY_TASK_ID+1}" ]; then
+#   SLURM_ARRAY_TASK_ID=-1
+#   SLURM_ARRAY_JOB_ID="${SLURM_JOB_ID}"
+# fi
 
 # Get project folder
 projectfolder=$(basename $(pwd))
-run_dir="${HOME}/scratch/${projectfolder}/${SLURM_ARRAY_JOB_ID}"
+run_dir="${HOME}/scratch/${projectfolder}/${SLURM_JOB_ID}"
 
 echo "======================================="
 echo " Execution Information"
 echo "======================================="
 echo "Project Folder:   $projectfolder"
 echo "Run Directory:    $run_dir"
-echo "Executing: mpirun python main.py ++hydra.run.dir=$run_dir"
+echo "Executing: mpirun python main.py ++hydra.run.dir=$run_dir $@"
 echo "======================================="
 
 # Run the Python script with MPI
-mpirun python main.py ++hydra.run.dir=$run_dir
+python main.py ++hydra.run.dir=$run_dir ++opt_dir=$opt_dir "$@"

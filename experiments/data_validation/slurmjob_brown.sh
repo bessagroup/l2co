@@ -20,7 +20,7 @@
 # Set run directory using provided --path
 # run_dir="${HOME}/scratch/${projectfolder}/${DATASET}"
 opt_dir="${HOME}/scratch/create_optimization_dataset_new/"
-run_dir="${HOME}/scratch/${projectfolder}/${SLURM_ARRAY_JOB_ID}"
+run_dir="${HOME}/scratch/${projectfolder}/${SLURM_JOB_ID}"
 
 echo "======================================="
 echo " Slurm Job Information"
@@ -68,4 +68,4 @@ echo "Executing: python main.py ++hydra.run.dir=$run_dir $@"
 echo "======================================="
 
 # Run the Python script
-python main.py ++hydra.run.dir=$run_dir +opt_dir=$opt_dir "$@"
+python main.py ++hydra.run.dir=$run_dir ++opt_dir=$opt_dir "$@"

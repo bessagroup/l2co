@@ -1,4 +1,5 @@
-dataset_path: /media/martin/T7/data/data_bench/opts
+path:
+opt_dir: /home/martin/Documents/GitHub/L2CO/experiments/create_optimization_dataset_new/outputs
 
 seed: 42
 
