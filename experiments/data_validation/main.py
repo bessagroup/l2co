@@ -1,10 +1,11 @@
-import argparse
+# import argparse
 import hashlib
 import json
 from functools import partial
 from pathlib import Path
 from typing import Dict, Tuple
 
+import hydra
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -15,7 +16,10 @@ from l2co._src.optimizerschedule import OptimizationSchedule, OptimizationStep
 from l2co._src.tasks.benchmarkfunctions.task import Task
 
 
-def main(path: Path):
+@hydra.main(config_path=".", config_name="config")
+def main(config):
+    path = Path(config.opt_dir) / config.path
+
     experimentdata = ExperimentData.from_file(path)
     labels, opt_data, placeholder_path, step_dict = create_entire_dataset(
         experiment_data=experimentdata)
@@ -209,10 +213,10 @@ def create_optimization_data(
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-p', '--path', type=str,
-                        help="Path to the experiment data", required=True)
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument('-p', '--path', type=str,
+    #                     help="Path to the experiment data", required=True)
 
-    args = parser.parse_args()
-    path = Path(args.path)
-    main(path)
+    # args = parser.parse_args()
+    # path = Path(args.path)
+    main()

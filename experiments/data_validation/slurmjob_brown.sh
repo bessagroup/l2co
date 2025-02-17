@@ -6,19 +6,21 @@
 #SBATCH --account=mbessa-condo
 #SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
 
-# Parse arguments
-while [[ "$#" -gt 0 ]]; do
-    case $1 in
-        --path) DATASET="$2"; shift ;;  # Capture --path argument
-    esac
-    shift
-done
+# # Parse arguments
+# while [[ "$#" -gt 0 ]]; do
+#     case $1 in
+#         --path) DATASET="$2"; shift ;;  # Capture --path argument
+#     esac
+#     shift
+# done
 
 # Set project folder manually
-projectfolder="create_optimization_dataset_new"
+# projectfolder="create_optimization_dataset_new"
 
 # Set run directory using provided --path
-run_dir="${HOME}/scratch/${projectfolder}/${DATASET}"
+# run_dir="${HOME}/scratch/${projectfolder}/${DATASET}"
+opt_dir="${HOME}/scratch/create_optimization_dataset_new/"
+run_dir="${HOME}/scratch/${projectfolder}/${SLURM_ARRAY_JOB_ID}"
 
 echo "======================================="
 echo " Slurm Job Information"
@@ -51,19 +53,19 @@ conda activate l2co
 
 echo "Conda Environment: $(conda info --envs | grep '*' | awk '{print $1}')"
 
-# Handle default SLURM_ARRAY_JOB_ID if not provided
-if [ -z "$DATASET" ]; then
-    echo "Error: --path argument not provided."
-    exit 1
-fi
+# # Handle default SLURM_ARRAY_JOB_ID if not provided
+# if [ -z "$DATASET" ]; then
+#     echo "Error: --path argument not provided."
+#     exit 1
+# fi
 
 echo "======================================="
 echo " Execution Information"
 echo "======================================="
 echo "Project Folder:   $projectfolder"
 echo "Run Directory:    $run_dir"
-echo "Executing: python main.py --path ${run_dir}"
+echo "Executing: python main.py ++hydra.run.dir=$run_dir $@"
 echo "======================================="
 
 # Run the Python script
-python main.py --path "${run_dir}"
+python main.py ++hydra.run.dir=$run_dir +opt_dir=$opt_dir "$@"
