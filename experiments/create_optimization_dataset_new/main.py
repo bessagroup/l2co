@@ -1,5 +1,4 @@
 # Standard
-import os
 import socket
 from pathlib import Path
 from time import sleep
@@ -35,9 +34,6 @@ def main(config):
 
     logger.setLevel(config.log_level)
     f3dasm_logger.setLevel(config.log_level)
-
-    if 'SLURM_JOB_ID' in os.environ:
-        jax.distributed.initialize()
 
     f3dasm_logger.info(f"{jax.device_count()=} - {jax.local_device_count()=}")
 
@@ -111,7 +107,8 @@ def pre_process(config: DictConfig):
         indices = rng.integers(
             len(experiment_data_combined),
             size=int(
-                len(experiment_data_combined) * config.fraction_combinations))
+                len(experiment_data_combined)
+                * config.schedules.fraction_combinations))
         experiment_data_combined = experiment_data_combined[indices]
 
         # Save everything
