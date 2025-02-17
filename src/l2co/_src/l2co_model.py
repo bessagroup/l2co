@@ -356,7 +356,7 @@ def train_stage1_model(model: eqx.Module, data: Dict[str, jnp.ndarray],
     opt_state = optimizer.init(params)
 
     data_iter = batch_iter(
-        dataset=data, batch_size=batch_size, key=jr.key(seed))
+        dataset=data, n_evals=epochs, batch_size=batch_size, key=seed)
 
     @jax.jit
     def update_fn(params, opt_state, batch):

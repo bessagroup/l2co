@@ -8,7 +8,6 @@ from typing import Any, Callable, Dict, List, Optional, TypedDict
 import cloudpickle
 import equinox as eqx
 import jax.numpy as jnp
-import jax.random as jrd
 import numpy as np
 import pandas as pd
 from f3dasm import Block, ExperimentData
@@ -16,7 +15,6 @@ from jaxtyping import PyTree
 from opfunu import create_benchmark_loss_function
 
 from ... import FUNCTION_MAPPING as MY_FUNCTION_MAPPING
-from .dataloader import batch_iter
 
 # =============================================================================
 
@@ -105,10 +103,13 @@ class Task:
         self.loss_fn = loss_fn
         self.tag = tag
 
-        self.learning_data = batch_iter(
-            dataset=load_dataset(self.dataset['dataset_path']),
-            batch_size=self.dataset['batch_size'],
-            key=jrd.key(self.dataset['seed']))
+    @property
+    def loaded_dataset(self) -> Dict[str, Any] | None:
+        return load_dataset(self.dataset['dataset_path'])
+
+    @property
+    def batch_size(self) -> int | None:
+        return self.dataset['batch_size']
 
     @property
     def name(self) -> str:

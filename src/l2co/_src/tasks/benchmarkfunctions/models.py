@@ -1,5 +1,5 @@
 
-from typing import Any, Dict, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 import equinox as eqx
 import jax
@@ -18,7 +18,7 @@ class RNN(eqx.Module):
     cell: eqx.Module
     linear: eqx.nn.Linear
     bias: jax.Array
-    in_size: int
+    in_size: int = eqx.field(static=True)
 
     def __init__(self, in_size, out_size, hidden_size, *, key):
         ckey, lkey = jrd.split(key)
@@ -29,14 +29,14 @@ class RNN(eqx.Module):
         self.bias = jnp.zeros(out_size)
         self.in_size = in_size
 
-    def __call__(self, input):
-        input = input.reshape(-1, self.in_size)
+    def __call__(self, x):
+        x = x.reshape(-1, self.in_size)
         hidden = jnp.zeros((self.hidden_size,))
 
         def f(carry, inp):
             return self.cell(inp, carry), None
 
-        out, _ = jax.lax.scan(f, hidden, input)
+        out, _ = jax.lax.scan(f, hidden, x)
         # sigmoid because we're performing binary classification
         return jax.nn.sigmoid(self.linear(out) + self.bias)
 
@@ -54,9 +54,17 @@ def rnn(in_size: int, out_size: int, hidden_size: int, *, key
 
 
 class MLP(eqx.Module):
-    layers: list
+    layers: List[eqx.nn.Linear]
+    hidden_activation: Callable[[jnp.ndarray],
+                                jnp.ndarray] = eqx.field(static=True)
+    output_activation: Callable[[jnp.ndarray],
+                                jnp.ndarray] = eqx.field(static=True)
 
-    def __init__(self, in_size, out_size, hidden_size, num_layers, *, key):
+    def __init__(self, in_size: int, out_size: int, hidden_size: int,
+                 num_layers: int,
+                 hidden_activation: Callable = jax.nn.tanh,
+                 output_activation: Callable = lambda x: x,
+                 *, key):
         keys = jrd.split(key, num_layers + 1)  # Separate keys for each layer
         self.layers = []
         self.layers.append(eqx.nn.Linear(in_size, hidden_size, key=keys[0]))
@@ -67,20 +75,32 @@ class MLP(eqx.Module):
 
         self.layers.append(eqx.nn.Linear(hidden_size, out_size, key=keys[-1]))
 
+        self.hidden_activation = hidden_activation
+        self.output_activation = output_activation
+
     def __call__(self, x):
         for layer in self.layers[:-1]:  # Apply activation for hidden layers
-            x = jax.nn.tanh(layer(x))
-        return self.layers[-1](x)  # No activation on output layer
+            x = self.hidden_activation(layer(x))
+        # Apply output activation
+        return self.output_activation(self.layers[-1](x))
 
 
-def mlp(in_size: int, out_size: int, hidden_size: int, num_layers: int, *, key
-        ) -> Tuple[eqx.Module, Dict[str, Any]]:
-    return (MLP(in_size, out_size, hidden_size, num_layers, key=key),
+def mlp(in_size: int, out_size: int, hidden_size: int, num_layers: int,
+        hidden_activation: Callable = jax.nn.tanh,
+        output_activation: Callable = lambda x: x,  # Identity function
+        *, key) -> Tuple[eqx.Module, Dict[str, Any]]:
+    return (MLP(in_size, out_size, hidden_size, num_layers,
+                hidden_activation=hidden_activation,
+                output_activation=output_activation,
+                key=key),
             {'model': 'mlp',
              'in_size': in_size,
              'out_size': out_size,
              'hidden_size': hidden_size,
-             'num_layers': num_layers})
+             'num_layers': num_layers,
+             'hidden_activation': hidden_activation.__name__,
+             'output_activation': output_activation.__name__ if
+             output_activation != (lambda x: x) else 'identity'})
 
 
 # =============================================================================

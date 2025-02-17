@@ -150,7 +150,7 @@ def process(config: DictConfig):
     run_opt = RunOptimization(
         n_realizations=config.n_realizations,
         seed=config.seed,
-        bounded=config.bounded,
+        bounded=config.tasks.bounded,
         include_input=False,
         clear_jax_cache=True,
     )

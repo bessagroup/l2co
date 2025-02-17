@@ -3,7 +3,7 @@ import gc
 import json
 from pathlib import Path
 from time import time
-from typing import Callable, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 # Third-party
 import equinox as eqx
@@ -23,6 +23,7 @@ from ..._logging import logger
 from ...data_loader import OptimizationDynamics
 from ...l2co_model import L2CO_model
 from ...optimizerschedule import OptimizationSchedule, OptimizationStep
+from .dataloader import batch_iter
 from .optimizers import OPT_MAPPING
 from .task import Task
 from .tree_utils import tree_to_dict_list
@@ -208,7 +209,8 @@ def run_optimization_schedule_multiple_realizations(
             seed=seed + s,
             bounded=bounded,
             sampler=sampler,
-            learning_data=task.learning_data,
+            dataset=task.loaded_dataset,
+            batch_size=task.batch_size,
         )
 
         results_list.append(experimentdata_to_xarray(
@@ -228,15 +230,18 @@ def run_optimization_schedule(
         seed: int,
         bounded: Optional[Tuple[float, float]],
         sampler: Block,
-        learning_data: Iterator,
-
-
+        dataset: Optional[Dict[str, Any]],
+        batch_size: Optional[int],
 ) -> ExperimentData:
 
     # Start with empty ExperimentData
     data = None
 
     for step in optimization_schedule:
+
+        learning_data = batch_iter(
+            dataset=dataset, n_evals=step.n_evals,
+            batch_size=batch_size, key=seed)
 
         evaluate_model = EvaluateModel(
             loss_fn=loss_fn, iter_data=learning_data)
@@ -514,8 +519,13 @@ def run_optimization_no_schedule(
     step_list.append(step)
 
     for s in range(n_switches):
+
+        learning_data = batch_iter(
+            dataset=task.loaded_dataset, n_evals=step.n_evals,
+            batch_size=task.batch_size, key=seed)
+
         evaluate_model = EvaluateModel(
-            loss_fn=task.loss_fn, iter_data=task.learning_data)
+            loss_fn=task.loss_fn, iter_data=learning_data)
 
         if previous_step is None or \
                 previous_step.optimizer != step.optimizer:
@@ -531,8 +541,7 @@ def run_optimization_no_schedule(
             popsize=update_step.popsize,
             x0_strategy=step.x0_strategy,
             data=data,
-            learning_data=task.learning_data,
-
+            learning_data=learning_data,
         )
 
         if s == n_switches - 1:

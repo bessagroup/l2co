@@ -1,12 +1,8 @@
 defaults:
-- tasks: benchmark
+- tasks: gaussian_classification
 - schedules: single
 
-n_realizations: 10
-
-bounded:
-  - 0.0
-  - 1.0
+n_realizations: 3
 
 seed: 467
 mode: mpi

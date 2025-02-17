@@ -320,3 +320,7 @@ task_kwargs:
 data_generator:
   _target_: l2co._src.tasks.benchmarkfunctions.task.create_benchmark_task
   _partial_: True
+
+bounded:
+  - 0.0
+  - 1.0

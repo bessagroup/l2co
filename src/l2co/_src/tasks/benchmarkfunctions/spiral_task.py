@@ -2,7 +2,6 @@ import math
 from pathlib import Path
 from typing import Dict
 
-import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jrd
 import jax.tree_util as jtu
