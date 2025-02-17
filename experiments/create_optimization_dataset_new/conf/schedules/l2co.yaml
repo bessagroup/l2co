@@ -2,8 +2,8 @@ optimizers:
   l2co:
     optimizer: l2co
     hyperparameters:
-      n_evals_per_switch: 100
-      n_switches: 10
+      n_evals_per_switch: 200
+      n_switches: 5
       l2co_path: /home/martin/Documents/GitHub/L2CO/experiments/predict_l2co_model/model
 
 schedules:
