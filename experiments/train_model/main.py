@@ -18,11 +18,13 @@ def main(config):
     logger.info("Started model training script")
     logger.info(f"{config=}")
 
+    path = Path(config.opt_dir) / str(config.path)
+
     # Data loading
-    data = DataLoader.from_file(config.path)
+    data = DataLoader.from_file(path)
 
     logger.info((
-        f"Loaded data from {config.path}: {len(data.data)} "
+        f"Loaded data from {path}: {len(data.data)} "
         f"data points"))
 
     data.export_all_and_store(path=Path.cwd() / "data",
