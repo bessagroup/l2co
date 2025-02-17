@@ -17,6 +17,3 @@ data_generation:
     _partial_: True
   kwargs:
     total_evals: 1000
-
-
-fraction_combinations:
