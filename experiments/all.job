@@ -5,4 +5,4 @@
 #SBATCH -n 1
 
 
-./all.sh
+./all.sh --tasks=gaussian_classification
