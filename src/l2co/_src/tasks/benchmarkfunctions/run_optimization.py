@@ -352,7 +352,10 @@ class RunOptimization(DataGenerator):
             n_evals_per_switch = schedule.steps[0]\
                 .hyperparameters['n_evals_per_switch']
             n_switches = schedule.steps[0].hyperparameters['n_switches']
-            l2co_path = schedule.steps[0].hyperparameters['l2co_path']
+            l2co_path = Path(schedule.steps[0].
+                             hyperparameters['model_dir']) / str(
+                schedule.steps[0].hyperparameters['l2co_path']) / 'model'
+
             trained_l2co_model = L2CO_model.load(l2co_path)
 
             experiment_sample = self.run_optimization_l2co(
@@ -415,7 +418,7 @@ class RunOptimization(DataGenerator):
             task: Task, trained_l2co_model: L2CO_model, seed: int,
             n_evals_per_switch: int, n_switches: int, include_input: bool,
             bounded: Optional[Tuple[float, float]]) -> ExperimentSample:
-        data_xarr, schedule_list = \
+        data_xarr, schedule_list =\
             run_optimization_no_schedule_multiple_realizations(
                 task=task,
                 seed=seed,
@@ -453,6 +456,8 @@ def run_optimization_no_schedule_multiple_realizations(
         n_realizations: int = 1,
         include_input: bool = False,
         bounded: Optional[Tuple[float, float]] = None,
+
+
 ) -> Tuple[xr.DataArray, List[OptimizationSchedule]]:
     schedule_list: List[OptimizationSchedule] = []
     results_list: List[xr.DataArray] = []

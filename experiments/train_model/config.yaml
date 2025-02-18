@@ -24,11 +24,12 @@ stage1_model:
   key: ${seed}
 
 feature_types:
-  convex: 'categorical'
-  separable: 'categorical'
-  noise: 'categorical'
-  dim: 'ordinal'
-  differentiable: 'categorical'
+  convex: ordinal
+  separable: ordinal
+  noise: scaler
+  dim: scaler
+  differentiable: ordinal
+  dimensionality: scaler
 
 
 optimizer:

@@ -28,7 +28,8 @@ from sklearn.pipeline import Pipeline, make_pipeline
 from ._logging import logger
 from .data_loader import OptimizationDynamics
 from .optimizerschedule import OptimizationStep
-from .preprocessing import preprocessing_factory
+from .preprocessing import (DataFrameColumnTransformer,
+                            EnsureColumnsTransformer, preprocessing_factory)
 from .tasks.benchmarkfunctions.dataloader import batch_iter
 
 #                                                                Basis function
@@ -166,7 +167,8 @@ class L2CO_model:
     ):
         # Stage0 model initialization
         stage0_model = make_pipeline(
-            preprocessing_factory(feature_types),
+            EnsureColumnsTransformer(),
+            DataFrameColumnTransformer(feature_types),
             MultiOutputRegressor(stage0_model)
         )
 
@@ -175,8 +177,7 @@ class L2CO_model:
             stage1_model_class)
 
         stage1_models_optimizers: \
-            Dict[str, Dict[str,
-                           OptimizationStep]] = defaultdict(dict)
+            Dict[str, Dict[str, OptimizationStep]] = defaultdict(dict)
 
         return cls(stage0_model=stage0_model,
                    stage0_model_optimizers=dict(),
@@ -311,8 +312,7 @@ class L2CO_model:
             )
 
             self.stage1_models[data.previous_step.name] = model
-            self.stage1_models_optimizers[data.previous_step.name] \
-                = data.opt_steps
+            self.stage1_models_optimizers[data.previous_step.name] = data.opt_steps
 
     def predict(self,
                 data: OptimizationDynamics) -> Iterable[OptimizationStep]:
