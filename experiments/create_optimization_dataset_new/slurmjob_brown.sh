@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name="RunTaskOnSchedule"
 #SBATCH --partition=batch
-#SBATCH --time=12:00:00
-#SBATCH --ntasks=32
-#SBATCH --nodes=2-5
+#SBATCH --time=6:00:00
+#SBATCH --ntasks=16
+#SBATCH --nodes=1-5
 #SBATCH --cpus-per-task=4
 #SBATCH --account=mbessa-condo
 #SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
