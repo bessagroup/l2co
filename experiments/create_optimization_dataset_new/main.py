@@ -103,7 +103,7 @@ def pre_process(config: DictConfig):
 
     # if applicable, select a subset of all combinations
     if 'fraction_combinations' in config.schedules:
-        rng = np.random.default_rng(config.seed)
+        rng = np.random.default_rng(int(config.seed))
         indices = rng.integers(
             len(experiment_data_combined),
             size=int(
@@ -146,7 +146,7 @@ def process(config: DictConfig):
 
     run_opt = RunOptimization(
         n_realizations=config.n_realizations,
-        seed=config.seed,
+        seed=int(config.seed),
         bounded=config.tasks.bounded,
         include_input=False,
         clear_jax_cache=True,
