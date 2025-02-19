@@ -54,7 +54,7 @@ echo "Fifth Job (jobID_5) submitted with job ID: $jobID_5"
 
 # Sixth job - Run L2CO on the tasks
 echo "Starting Sixth Job: Run L2CO on the tasks, depends on jobID_5..."
-jobID_6=$(cd $DIR_CREATE_OPT_DATA && sbatch --job-name=$JOB_NAME_6 --dependency=afterok:$jobID_5 $JOB_SCRIPT schedules=l2co tasks=$tasks +path=$jobID_5 | cut -f 4 -d' ')
+jobID_6=$(cd $DIR_CREATE_OPT_DATA && sbatch --job-name=$JOB_NAME_6 --dependency=afterok:$jobID_5 $JOB_SCRIPT schedules=l2co tasks=$tasks +schedules.path=$jobID_5 | cut -f 4 -d' ')
 echo "Sixth Job (jobID_6) submitted with job ID: $jobID_6"
 
 # Seventh job - Data validation on L2CO results
