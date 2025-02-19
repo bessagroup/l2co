@@ -19,6 +19,7 @@
 
 # Set run directory using provided --path
 # run_dir="${HOME}/scratch/${projectfolder}/${DATASET}"
+projectfolder=$(basename $(pwd))
 opt_dir="${HOME}/scratch/create_optimization_dataset_new/"
 run_dir="${HOME}/scratch/${projectfolder}/${SLURM_JOB_ID}"
 
