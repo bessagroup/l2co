@@ -320,18 +320,28 @@ class L2CO_model:
             y_pred = predict_stage0_model(
                 model=self.stage0_model, x=data.X_features)
             optimizers = self.stage0_optimizers
+            xarr_y = xr.DataArray(
+                np.array(y_pred), dims=['batch_id', 'optimizer'], coords={
+                    'batch_id': range(y_pred.shape[0]),
+                    'optimizer': list(optimizers.keys())})
+            # Take the max since the value corresponds to True or False
+            # For succesfull optimization
+            y_opt = xarr_y.idxmax('optimizer')
         else:
             model = self.stage1_models[data.previous_step.name]
             y_pred = predict_stage1_model(
                 model=model, data=data.to_dict())
             optimizers = self.stage1_models_optimizers[data.previous_step.name]
-        xarr_y = xr.DataArray(
-            np.array(y_pred), dims=['batch_id', 'optimizer'], coords={
-                'batch_id': range(y_pred.shape[0]),
-                'optimizer': list(optimizers.keys())})
+            xarr_y = xr.DataArray(
+                np.array(y_pred), dims=['batch_id', 'optimizer'], coords={
+                    'batch_id': range(y_pred.shape[0]),
+                    'optimizer': list(optimizers.keys())})
+            # Take the min since the value corresponds to the predicted
+            # normalized loss
+            y_opt = xarr_y.idxmin('optimizer')
 
         steps = [optimizers[str(i.values)]
-                 for i in xarr_y.idxmin('optimizer')]
+                 for i in y_opt]
 
         return steps
 
