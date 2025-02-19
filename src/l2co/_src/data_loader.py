@@ -283,10 +283,12 @@ class DataLoader:
                 check_sbs = performance
 
             sbs = check_sbs.groupby('itemID').map(
-                lambda x: x.isel(iterations=-1, drop=True).idxmin(
-                    'optimizer')).assign_coords(
-                {'problem': performance.problem}).isel(
-                        output_dim=0, drop=True)
+                lambda x: x.mean('problem').isel(
+                    iterations=-1, drop=True).idxmin(
+                    'optimizer').expand_dims(problem=x.problem)).isel(
+                output_dim=0, drop=True).assign_coords(
+                        {'problem': performance.problem})
+
             sbs = sbs.fillna(performance.optimizer.values[0])
             perf_sbs = performance.sel(optimizer=sbs, drop=True).reset_coords(
                 'optimizer', drop=True).expand_dims(optimizer=['sbs'])
@@ -535,7 +537,7 @@ class DataLoader:
                 dims='relative_error')})
 
         performance_profile = np.less_equal(
-            ds_f, ds_f.relative_error+1e-4).where(
+            ds_f, ds_f.relative_error+1e-2).where(
             ~ds_f.isnull(), np.nan).mean(dim='problem').performance_profile
 
         rel_error = (performance_profile.relative_error * 100) - 100

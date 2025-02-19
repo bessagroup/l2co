@@ -6,8 +6,9 @@ Plotting module
 # =============================================================================
 
 # Local
-from l2co._src.plotting import (OPTIMIZER_COLORS, plot_perf_profile,
-                                plot_rtd_profile, plot_trajectories, set_size)
+from l2co._src.plotting import (OPTIMIZER_COLORS, format_plot,
+                                plot_perf_profile, plot_rtd_profile,
+                                plot_trajectories, set_size)
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -23,5 +24,6 @@ __all__ = ["set_size",
            "plot_perf_profile",
            "plot_rtd_profile",
            "plot_trajectories",
-           "OPTIMIZER_COLORS"
+           "OPTIMIZER_COLORS",
+           "format_plot"
            ]

@@ -83,7 +83,8 @@ def scaling2(data: xr.Dataset) -> xr.DataArray:
         # 3. Make sure the quality indicator value is non-negative
         p = (x - x.min())
         # 4. Add epsilon to make quality indicator value non-zero
-        eps = p.where(p > 0.0, p.max()+1e-16).min()
+        # the 1e-2 is to prevent really big differences in quality values
+        eps = p.where(p > 0.0, p.max()+1e-16).min() + 1e-2
         x_log10 = np.log10(p + eps)
 
         # 5. Min-max scaling of the data

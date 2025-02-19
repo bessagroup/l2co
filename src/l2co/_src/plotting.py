@@ -19,9 +19,10 @@ from typing import Iterable, List, Optional, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
+from matplotlib.colors import LinearSegmentedColormap, SymLogNorm
+
 # Local
 from l2co._src.data_loader import DataLoader, OptimizationDynamics
-from matplotlib.colors import LinearSegmentedColormap, SymLogNorm
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -302,3 +303,56 @@ def plot_quadric_curve(y: np.ndarray, coeffs, color: str,
     ax.set_ylabel('performance value (y)')
     ax.legend(handles=[contour_proxy, scatter], loc='best')
     ax.grid()
+
+# =============================================================================
+
+
+def format_plot(ax: plt.Axes, xlim_right: int, ylabel: str, xlabel: str, title: str):
+    """
+    Format a plot with consistent styling.
+
+    Parameters:
+    ax (matplotlib.axes.Axes): The axes object to format.
+    xlim_right (float): The right limit for the x-axis.
+    ylabel (str): The label for the y-axis.
+    xlabel (str): The label for the x-axis.
+    title (str): The title of the plot.
+    """
+    ax.set_ylim(0, 1)
+    ax.set_xlim(0, xlim_right)  # Ensure x-axis starts at 0
+
+    ax.set_ylabel(ylabel, fontsize=14)
+    ax.set_xlabel(xlabel, fontsize=14)
+    ax.set_title(title, fontsize=14)
+
+    # Increase font size of tick labels
+    ax.tick_params(axis='both', labelsize=12)
+
+    ax.grid(True, which='both', linestyle='--', linewidth=0.7)
+    # Set x-axis grid every 100
+    ax.xaxis.set_minor_locator(plt.MultipleLocator(100))
+    # Set y-axis grid every 0.1
+    ax.yaxis.set_minor_locator(plt.MultipleLocator(0.1))
+
+    # Modify the existing legend if present
+    legend = ax.get_legend()
+    if legend:
+        custom_labels = {
+            "adam": "Adam",
+            "pso": "PSO",
+            "cmaes": "CMA-ES",
+            "lbfgsb": "L-BFGS-B",
+            "sbs": "Single Best Solver",
+            "l2co": "L2CO",
+        }
+
+        legend.set_frame_on(True)
+        legend.get_frame().set_edgecolor('black')
+        legend.get_frame().set_facecolor('white')
+        legend.get_title().set_fontsize(14)
+        for text in legend.get_texts():
+            old_label = text.get_text()
+            new_label = custom_labels.get(
+                old_label, old_label)  # Replace if found
+            text.set_text(new_label)
+            text.set_fontsize(12)

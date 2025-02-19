@@ -216,9 +216,6 @@ def run_optimization_schedule_multiple_realizations(
         results_list.append(experimentdata_to_xarray(
             data, include_input=include_input))
 
-    # results = xr.concat(results_list, xr.DataArray(range(n_realizations),
-    #                                                dims='realization'))
-
     results = xr.concat(results_list, dim='realization')
 
     return results
