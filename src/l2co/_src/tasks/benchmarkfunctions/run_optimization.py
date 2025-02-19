@@ -488,8 +488,7 @@ def run_optimization_no_schedule_multiple_realizations(
 
         schedule_list.append(schedule)
 
-    results = xr.concat(results_list, xr.DataArray(range(n_realizations),
-                                                   dims='realization'))
+    results = xr.concat(results_list, dim='realization')
 
     return results, schedule_list
 
