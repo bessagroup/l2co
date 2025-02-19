@@ -1,0 +1,20 @@
+from_sampling:
+  sampler: "random"
+  seed: ${seed}
+  n_samples: 90
+  domain:
+    input:
+      seed:
+        type: int
+        low: 0
+        high: 10000
+      dimensionality:
+        type: int
+        low: 10
+        high: 50
+task_kwargs:
+data_generator:
+  _target_: l2co._src.tasks.benchmarkfunctions.quadratic_task.create_quadratic_task
+  _partial_: True
+
+bounded:
