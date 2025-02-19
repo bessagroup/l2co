@@ -152,3 +152,6 @@ notebooks/
 # Ignore svg generated files
 *.svg
 *.eqx
+
+# Slurm generated files
+*.out
