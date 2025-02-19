@@ -39,27 +39,27 @@ echo "Second Job (jobID_2_single) submitted with job ID: $jobID_2_single"
 
 # Third job - Data validation on single schedules
 echo "Starting Third Job: Data validation on single schedules, depends on jobID_2_single..."
-jobID_3=$(cd $DIR_VALIDATION && sbatch --job-name=$JOB_NAME_3 --dependency=afterok:$jobID_2_single $JOB_SCRIPT +path=$jobID_2_single | cut -f 4 -d' ')
+jobID_3=$(cd $DIR_VALIDATION && sbatch --job-name=$JOB_NAME_3 --dependency=afterany:$jobID_2_single $JOB_SCRIPT +path=$jobID_2_single | cut -f 4 -d' ')
 echo "Third Job (jobID_3) submitted with job ID: $jobID_3"
 
 # Fourth job - Data validation on combination schedules
 echo "Starting Fourth Job: Data validation on combination schedules, depends on jobID_1_combination..."
-jobID_4=$(cd $DIR_VALIDATION && sbatch --job-name=$JOB_NAME_4 --dependency=afterok:$jobID_1_combination $JOB_SCRIPT +path=$jobID_1_combination | cut -f 4 -d' ')
+jobID_4=$(cd $DIR_VALIDATION && sbatch --job-name=$JOB_NAME_4 --dependency=afterany:$jobID_1_combination $JOB_SCRIPT +path=$jobID_1_combination | cut -f 4 -d' ')
 echo "Fourth Job (jobID_4) submitted with job ID: $jobID_4"
 
 # Fifth job - Train L2CO model
 echo "Starting Fifth Job: Train L2CO model, depends on jobID_4..."
-jobID_5=$(cd $DIR_TRAIN_MODEL && sbatch --job-name=$JOB_NAME_5 --dependency=afterany:$jobID_4 $JOB_SCRIPT +path=$jobID_1_combination | cut -f 4 -d' ')
+jobID_5=$(cd $DIR_TRAIN_MODEL && sbatch --job-name=$JOB_NAME_5 --dependency=afterok:$jobID_4 $JOB_SCRIPT +path=$jobID_1_combination | cut -f 4 -d' ')
 echo "Fifth Job (jobID_5) submitted with job ID: $jobID_5"
 
 # Sixth job - Run L2CO on the tasks
 echo "Starting Sixth Job: Run L2CO on the tasks, depends on jobID_5..."
-jobID_6=$(cd $DIR_CREATE_OPT_DATA && sbatch --job-name=$JOB_NAME_6 --dependency=afterany:$jobID_5 $JOB_SCRIPT schedules=l2co tasks=$tasks +path=$jobID_5 | cut -f 4 -d' ')
+jobID_6=$(cd $DIR_CREATE_OPT_DATA && sbatch --job-name=$JOB_NAME_6 --dependency=afterok:$jobID_5 $JOB_SCRIPT schedules=l2co tasks=$tasks +path=$jobID_5 | cut -f 4 -d' ')
 echo "Sixth Job (jobID_6) submitted with job ID: $jobID_6"
 
 # Seventh job - Data validation on L2CO results
 echo "Starting Seventh Job: Data validation on L2CO results, depends on jobID_6..."
-cd $DIR_VALIDATION && sbatch --job-name=$JOB_NAME_7 --dependency=afterok:$jobID_6 $JOB_SCRIPT +path=$jobID_6
+cd $DIR_VALIDATION && sbatch --job-name=$JOB_NAME_7 --dependency=afterany:$jobID_6 $JOB_SCRIPT +path=$jobID_6
 echo "Seventh Job (Data validation on L2CO results) submitted."
 
 # Echo job ID table at the bottom
