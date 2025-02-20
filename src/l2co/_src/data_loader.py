@@ -306,6 +306,7 @@ class DataLoader:
 #                                                            Selecting problems
 # =============================================================================
 
+
     def select_problems(self, problem_indices: xr.DataArray) -> DataLoader:
         """
         Select a subset of problems of the data loader.
@@ -414,7 +415,6 @@ class DataLoader:
 #                                                          Selecting optimizers
 # =============================================================================
 
-
     def select_single_optimizers(
             self, squash: bool = False) -> DataLoader:
         """
@@ -520,6 +520,7 @@ class DataLoader:
 #                                                           Performance metrics
 # =============================================================================
 
+
     def performance_profile(
             self, max_f_value: int = 2.0, include_best: bool = False,
             exclude_optimizer: Optional[str] = None,
@@ -553,6 +554,30 @@ class DataLoader:
 
     def load(self):
         self.data.load()
+
+    def save(self, path: str):
+        _path = Path(path)
+
+        _path.mkdir(parents=True, exist_ok=True)
+
+        # Save optimization dynamics data
+        self.data.to_netcdf((_path / 'entire_dataset').with_suffix('.nc'))
+
+        # Convert task_labels to a DataFrame and save as CSV
+        df_task_labels = pd.DataFrame(
+            self.task_labels.values,
+            index=self.task_labels.coords['itemID'].values,
+            columns=self.task_labels.coords['features'].values
+        )
+        df_task_labels = df_task_labels[~df_task_labels.index.duplicated(
+            keep='first')]
+        df_task_labels.to_csv((_path / 'labels').with_suffix('.csv'))
+
+        # Save optimization steps as JSON
+        opt_steps_serialized = {k: v.to_dict()
+                                for k, v in self.opt_steps.items()}
+        with open((_path / 'steps').with_suffix('.json'), 'w') as f:
+            json.dump(opt_steps_serialized, f, indent=4)
 
 #                                                          OptimizationDynamics
 # =============================================================================
