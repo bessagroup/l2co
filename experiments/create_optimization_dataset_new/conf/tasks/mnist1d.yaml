@@ -1,22 +1,17 @@
 from_sampling:
   sampler: "random"
   seed: ${seed}
-  n_samples: 3
+  n_samples: 100
   domain:
     input:
-      hidden_size:
+      seed:
         type: int
-        low: 4
-        high: 64
-      num_layers:
-        type: int
-        low: 2
-        high: 5
+        low: 0
+        high: 100000
 task_kwargs:
   dataset_size: 1000
   batch_size: 16
   dataset_path: './data/mnist1d.npz'
-  seed: ${seed}
 data_generator:
   _target_: l2co._src.tasks.benchmarkfunctions.mnist1d_task.create_mnist1d_task
   _partial_: True

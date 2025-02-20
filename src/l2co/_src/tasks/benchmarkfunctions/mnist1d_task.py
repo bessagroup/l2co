@@ -29,18 +29,18 @@ def save_dataset(dataset: Dict[str, jnp.ndarray], path: str | Path):
 
 
 def create_mnist1d_task(
-    hidden_size: int, num_layers: int,
         dataset_path: str, dataset_size: int, seed: int,
         batch_size: int) -> Task:
     tag = {'task_name': 'mnist1d'}
+    tag['seed'] = seed
 
     if not Path(dataset_path).with_suffix('.npz').exists():
         dataset = mnist1d_dataset(dataset_size=dataset_size,
                                   seed=seed)
         save_dataset(dataset, dataset_path)
 
-    model, model_tags = mlp(in_size=40, out_size=10, hidden_size=hidden_size,
-                            num_layers=num_layers, key=jr.key(seed))
+    model, model_tags = mlp(in_size=40, out_size=10, hidden_size=16,
+                            num_layers=2, key=jr.key(seed))
 
     # Count trainable parameters
     num_params = sum(p.size for p in jtu.tree_leaves(
