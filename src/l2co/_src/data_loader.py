@@ -21,6 +21,7 @@ create_entire_dataset
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 from time import perf_counter
 from typing import Dict, Iterable, Optional, Tuple
@@ -307,6 +308,27 @@ class DataLoader:
 # =============================================================================
 
 
+    def select_itemIDs(self, itemIDs: str | Iterable[str]) -> DataLoader:
+
+        if len(itemIDs) == 0:
+            return deepcopy(self)
+
+        if isinstance(itemIDs, str):
+            itemIDs = [itemIDs]
+
+        task_labels = xr.concat(
+            [group for i, group in self.task_labels.groupby(
+                'itemID') if i in itemIDs], dim="problem")
+        data = xr.concat(
+            [group for i, group in self.data.groupby(
+                'itemID') if i in itemIDs], dim="problem")
+
+        return DataLoader(
+            task_labels=task_labels,
+            data=data,
+            opt_steps=self.opt_steps,
+        )
+
     def select_problems(self, problem_indices: xr.DataArray) -> DataLoader:
         """
         Select a subset of problems of the data loader.
@@ -415,6 +437,7 @@ class DataLoader:
 #                                                          Selecting optimizers
 # =============================================================================
 
+
     def select_single_optimizers(
             self, squash: bool = False) -> DataLoader:
         """
@@ -520,7 +543,6 @@ class DataLoader:
 #                                                           Performance metrics
 # =============================================================================
 
-
     def performance_profile(
             self, max_f_value: int = 2.0, include_best: bool = False,
             exclude_optimizer: Optional[str] = None,
@@ -529,28 +551,17 @@ class DataLoader:
         # Trigger performance
         p = self._performance(
             include_best=include_best,
-            exclude_optimizer=exclude_optimizer).isel(iterations=-1)
-        rij = (p + 1.0) / 1.0
+            exclude_optimizer=exclude_optimizer)
 
-        ds_f = xr.Dataset(
-            {'performance_profile': rij, 'relative_error': xr.DataArray(
-                np.logspace(np.log10(1.0), np.log10(max_f_value), 1000),
-                dims='relative_error')})
-
-        performance_profile = np.less_equal(
-            ds_f, ds_f.relative_error+1e-2).where(
-            ~ds_f.isnull(), np.nan).mean(dim='problem').performance_profile
-
-        rel_error = (performance_profile.relative_error * 100) - 100
-
-        return performance_profile.assign_coords(relative_error=rel_error)
+        return performance_profile(performance=p, max_f_value=max_f_value)
 
     def rtd_profile(self, include_best: bool = False,
                     exclude_optimizer: Optional[str] = None,) -> xr.DataArray:
         p = self._performance(
             include_best=include_best,
             exclude_optimizer=exclude_optimizer)
-        return (1.0-p).mean('problem')
+
+        return rtd(performance=p)
 
     def load(self):
         self.data.load()
@@ -580,6 +591,31 @@ class DataLoader:
             json.dump(opt_steps_serialized, f, indent=4)
 
 #                                                          OptimizationDynamics
+# =============================================================================
+
+
+def performance_profile(performance: xr.DataArray, max_f_value: int = 2.0
+                        ) -> xr.DataArray:
+    p = performance.isel(iterations=-1)
+    rij = (p + 1.0) / 1.0
+
+    ds_f = xr.Dataset(
+        {'performance_profile': rij, 'relative_error': xr.DataArray(
+            np.logspace(np.log10(1.0), np.log10(max_f_value), 1000),
+            dims='relative_error')})
+
+    performance_profile = np.less_equal(
+        ds_f, ds_f.relative_error+1e-2).where(
+        ~ds_f.isnull(), np.nan).mean(dim='problem').performance_profile
+
+    rel_error = (performance_profile.relative_error * 100) - 100
+
+    return performance_profile.assign_coords(relative_error=rel_error)
+
+
+def rtd(performance: xr.DataArray) -> xr.DataArray:
+    return (1.0-performance).mean('problem')
+
 # =============================================================================
 
 

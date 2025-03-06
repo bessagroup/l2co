@@ -22,7 +22,7 @@ class OptimizationStep:
         self.hyperparameters = dict(hyperparameters)
         self.x0_strategy = x0_strategy
         self.n_evals = n_evals
-        self.tag = {'opt_name': optimizer, **hyperparameters}
+        self.tag = {'opt_name': self.name, **hyperparameters}
 
     def __repr__(self):
         return (
@@ -58,7 +58,9 @@ class OptimizationStep:
 
     @property
     def name(self) -> str:
-        return self.tag['opt_name']
+        hyperparameters = '_'.join(
+            [f"{k}={v}" for k, v in self.hyperparameters.items()])
+        return f"{self.optimizer}_{hyperparameters}"
 
     @classmethod
     def from_yaml(cls, config: Dict[str, Any]) -> OptimizationStep:
@@ -105,7 +107,7 @@ class OptimizationSchedule:
             n_evals = [n_evals]
 
         self.steps = [step.copy() for step in steps]
-        self.tag = {'opt_name': '+'.join([step.optimizer for step in steps]),
+        self.tag = {'opt_name': '+'.join([step.name for step in steps]),
                     'steps': [step.tag for step in steps]}
 
         for i, (step, single_n_evals) in enumerate(zip(self.steps, n_evals)):

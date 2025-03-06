@@ -28,7 +28,7 @@ def save_dataset(dataset: Dict[str, jnp.ndarray], path: str | Path):
 
 def load_dataset(path: Optional[str | Path]) -> Dict[str, jnp.ndarray]:
     if path is None:
-        return None
+        return {}
     loaded_data = jnp.load(Path(path).with_suffix('.npz'))
     return {k: jnp.array(v) for k, v in loaded_data.items()}
 
@@ -257,7 +257,8 @@ class BenchmarkFuncSampler(Block):
 
 
 def create_benchmark_task(fn_name: str, seed: int, noise: float,
-                          dimensionality: int) -> Task:
+                          dimensionality: int, offset: bool = True,
+                          scale_output: bool = True) -> Task:
     model, loss_fn, tag = create_benchmark_loss_function(
         fn_name=str(fn_name),
         seed=int(seed),
@@ -265,6 +266,7 @@ def create_benchmark_task(fn_name: str, seed: int, noise: float,
             jnp.array([0., 1.]), (dimensionality, 1)),
         dimensionality=int(dimensionality),
         noise=float(noise),
-        offset=True)
+        offset=offset,
+        scale_output=scale_output)
 
     return Task(model=model, loss_fn=loss_fn, tag=tag)

@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jrd
 import jax.tree as jt
+import jax.tree_util as jtu
 import numpy as onp
 import xarray as xr
 from f3dasm import Block, ExperimentData, ExperimentSample
@@ -152,6 +153,49 @@ class NormalWeightSampler(Block):
                 key, shape=x.shape), params)
 
             sample_list.append({'x': eqx.combine(sample, static)})
+
+        return ExperimentData(domain=data.domain, input_data=sample_list,
+                              project_dir=data.project_dir)
+
+
+class GridWeightSampler(Block):
+    def __init__(self, model: PyTree, stepsize: float,
+                 lower_bound: float, upper_bound: float):
+        self.model = model
+        self.stepsize = stepsize
+        self.lower_bound = lower_bound
+        self.upper_bound = upper_bound
+
+        self.num_points = max(
+            2, int(round((self.upper_bound - self.lower_bound) / self.stepsize)) + 1)
+
+    def generate_grid(self, params):
+        """Generate a grid of values for each parameter ensuring lower
+        & upper bounds are included."""
+        grid_params = []
+        for param in jtu.tree_leaves(params):
+            if param.ndim == 0:  # Scalar parameter
+                grid = jnp.linspace(
+                    self.lower_bound, self.upper_bound,
+                    num=self.num_points)
+            else:  # Tensor parameter
+                grid = jnp.meshgrid(
+                    *[jnp.linspace(
+                        self.lower_bound, self.upper_bound,
+                        num=self.num_points)] * param.size)
+                # Reshape into parameter shape
+                grid = jnp.stack(grid, axis=-1).reshape((-1,) + param.shape)
+            grid_params.append(grid)
+        return jtu.tree_unflatten(jtu.tree_structure(params), grid_params)
+
+    def call(self, data: ExperimentData, **kwargs) -> ExperimentData:
+        params, static = eqx.partition(self.model, eqx.is_inexact_array)
+
+        # Generate the grid of sampled parameter values
+        grid_samples = self.generate_grid(params)
+
+        sample_list = [{'x': eqx.combine(sample, static)}
+                       for sample in grid_samples]
 
         return ExperimentData(domain=data.domain, input_data=sample_list,
                               project_dir=data.project_dir)

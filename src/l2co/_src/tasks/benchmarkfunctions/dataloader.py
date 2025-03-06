@@ -31,7 +31,8 @@ def batch_iter(dataset: Optional[Dict[str, jnp.ndarray]],
                n_evals: int, batch_size: Optional[int], *,
                key: int) -> Iterator:
 
-    if dataset is None:
+    # Check if empty dictionary or None value
+    if not dataset:
         return NoneIterator()
 
     source = DictSource(dataset)
