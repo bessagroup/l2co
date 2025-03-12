@@ -215,7 +215,7 @@ def save_dataset(dataset: Dict[str, jnp.ndarray], path: str | Path):
     jnp.savez(path, **dataset)
 
 
-def create_convection_task(
+def create_pde_task(
         pde_task_name: str,
         seed: int,
         dataset_path: str,
@@ -226,6 +226,7 @@ def create_convection_task(
         num_ic_points: int,
         num_bc_points: int,
         num_res_points: int,
+        hidden_size: int,
         **task_params) -> Task:
     tag = {}
 
@@ -264,7 +265,7 @@ def create_convection_task(
         tag['loss_fn'] = 'wave_pde_loss'
 
     model, model_tags = mlp(
-        in_size=2, out_size=1, hidden_size=50,
+        in_size=2, out_size=1, hidden_size=hidden_size,
         num_layers=3, hidden_activation=jax.nn.tanh,
         key=model_key)
 
