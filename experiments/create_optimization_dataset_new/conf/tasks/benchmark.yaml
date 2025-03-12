@@ -1,11 +1,12 @@
-from_sampling:
-  sampler: 
-    _target_: l2co._src.tasks.benchmarkfunctions.task.BenchmarkFuncSampler
-    noise_distribution:
-      - 0.4
-      - 0.6
+sampler: 
+  _target_: l2co._src.tasks.benchmarkfunctions.task.BenchmarkFuncSampler
+  noise_distribution:
+    - 0.4
+    - 0.6
+sampler_kwargs:
   n_samples: 10
   seed: ${seed}
+experimentdata:
   domain:
     input:
       fn_name:

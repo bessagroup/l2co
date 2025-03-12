@@ -3,11 +3,12 @@ import gc
 import json
 from pathlib import Path
 from time import time
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Type
 
 # Third-party
 import equinox as eqx
 import jax
+import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jrd
 import jax.tree as jt
@@ -167,7 +168,8 @@ class GridWeightSampler(Block):
         self.upper_bound = upper_bound
 
         self.num_points = max(
-            2, int(round((self.upper_bound - self.lower_bound) / self.stepsize)) + 1)
+            2, int(round((self.upper_bound - self.lower_bound) / self.stepsize)
+                   ) + 1)
 
     def generate_grid(self, params):
         """Generate a grid of values for each parameter ensuring lower
@@ -199,6 +201,61 @@ class GridWeightSampler(Block):
 
         return ExperimentData(domain=data.domain, input_data=sample_list,
                               project_dir=data.project_dir)
+
+
+class XavierNormalWeightSampler:
+    def __init__(self, model: PyTree, seed: jax.Array, max_samples: int = 100):
+        self.model = model
+        self.seed = jrd.key(seed)
+        self.max_samples = max_samples
+        self.keys = jrd.split(self.seed, self.max_samples)
+
+    def call(self, data: ExperimentData,
+             num_samples: int, **kwargs) -> ExperimentData:
+        def is_linear(x):
+            return isinstance(x, eqx.nn.Linear)
+
+        params, static = eqx.partition(self.model, eqx.is_inexact_array)
+
+        sample_list = []
+
+        for key, _ in zip(self.keys, range(num_samples)):
+
+            wkey, bkey = jrd.split(key)
+            params = init_part(
+                params=params,
+                filter_fn=lambda m: [x.weight for x in jt.leaves(
+                    m, is_leaf=is_linear)
+                    if is_linear(x)],
+                init_fn=jnn.initializers.xavier_normal(),
+                key=wkey)
+            params = init_part(
+                params=params,
+                filter_fn=lambda m: [x.bias for x in jt.leaves(
+                    m, is_leaf=is_linear)
+                    if is_linear(x)],
+                init_fn=jnn.initializers.zeros,
+                key=bkey)
+
+            # Append the sample to the sample list
+            sample_list.append({'x': eqx.combine(params, static)})
+
+        # Return the ExperimentData with the updated domain and sampled data
+        return ExperimentData(domain=data.domain, input_data=sample_list,
+                              project_dir=data.project_dir)
+
+
+def init_part(
+    params: PyTree, filter_fn: Callable, init_fn: jnn.initializers.Initializer,
+    *, key=jrd.PRNGKey
+) -> PyTree:
+    w = filter_fn(params)
+    new_w = [
+        init_fn(subkey, weight.shape, weight.dtype)
+        for weight, subkey in zip(w, jrd.split(key, len(w)))
+    ]
+    return eqx.tree_at(filter_fn, params, new_w)
+
 
 #                                                                Evaluate Block
 # =============================================================================
@@ -233,19 +290,26 @@ def run_optimization_schedule_multiple_realizations(
         n_realizations: int = 1,
         include_input: bool = False,
         bounded: Optional[Tuple[float, float]] = None,
+        sampler_cls: Optional[Type[Block]] = None,
 ) -> xr.DataArray:
     results_list: List[xr.DataArray] = []
 
     for s in range(n_realizations):
-        if bounded is None:
-            sampler = NormalWeightSampler(
-                model=task.model,
-                seed=seed + s,
-            )
+        if sampler_cls is None:
+            if bounded is None:
+                sampler = NormalWeightSampler(
+                    model=task.model,
+                    seed=seed + s,
+                )
+            else:
+                sampler = RandomWeightSampler(
+                    model=task.model,
+                    seed=seed + s,
+                    lower_bound=bounded[0],
+                    upper_bound=bounded[1])
+
         else:
-            sampler = RandomWeightSampler(
-                model=task.model,
-                seed=seed + s, lower_bound=bounded[0], upper_bound=bounded[1])
+            sampler = sampler_cls(model=task.model, seed=seed + s)
 
         data = run_optimization_schedule(
             loss_fn=task.loss_fn,
@@ -459,7 +523,7 @@ class RunOptimization(DataGenerator):
             task: Task, trained_l2co_model: L2CO_model, seed: int,
             n_evals_per_switch: int, n_switches: int, include_input: bool,
             bounded: Optional[Tuple[float, float]]) -> ExperimentSample:
-        data_xarr, schedule_list =\
+        data_xarr, schedule_list = \
             run_optimization_no_schedule_multiple_realizations(
                 task=task,
                 seed=seed,

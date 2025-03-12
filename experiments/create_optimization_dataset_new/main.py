@@ -7,9 +7,9 @@ from time import sleep
 import hydra
 import jax
 import numpy as np
-from f3dasm import ExperimentData
+from f3dasm import Block, ExperimentData, datagenerator
 from f3dasm import logger as f3dasm_logger
-from f3dasm.design import Domain
+from f3dasm.design import Domain, grid
 from hydra.utils import instantiate
 from mpi4py import MPI
 from omegaconf import DictConfig
@@ -53,17 +53,26 @@ def main(config):
 def pre_process(config: DictConfig):
     logger.info("== PRE PROCESS ==")
     # Task
-    experiment_data_tasks = ExperimentData.from_yaml(config.tasks)
+    experiment_data_tasks = ExperimentData.from_yaml(
+        config.tasks.experimentdata)
 
-    task_fn = instantiate(config.tasks.data_generator, _partial_=True)
+    sampler = Block.from_yaml(init_config=config.tasks.sampler,
+                              call_config=config.tasks.sampler_kwargs)
+
+    sampler.arm(experiment_data_tasks)
+    experiment_data_tasks = sampler.call(data=experiment_data_tasks)
+
+    task_fn = datagenerator(output_names='task')(
+        instantiate(config.tasks.data_generator, _partial_=True)
+    )
 
     if config.tasks.task_kwargs is None:
         task_kwargs = {}
     else:
         task_kwargs = config.tasks.task_kwargs
 
-    experiment_data_tasks.evaluate(
-        data_generator=task_fn, output_names=['task'],
+    experiment_data_tasks = task_fn.call(
+        data=experiment_data_tasks,
         **task_kwargs)
 
     # Schedule
@@ -71,15 +80,14 @@ def pre_process(config: DictConfig):
     for k, v in config.schedules.schedules.items():
         domain_schedule.add_category(name=k, categories=instantiate(v))
 
-    experiment_data_schedules = ExperimentData.from_sampling(
-        sampler='grid', domain=domain_schedule)
+    experiment_data_schedules = grid().call(
+        data=ExperimentData(domain=domain_schedule))
 
-    schedule_fn = instantiate(
-        config.schedules.data_generation.data_generator, _partial_=True)
+    schedule_fn = datagenerator(output_names='optimizer schedule')(instantiate(
+        config.schedules.data_generation.data_generator, _partial_=True))
 
-    experiment_data_schedules.evaluate(
-        data_generator=schedule_fn,
-        output_names=['optimizer schedule'],
+    experiment_data_schedules = schedule_fn.call(
+        data=experiment_data_schedules,
         **config.schedules.data_generation.kwargs
     )
 
@@ -98,8 +106,8 @@ def pre_process(config: DictConfig):
         name='optimizer schedule',
         categories=df_optimizer['optimizer schedule'].to_list())
 
-    experiment_data_combined = ExperimentData.from_sampling(
-        sampler='grid', domain=domain_grid_sampling)
+    experiment_data_combined = grid().call(
+        data=ExperimentData(domain=domain_grid_sampling))
 
     # if applicable, select a subset of all combinations
     if 'fraction_combinations' in config.schedules:

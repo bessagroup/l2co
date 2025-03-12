@@ -10,7 +10,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
-from f3dasm import Block, ExperimentData
+from f3dasm import Block, ExperimentData, datagenerator
 from jaxtyping import PyTree
 from opfunu import create_benchmark_loss_function
 

@@ -19,26 +19,30 @@ class DictSource:
 
 
 class NoneIterator:
+    def __init__(self, data: Optional[Dict[str, jnp.ndarray]] = None):
+        if data is None:
+            data = {}
+
+        self.data = data
+
     def __iter__(self):
         return self
 
     def __next__(self):
-        return {}
-
+        return self.data
 
 # =============================================================================
+
+
 def batch_iter(dataset: Optional[Dict[str, jnp.ndarray]],
                n_evals: int, batch_size: Optional[int], *,
                key: int) -> Iterator:
 
     # Check if empty dictionary or None value
-    if not dataset:
-        return NoneIterator()
+    if not dataset or not batch_size:
+        return NoneIterator(dataset)
 
     source = DictSource(dataset)
-
-    if batch_size is None:
-        batch_size = len(dataset)
 
     transformation = grain.Batch(batch_size=batch_size, drop_remainder=True)
 

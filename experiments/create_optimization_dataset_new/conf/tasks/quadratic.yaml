@@ -1,7 +1,10 @@
-from_sampling:
+sampler:
+  _target_: f3dasm.create_sampler
   sampler: "random"
   seed: ${seed}
+sampler_kwargs:
   n_samples: 90
+experimentdata:
   domain:
     input:
       seed:
