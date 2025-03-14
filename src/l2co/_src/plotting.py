@@ -19,10 +19,16 @@ from typing import Iterable, List, Optional, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
+from f3dasm import ExperimentData
+from f3dasm.design import Domain
 from matplotlib.colors import LinearSegmentedColormap, SymLogNorm
 
 # Local
 from l2co._src.data_loader import DataLoader, OptimizationDynamics
+from l2co._src.tasks.benchmarkfunctions.dataloader import batch_iter
+from l2co._src.tasks.benchmarkfunctions.run_optimization import (
+    EvaluateModel, GridWeightSampler, experimentdata_to_xarray)
+from l2co._src.tasks.benchmarkfunctions.task import Task
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -307,7 +313,8 @@ def plot_quadric_curve(y: np.ndarray, coeffs, color: str,
 # =============================================================================
 
 
-def format_plot(ax: plt.Axes, xlim_right: int, ylabel: str, xlabel: str, title: str):
+def format_plot(ax: plt.Axes, xlim_right: int, ylabel: str,
+                xlabel: str, title: str):
     """
     Format a plot with consistent styling.
 
@@ -356,3 +363,60 @@ def format_plot(ax: plt.Axes, xlim_right: int, ylabel: str, xlabel: str, title: 
                 old_label, old_label)  # Replace if found
             text.set_text(new_label)
             text.set_fontsize(12)
+
+
+def plot_2d_loss_landscape(task: Task, plot_resolution: int = 100,
+                           stepsize: float = 0.033):
+    sampler = GridWeightSampler(
+        model=task.model, stepsize=stepsize, lower_bound=0.0, upper_bound=1.0)
+    evaluate_block = EvaluateModel(
+        loss_fn=task.loss_fn,
+        iter_data=batch_iter(
+            dataset=task.loaded_dataset,
+            n_evals=sampler.num_points**2,
+            batch_size=task.dataset['batch_size'],
+            key=task.dataset['seed']),
+        has_aux=task.has_aux)
+
+    domain = Domain()
+    domain.add_parameter('x')
+    domain.add_output('y')
+    data = ExperimentData(domain=domain)
+
+    data = sampler.call(data=data)
+    data = evaluate_block.call(data=data)
+    data = experimentdata_to_xarray(data, include_input=True)
+
+    x = data['input'].isel(input_dim=0).values
+    y = data['input'].isel(input_dim=1).values
+    z = data['output'].isel(output_dim=0).values
+    x.shape, y.shape, z.shape
+
+    import numpy as np
+    from scipy.interpolate import griddata
+
+    X, Y = np.meshgrid(np.linspace(min(x), max(x), plot_resolution),
+                       np.linspace(min(y), max(y), plot_resolution))
+
+    Z = griddata((x, y), z, (X, Y), method='cubic')
+
+    # Create the figure and set up the subplots
+    fig = plt.figure(figsize=(12, 6))
+
+    # 3D Surface Plot
+    ax1 = fig.add_subplot(121, projection='3d')
+    surf = ax1.plot_surface(X, Y, Z, cmap='viridis')
+    fig.colorbar(surf, ax=ax1)
+    ax1.set_xlabel('X axis')
+    ax1.set_ylabel('Y axis')
+    ax1.set_zlabel('Z axis')
+    ax1.set_title('3D Surface Plot')
+
+    # 2D Heatmap
+    ax2 = fig.add_subplot(122)
+    heatmap = ax2.pcolormesh(X, Y, Z, cmap='viridis', shading='auto')
+    fig.colorbar(heatmap, ax=ax2)
+    ax2.set_xlabel('X axis')
+    ax2.set_ylabel('Y axis')
+    ax2.set_title('2D Heatmap')
+    return fig

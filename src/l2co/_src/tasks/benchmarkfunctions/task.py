@@ -7,10 +7,12 @@ from typing import Any, Callable, Dict, List, Optional, TypedDict
 
 import cloudpickle
 import equinox as eqx
+import jax
 import jax.numpy as jnp
+import jax.random as jr
 import numpy as np
 import pandas as pd
-from f3dasm import Block, ExperimentData, datagenerator
+from f3dasm import Block, ExperimentData
 from jaxtyping import PyTree
 from opfunu import create_benchmark_loss_function
 
@@ -84,6 +86,7 @@ class Task:
         model: PyTree,
         loss_fn: Callable,
         dataset: Optional[DatasetDict] = None,
+        has_aux: bool = False,
         tag: Optional[Dict[str, Any]] = None,
     ):
         if tag is None:
@@ -91,7 +94,7 @@ class Task:
 
         if dataset is None:
             self.dataset = {'dataset_path': None,
-                            'batch_size': None, 'seed': 0}
+                            'batch_size': None, 'seed': None}
         else:
 
             self.dataset = dataset.copy()
@@ -101,6 +104,7 @@ class Task:
 
         self.model = model
         self.loss_fn = loss_fn
+        self.has_aux = has_aux
         self.tag = tag
 
     @property
@@ -151,7 +155,9 @@ class Task:
 
         dataset = data.get('dataset', None)
         tag = data.get('tag', None)
-        return cls(model=model, loss_fn=loss_fn, dataset=dataset, tag=tag)
+        has_aux = data['has_aux']
+        return cls(model=model, loss_fn=loss_fn, dataset=dataset,
+                   has_aux=has_aux, tag=tag)
 
     def save_to_json(self, filepath: Path):
         with open(filepath.with_suffix('.json'), 'w') as f:
@@ -188,7 +194,8 @@ class Task:
             'model_path': model_path,
             'loss_fn': loss_fn,
             'dataset': dataset,
-            'tag': self.tag
+            'tag': self.tag,
+            'has_aux': self.has_aux
         }
 
     @classmethod
@@ -256,9 +263,25 @@ class BenchmarkFuncSampler(Block):
         return ExperimentData(domain=data.domain, input_data=df)
 
 
-def create_benchmark_task(fn_name: str, seed: int, noise: float,
-                          dimensionality: int, offset: bool = True,
-                          scale_output: bool = True) -> Task:
+def random_keys_dataset(dataset_size: int, *, key: jax.Array
+                        ) -> Dict[str, jax.Array]:
+    return {'key': jr.randint(key=key, shape=(dataset_size,),
+                              minval=0, maxval=2**16)}
+
+
+def create_benchmark_task(
+    fn_name: str, dataset_path: str, seed: int, noise: float,
+        dimensionality: int, offset: bool = True,
+        scale_output: bool = True) -> Task:
+
+    # add '_seed' to dataset_path
+    _path = Path(dataset_path + f'_{seed}').with_suffix('.npz')
+
+    if not _path.exists():
+        dataset = random_keys_dataset(
+            dataset_size=1000, key=jr.key(seed))
+        save_dataset(dataset, _path)
+
     model, loss_fn, tag = create_benchmark_loss_function(
         fn_name=str(fn_name),
         seed=int(seed),
@@ -269,4 +292,8 @@ def create_benchmark_task(fn_name: str, seed: int, noise: float,
         offset=offset,
         scale_output=scale_output)
 
-    return Task(model=model, loss_fn=loss_fn, tag=tag)
+    return Task(model=model, loss_fn=loss_fn,
+                dataset={'dataset_path': _path,
+                         'batch_size': 1,
+                         'seed': seed},
+                tag=tag)

@@ -263,22 +263,37 @@ def init_part(
 
 class EvaluateModel(Block):
     def __init__(self, loss_fn: Callable,
-                 iter_data: Iterator):
+                 iter_data: Iterator, has_aux: bool):
         self.iter_data = iter_data
         self.loss_fn = jax.jit(loss_fn)
+        self.has_aux = has_aux
 
     def call(self, data: ExperimentData, **kwargs) -> ExperimentData:
+
         open_es = [es for _, es in data if es.is_status('open')]
         if not open_es:
             return data
 
+        if self.has_aux:
+            self._call_with_aux(open_es)
+        else:
+            self._call_without_aux(open_es)
+
+        return data
+
+    def _call_with_aux(self, open_es: List[ExperimentSample]) -> None:
+        for es in open_es:
+            es.mark('in_progress')
+            y, aux = self.loss_fn(es.input_data['x'], **next(self.iter_data))
+            es.store(name='y', object=y)
+            es.mark('finished')
+
+    def _call_without_aux(self, open_es: List[ExperimentSample]) -> None:
         for es in open_es:
             es.mark('in_progress')
             y = self.loss_fn(es.input_data['x'], **next(self.iter_data))
             es.store(name='y', object=y)
             es.mark('finished')
-
-        return data
 
 # =============================================================================
 
@@ -319,6 +334,7 @@ def run_optimization_schedule_multiple_realizations(
             sampler=sampler,
             dataset=task.loaded_dataset,
             batch_size=task.batch_size,
+            has_aux=task.has_aux,
         )
 
         results_list.append(experimentdata_to_xarray(
@@ -337,6 +353,7 @@ def run_optimization_schedule(
         sampler: Block,
         dataset: Optional[Dict[str, Any]],
         batch_size: Optional[int],
+        has_aux: bool,
 ) -> ExperimentData:
 
     # Start with empty ExperimentData
@@ -349,7 +366,8 @@ def run_optimization_schedule(
             batch_size=batch_size, key=seed)
 
         evaluate_model = EvaluateModel(
-            loss_fn=loss_fn, iter_data=learning_data)
+            loss_fn=loss_fn, iter_data=learning_data,
+            has_aux=has_aux)
         update_step = OPT_MAPPING[step.optimizer](
             **step.hyperparameters, seed=seed,
             bounded=bounded)
@@ -359,10 +377,11 @@ def run_optimization_schedule(
             update_step=update_step,
             sampler=sampler,
             n_evals=step.n_evals,
+            learning_data=learning_data,
             popsize=update_step.popsize,
             x0_strategy=step.x0_strategy,
+            has_aux=has_aux,
             data=data,
-            learning_data=learning_data,
 
         )
 
@@ -377,6 +396,7 @@ def run_optimization(
     learning_data: Iterator,
     popsize: int,
     x0_strategy: str,
+    has_aux: bool,
     data: Optional[ExperimentData] = None,
 ) -> ExperimentData:
 
@@ -406,7 +426,7 @@ def run_optimization(
 
     data += update_step.call(
         data=data, fn=data_generator.loss_fn, n_evals=n_updates,
-        data_iter=learning_data)
+        data_iter=learning_data, has_aux=has_aux)
 
     # Remove overiterations
     data.remove_rows_bottom(number_of_rows=popsize * n_updates - n_evals)
@@ -647,10 +667,11 @@ def run_optimization_no_schedule(
             update_step=update_step,
             sampler=sampler,
             n_evals=step.n_evals,
+            learning_data=learning_data,
             popsize=update_step.popsize,
             x0_strategy=step.x0_strategy,
+            aux=task.aux,
             data=data,
-            learning_data=learning_data,
         )
 
         if s == n_switches - 1:

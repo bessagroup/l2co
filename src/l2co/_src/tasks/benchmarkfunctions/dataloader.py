@@ -36,11 +36,17 @@ class NoneIterator:
 
 def batch_iter(dataset: Optional[Dict[str, jnp.ndarray]],
                n_evals: int, batch_size: Optional[int], *,
-               key: int) -> Iterator:
+               key: Optional[int]) -> Iterator:
 
     # Check if empty dictionary or None value
     if not dataset or not batch_size:
         return NoneIterator(dataset)
+
+    if key is None:
+        raise ValueError((
+            f"Key must be provided when dataset is not None"
+            f"{key=}, {dataset=}")
+        )
 
     source = DictSource(dataset)
 
