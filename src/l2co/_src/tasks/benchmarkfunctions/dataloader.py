@@ -53,7 +53,8 @@ def batch_iter(dataset: Optional[Dict[str, jnp.ndarray]],
     transformation = grain.Batch(batch_size=batch_size, drop_remainder=True)
 
     num_records = len(source)
-    num_epochs = math.ceil((n_evals * batch_size) / num_records)
+    # Note: Add one since we are doing one scan more
+    num_epochs = math.ceil(((n_evals + 1) * batch_size) / num_records)
 
     index_sampler = grain.IndexSampler(
         num_records=num_records,

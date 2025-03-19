@@ -1,6 +1,7 @@
 # Standard
 import gc
 import json
+from copy import deepcopy
 from pathlib import Path
 from time import time
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Type
@@ -19,7 +20,10 @@ from f3dasm import Block, ExperimentData, ExperimentSample
 from f3dasm.datageneration import DataGenerator
 from f3dasm.design import Domain
 from jaxtyping import PyTree
-from SALib.sample import latin
+
+from l2co._src.tasks.benchmarkfunctions.optimizers import unroll_batches
+from l2co._src.tasks.benchmarkfunctions.tree_utils import (dict_list_to_tree,
+                                                           tree_to_dict_list)
 
 from ..._logging import logger
 from ...data_loader import OptimizationDynamics
@@ -28,7 +32,6 @@ from ...optimizerschedule import OptimizationSchedule, OptimizationStep
 from .dataloader import batch_iter
 from .optimizers import OPT_MAPPING
 from .task import Task
-from .tree_utils import tree_to_dict_list
 
 #                                                            Converter function
 # =============================================================================
@@ -65,70 +68,25 @@ def experimentdata_to_xarray(data: ExperimentData,
 # =============================================================================
 
 
-class LatinSampler(Block):
-    def __init__(self, num_vars: int, lower_bound: float,
-                 upper_bound: float, seed: int):
-        self.seed = seed
-        self.lower_bound = lower_bound
-        self.upper_bound = upper_bound
-
-        self.problem = {
-            "num_vars": num_vars,
-            "bounds": [[lower_bound, upper_bound]
-                       for _ in range(num_vars)]
-        }
-
-    def call(self, data: ExperimentData, num_samples: int, **kwargs
-             ) -> ExperimentData:
-
-        samples = jnp.array(latin.sample(
-            problem=self.problem, N=num_samples, seed=self.seed))
-        return ExperimentData(
-            input_data=tree_to_dict_list(samples, name='x'),
-            domain=data.domain,
-            project_dir=data.project_dir)
-
-
-class RandomSampler(Block):
-    def __init__(self, num_vars: int, seed: int, lower_bound: float = 0.0,
-                 upper_bound: float = 1.0, max_samples: int = 10**3):
-        self.seed = jrd.key(seed)
-        self.num_vars = num_vars
-        self.max_samples = max_samples
-        self.lower_bound = lower_bound
-        self.upper_bound = upper_bound
-
-    def call(self, data: ExperimentData, num_samples: int, **kwargs
-             ) -> ExperimentData:
-
-        samples_pool = jrd.uniform(
-            key=self.seed, shape=(self.max_samples, self.num_vars),
-            minval=self.lower_bound, maxval=self.upper_bound)
-
-        return ExperimentData(
-            input_data=tree_to_dict_list(samples_pool[:num_samples], name='x'),
-            domain=data.domain,
-            project_dir=data.project_dir)
-
-
 class RandomWeightSampler(Block):
     def __init__(self, model: PyTree, seed: jax.Array,
                  lower_bound: float = 0.0,
-                 upper_bound: float = 1.0, max_samples: int = 100):
+                 upper_bound: float = 1.0):
         self.model = model
-        self.seed = jrd.key(seed)
+        self.key = jrd.key(seed)
         self.lower_bound = lower_bound
         self.upper_bound = upper_bound
-        self.max_samples = max_samples
-        self.keys = jrd.split(self.seed, self.max_samples)
 
     def call(self, data: ExperimentData, num_samples: int,
              **kwargs) -> ExperimentData:
         params, static = eqx.partition(self.model, eqx.is_inexact_array)
         sample_list = []
-        for key, _ in zip(self.keys, range(num_samples)):
+        key = deepcopy(self.key)
+
+        for _ in range(num_samples):
+            _, key = jrd.split(key)
             sample = jt.map(lambda x: jrd.uniform(
-                key, shape=x.shape, minval=self.lower_bound,
+                key=key, shape=x.shape, minval=self.lower_bound,
                 maxval=self.upper_bound), params)
 
             sample_list.append({'x': eqx.combine(sample, static)})
@@ -138,18 +96,17 @@ class RandomWeightSampler(Block):
 
 
 class NormalWeightSampler(Block):
-    def __init__(self, model: PyTree, seed: jax.Array,
-                 max_samples: int = 100):
+    def __init__(self, model: PyTree, seed: jax.Array):
         self.model = model
-        self.seed = jrd.key(seed)
-        self.max_samples = max_samples
-        self.keys = jrd.split(self.seed, self.max_samples)
+        self.key = jrd.key(seed)
 
     def call(self, data: ExperimentData, num_samples: int,
              **kwargs) -> ExperimentData:
         params, static = eqx.partition(self.model, eqx.is_inexact_array)
         sample_list = []
-        for key, _ in zip(self.keys, range(num_samples)):
+        key = deepcopy(self.key)
+        for _ in range(num_samples):
+            _, key = jrd.split(key)
             sample = jt.map(lambda x: jrd.normal(
                 key, shape=x.shape), params)
 
@@ -204,11 +161,9 @@ class GridWeightSampler(Block):
 
 
 class XavierNormalWeightSampler:
-    def __init__(self, model: PyTree, seed: jax.Array, max_samples: int = 100):
+    def __init__(self, model: PyTree, seed: jax.Array):
         self.model = model
-        self.seed = jrd.key(seed)
-        self.max_samples = max_samples
-        self.keys = jrd.split(self.seed, self.max_samples)
+        self.key = jrd.key(seed)
 
     def call(self, data: ExperimentData,
              num_samples: int, **kwargs) -> ExperimentData:
@@ -219,8 +174,10 @@ class XavierNormalWeightSampler:
 
         sample_list = []
 
-        for key, _ in zip(self.keys, range(num_samples)):
+        key = deepcopy(self.key)
 
+        for _ in range(num_samples):
+            _, key = jrd.split(key)
             wkey, bkey = jrd.split(key)
             params = init_part(
                 params=params,
@@ -260,40 +217,38 @@ def init_part(
 #                                                                Evaluate Block
 # =============================================================================
 
-
 class EvaluateModel(Block):
-    def __init__(self, loss_fn: Callable,
-                 iter_data: Iterator, has_aux: bool):
-        self.iter_data = iter_data
-        self.loss_fn = jax.jit(loss_fn)
-        self.has_aux = has_aux
+    def __init__(self, task: Task):
+        self.task = task
 
-    def call(self, data: ExperimentData, **kwargs) -> ExperimentData:
+    def call(self, data: ExperimentData) -> ExperimentData:
+        x = [v.input_data for k, v in data]
+        models = dict_list_to_tree(x, name='x')
 
-        open_es = [es for _, es in data if es.is_status('open')]
-        if not open_es:
-            return data
+        inner_steps = len(data)
 
-        if self.has_aux:
-            self._call_with_aux(open_es)
+        data_iter = batch_iter(dataset=self.task.loaded_dataset,
+                               n_evals=inner_steps,
+                               batch_size=self.task.batch_size,
+                               key=self.task.dataset['seed'])
+        loss_iter = batch_iter(dataset=self.task.loaded_loss_fn_data,
+                               n_evals=inner_steps, batch_size=1,
+                               key=self.task.loss_fn_data['seed'])
+
+        init_sample, samples = unroll_batches(data_iter, inner_steps)
+        init_loss_sample, loss_samples = unroll_batches(loss_iter, inner_steps)
+
+        loss_fn = jax.vmap(self.task.loss_fn)
+
+        if self.task.has_aux:
+            y, aux = loss_fn(models, **samples, **loss_samples)
         else:
-            self._call_without_aux(open_es)
+            y = loss_fn(models, **samples, **loss_samples)
 
-        return data
+        return ExperimentData(domain=data.domain, input_data=x,
+                              output_data=tree_to_dict_list(y, name='y'),
+                              project_dir=data.project_dir)
 
-    def _call_with_aux(self, open_es: List[ExperimentSample]) -> None:
-        for es in open_es:
-            es.mark('in_progress')
-            y, aux = self.loss_fn(es.input_data['x'], **next(self.iter_data))
-            es.store(name='y', object=y)
-            es.mark('finished')
-
-    def _call_without_aux(self, open_es: List[ExperimentSample]) -> None:
-        for es in open_es:
-            es.mark('in_progress')
-            y = self.loss_fn(es.input_data['x'], **next(self.iter_data))
-            es.store(name='y', object=y)
-            es.mark('finished')
 
 # =============================================================================
 
@@ -335,6 +290,7 @@ def run_optimization_schedule_multiple_realizations(
             dataset=task.loaded_dataset,
             batch_size=task.batch_size,
             has_aux=task.has_aux,
+            loss_fn_data=task.loaded_loss_fn_data,
         )
 
         results_list.append(experimentdata_to_xarray(
@@ -354,6 +310,7 @@ def run_optimization_schedule(
         dataset: Optional[Dict[str, Any]],
         batch_size: Optional[int],
         has_aux: bool,
+        loss_fn_data: Optional[Dict[str, Any]],
 ) -> ExperimentData:
 
     # Start with empty ExperimentData
@@ -365,19 +322,21 @@ def run_optimization_schedule(
             dataset=dataset, n_evals=step.n_evals,
             batch_size=batch_size, key=seed)
 
-        evaluate_model = EvaluateModel(
-            loss_fn=loss_fn, iter_data=learning_data,
-            has_aux=has_aux)
         update_step = OPT_MAPPING[step.optimizer](
             **step.hyperparameters, seed=seed,
             bounded=bounded)
 
+        loss_data = batch_iter(
+            dataset=loss_fn_data, n_evals=step.n_evals,
+            batch_size=update_step.popsize, key=seed)
+
         data = run_optimization(
-            data_generator=evaluate_model,
+            loss_fn=loss_fn,
             update_step=update_step,
             sampler=sampler,
             n_evals=step.n_evals,
             learning_data=learning_data,
+            loss_data=loss_data,
             popsize=update_step.popsize,
             x0_strategy=step.x0_strategy,
             has_aux=has_aux,
@@ -389,11 +348,12 @@ def run_optimization_schedule(
 
 
 def run_optimization(
-    data_generator: Block,
+    loss_fn: Callable,
     update_step: Block,
     sampler: Block,
     n_evals: int,
     learning_data: Iterator,
+    loss_data: Iterator,
     popsize: int,
     x0_strategy: str,
     has_aux: bool,
@@ -415,18 +375,14 @@ def run_optimization(
         n_evals -= popsize
         data += x0
 
-    # Evaluate samples
-    data_generator.arm(data=x0)
-    x0 = data_generator.call(data=x0)
-
     # Arm update step
     update_step.arm(x0)
 
     n_updates = n_evals // popsize + (n_evals % popsize > 0)
 
-    data += update_step.call(
-        data=data, fn=data_generator.loss_fn, n_evals=n_updates,
-        data_iter=learning_data, has_aux=has_aux)
+    data = update_step.call(
+        data=data, fn=loss_fn, n_evals=n_updates,
+        data_iter=learning_data, loss_iter=loss_data, has_aux=has_aux)
 
     # Remove overiterations
     data.remove_rows_bottom(number_of_rows=popsize * n_updates - n_evals)
@@ -653,24 +609,28 @@ def run_optimization_no_schedule(
             dataset=task.loaded_dataset, n_evals=step.n_evals,
             batch_size=task.batch_size, key=seed)
 
-        evaluate_model = EvaluateModel(
-            loss_fn=task.loss_fn, iter_data=learning_data)
-
         if previous_step is None or \
                 previous_step.optimizer != step.optimizer:
             update_step = OPT_MAPPING[step.optimizer](
                 **step.hyperparameters, seed=seed,
                 bounded=bounded)
 
+        loss_data = batch_iter(
+            dataset=task.loaded_loss_fn_data,
+            n_evals=step.n_evals, batch_size=update_step.popsize,
+            key=seed
+        )
+
         data = run_optimization(
-            data_generator=evaluate_model,
+            loss_fn=task.loss_fn,
             update_step=update_step,
             sampler=sampler,
             n_evals=step.n_evals,
             learning_data=learning_data,
+            loss_data=loss_data,
             popsize=update_step.popsize,
             x0_strategy=step.x0_strategy,
-            aux=task.aux,
+            has_aux=task.has_aux,
             data=data,
         )
 

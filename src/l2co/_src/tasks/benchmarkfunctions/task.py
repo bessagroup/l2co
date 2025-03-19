@@ -86,21 +86,32 @@ class Task:
         model: PyTree,
         loss_fn: Callable,
         dataset: Optional[DatasetDict] = None,
+        loss_fn_data: Optional[DatasetDict] = None,
         has_aux: bool = False,
         tag: Optional[Dict[str, Any]] = None,
     ):
         if tag is None:
             tag = {}
 
+        # Dataset
         if dataset is None:
             self.dataset = {'dataset_path': None,
                             'batch_size': None, 'seed': None}
         else:
-
             self.dataset = dataset.copy()
             # resolve relative path
             self.dataset['dataset_path'] = str(Path(
                 self.dataset['dataset_path']).resolve())
+
+        # Loss fn data
+        if loss_fn_data is None:
+            self.loss_fn_data = {'dataset_path': None,
+                                 'batch_size': None, 'seed': None}
+        else:
+            self.loss_fn_data = loss_fn_data.copy()
+            # resolve relative path
+            self.loss_fn_data['dataset_path'] = str(Path(
+                self.loss_fn_data['dataset_path']).resolve())
 
         self.model = model
         self.loss_fn = loss_fn
@@ -110,6 +121,10 @@ class Task:
     @property
     def loaded_dataset(self) -> Dict[str, Any] | None:
         return load_dataset(self.dataset['dataset_path'])
+
+    @property
+    def loaded_loss_fn_data(self) -> Dict[str, Any] | None:
+        return load_dataset(self.loss_fn_data['dataset_path'])
 
     @property
     def batch_size(self) -> int | None:
@@ -154,10 +169,11 @@ class Task:
             bytes.fromhex(data['loss_fn']))
 
         dataset = data.get('dataset', None)
+        loss_fn_data = data.get('loss_fn_data', None)
         tag = data.get('tag', None)
         has_aux = data['has_aux']
         return cls(model=model, loss_fn=loss_fn, dataset=dataset,
-                   has_aux=has_aux, tag=tag)
+                   loss_fn_data=loss_fn_data, has_aux=has_aux, tag=tag)
 
     def save_to_json(self, filepath: Path):
         with open(filepath.with_suffix('.json'), 'w') as f:
@@ -190,10 +206,19 @@ class Task:
             dataset['dataset_path'] = str(
                 Path(self.dataset['dataset_path']))
 
+        if self.loss_fn_data['dataset_path'] is None:
+            loss_fn_data = None
+
+        else:
+            loss_fn_data = self.loss_fn_data.copy()
+            loss_fn_data['dataset_path'] = str(
+                Path(self.loss_fn_data['dataset_path']))
+
         return {
             'model_path': model_path,
             'loss_fn': loss_fn,
             'dataset': dataset,
+            'loss_fn_data': loss_fn_data,
             'tag': self.tag,
             'has_aux': self.has_aux
         }
@@ -272,7 +297,7 @@ def random_keys_dataset(dataset_size: int, *, key: jax.Array
 def create_benchmark_task(
     fn_name: str, dataset_path: str, seed: int, noise: float,
         dimensionality: int, offset: bool = True,
-        scale_output: bool = True) -> Task:
+        scale_output: bool = True, grad_noise: float = 0.0) -> Task:
 
     # add '_seed' to dataset_path
     _path = Path(dataset_path + f'_{seed}').with_suffix('.npz')
@@ -290,10 +315,12 @@ def create_benchmark_task(
         dimensionality=int(dimensionality),
         noise=float(noise),
         offset=offset,
-        scale_output=scale_output)
+        scale_output=scale_output,
+        grad_noise=grad_noise,
+    )
 
     return Task(model=model, loss_fn=loss_fn,
-                dataset={'dataset_path': _path,
-                         'batch_size': 1,
-                         'seed': seed},
+                loss_fn_data={'dataset_path': _path,
+                              'batch_size': 1,
+                              'seed': seed},
                 tag=tag)

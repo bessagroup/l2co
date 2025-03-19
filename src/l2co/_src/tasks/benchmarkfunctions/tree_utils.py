@@ -21,6 +21,13 @@ def tree_extend(base: PyTree, extension: PyTree, expand_axis=True,
     return jt.map(_tree_extend, base, extension)
 
 
+def tree_expand_dims(tree: PyTree, axis: int = 0):
+    def _expand_dims(leaf):
+        return jnp.expand_dims(leaf, axis=axis)
+
+    return jt.map(_expand_dims, tree)
+
+
 def tree_trim(tree: PyTree, n: int, axis: int = 0):
     def _trim_leaf(leaf):
         return jnp.take(leaf, indices=jnp.arange(n, leaf.shape[axis]),
@@ -54,3 +61,12 @@ def tree_to_dict_list(tree: PyTree, name: str):
 def dict_list_to_tree(dict_list, name: str) -> PyTree:
     return jt.map(lambda *params: jax.numpy.stack(params, axis=0),
                   *[d[name] for d in dict_list])
+
+
+def update_pytree_at_index(tree: PyTree, new_values: PyTree, index: int) -> PyTree:
+    """Updates a PyTree at a specific index using JAX's in-place updates."""
+    return jax.tree_map(lambda x, y: x.at[index].set(y), tree, new_values)
+
+
+def tree_remove_first(tree: PyTree) -> PyTree:
+    return jax.tree_map(lambda x: x[1:], tree)

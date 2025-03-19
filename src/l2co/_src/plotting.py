@@ -21,14 +21,12 @@ import numpy as np
 import xarray as xr
 from f3dasm import ExperimentData
 from f3dasm.design import Domain
-from matplotlib.colors import LinearSegmentedColormap, SymLogNorm
-
 # Local
 from l2co._src.data_loader import DataLoader, OptimizationDynamics
-from l2co._src.tasks.benchmarkfunctions.dataloader import batch_iter
 from l2co._src.tasks.benchmarkfunctions.run_optimization import (
     EvaluateModel, GridWeightSampler, experimentdata_to_xarray)
 from l2co._src.tasks.benchmarkfunctions.task import Task
+from matplotlib.colors import LinearSegmentedColormap, LogNorm, SymLogNorm
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -369,14 +367,10 @@ def plot_2d_loss_landscape(task: Task, plot_resolution: int = 100,
                            stepsize: float = 0.033):
     sampler = GridWeightSampler(
         model=task.model, stepsize=stepsize, lower_bound=0.0, upper_bound=1.0)
+
     evaluate_block = EvaluateModel(
-        loss_fn=task.loss_fn,
-        iter_data=batch_iter(
-            dataset=task.loaded_dataset,
-            n_evals=sampler.num_points**2,
-            batch_size=task.dataset['batch_size'],
-            key=task.dataset['seed']),
-        has_aux=task.has_aux)
+        task=task,
+    )
 
     domain = Domain()
     domain.add_parameter('x')
@@ -400,12 +394,21 @@ def plot_2d_loss_landscape(task: Task, plot_resolution: int = 100,
 
     Z = griddata((x, y), z, (X, Y), method='cubic')
 
+    # Ensure Z is positive
+    Z_min = np.min(Z)
+    Z = Z - Z_min
+
+    Z_nonzero = Z[Z > 0]
+    eps = np.min(Z_nonzero) if Z_nonzero.size > 0 else 1e-1
+
+    Z += eps
+
     # Create the figure and set up the subplots
     fig = plt.figure(figsize=(12, 6))
 
     # 3D Surface Plot
     ax1 = fig.add_subplot(121, projection='3d')
-    surf = ax1.plot_surface(X, Y, Z, cmap='viridis')
+    surf = ax1.plot_surface(X, Y, Z, cmap='viridis', norm=LogNorm())
     fig.colorbar(surf, ax=ax1)
     ax1.set_xlabel('X axis')
     ax1.set_ylabel('Y axis')
@@ -414,7 +417,8 @@ def plot_2d_loss_landscape(task: Task, plot_resolution: int = 100,
 
     # 2D Heatmap
     ax2 = fig.add_subplot(122)
-    heatmap = ax2.pcolormesh(X, Y, Z, cmap='viridis', shading='auto')
+    heatmap = ax2.pcolormesh(X, Y, Z, cmap='viridis',
+                             shading='auto', norm=LogNorm())
     fig.colorbar(heatmap, ax=ax2)
     ax2.set_xlabel('X axis')
     ax2.set_ylabel('Y axis')
