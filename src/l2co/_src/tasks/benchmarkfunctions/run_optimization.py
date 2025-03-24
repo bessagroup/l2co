@@ -282,15 +282,11 @@ def run_optimization_schedule_multiple_realizations(
             sampler = sampler_cls(model=task.model, seed=seed + s)
 
         data = run_optimization_schedule(
-            loss_fn=task.loss_fn,
+            task=task,
             optimization_schedule=optimization_schedule,
             seed=seed + s,
             bounded=bounded,
             sampler=sampler,
-            dataset=task.loaded_dataset,
-            batch_size=task.batch_size,
-            has_aux=task.has_aux,
-            loss_fn_data=task.loaded_loss_fn_data,
         )
 
         results_list.append(experimentdata_to_xarray(
@@ -302,36 +298,34 @@ def run_optimization_schedule_multiple_realizations(
 
 
 def run_optimization_schedule(
-        loss_fn: Callable,
+        task: Task,
         optimization_schedule: OptimizationSchedule,
         seed: int,
         bounded: Optional[Tuple[float, float]],
         sampler: Block,
-        dataset: Optional[Dict[str, Any]],
-        batch_size: Optional[int],
-        has_aux: bool,
-        loss_fn_data: Optional[Dict[str, Any]],
 ) -> ExperimentData:
 
     # Start with empty ExperimentData
     data = None
+    loaded_dataset = task.loaded_dataset
+    loaded_loss_fn_data = task.loaded_loss_fn_data
 
     for step in optimization_schedule:
 
         learning_data = batch_iter(
-            dataset=dataset, n_evals=step.n_evals,
-            batch_size=batch_size, key=seed)
+            dataset=loaded_dataset, n_evals=step.n_evals,
+            batch_size=task.batch_size, key=seed)
 
         update_step = OPT_MAPPING[step.optimizer](
             **step.hyperparameters, seed=seed,
             bounded=bounded)
 
         loss_data = batch_iter(
-            dataset=loss_fn_data, n_evals=step.n_evals,
+            dataset=loaded_loss_fn_data, n_evals=step.n_evals,
             batch_size=update_step.popsize, key=seed)
 
         data = run_optimization(
-            loss_fn=loss_fn,
+            task=task,
             update_step=update_step,
             sampler=sampler,
             n_evals=step.n_evals,
@@ -339,7 +333,6 @@ def run_optimization_schedule(
             loss_data=loss_data,
             popsize=update_step.popsize,
             x0_strategy=step.x0_strategy,
-            has_aux=has_aux,
             data=data,
 
         )
@@ -348,7 +341,7 @@ def run_optimization_schedule(
 
 
 def run_optimization(
-    loss_fn: Callable,
+    task: Task,
     update_step: Block,
     sampler: Block,
     n_evals: int,
@@ -356,7 +349,6 @@ def run_optimization(
     loss_data: Iterator,
     popsize: int,
     x0_strategy: str,
-    has_aux: bool,
     data: Optional[ExperimentData] = None,
 ) -> ExperimentData:
 
@@ -372,6 +364,9 @@ def run_optimization(
                    sampler=sampler)
 
     if x0_strategy == 'new':
+        data_generator = EvaluateModel(task)
+        data_generator.arm(x0)
+        x0 = data_generator.call(data=x0)
         n_evals -= popsize
         data += x0
 
@@ -380,12 +375,16 @@ def run_optimization(
 
     n_updates = n_evals // popsize + (n_evals % popsize > 0)
 
-    data = update_step.call(
-        data=data, fn=loss_fn, n_evals=n_updates,
-        data_iter=learning_data, loss_iter=loss_data, has_aux=has_aux)
+    iterates = update_step.call(
+        data=data, fn=task.loss_fn, n_evals=n_updates,
+        data_iter=learning_data, loss_iter=loss_data, has_aux=task.has_aux)
+
+    data += iterates[popsize:]
 
     # Remove overiterations
-    data.remove_rows_bottom(number_of_rows=popsize * n_updates - n_evals)
+    data.remove_rows_bottom(number_of_rows=popsize * n_updates - n_evals,
+                            in_place=True)
+
     logger.debug(f"Optimization finished with {n_evals} evaluations")
 
     return data
@@ -395,17 +394,17 @@ def create_x0(data: ExperimentData, mode: str, n_samples: int,
               sampler: Block) -> ExperimentData:
 
     if mode == 'new':
-        data = sampler.call(data=data, num_samples=n_samples)
+        _data = sampler.call(data=data, num_samples=n_samples)
 
     elif mode == 'last':
-        data = data[-n_samples:]
+        _data = data[-n_samples:]
 
     elif mode == 'best':
-        data = data.sort(
+        _data = data.sort(
             criterion=lambda es: es.output_data['y'],
             reverse=True)[-n_samples:].reset_index()
 
-    return data
+    return _data
 
 
 class RunOptimization(DataGenerator):
@@ -602,11 +601,13 @@ def run_optimization_no_schedule(
     step.n_evals = n_evals_per_switch
     previous_step = None
     step_list.append(step)
+    loaded_dataset = task.loaded_dataset
+    loaded_loss_fn_data = task.loaded_loss_fn_data
 
     for s in range(n_switches):
 
         learning_data = batch_iter(
-            dataset=task.loaded_dataset, n_evals=step.n_evals,
+            dataset=loaded_dataset, n_evals=step.n_evals,
             batch_size=task.batch_size, key=seed)
 
         if previous_step is None or \
@@ -616,13 +617,13 @@ def run_optimization_no_schedule(
                 bounded=bounded)
 
         loss_data = batch_iter(
-            dataset=task.loaded_loss_fn_data,
+            dataset=loaded_loss_fn_data,
             n_evals=step.n_evals, batch_size=update_step.popsize,
             key=seed
         )
 
         data = run_optimization(
-            loss_fn=task.loss_fn,
+            task=task,
             update_step=update_step,
             sampler=sampler,
             n_evals=step.n_evals,
@@ -630,7 +631,6 @@ def run_optimization_no_schedule(
             loss_data=loss_data,
             popsize=update_step.popsize,
             x0_strategy=step.x0_strategy,
-            has_aux=task.has_aux,
             data=data,
         )
 

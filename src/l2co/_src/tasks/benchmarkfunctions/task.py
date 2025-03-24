@@ -299,13 +299,21 @@ def create_benchmark_task(
         dimensionality: int, offset: bool = True,
         scale_output: bool = True, grad_noise: float = 0.0) -> Task:
 
-    # add '_seed' to dataset_path
-    _path = Path(dataset_path + f'_{seed}').with_suffix('.npz')
+    if noise > 0.0:
+        # add '_seed' to dataset_path
+        _path = Path(dataset_path + f'_{seed}').with_suffix('.npz')
 
-    if not _path.exists():
-        dataset = random_keys_dataset(
-            dataset_size=1000, key=jr.key(seed))
-        save_dataset(dataset, _path)
+        if not _path.exists():
+            dataset = random_keys_dataset(
+                dataset_size=1000, key=jr.key(seed))
+            save_dataset(dataset, _path)
+
+        loss_fn_data = {'dataset_path': _path,
+                        'batch_size': 1,
+                        'seed': seed}
+
+    else:
+        loss_fn_data = None
 
     model, loss_fn, tag = create_benchmark_loss_function(
         fn_name=str(fn_name),
@@ -316,11 +324,9 @@ def create_benchmark_task(
         noise=float(noise),
         offset=offset,
         scale_output=scale_output,
-        grad_noise=grad_noise,
+        grad_noise=float(noise),
     )
 
     return Task(model=model, loss_fn=loss_fn,
-                loss_fn_data={'dataset_path': _path,
-                              'batch_size': 1,
-                              'seed': seed},
+                loss_fn_data=loss_fn_data,
                 tag=tag)

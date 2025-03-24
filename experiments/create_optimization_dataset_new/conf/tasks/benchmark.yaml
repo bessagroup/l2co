@@ -1,8 +1,10 @@
 sampler: 
   _target_: l2co._src.tasks.benchmarkfunctions.task.BenchmarkFuncSampler
   noise_distribution:
-    - 0.4
-    - 0.6
+    - 0.25
+    - 0.25
+    - 0.25
+    - 0.25
 sampler_kwargs:
   n_samples: 100
   seed: ${seed}
@@ -304,13 +306,14 @@ experimentdata:
         type: category
         categories:
           - 0.0
+          - 0.01
           - 0.1
+          - 0.5
       dimensionality:
         type: category
         categories:
           - 2
           - 5
-          - 10
           - 20
           - 50
       seed:
@@ -318,6 +321,7 @@ experimentdata:
         low: 0
         high: 100000
 task_kwargs:
+  dataset_path: './data/keys' 
 data_generator:
   _target_: l2co._src.tasks.benchmarkfunctions.task.create_benchmark_task
   _partial_: True
