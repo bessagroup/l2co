@@ -1,7 +1,13 @@
 sampler: 
-  _target_: f3dasm.create_sampler
-  sampler: 'grid'
+  _target_: l2co._src.tasks.benchmarkfunctions.task.BenchmarkFuncSampler
+  noise_distribution:
+    - 0.4
+    - 0.2
+    - 0.2
+    - 0.2
 sampler_kwargs:
+  n_samples: 100
+  seed: ${seed}
 
 experimentdata:
   domain:
@@ -140,14 +146,20 @@ experimentdata:
         type: category
         categories:
           - 0.0
+          - 0.01
+          - 0.1
+          - 0.3
       dimensionality:
         type: category
         categories:
           - 2
+          - 5
+          - 20
+          - 1000
       seed:
-        type: category
-        categories:
-          - 42
+        type: int
+        low: 0
+        high: 10000
 task_kwargs:
   dataset_path: './data/keys' 
 data_generator:

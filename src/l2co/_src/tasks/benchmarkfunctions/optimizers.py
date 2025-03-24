@@ -362,7 +362,7 @@ class EvoSaxUpdate(UpdateStep):
                  seed: int,
                  popsize: int,
                  update_fn: Callable,
-                 bounded: bool = False,
+                 bounded: Optional[Tuple[float, float]] = None,
                  **hyperparameters):
         self.optimizer_class = optimizer
         self.update_fn = update_fn
