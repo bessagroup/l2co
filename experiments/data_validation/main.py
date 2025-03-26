@@ -12,7 +12,8 @@ import xarray as xr
 from f3dasm import ExperimentData
 
 from l2co import logger as l2co_logger
-from l2co._src.optimizerschedule import OptimizationSchedule, OptimizationStep
+from l2co._src.optimizerschedule import (OptimizationSchedule,
+                                         OptimizationStep, step_n_iterations)
 from l2co._src.tasks.benchmarkfunctions.task import Task
 
 
@@ -188,9 +189,12 @@ def create_optimization_data(
 
         n_iterations = x.attrs['n_iterations']
 
+        iterations_per_step = step_n_iterations(n_iterations=n_iterations,
+                                                budgets=budgets)
+
         bins = np.concatenate(([0], np.cumsum(
-            [n_iterations*pop*budget for
-             pop, budget in zip(popsizes, budgets)])))
+            [i*pop for
+             pop, i in zip(popsizes, iterations_per_step)])))
 
         bins[-1] += 1
 

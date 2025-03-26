@@ -320,7 +320,10 @@ def get_combination(optimizer_1: OptimizationStep,
 
 
 def step_n_iterations(n_iterations: int, budgets: List[int]) -> List[int]:
-    return list(np.multiply(budgets, n_iterations).astype(int))
+    allocations = np.floor(np.array(budgets) * n_iterations)
+    remainder = n_iterations - np.sum(allocations)
+    allocations[-1] += remainder
+    return list(allocations.astype(int))
 
 
 def step_n_iterations_equal(self, n_iterations: int,
