@@ -18,7 +18,7 @@ from l2co._src.tasks.benchmarkfunctions.task import Task
 
 @hydra.main(config_path=".", config_name="config")
 def main(config):
-    path = Path(config.opt_dir) / config.path
+    path = Path(config.opt_dir) / str(config.path)
 
     experimentdata = ExperimentData.from_file(path)
     labels, opt_data, placeholder_path, step_dict = create_entire_dataset(
