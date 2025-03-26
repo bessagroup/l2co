@@ -1,7 +1,6 @@
 # import argparse
 import hashlib
 import json
-from functools import partial
 from numbers import Integral, Real
 from pathlib import Path
 from typing import Dict, Tuple
@@ -76,8 +75,6 @@ def create_entire_dataset(
     df, df_output = experiment_data.to_pandas(keep_references=True)
 
     df[loss_column_name] = df_output[loss_column_name]
-    # drop the seed column
-    # df = df.drop(columns=[seed_column_name])
 
     # preceed every entry of df_output with experimentdata.project_dir
     df = df.map(
@@ -104,9 +101,6 @@ def create_entire_dataset(
         schedules.append(schedule.tag_hashable)
         del schedule
 
-    # schedules_list = list(
-    #     filter(lambda obj: '+' not in obj.name, set(step_list)))
-    # schedule_list = list(step(step_list))
     step_dict = {schedule.name: schedule.to_dict() for schedule in step_list}
 
     df_schedules = pd.DataFrame(
@@ -241,13 +235,6 @@ def create_optimization_data(
     # Open the whole thing:
     l2co_logger.info("Opening the whole thing")
 
-    # xarr_full = xarr_full.stack(
-    #     problem=('realization', 'itemID'), create_index=False
-    # )
-
-    # xarr_full = xarr_full.assign_coords(
-    #     {'problem': np.arange(xarr_full.problem.size)})
-
     if 'input_dim' in xarr_full.coords:
         return xarr_full.drop('input_dim'), placeholder_path
 
@@ -256,10 +243,4 @@ def create_optimization_data(
 
 
 if __name__ == '__main__':
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument('-p', '--path', type=str,
-    #                     help="Path to the experiment data", required=True)
-
-    # args = parser.parse_args()
-    # path = Path(args.path)
     main()
