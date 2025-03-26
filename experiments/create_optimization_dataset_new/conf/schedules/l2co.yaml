@@ -19,3 +19,5 @@ data_generation:
 
 path:
 model_dir: /home/martin/Documents/GitHub/L2CO/experiments/train_model/outputs
+
+partition_factor: 1.0

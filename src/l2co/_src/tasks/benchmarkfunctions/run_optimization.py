@@ -270,6 +270,7 @@ def run_optimization_schedule_multiple_realizations(
         optimization_schedule: OptimizationSchedule,
         seed: int,
         n_iterations_per_dim: int,
+        partition_factor: float,
         max_iterations: int,
         n_realizations: int = 1,
         include_input: bool = False,
@@ -278,8 +279,9 @@ def run_optimization_schedule_multiple_realizations(
 ) -> xr.DataArray:
     results_list: List[xr.DataArray] = []
 
-    n_iterations = min(
+    n_iterations = int(min(
         task.dimensionality * n_iterations_per_dim, max_iterations)
+        * partition_factor)
 
     for s in range(n_realizations):
         if sampler_cls is None:
@@ -432,6 +434,7 @@ class RunOptimization(DataGenerator):
                  n_realizations: int,
                  n_evals_per_dim: int,
                  max_iterations: int,
+                 partition_factor: float,
                  seed: int,
                  bounded: Optional[Tuple[float, float]] = None,
                  include_input: bool = False,
@@ -441,6 +444,7 @@ class RunOptimization(DataGenerator):
         self.n_realizations = n_realizations
         self.n_evals_per_dim = n_evals_per_dim
         self.max_iterations = max_iterations
+        self.partition_factor = partition_factor
         self.include_input = include_input
         self.clear_jax_cache = clear_jax_cache
         self.rng = onp.random.default_rng(seed=seed)
@@ -464,6 +468,7 @@ class RunOptimization(DataGenerator):
                 experiment_sample=experiment_sample,
                 task=task,
                 trained_l2co_model=trained_l2co_model,
+                n_evals_per_dim=self.n_evals_per_dim,
                 seed=seed,
                 n_switches=n_switches,
                 include_input=self.include_input,
@@ -477,6 +482,7 @@ class RunOptimization(DataGenerator):
                 schedule=schedule,
                 seed=seed,
                 n_evals_per_dim=self.n_evals_per_dim,
+                partition_factor=self.partition_factor,
                 n_realizations=self.n_realizations,
                 include_input=self.include_input,
                 bounded=self.bounded,
@@ -497,7 +503,8 @@ class RunOptimization(DataGenerator):
     def run_optimization(
         self, experiment_sample: ExperimentSample, task: Task,
         schedule: OptimizationSchedule,
-            seed: int, n_evals_per_dim: int, n_realizations: int,
+            seed: int, n_evals_per_dim: int, partition_factor: float,
+            n_realizations: int,
             include_input: bool,
             bounded: Optional[Tuple[float, float]]) -> ExperimentSample:
         # t1 = time()
@@ -506,6 +513,7 @@ class RunOptimization(DataGenerator):
             optimization_schedule=schedule,
             seed=seed,
             n_iterations_per_dim=n_evals_per_dim,
+            partition_factor=partition_factor,
             max_iterations=self.max_iterations,
             n_realizations=self.n_realizations,
             include_input=self.include_input,

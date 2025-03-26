@@ -47,6 +47,8 @@ data_generation:
     _target_: l2co._src.optimizerschedule.get_combination
     _partial_: True
   kwargs:
-    switch: 0.2
+    switch: 0.5
+
+partition_factor: 0.25
 
 fraction_combinations: 0.75
