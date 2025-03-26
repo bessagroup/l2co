@@ -326,7 +326,7 @@ def step_n_iterations(n_iterations: int, budgets: List[int]) -> List[int]:
     return list(allocations.astype(int))
 
 
-def step_n_iterations_equal(self, n_iterations: int,
+def step_n_iterations_equal(n_iterations: int,
                             n_switches: int) -> List[int]:
     base_value = n_iterations // n_switches  # Integer division
     remainder = n_iterations % n_switches    # Remainder
