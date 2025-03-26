@@ -41,14 +41,14 @@ class UpdateStep(Block):
             x = v.input_data['x']
         self.params, self.static = eqx.partition(x, eqx.is_inexact_array)
 
-    def call(self, data: ExperimentData, fn: Callable, n_evals: int,
+    def call(self, data: ExperimentData, fn: Callable, n_iterations: int,
              data_iter: Iterator, loss_iter: Iterator, has_aux: bool = False,
              **kwargs
              ) -> ExperimentData:
         params_history, loss_history, opt_state, aux_history = self.update_fn(
             params=self.params, static=self.static,
             optimizer=self.optimizer, loss_fn=fn,
-            inner_steps=n_evals, data_iter=data_iter,
+            inner_steps=n_iterations, data_iter=data_iter,
             loss_iter=loss_iter,
             seed=self.seed,
             bounded=self.bounded,

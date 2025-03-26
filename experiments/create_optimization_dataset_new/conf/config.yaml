@@ -3,6 +3,8 @@ defaults:
 - schedules: single
 
 n_realizations: 3
+n_evals_per_dim: 20
+max_iterations: 2000
 
 seed: 467
 mode: mpi

@@ -86,9 +86,14 @@ def pre_process(config: DictConfig):
     schedule_fn = datagenerator(output_names='optimizer schedule')(instantiate(
         config.schedules.data_generation.data_generator, _partial_=True))
 
+    if config.schedules.data_generation.kwargs is None:
+        schedules_kwargs = {}
+    else:
+        schedules_kwargs = config.schedules.data_generation.kwargs
+
     experiment_data_schedules = schedule_fn.call(
         data=experiment_data_schedules,
-        **config.schedules.data_generation.kwargs
+        **schedules_kwargs
     )
 
     # Grid sample tasks + schedules
@@ -154,6 +159,8 @@ def process(config: DictConfig):
 
     run_opt = RunOptimization(
         n_realizations=config.n_realizations,
+        n_evals_per_dim=config.n_evals_per_dim,
+        max_iterations=config.max_iterations,
         seed=int(config.seed),
         bounded=config.tasks.bounded,
         include_input=False,

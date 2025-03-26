@@ -68,7 +68,8 @@ def transformer_factory(dtype: str) -> Pipeline:
 
 class EnsureColumnsTransformer(BaseEstimator, TransformerMixin):
     def __init__(self, trained_columns=None):
-        self.trained_columns = trained_columns  # Columns the model was trained on
+        # Columns the model was trained on
+        self.trained_columns = trained_columns
 
     def fit(self, X, y=None):
         if self.trained_columns is None:
@@ -150,28 +151,3 @@ def preprocessing_factory(feature_types: dict) -> ColumnTransformer:
         [(feature_name, transformer_factory(feature_type), [feature_name])
          for feature_name, feature_type in feature_types.items()],
         remainder='drop')
-
-
-# def filter_columns_transformer(
-#         X_features: pd.DataFrame,
-#         column_transformer: DataFrameColumnTransformer) -> DataFrameColumnTransformer:
-
-#     valid_columns = set(X_features.columns).intersection(
-#         set(column_transformer.column_transformer.feature_names_in_))
-#     new_transformers_dict = {}
-
-#     for name, trans, cols in column_transformer.column_transformer.transformers_:
-#         if name in valid_columns:
-#             new_transformers_dict[name] = (name, trans, cols)
-
-#     filtered_ct = DataFrameColumnTransformer(list(new_transformers_dict.values()),
-#                                              remainder='drop',
-#                                              force_int_remainder_cols=False)
-#     filtered_ct.fit(X_features)
-
-#     for idx, (name, trans, cols) in enumerate(filtered_ct.column_transformer.transformers_):
-#         if name != 'remainder':
-#             filtered_ct.column_transformer.transformers_[
-#                 idx] = new_transformers_dict[name]
-
-#     return filtered_ct

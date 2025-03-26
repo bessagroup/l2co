@@ -63,7 +63,8 @@ def dict_list_to_tree(dict_list, name: str) -> PyTree:
                   *[d[name] for d in dict_list])
 
 
-def update_pytree_at_index(tree: PyTree, new_values: PyTree, index: int) -> PyTree:
+def update_pytree_at_index(tree: PyTree, new_values: PyTree,
+                           index: int) -> PyTree:
     """Updates a PyTree at a specific index using JAX's in-place updates."""
     return jax.tree_map(lambda x, y: x.at[index].set(y), tree, new_values)
 

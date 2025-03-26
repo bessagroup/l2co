@@ -147,7 +147,7 @@ class DataLoader:
 # =============================================================================
 
     def to_learning_data(
-            self, t: int, t_start: int = 0, t_end: int = 0,
+            self, t: float, t_start: float = 0.0, t_end: float = 1.0,
             optimizer: Optional[str] = None) -> OptimizationDynamics:
         """
         Convert the data loader to learning data.
@@ -156,11 +156,14 @@ class DataLoader:
         ----------
         optimizer : str
             The optimizer to select.
-        t : int
-            The iteration to select.
+        t : float
+            The budget to select.
         t_start : int, optional
-            The starting iteration number of the requested trajectory,
-            by default 0
+            The starting budget number of the requested trajectory,
+            by default 0.0
+        t_end : int, optional
+            The ending budget number of the requested trajectory,
+            by default 0.0
 
         Returns
         -------
@@ -176,8 +179,9 @@ class DataLoader:
             Y_data = self.select_single_optimizers(squash=True).select_t(
                 t_start=t, t=t_end)
 
-            Y = Y_data.performance.isel(
-                iterations=t_end-1, output_dim=0, drop=True).sortby(
+            Y = Y_data.performance.sel(
+                budget=t_end, method='nearest', drop=True).isel(
+                output_dim=0, drop=True).sortby(
                     'optimizer')
             previous_step = None
 
@@ -187,8 +191,9 @@ class DataLoader:
                 t_start=t_start, t=t).data)
             Y_data = self.query_optimizer(optimizer)
 
-            Y = Y_data.performance.isel(
-                iterations=t_end-1, output_dim=0, drop=True).sortby(
+            Y = Y_data.performance.sel(
+                budget=t_end, method='nearest', drop=True).isel(
+                output_dim=0, drop=True).sortby(
                     'optimizer')
             previous_step = self.opt_steps[optimizer].steps[0]
 
@@ -225,7 +230,7 @@ class DataLoader:
 
     @property
     def n_iterations(self) -> int:
-        return self.data.iterations.size
+        return self.data.budget.size
 
     @property
     def n_realization(self) -> int:
@@ -273,7 +278,7 @@ class DataLoader:
         print("Triggered performance")
         performance = scaling2(self.data)
 
-        performance = performance.ffill(dim='iterations')
+        performance = performance.ffill(dim='budget')
 
         if include_best:
 
@@ -285,7 +290,7 @@ class DataLoader:
 
             sbs = check_sbs.groupby('itemID').map(
                 lambda x: x.mean('problem').isel(
-                    iterations=-1, drop=True).idxmin(
+                    budget=-1, drop=True).idxmin(
                     'optimizer').expand_dims(problem=x.problem)).isel(
                 output_dim=0, drop=True).assign_coords(
                         {'problem': performance.problem})
@@ -293,7 +298,7 @@ class DataLoader:
             sbs = sbs.fillna(performance.optimizer.values[0])
             perf_sbs = performance.sel(optimizer=sbs, drop=True).reset_coords(
                 'optimizer', drop=True).expand_dims(optimizer=['sbs'])
-            performance = xr.merge([performance, perf_sbs]).output
+            performance = xr.merge([performance, perf_sbs]).output_min
 
         print(f"Performance calculation took: {perf_counter()-t_start:0.2f}")
         return performance
@@ -407,29 +412,28 @@ class DataLoader:
         return (self.isel(_X_train_indices),
                 self.isel(_X_test_indices))
 
-#                                                          Selecting iterations
+#                                                              Selecting budget
 # =============================================================================
 
-    def select_t(self, t: int, t_start: Optional[int] = 0) -> DataLoader:
+    def select_t(self, t: int, t_start: Optional[float] = 0.0) -> DataLoader:
         """
-        Select a subset of the data loader at a specific iteration.
+        Select a subset of the data loader at a specific budget.
 
         Parameters
         ----------
         t : int
-            The iteration to select.
+            The budget to select.
+        t_start : float, optional
+            The starting budget number of the requested trajectory,
 
         Returns
         -------
         DataLoader
             The selected data loader.
         """
-        if t == 0:
-            t = self.n_iterations
-
         return DataLoader(
             task_labels=self.task_labels,
-            data=self.data.isel(iterations=range(t_start, t)),
+            data=self.data.sel(budget=slice(t_start, t)),
             opt_steps=self.opt_steps
         )
 
@@ -596,7 +600,7 @@ class DataLoader:
 
 def performance_profile(performance: xr.DataArray, max_f_value: int = 2.0
                         ) -> xr.DataArray:
-    p = performance.isel(iterations=-1)
+    p = performance.isel(budget=-1)
     rij = (p + 1.0) / 1.0
 
     ds_f = xr.Dataset(
@@ -671,7 +675,7 @@ class OptimizationDynamics:
         mask = ~Y.isnull().all('optimizer')
 
         if X_trajectory is not None:
-            mask_X_trajectory = ~X_trajectory.isnull().any('iterations').isel(
+            mask_X_trajectory = ~X_trajectory.isnull().any('budget').isel(
                 optimizer=0, drop=True)
 
             mask = mask & mask_X_trajectory
@@ -806,8 +810,8 @@ def squash_optimizer(data: xr.Dataset, target_optimizer: str) -> xr.Dataset:
     _data = data.sel(
         optimizer=[o for o in data.optimizer.values
                    if o.startswith(target_optimizer)])
-    mask = _data.notnull().any(dim='iterations').idxmax(
-        dim='optimizer').isel(output_dim=0, drop=True).output
+    mask = _data.notnull().any(dim='budget').idxmax(
+        dim='optimizer').isel(output_dim=0, drop=True).output_mean
 
     return _data.sel(optimizer=mask).reset_coords(
         'optimizer', drop=True).expand_dims(
@@ -845,12 +849,8 @@ def compute_X_trajectory(data: xr.Dataset) -> xr.DataArray:
 
     Parameters
     ----------
-    iterations : int
-        The number of iterations to select.
-    t_start : int, optional
-        The starting iteration number of the requested trajectory,
-        by default 0
-
+    data : xarray.Dataset
+        The optimization trajectory data.
     Returns
     -------
     xarray.DataArray
@@ -872,14 +872,14 @@ def compute_X_trajectory(data: xr.Dataset) -> xr.DataArray:
     trajectory: xr.Dataset = xr.apply_ufunc(
         scale,
         data,
-        input_core_dims=[['iterations', 'output_dim']],
-        output_core_dims=[['iterations', 'output_dim']],
+        input_core_dims=[['budget', 'output_dim']],
+        output_core_dims=[['budget', 'output_dim']],
         vectorize=True,
         dask='parallelized',
         dask_gufunc_kwargs={'allow_rechunk': True}  # False
     )
 
-    return trajectory.output.isel(
+    return trajectory.output_mean.isel(
         output_dim=0, drop=True).rename(
             'trajectory').transpose(
-                'optimizer', 'iterations', 'problem')
+                'optimizer', 'budget', 'problem')

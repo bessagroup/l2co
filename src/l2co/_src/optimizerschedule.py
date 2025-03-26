@@ -4,7 +4,9 @@ import json
 from copy import deepcopy
 from itertools import permutations
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
+
+import numpy as np
 
 # =============================================================================
 
@@ -12,8 +14,7 @@ from typing import Any, Dict, List, Optional
 class OptimizationStep:
     def __init__(self, optimizer: str,
                  hyperparameters: Optional[Dict[str, Any]] = None,
-                 x0_strategy: Optional[str] = None,
-                 n_evals: Optional[int] = None):
+                 x0_strategy: Optional[str] = None):
 
         if hyperparameters is None:
             hyperparameters = {}
@@ -21,7 +22,6 @@ class OptimizationStep:
         self.optimizer = optimizer
         self.hyperparameters = dict(hyperparameters)
         self.x0_strategy = x0_strategy
-        self.n_evals = n_evals
         self.tag = {'opt_name': self.name, **hyperparameters}
 
     def __repr__(self):
@@ -29,7 +29,6 @@ class OptimizationStep:
             f"Optimizer: {self.optimizer}, "
             f"Hyperparameters: {self.hyperparameters}, "
             f"x0_strategy: {self.x0_strategy}, "
-            f"n_evals: {self.n_evals}, "
         )
 
     def __str__(self):
@@ -37,7 +36,6 @@ class OptimizationStep:
             f"Optimizer: {self.optimizer}\n"
             f"  Hyperparameters: {self.hyperparameters}\n"
             f"  x0_strategy: {self.x0_strategy}\n"
-            f"  n_evals: {self.n_evals}"
         )
 
     def __eq__(self, other):
@@ -46,7 +44,6 @@ class OptimizationStep:
         return (
             self.optimizer == other.optimizer
             and self.x0_strategy == other.x0_strategy
-            and self.n_evals == other.n_evals
             and self.hyperparameters == other.hyperparameters
         )
 
@@ -60,7 +57,15 @@ class OptimizationStep:
     def name(self) -> str:
         hyperparameters = '_'.join(
             [f"{k}={v}" for k, v in self.hyperparameters.items()])
-        return f"{self.optimizer}_{hyperparameters}"
+
+        _name = f"{self.optimizer}_{hyperparameters}"
+
+        # Trim any leading/trailing underscores
+        return _name.strip('_')
+
+    @property
+    def popsize(self) -> int:
+        return self.hyperparameters.get('popsize', 1)
 
     @classmethod
     def from_yaml(cls, config: Dict[str, Any]) -> OptimizationStep:
@@ -75,7 +80,6 @@ class OptimizationStep:
             'optimizer': self.optimizer,
             'hyperparameters': self.hyperparameters,
             'x0_strategy': self.x0_strategy,
-            'n_evals': self.n_evals
         }
 
     def save_to_json(self, filepath: Path | str):
@@ -87,7 +91,6 @@ class OptimizationStep:
         return cls(
             optimizer=data['optimizer'],
             x0_strategy=data.get('x0_strategy'),
-            n_evals=data.get('n_evals'),
             hyperparameters=data.get('hyperparameters'),
         )
 
@@ -99,25 +102,25 @@ class OptimizationStep:
 
 class OptimizationSchedule:
     def __init__(self, steps: OptimizationStep | list[OptimizationStep],
-                 n_evals: int | list[int]):
+                 budgets: float | list[float]):
         if isinstance(steps, OptimizationStep):
             steps = [steps]
 
-        if isinstance(n_evals, int):
-            n_evals = [n_evals]
+        if isinstance(budgets, (float, int)):
+            budgets = [budgets]
 
         self.steps = [step.copy() for step in steps]
         self.tag = {'opt_name': '+'.join([step.name for step in steps]),
                     'steps': [step.tag for step in steps]}
+        self.budgets = budgets
 
-        for i, (step, single_n_evals) in enumerate(zip(self.steps, n_evals)):
+        for i, step in enumerate(self.steps):
             if step.x0_strategy is None:
                 if i == 0:
                     step.x0_strategy = 'new'
                 else:
                     step.x0_strategy = get_handshake(
                         self.steps[i-1].optimizer, step.optimizer)
-            step.n_evals = single_n_evals
 
     @property
     def name(self) -> str:
@@ -126,6 +129,16 @@ class OptimizationSchedule:
     @name.setter
     def name(self, new_name: str):
         self.tag['opt_name'] = new_name  # Update the tag with the new name
+
+    def step_n_evals(self, n_evals: int) -> List[int]:
+        num_splits = len(self.budgets)
+        base_value = n_evals // num_splits  # Integer division
+        remainder = n_evals % num_splits    # Remainder
+
+        result = [base_value] * num_splits
+        result[-1] += remainder  # Add remainder to the last entry
+
+        return result
 
     @property
     def tag_hashable(self) -> tuple[tuple[str, Any]]:
@@ -143,24 +156,28 @@ class OptimizationSchedule:
         # Use frozenset for order independence
         return frozenset(tag_hashable.items())
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[OptimizationStep]:
         return iter(self.steps)
 
     def __repr__(self):
         return (
             f"OptimizationSchedule(tag={self.name}, "
-            f"steps={self.steps})"
+            f"steps={self.steps}), "
+            f"budgets={self.budgets}"
         )
 
     def __str__(self):
         step_details = "\n".join(
             [f"Step {i+1}:\n{step}" for i, step in enumerate(self.steps)])
-        return f"Optimization Schedule ({self.name}):\n{step_details}"
+        return (f"Optimization Schedule ({self.name}):\n{step_details}\n "
+                f"- budgets: {self.budgets}")
 
     def __eq__(self, other):
         if not isinstance(other, OptimizationSchedule):
             return False
-        return (self.tag == other.tag and self.steps == other.steps)
+        return (self.tag == other.tag
+                and self.steps == other.steps
+                and self.budgets == other.budgets)
 
     def __hash__(self):
         return hash(self.tag_hashable)
@@ -170,16 +187,16 @@ class OptimizationSchedule:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            'tag': self.tag,
-            'steps': [step.to_dict() for step in self.steps]
+            # 'tag': self.tag,
+            'steps': [step.to_dict() for step in self.steps],
+            'budgets': self.budgets,
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'OptimizationSchedule':
+    def from_dict(cls, data: Dict[str, Any]) -> OptimizationSchedule:
         steps = [OptimizationStep.from_dict(
             step_data) for step_data in data['steps']]
-        return cls(steps=steps, n_evals=[step_data['n_evals']
-                                         for step_data in data['steps']])
+        return cls(steps=steps, budgets=data['budgets'])
 
     def save_to_json(self, filepath: Path | str):
         with open(Path(filepath).with_suffix('.json'), 'w') as f:
@@ -191,7 +208,7 @@ class OptimizationSchedule:
         return Path(path).with_suffix('.json')
 
     @classmethod
-    def load(cls, filepath: str) -> 'OptimizationSchedule':
+    def load(cls, filepath: str) -> OptimizationSchedule:
         with open(filepath, 'r') as f:
             data = json.load(f)
         return cls.from_dict(data)
@@ -249,16 +266,16 @@ def get_all_combinations(steps: list[OptimizationStep],
 
     # Include individual steps as OptimizationSchedule
     step_combinations.extend(
-        [OptimizationSchedule(step, total_evals) for step in steps]
+        [OptimizationSchedule(steps=step, budgets=1) for step in steps]
     )
 
     # Include all permutations of steps as OptimizationSchedule
     for step1, step2 in permutations(steps, 2):
         handshake = get_handshake(step1.optimizer, step2.optimizer)
 
-        # Corrected n_evals split
-        n_evals1 = int(total_evals * switch)
-        n_evals2 = total_evals - n_evals1
+        # # Corrected n_evals split
+        # n_evals1 = int(total_evals * switch)
+        # n_evals2 = total_evals - n_evals1
 
         # Create a copy of step2 with updated x0_strategy
         step2_copy = OptimizationStep(optimizer=step2.optimizer,
@@ -267,51 +284,63 @@ def get_all_combinations(steps: list[OptimizationStep],
 
         # Append the new schedule
         step_combinations.append(OptimizationSchedule(
-            [step1, step2_copy], [n_evals1, n_evals2]))
+            steps=[step1, step2_copy], budgets=[switch, 1-switch]))
 
     return step_combinations
 
 
 def get_combination(optimizer_1: OptimizationStep,
                     optimizer_2: OptimizationStep,
-                    switch: float, total_evals: int) -> OptimizationSchedule:
+                    switch: float) -> OptimizationSchedule:
     # create copies
     optimizer_1 = optimizer_1.copy()
     optimizer_2 = optimizer_2.copy()
 
     # set the number of evaluations
-    switch = max(0, min(1, switch))
+    # switch = max(0, min(1, switch))
 
     if optimizer_1 == optimizer_2:
         optimizer_1.x0_strategy = 'new'
-        optimizer_1.n_evals = total_evals
         steps = [optimizer_1]
-        n_evals = total_evals
+        budgets = 1.0
     else:
         # Corrected n_evals split
-        optimizer_1.n_evals = int(total_evals * switch)
-        optimizer_2.n_evals = total_evals - optimizer_1.n_evals
+        # optimizer_1.n_evals = int(total_evals * switch)
+        # optimizer_2.n_evals = total_evals - optimizer_1.n_evals
 
         optimizer_1.x0_strategy = 'new'
         optimizer_2.x0_strategy = get_handshake(
             optimizer_1.optimizer, optimizer_2.optimizer)
 
         steps = [optimizer_1, optimizer_2]
-        n_evals = [optimizer_1.n_evals, optimizer_2.n_evals]
+        budgets = [switch, 1-switch]
+        # n_evals = [optimizer_1.n_evals, optimizer_2.n_evals]
 
-    return OptimizationSchedule(steps=steps, n_evals=n_evals)
+    return OptimizationSchedule(steps=steps, budgets=budgets)
 
 
-def get_single(optimizer_1: OptimizationStep,
-               total_evals: int) -> OptimizationSchedule:
+def step_n_iterations(n_iterations: int, budgets: List[int]) -> List[int]:
+    return list(np.multiply(budgets, n_iterations).astype(int))
+
+
+def step_n_iterations_equal(self, n_iterations: int,
+                            n_switches: int) -> List[int]:
+    base_value = n_iterations // n_switches  # Integer division
+    remainder = n_iterations % n_switches    # Remainder
+
+    result = [base_value] * n_switches
+    result[-1] += remainder  # Add remainder to the last entry
+
+    return result
+
+
+def get_single(optimizer_1: OptimizationStep) -> OptimizationSchedule:
     # create copies
     optimizer_1 = optimizer_1.copy()
 
     # set the number of evaluations
-    optimizer_1.n_evals = total_evals
     optimizer_1.x0_strategy = 'new'
 
     steps = [optimizer_1]
-    n_evals = total_evals
 
-    return OptimizationSchedule(steps=steps, n_evals=n_evals)
+    return OptimizationSchedule(steps=steps, budgets=1.)

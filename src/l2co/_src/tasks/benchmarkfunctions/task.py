@@ -10,6 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import jax.tree_util as jtu
 import numpy as np
 import pandas as pd
 from f3dasm import Block, ExperimentData
@@ -133,6 +134,13 @@ class Task:
     @property
     def name(self) -> str:
         return self.tag.get('task_name', '')
+
+    @property
+    def dimensionality(self) -> int:
+        return sum(
+            p.size for p in jtu.tree_leaves(
+                eqx.filter(self.model, eqx.is_inexact_array))
+        )
 
     @property
     def tag_hashable(self) -> tuple[tuple[str, Any]]:

@@ -2,6 +2,7 @@
 import hashlib
 import json
 from functools import partial
+from numbers import Integral, Real
 from pathlib import Path
 from typing import Dict, Tuple
 
@@ -22,7 +23,8 @@ def main(config):
 
     experimentdata = ExperimentData.from_file(path)
     labels, opt_data, placeholder_path, step_dict = create_entire_dataset(
-        experiment_data=experimentdata)
+        experiment_data=experimentdata,
+        budget_steps=config.budget_steps,)
 
     # Store the files
     opt_data.to_netcdf(path / 'entire_dataset.nc')
@@ -38,6 +40,7 @@ def main(config):
 
 def create_entire_dataset(
     experiment_data: ExperimentData,
+    budget_steps: int,
     loss_column_name: str = 'loss history',
         seed_column_name: str = 'seed',
         optimizer_column_name: str = 'optimizer schedule',
@@ -124,7 +127,8 @@ def create_entire_dataset(
     # ============= Create the optimization data =============
 
     labels = create_task_labels_df(pivot_table)
-    opt_data, placeholder_path = create_optimization_data(pivot_table)
+    opt_data, placeholder_path = create_optimization_data(
+        pivot_table, budget_steps=budget_steps)
 
     return labels, opt_data, placeholder_path, step_dict
 
@@ -151,7 +155,8 @@ def create_task_labels_df(pivot_table: pd.DataFrame) -> pd.DataFrame:
 
 
 def create_optimization_data(
-        pivot_table: pd.DataFrame) -> Tuple[xr.Dataset, Path]:
+        pivot_table: pd.DataFrame,
+        budget_steps: int) -> Tuple[xr.Dataset, Path]:
 
     df = pivot_table.copy(deep=True)
 
@@ -171,11 +176,50 @@ def create_optimization_data(
 
     # Store placeholder to disk
     placeholder.to_netcdf(placeholder_path)
+    placeholder.close()
 
     # Fill al nans with the placeholder path
     df: pd.DataFrame = df.fillna(placeholder_path)
 
-    def validation_fn(x, placeholder: xr.Dataset):
+    def validation_fn(x: xr.Dataset):
+        popsizes = x.attrs['popsizes']
+
+        if isinstance(popsizes, Integral):
+            popsizes = [popsizes]
+
+        budgets = x.attrs['budgets']
+
+        if isinstance(budgets, Real):
+            budgets = [budgets]
+
+        n_iterations = x.attrs['n_iterations']
+
+        bins = np.concatenate(([0], np.cumsum(
+            [n_iterations*pop*budget for
+             pop, budget in zip(popsizes, budgets)])))
+
+        bins[-1] += 1
+
+        y_bins = x['output'].groupby_bins(
+            "budget", bins=bins, include_lowest=True, right=False)
+
+        y_coarsen = [y_group.coarsen(budget=pop)
+                     for (_, y_group), pop in zip(y_bins, popsizes)]
+
+        y_mean: xr.DataArray = xr.concat(
+            [_y.mean() for _y in y_coarsen], dim='budget')
+        y_std = xr.concat([_y.std() for _y in y_coarsen], dim='budget')
+        y_min = xr.concat([_y.min() for _y in y_coarsen], dim='budget')
+
+        x = xr.Dataset(
+            {'output_mean': y_mean,
+             'output_std': y_std,
+             'output_min': y_min},
+            coords={'budget': np.linspace(0., 1., n_iterations)})
+
+        x = x.interp(budget=np.linspace(
+            0., 1., budget_steps), method='nearest')
+
         return x
 
     xarr_full = xr.open_mfdataset(
@@ -186,8 +230,7 @@ def create_optimization_data(
                         df.columns], dims=['optimizer']),
                     ],
         parallel=True,
-        preprocess=partial(validation_fn,
-                           placeholder=placeholder),
+        preprocess=validation_fn,
         coords='minimal',
         join='outer',
     )

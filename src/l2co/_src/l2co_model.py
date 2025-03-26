@@ -28,8 +28,7 @@ from sklearn.pipeline import Pipeline, make_pipeline
 from ._logging import logger
 from .data_loader import OptimizationDynamics
 from .optimizerschedule import OptimizationStep
-from .preprocessing import (DataFrameColumnTransformer,
-                            EnsureColumnsTransformer, preprocessing_factory)
+from .preprocessing import DataFrameColumnTransformer, EnsureColumnsTransformer
 from .tasks.benchmarkfunctions.dataloader import batch_iter
 
 #                                                                Basis function
@@ -312,7 +311,8 @@ class L2CO_model:
             )
 
             self.stage1_models[data.previous_step.name] = model
-            self.stage1_models_optimizers[data.previous_step.name] = data.opt_steps
+            self.stage1_models_optimizers[data.previous_step.name]\
+                = data.opt_steps
 
     def predict(self,
                 data: OptimizationDynamics) -> Iterable[OptimizationStep]:

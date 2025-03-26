@@ -4,7 +4,7 @@ import json
 from copy import deepcopy
 from pathlib import Path
 from time import time
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Type
+from typing import Callable, Iterator, List, Optional, Tuple, Type
 
 # Third-party
 import equinox as eqx
@@ -28,7 +28,8 @@ from l2co._src.tasks.benchmarkfunctions.tree_utils import (dict_list_to_tree,
 from ..._logging import logger
 from ...data_loader import OptimizationDynamics
 from ...l2co_model import L2CO_model
-from ...optimizerschedule import OptimizationSchedule, OptimizationStep
+from ...optimizerschedule import (OptimizationSchedule, OptimizationStep,
+                                  step_n_iterations, step_n_iterations_equal)
 from .dataloader import batch_iter
 from .optimizers import OPT_MAPPING
 from .task import Task
@@ -36,34 +37,45 @@ from .task import Task
 #                                                            Converter function
 # =============================================================================
 
+MAX_ITERATIONS = 2000
+
+# =============================================================================
+
 
 def experimentdata_to_xarray(data: ExperimentData,
+                             optimization_schedule: OptimizationSchedule,
+                             n_iterations: int,
                              include_input: bool = False) -> xr.Dataset:
     y_arr = jnp.atleast_2d([es.output_data['y']
                             for _, es in data])
 
     y = xr.DataArray(
         y_arr,
-        dims=['output_dim', 'iterations'],
-        coords={'iterations': range(y_arr.shape[1]),
-                'output_dim': ['y']})
-    if include_input:
+        dims=['output_dim', 'budget'],
+        coords={'output_dim': ['y']})
 
+    if include_input:
         x_arr = jnp.array([es.input_data['x']
                           for _, es in data])
 
         x = xr.DataArray(
             x_arr.T,
-            dims=['input_dim', 'iterations'],
-            coords={'iterations': range(x_arr.shape[0]),
-                    'input_dim': [f"x{i}" for i in range(x_arr.shape[1])]})
+            dims=['input_dim', 'budget'],
+            coords={'input_dim': [f"x{i}" for i in range(x_arr.shape[1])]})
 
-        return xr.Dataset({'input': x,
-                           'output': y})
+        ds = xr.Dataset({'input': x,
+                         'output': y,
+                         })
 
     else:
-        return xr.Dataset({'output': y})
+        ds = xr.Dataset({
+            'output': y,
+        })
 
+    ds.attrs['popsizes'] = [step.popsize for step in optimization_schedule]
+    ds.attrs['budgets'] = optimization_schedule.budgets
+    ds.attrs['n_iterations'] = n_iterations
+    return ds
 #                                                               Sampling Blocks
 # =============================================================================
 
@@ -257,12 +269,17 @@ def run_optimization_schedule_multiple_realizations(
         task: Task,
         optimization_schedule: OptimizationSchedule,
         seed: int,
+        n_iterations_per_dim: int,
+        max_iterations: int,
         n_realizations: int = 1,
         include_input: bool = False,
         bounded: Optional[Tuple[float, float]] = None,
         sampler_cls: Optional[Type[Block]] = None,
 ) -> xr.DataArray:
     results_list: List[xr.DataArray] = []
+
+    n_iterations = min(
+        task.dimensionality * n_iterations_per_dim, max_iterations)
 
     for s in range(n_realizations):
         if sampler_cls is None:
@@ -284,13 +301,16 @@ def run_optimization_schedule_multiple_realizations(
         data = run_optimization_schedule(
             task=task,
             optimization_schedule=optimization_schedule,
+            n_iterations=n_iterations,
             seed=seed + s,
             bounded=bounded,
             sampler=sampler,
         )
 
         results_list.append(experimentdata_to_xarray(
-            data, include_input=include_input))
+            data=data, optimization_schedule=optimization_schedule,
+            n_iterations=n_iterations,
+            include_input=include_input))
 
     results = xr.concat(results_list, dim='realization')
 
@@ -300,6 +320,7 @@ def run_optimization_schedule_multiple_realizations(
 def run_optimization_schedule(
         task: Task,
         optimization_schedule: OptimizationSchedule,
+        n_iterations: int,
         seed: int,
         bounded: Optional[Tuple[float, float]],
         sampler: Block,
@@ -310,10 +331,14 @@ def run_optimization_schedule(
     loaded_dataset = task.loaded_dataset
     loaded_loss_fn_data = task.loaded_loss_fn_data
 
-    for step in optimization_schedule:
+    for step, step_iterations in zip(
+        optimization_schedule,
+        step_n_iterations(
+            n_iterations=n_iterations,
+            budgets=optimization_schedule.budgets)):
 
         learning_data = batch_iter(
-            dataset=loaded_dataset, n_evals=step.n_evals,
+            dataset=loaded_dataset, n_evals=step_iterations,
             batch_size=task.batch_size, key=seed)
 
         update_step = OPT_MAPPING[step.optimizer](
@@ -321,14 +346,15 @@ def run_optimization_schedule(
             bounded=bounded)
 
         loss_data = batch_iter(
-            dataset=loaded_loss_fn_data, n_evals=step.n_evals,
+            dataset=loaded_loss_fn_data,
+            n_evals=step_iterations*update_step.popsize,
             batch_size=update_step.popsize, key=seed)
 
         data = run_optimization(
             task=task,
             update_step=update_step,
             sampler=sampler,
-            n_evals=step.n_evals,
+            n_iterations=step_iterations,
             learning_data=learning_data,
             loss_data=loss_data,
             popsize=update_step.popsize,
@@ -344,7 +370,7 @@ def run_optimization(
     task: Task,
     update_step: Block,
     sampler: Block,
-    n_evals: int,
+    n_iterations: int,
     learning_data: Iterator,
     loss_data: Iterator,
     popsize: int,
@@ -367,25 +393,19 @@ def run_optimization(
         data_generator = EvaluateModel(task)
         data_generator.arm(x0)
         x0 = data_generator.call(data=x0)
-        n_evals -= popsize
+        n_iterations -= 1
         data += x0
 
     # Arm update step
     update_step.arm(x0)
 
-    n_updates = n_evals // popsize + (n_evals % popsize > 0)
-
     iterates = update_step.call(
-        data=data, fn=task.loss_fn, n_evals=n_updates,
+        data=data, fn=task.loss_fn, n_iterations=n_iterations,
         data_iter=learning_data, loss_iter=loss_data, has_aux=task.has_aux)
 
     data += iterates[popsize:]
 
-    # Remove overiterations
-    data.remove_rows_bottom(number_of_rows=popsize * n_updates - n_evals,
-                            in_place=True)
-
-    logger.debug(f"Optimization finished with {n_evals} evaluations")
+    logger.debug(f"Optimization finished with {n_iterations} evaluations")
 
     return data
 
@@ -410,6 +430,8 @@ def create_x0(data: ExperimentData, mode: str, n_samples: int,
 class RunOptimization(DataGenerator):
     def __init__(self,
                  n_realizations: int,
+                 n_evals_per_dim: int,
+                 max_iterations: int,
                  seed: int,
                  bounded: Optional[Tuple[float, float]] = None,
                  include_input: bool = False,
@@ -417,6 +439,8 @@ class RunOptimization(DataGenerator):
                  ):
         self.bounded = bounded
         self.n_realizations = n_realizations
+        self.n_evals_per_dim = n_evals_per_dim
+        self.max_iterations = max_iterations
         self.include_input = include_input
         self.clear_jax_cache = clear_jax_cache
         self.rng = onp.random.default_rng(seed=seed)
@@ -429,8 +453,6 @@ class RunOptimization(DataGenerator):
         seed: int = self.rng.integers(0, 2**30)
 
         if schedule.name.startswith('l2co'):
-            n_evals_per_switch = schedule.steps[0]\
-                .hyperparameters['n_evals_per_switch']
             n_switches = schedule.steps[0].hyperparameters['n_switches']
             l2co_path = Path(schedule.steps[0].
                              hyperparameters['model_dir']) / str(
@@ -443,7 +465,6 @@ class RunOptimization(DataGenerator):
                 task=task,
                 trained_l2co_model=trained_l2co_model,
                 seed=seed,
-                n_evals_per_switch=n_evals_per_switch,
                 n_switches=n_switches,
                 include_input=self.include_input,
                 bounded=self.bounded,
@@ -455,6 +476,7 @@ class RunOptimization(DataGenerator):
                 task=task,
                 schedule=schedule,
                 seed=seed,
+                n_evals_per_dim=self.n_evals_per_dim,
                 n_realizations=self.n_realizations,
                 include_input=self.include_input,
                 bounded=self.bounded,
@@ -475,13 +497,16 @@ class RunOptimization(DataGenerator):
     def run_optimization(
         self, experiment_sample: ExperimentSample, task: Task,
         schedule: OptimizationSchedule,
-            seed: int, n_realizations: int, include_input: bool,
+            seed: int, n_evals_per_dim: int, n_realizations: int,
+            include_input: bool,
             bounded: Optional[Tuple[float, float]]) -> ExperimentSample:
         # t1 = time()
         data_xarr = run_optimization_schedule_multiple_realizations(
             task=task,
             optimization_schedule=schedule,
             seed=seed,
+            n_iterations_per_dim=n_evals_per_dim,
+            max_iterations=self.max_iterations,
             n_realizations=self.n_realizations,
             include_input=self.include_input,
             bounded=self.bounded,
@@ -495,15 +520,17 @@ class RunOptimization(DataGenerator):
 
     def run_optimization_l2co(
         self, experiment_sample: ExperimentSample,
-            task: Task, trained_l2co_model: L2CO_model, seed: int,
-            n_evals_per_switch: int, n_switches: int, include_input: bool,
+            task: Task, trained_l2co_model: L2CO_model, n_evals_per_dim: int,
+            seed: int,
+            n_switches: int, include_input: bool,
             bounded: Optional[Tuple[float, float]]) -> ExperimentSample:
         data_xarr, schedule_list = \
             run_optimization_no_schedule_multiple_realizations(
                 task=task,
                 seed=seed,
                 trained_l2co_model=trained_l2co_model,
-                n_evals_per_switch=n_evals_per_switch,
+                n_iterations_per_dim=n_evals_per_dim,
+                max_iterations=self.max_iterations,
                 n_switches=n_switches,
                 n_realizations=self.n_realizations,
                 include_input=self.include_input,
@@ -531,7 +558,8 @@ def run_optimization_no_schedule_multiple_realizations(
         task: Task,
         seed: int,
         trained_l2co_model: L2CO_model,
-        n_evals_per_switch: int,
+        n_iterations_per_dim: int,
+        max_iterations: int,
         n_switches: int = 1,
         n_realizations: int = 1,
         include_input: bool = False,
@@ -541,6 +569,9 @@ def run_optimization_no_schedule_multiple_realizations(
 ) -> Tuple[xr.DataArray, List[OptimizationSchedule]]:
     schedule_list: List[OptimizationSchedule] = []
     results_list: List[xr.DataArray] = []
+
+    n_iterations = min(
+        task.dimensionality * n_iterations_per_dim, max_iterations)
 
     for s in range(n_realizations):
         if bounded is None:
@@ -560,11 +591,13 @@ def run_optimization_no_schedule_multiple_realizations(
             sampler=sampler,
             task=task,
             n_switches=n_switches,
-            n_evals_per_switch=n_evals_per_switch,
+            n_iterations=n_iterations,
         )
 
         results_list.append(experimentdata_to_xarray(
-            data, include_input=include_input))
+            data=data, optimization_schedule=schedule,
+            n_iterations=n_iterations,
+            include_input=include_input))
 
         schedule_list.append(schedule)
 
@@ -580,8 +613,11 @@ def run_optimization_no_schedule(
         sampler: Block,
         task: Task,
         n_switches: int,
-        n_evals_per_switch: int,
+        n_iterations: int,
 ) -> Tuple[ExperimentData, OptimizationSchedule]:
+
+    budgets = step_n_iterations_equal(
+        n_iterations=n_iterations, n_switches=n_switches)
 
     # Start with empty ExperimentData
     data = None
@@ -598,16 +634,15 @@ def run_optimization_no_schedule(
     logger.debug(
         f"[window 0/{n_switches}] Predicted optimizer: {step.optimizer}")
 
-    step.n_evals = n_evals_per_switch
     previous_step = None
     step_list.append(step)
     loaded_dataset = task.loaded_dataset
     loaded_loss_fn_data = task.loaded_loss_fn_data
 
-    for s in range(n_switches):
+    for s, n_iterations_per_switch in enumerate(range(budgets)):
 
         learning_data = batch_iter(
-            dataset=loaded_dataset, n_evals=step.n_evals,
+            dataset=loaded_dataset, n_evals=n_iterations_per_switch,
             batch_size=task.batch_size, key=seed)
 
         if previous_step is None or \
@@ -618,7 +653,8 @@ def run_optimization_no_schedule(
 
         loss_data = batch_iter(
             dataset=loaded_loss_fn_data,
-            n_evals=step.n_evals, batch_size=update_step.popsize,
+            n_evals=update_step.popsize*n_iterations_per_switch,
+            batch_size=update_step.popsize,
             key=seed
         )
 
@@ -626,7 +662,7 @@ def run_optimization_no_schedule(
             task=task,
             update_step=update_step,
             sampler=sampler,
-            n_evals=step.n_evals,
+            n_iterations=n_iterations_per_switch,
             learning_data=learning_data,
             loss_data=loss_data,
             popsize=update_step.popsize,
@@ -642,7 +678,7 @@ def run_optimization_no_schedule(
         optimization_dynamics = OptimizationDynamics.from_task_and_run(
             task=task,
             previous_step=previous_step,
-            data=data[-n_evals_per_switch:],
+            data=data[-(n_iterations_per_switch*update_step.popsize):],
         )
 
         step: OptimizationStep = trained_l2co_model.predict(
@@ -651,13 +687,14 @@ def run_optimization_no_schedule(
         logger.debug(
             f"[window {s}/{n_switches}] Predicted optimizer: {step.optimizer}")
 
-        step.n_evals = n_evals_per_switch
         step_list.append(step)
 
     schedule = OptimizationSchedule(
-        steps=step_list, n_evals=n_evals_per_switch*n_switches)
+        steps=step_list, budgets=list(jnp.multiply(budgets, n_iterations)))
 
-    logger.debug(f"Optimization finished with {n_evals_per_switch*n_switches}")
+    logger.debug(
+        f"Optimization finished with {n_iterations_per_switch*n_switches}"
+        f"iterations!")
 
     return data, schedule
 

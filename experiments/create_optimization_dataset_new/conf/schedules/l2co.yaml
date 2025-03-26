@@ -2,7 +2,6 @@ optimizers:
   l2co:
     optimizer: l2co
     hyperparameters:
-      n_evals_per_switch: 200
       n_switches: 5
       l2co_path: ${schedules.path}
       model_dir: ${schedules.model_dir}
@@ -17,7 +16,6 @@ data_generation:
     _target_: l2co._src.optimizerschedule.get_single
     _partial_: True
   kwargs:
-    total_evals: 1000
 
 path:
 model_dir: /home/martin/Documents/GitHub/L2CO/experiments/train_model/outputs

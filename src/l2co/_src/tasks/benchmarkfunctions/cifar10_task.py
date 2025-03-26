@@ -1,4 +1,3 @@
-import os
 import pickle
 import tarfile
 import urllib.request
@@ -7,8 +6,6 @@ from typing import Dict
 
 import jax.numpy as jnp
 import numpy as np
-
-from l2co import Task
 
 # URL for CIFAR-10
 url = "https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz"
@@ -64,12 +61,12 @@ def save_dataset(dataset: Dict[str, jnp.ndarray], path: str | Path):
     jnp.savez(path, **dataset)
 
 
-def create_cifar10_task(
-    seed: int,
-    dataset_path: str,
-) -> Task:
-    tag = {}
+# def create_cifar10_task(
+#     seed: int,
+#     dataset_path: str,
+# ) -> Task:
+#     tag = {}
 
-    if not Path(dataset_path).exists():
-        dataset = download_cifar10()
-        save_dataset(dataset=dataset, path=dataset_path)
+#     if not Path(dataset_path).exists():
+#         dataset = download_cifar10()
+#         save_dataset(dataset=dataset, path=dataset_path)

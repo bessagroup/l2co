@@ -9,13 +9,13 @@ output_cummin
 scale
     Scale the given array using the minimum over realizations.
 scaling
-    Create a performance value for each problem and iterations per optimizer.
+    Create a performance value for each problem and budget per optimizer.
 add_random_samples_combinations
     Add random samples as optimizers to the optimization dataset.
 calculate_performance_ratio
     Calculate the performance ratio for the given dataset.
 create_performance_profile
-    Create a performance profile for the given experiment data and iterations.
+    Create a performance profile for the given experiment data and budget.
 """
 
 #                                                                       Modules
@@ -53,13 +53,13 @@ def output_cummin(da: xr.DataArray):
     Notes
     -----
     The dataarray calculate the cumulative minimum for the coordinate named
-    'iterations'.
+    'budget'.
     """
     return xr.apply_ufunc(
         np.minimum.accumulate,
         da,
-        input_core_dims=[['iterations']],
-        output_core_dims=[['iterations']],
+        input_core_dims=[['budget']],
+        output_core_dims=[['budget']],
         vectorize=True,
         dask='parallelized',
         output_dtypes=[da.dtype],
@@ -70,7 +70,7 @@ def output_cummin(da: xr.DataArray):
 def scaling2(data: xr.Dataset) -> xr.DataArray:
 
     # 1. Calculate cumulative minimum (quality indictor value)
-    ds_output = output_cummin(data.output)  # .chunk('auto')
+    ds_output = output_cummin(data.output_min)  # .chunk('auto')
 
     # Cap the quality indicator value at 1e-8
     ds_output = ds_output.where(
@@ -89,7 +89,7 @@ def scaling2(data: xr.Dataset) -> xr.DataArray:
 
         # 5. Min-max scaling of the data
         x_min = x_log10.min()
-        x_max = x_log10.max(['iterations'])
+        x_max = x_log10.max(['budget'])
         return (x_log10 - x_min) / (x_max - x_min + 1e-16)
 
     ds_log10_positive = group_by_realizations.map(min_custom).assign_coords({
