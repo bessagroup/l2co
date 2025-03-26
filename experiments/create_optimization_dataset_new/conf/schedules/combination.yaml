@@ -49,6 +49,6 @@ data_generation:
   kwargs:
     switch: 0.5
 
-partition_factor: 0.25
+partition_factor: 0.20
 
 fraction_combinations: 0.75
