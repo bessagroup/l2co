@@ -86,6 +86,7 @@ class Task:
         self,
         model: PyTree,
         loss_fn: Callable,
+        pass_rng: bool = False,
         dataset: Optional[DatasetDict] = None,
         loss_fn_data: Optional[DatasetDict] = None,
         has_aux: bool = False,
@@ -116,6 +117,7 @@ class Task:
 
         self.model = model
         self.loss_fn = loss_fn
+        self.pass_rng = pass_rng
         self.has_aux = has_aux
         self.tag = tag
 
@@ -180,8 +182,10 @@ class Task:
         loss_fn_data = data.get('loss_fn_data', None)
         tag = data.get('tag', None)
         has_aux = data['has_aux']
-        return cls(model=model, loss_fn=loss_fn, dataset=dataset,
-                   loss_fn_data=loss_fn_data, has_aux=has_aux, tag=tag)
+        pass_rng = data['pass_rng']
+        return cls(model=model, pass_rng=pass_rng, loss_fn=loss_fn,
+                   dataset=dataset, loss_fn_data=loss_fn_data,
+                   has_aux=has_aux, tag=tag)
 
     def save_to_json(self, filepath: Path):
         with open(filepath.with_suffix('.json'), 'w') as f:
@@ -225,6 +229,7 @@ class Task:
         return {
             'model_path': model_path,
             'loss_fn': loss_fn,
+            'pass_rng': self.pass_rng,
             'dataset': dataset,
             'loss_fn_data': loss_fn_data,
             'tag': self.tag,
@@ -319,9 +324,11 @@ def create_benchmark_task(
         loss_fn_data = {'dataset_path': _path,
                         'batch_size': 1,
                         'seed': seed}
+        pass_rng = True
 
     else:
         loss_fn_data = None
+        pass_rng = False
 
     model, loss_fn, tag = create_benchmark_loss_function(
         fn_name=str(fn_name),
@@ -335,6 +342,7 @@ def create_benchmark_task(
         grad_noise=float(noise),
     )
 
-    return Task(model=model, loss_fn=loss_fn,
+    return Task(model=model, pass_rng=pass_rng,
+                loss_fn=loss_fn,
                 loss_fn_data=loss_fn_data,
                 tag=tag)

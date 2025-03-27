@@ -28,14 +28,24 @@ def main(config):
 
     # Store the files
     opt_data.to_netcdf(path / 'entire_dataset.nc')
+
+    l2co_logger(f"Entire dataset stored at {path / 'entire_dataset.nc'}")
+
     labels.to_csv(path / 'labels.csv')
+
+    l2co_logger(f"Labels stored at {path / 'labels.csv'}")
+
     experimentdata.store()
 
     with open(path / 'steps.json', 'w') as f:
         json.dump(step_dict, f, indent=4)
 
+    l2co_logger(f"Steps stored at {path / 'steps.json'}")
+
     # Remove placeholder
     placeholder_path.unlink()
+
+    l2co_logger.info("End of the program")
 
 
 def create_entire_dataset(

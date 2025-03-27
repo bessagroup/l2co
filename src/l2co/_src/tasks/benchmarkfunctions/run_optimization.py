@@ -43,11 +43,12 @@ MAX_ITERATIONS = 2000
 
 
 def experimentdata_to_xarray(data: ExperimentData,
-                             optimization_schedule: OptimizationSchedule,
+                             popsizes: List[int],
+                             budgets: List[float] | float,
                              n_iterations: int,
                              include_input: bool = False) -> xr.Dataset:
-    y_arr = jnp.atleast_2d([es.output_data['y']
-                            for _, es in data])
+    y_arr = jnp.vstack([es.output_data['y']
+                        for _, es in data]).T
 
     y = xr.DataArray(
         y_arr,
@@ -55,13 +56,13 @@ def experimentdata_to_xarray(data: ExperimentData,
         coords={'output_dim': ['y']})
 
     if include_input:
-        x_arr = jnp.array([es.input_data['x']
-                          for _, es in data])
+        x_arr = jnp.vstack([es.input_data['x']
+                            for _, es in data]).T
 
         x = xr.DataArray(
-            x_arr.T,
+            x_arr,
             dims=['input_dim', 'budget'],
-            coords={'input_dim': [f"x{i}" for i in range(x_arr.shape[1])]})
+            coords={'input_dim': [f"x{i}" for i in range(x_arr.shape[0])]})
 
         ds = xr.Dataset({'input': x,
                          'output': y,
@@ -72,8 +73,8 @@ def experimentdata_to_xarray(data: ExperimentData,
             'output': y,
         })
 
-    ds.attrs['popsizes'] = [step.popsize for step in optimization_schedule]
-    ds.attrs['budgets'] = optimization_schedule.budgets
+    ds.attrs['popsizes'] = popsizes
+    ds.attrs['budgets'] = budgets
     ds.attrs['n_iterations'] = n_iterations
     return ds
 #                                                               Sampling Blocks
@@ -230,14 +231,21 @@ def init_part(
 # =============================================================================
 
 class EvaluateModel(Block):
-    def __init__(self, task: Task):
+    def __init__(self, task: Task, seed: int = 0):
         self.task = task
+        self.seed = seed
 
     def call(self, data: ExperimentData) -> ExperimentData:
         x = [v.input_data for k, v in data]
         models = dict_list_to_tree(x, name='x')
 
         inner_steps = len(data)
+
+        if self.task.pass_rng:
+            rng_sample = {'key': jrd.split(
+                jrd.key(self.seed), num=inner_steps)}
+        else:
+            rng_sample = {}
 
         data_iter = batch_iter(dataset=self.task.loaded_dataset,
                                n_evals=inner_steps,
@@ -253,9 +261,9 @@ class EvaluateModel(Block):
         loss_fn = jax.vmap(self.task.loss_fn)
 
         if self.task.has_aux:
-            y, aux = loss_fn(models, **samples, **loss_samples)
+            y, aux = loss_fn(models, **samples, **rng_sample)
         else:
-            y = loss_fn(models, **samples, **loss_samples)
+            y = loss_fn(models, **samples, **rng_sample)
 
         return ExperimentData(domain=data.domain, input_data=x,
                               output_data=tree_to_dict_list(y, name='y'),
@@ -307,10 +315,13 @@ def run_optimization_schedule_multiple_realizations(
             seed=seed + s,
             bounded=bounded,
             sampler=sampler,
+            include_input=include_input,
         )
 
         results_list.append(experimentdata_to_xarray(
-            data=data, optimization_schedule=optimization_schedule,
+            data=data,
+            popsizes=[step.popsize for step in optimization_schedule],
+            budgets=optimization_schedule.budgets,
             n_iterations=n_iterations,
             include_input=include_input))
 
@@ -326,6 +337,7 @@ def run_optimization_schedule(
         seed: int,
         bounded: Optional[Tuple[float, float]],
         sampler: Block,
+        include_input: bool
 ) -> ExperimentData:
 
     # Start with empty ExperimentData
@@ -345,7 +357,9 @@ def run_optimization_schedule(
 
         update_step = OPT_MAPPING[step.optimizer](
             **step.hyperparameters, seed=seed,
-            bounded=bounded)
+            bounded=bounded,
+            include_input=include_input,
+            pass_rng=task.pass_rng)
 
         loss_data = batch_iter(
             dataset=loaded_loss_fn_data,
@@ -361,6 +375,7 @@ def run_optimization_schedule(
             loss_data=loss_data,
             popsize=update_step.popsize,
             x0_strategy=step.x0_strategy,
+            seed=seed,
             data=data,
 
         )
@@ -377,6 +392,7 @@ def run_optimization(
     loss_data: Iterator,
     popsize: int,
     x0_strategy: str,
+    seed: int,
     data: Optional[ExperimentData] = None,
 ) -> ExperimentData:
 
@@ -392,7 +408,7 @@ def run_optimization(
                    sampler=sampler)
 
     if x0_strategy == 'new':
-        data_generator = EvaluateModel(task)
+        data_generator = EvaluateModel(task=task, seed=seed)
         data_generator.arm(x0)
         x0 = data_generator.call(data=x0)
         n_iterations -= 1
@@ -600,10 +616,13 @@ def run_optimization_no_schedule_multiple_realizations(
             task=task,
             n_switches=n_switches,
             n_iterations=n_iterations,
+            include_input=include_input,
         )
 
         results_list.append(experimentdata_to_xarray(
-            data=data, optimization_schedule=schedule,
+            data=data,
+            popsizes=[step.popsize for step in schedule],
+            budgets=schedule.budgets,
             n_iterations=n_iterations,
             include_input=include_input))
 
@@ -622,6 +641,7 @@ def run_optimization_no_schedule(
         task: Task,
         n_switches: int,
         n_iterations: int,
+        include_input: bool,
 ) -> Tuple[ExperimentData, OptimizationSchedule]:
 
     budgets = step_n_iterations_equal(
@@ -657,7 +677,9 @@ def run_optimization_no_schedule(
                 previous_step.optimizer != step.optimizer:
             update_step = OPT_MAPPING[step.optimizer](
                 **step.hyperparameters, seed=seed,
-                bounded=bounded)
+                bounded=bounded,
+                include_input=include_input,
+                pass_rng=task.pass_rng)
 
         loss_data = batch_iter(
             dataset=loaded_loss_fn_data,
@@ -675,6 +697,7 @@ def run_optimization_no_schedule(
             loss_data=loss_data,
             popsize=update_step.popsize,
             x0_strategy=step.x0_strategy,
+            seed=seed,
             data=data,
         )
 
