@@ -14,6 +14,7 @@ from f3dasm import Block, ExperimentData
 from jaxtyping import PyTree
 from tqdm import tqdm
 
+from .batching import unroll_batches
 from .tree_utils import (dict_list_to_tree, tree_flatten_population_dim,
                          tree_to_dict_list, update_pytree_at_index)
 
@@ -28,6 +29,7 @@ class UpdateStep(Block):
                  update_fn: Callable,
                  include_input: bool,
                  pass_rng: bool,
+                 use_scan: bool,
                  bounded: Optional[Tuple[float, float]] = None,
                  **hyperparameters):
 
@@ -38,6 +40,7 @@ class UpdateStep(Block):
         self.seed = jrd.key(seed)
         self.opt_state = None
         self.pass_rng = pass_rng
+        self.use_scan = use_scan
 
         self.optimizer = optimizer(**hyperparameters)
 
@@ -50,7 +53,7 @@ class UpdateStep(Block):
              data_iter: Iterator, has_aux: bool = False,
              **kwargs
              ) -> ExperimentData:
-        params_history, loss_history, opt_state, aux_history = self.update_fn(
+        history, opt_state = self.update_fn(
             params=self.params,
             static=self.static,
             optimizer=self.optimizer,
@@ -64,24 +67,59 @@ class UpdateStep(Block):
             include_input=self.include_input,
             pass_rng=self.pass_rng,
             popsize=self.popsize,
+            use_scan=self.use_scan,
         )
 
         self.opt_state = opt_state
 
         if self.include_input:
             models = jax.lax.map(lambda p: eqx.combine(
-                p, self.static), params_history)
+                p, self.static), history['params'])
             input_data = tree_to_dict_list(models, name='x')
         else:
             input_data = None
 
-        output_data = tree_to_dict_list(loss_history, name='y')
+        output_data = tree_to_dict_list(history['loss'], name='y')
 
         return ExperimentData(
             domain=data.domain,
             input_data=input_data,
             output_data=output_data,
             project_dir=data.project_dir)
+
+
+class EvoSaxUpdate(UpdateStep):
+    def __init__(self, optimizer: Strategy,
+                 seed: int,
+                 popsize: int,
+                 update_fn: Callable,
+                 include_input: bool,
+                 pass_rng: bool,
+                 use_scan: bool,
+                 bounded: Optional[Tuple[float, float]] = None,
+                 **hyperparameters):
+        self.popsize = popsize
+        self.bounded = bounded
+        self.include_input = include_input
+        self.update_fn = update_fn
+        self.seed = jrd.key(seed)
+        self.opt_state = None
+        self.pass_rng = pass_rng
+        self.use_scan = use_scan
+
+        self.optimizer_class = optimizer
+        self.hyperparameters = hyperparameters
+
+    def arm(self, data: ExperimentData) -> None:
+        x = [v.input_data for k, v in data[-self.popsize:]]
+        pop_x = dict_list_to_tree(x, name='x')
+
+        self.params, self.static = eqx.partition(pop_x, eqx.is_inexact_array)
+
+        self.optimizer = self.optimizer_class(
+            popsize=self.popsize,
+            pholder_params=jt.map(lambda x: x[0], self.params),
+            **self.hyperparameters)
 
 #                                                                Scan functions
 # =============================================================================
@@ -421,14 +459,12 @@ def lbfgs_adapt(params: PyTree, static: PyTree,
                 pass_rng: bool,
                 use_scan: bool,
                 **kwargs,
-                ) -> Tuple[PyTree, PyTree, optax.OptState]:
+                ) -> Tuple[PyTree, optax.OptState]:
 
     rng, _ = jrd.split(seed)
 
     if opt_state is None:
         opt_state = optimizer.init(params)
-
-    # =========================================================================
 
     if use_scan:
         samples = unroll_batches(data_iter, inner_steps+1)
@@ -473,75 +509,9 @@ def lbfgs_adapt(params: PyTree, static: PyTree,
 
         history = jax.tree.map(lambda *xs: jnp.vstack(xs), *history_list)
 
-    history_params = history.get('params')
-    history_losses = history.get('loss')
-    history_aux = history.get('aux')
-
-    return history_params, history_losses, opt_state, history_aux
-
-
-def lbfgs_adapt_for_loop(params: PyTree, static: PyTree,
-                         optimizer: optax.GradientTransformation,
-                         loss_fn: Callable,
-                         inner_steps: int,
-                         seed: jax.Array,
-                         bounded: Optional[Tuple[float, float]],
-                         data_iter: Iterator,
-                         opt_state: Optional[optax.OptState],
-                         has_aux: bool,
-                         include_input: bool,
-                         pass_rng: bool,
-                         **kwargs
-                         ) -> Tuple[PyTree, PyTree, optax.OptState, PyTree]:
-
-    make_step = lbfgs_make_step(
-        static=static,
-        optimizer=optimizer,
-        loss_fn=loss_fn,
-        bounded=bounded,
-        has_aux=has_aux,
-        include_input=include_input,
-        pass_rng=pass_rng,
-    )
-
-    if opt_state is None:
-        opt_state = optimizer.init(params)
-
-    rng, _ = jrd.split(seed)
-
-    history_list = []
-    iter_loop = zip(range(inner_steps+1), data_iter)
-
-    for _, sample in tqdm(iter_loop, total=inner_steps+1):
-        params, opt_state, rng, history = make_step(
-            params=params, opt_state=opt_state,
-            rng=rng, **sample)
-
-        history_list.append(history)
-
-    history = jax.tree.map(lambda *xs: jnp.vstack(xs), *history_list)
-
-    history_params = history.get('params')
-    history_losses = history.get('loss')
-    history_aux = history.get('aux')
-
-    return history_params, history_losses, opt_state, history_aux
+    return history, opt_state
 
 # =============================================================================
-
-
-def unroll_batches(data_iter: Iterator, inner_steps: int):
-    # Collect samples while preserving dictionary structure
-    data = [next(data_iter) for _ in range(inner_steps)]
-
-    if not data:
-        return {}, {}
-
-    # Stack the batch data directly
-    samples = jax.tree_util.tree_map(
-        lambda *vals: jnp.stack(vals, axis=0), *data)
-
-    return samples
 
 
 def optax_adapt(params: PyTree, static: PyTree,
@@ -555,35 +525,63 @@ def optax_adapt(params: PyTree, static: PyTree,
                 has_aux: bool,
                 include_input: bool,
                 pass_rng: bool,
-                **kwargs) -> Tuple[PyTree, PyTree, optax.OptState, PyTree]:
+                use_scan: bool,
+                verbose: bool = False,
+                **kwargs) -> Tuple[PyTree, optax.OptState]:
+
+    rng, _ = jrd.split(seed)
 
     if opt_state is None:
         opt_state = optimizer.init(params)
 
-    samples = unroll_batches(data_iter, inner_steps+1)
+    if use_scan:
+        samples = unroll_batches(data_iter, inner_steps+1)
 
-    scan_fn = optax_scan(
-        static=static,
-        optimizer=optimizer,
-        loss_fn=loss_fn,
-        bounded=bounded,
-        has_aux=has_aux,
-        include_input=include_input,
-        pass_rng=pass_rng,
-    )
+        scan_fn = optax_scan(
+            static=static,
+            optimizer=optimizer,
+            loss_fn=loss_fn,
+            bounded=bounded,
+            has_aux=has_aux,
+            include_input=include_input,
+            pass_rng=pass_rng,
+        )
 
-    (_, opt_state, _), history = jax.lax.scan(
-        scan_fn,
-        (params, opt_state, seed),
-        xs=samples,
-        length=inner_steps+1,
-    )
+        (_, opt_state, _), history = jax.lax.scan(
+            scan_fn,
+            (params, opt_state, rng),
+            xs=samples,
+            length=inner_steps+1,
+        )
 
-    history_params = history.get('params')
-    history_losses = history.get('loss')
-    history_aux = history.get('aux')
+    else:
+        make_step = optax_make_step(
+            static=static,
+            optimizer=optimizer,
+            loss_fn=loss_fn,
+            bounded=bounded,
+            has_aux=has_aux,
+            include_input=include_input,
+            pass_rng=pass_rng,
+        )
 
-    return history_params, history_losses, opt_state, history_aux
+        history_list = []
+        if verbose:
+            iter_loop = tqdm(zip(range(inner_steps+1), data_iter),
+                             total=inner_steps+1)
+        else:
+            iter_loop = zip(range(inner_steps+1), data_iter)
+
+        for _, sample in iter_loop:
+            params, opt_state, rng, history = make_step(
+                params=params, opt_state=opt_state,
+                rng=rng, **sample)
+
+            history_list.append(history)
+
+        history: dict = jax.tree.map(lambda *xs: jnp.vstack(xs), *history_list)
+
+    return history, opt_state
 
 
 class OptHistory(NamedTuple):
@@ -605,58 +603,6 @@ class OptHistory(NamedTuple):
         return OptHistory(new_losses, new_params, new_aux, history.index + 1)
 
 
-def optax_adapt_for_loop(params: PyTree, static: PyTree,
-                         optimizer: optax.GradientTransformation,
-                         loss_fn: Callable,
-                         inner_steps: int,
-                         seed: jax.Array,
-                         bounded: Optional[Tuple[float, float]],
-                         data_iter: Iterator,
-                         opt_state: Optional[optax.OptState],
-                         has_aux: bool,
-                         include_input: bool,
-                         pass_rng: bool,
-                         verbose: bool = False,
-                         **kwargs
-                         ) -> Tuple[PyTree, PyTree, optax.OptState, PyTree]:
-
-    make_step = optax_make_step(
-        static=static,
-        optimizer=optimizer,
-        loss_fn=loss_fn,
-        bounded=bounded,
-        has_aux=has_aux,
-        include_input=include_input,
-        pass_rng=pass_rng,
-    )
-
-    if opt_state is None:
-        opt_state = optimizer.init(params)
-
-    rng, _ = jrd.split(seed)
-
-    history_list = []
-    if verbose:
-        iter_loop = tqdm(zip(range(inner_steps+1), data_iter),
-                         total=inner_steps+1)
-    else:
-        iter_loop = zip(range(inner_steps+1), data_iter)
-
-    for _, sample in iter_loop:
-        params, opt_state, rng, history = make_step(
-            params=params, opt_state=opt_state,
-            rng=rng, **sample)
-
-        history_list.append(history)
-
-    history: dict = jax.tree.map(lambda *xs: jnp.vstack(xs), *history_list)
-
-    history_params = history.get('params')
-    history_losses = history.get('loss')
-    history_aux = history.get('aux')
-
-    return history_params, history_losses, opt_state, history_aux
-
 # =============================================================================
 
 
@@ -672,151 +618,101 @@ def evosax_adapt(params: PyTree, static: PyTree,
                  include_input: bool,
                  pass_rng: bool,
                  popsize: int,
+                 use_scan: bool,
                  **kwargs
-                 ) -> Tuple[PyTree, PyTree, EvoState]:
-
-    es_params = optimizer.default_params
-
-    if bounded is not None:
-        es_params = es_params.replace(clip_min=bounded[0], clip_max=bounded[1])
-
-    if opt_state is None:
-        opt_state = optimizer.initialize(rng=seed, params=es_params)
-
-    samples = unroll_batches(data_iter, inner_steps+1)
-
-    scan_fn = evosax_scan(
-        static=static,
-        optimizer=optimizer,
-        loss_fn=loss_fn,
-        bounded=bounded,
-        has_aux=has_aux,
-        include_input=include_input,
-        pass_rng=pass_rng,
-        popsize=popsize,
-        es_params=es_params
-    )
-
-    (_, opt_state, _), history = jax.lax.scan(
-        f=scan_fn,
-        init=(params, opt_state, seed),
-        xs=samples,
-        length=inner_steps+1,
-    )
-
-    history_params = history.get('params')
-    history_losses = history.get('loss')
-    history_aux = history.get('aux')
-
-    return (tree_flatten_population_dim(history_params),
-            history_losses.flatten(), opt_state, history_aux)
-
-
-def evosax_adapt_for_loop(params: PyTree, static: PyTree,
-                          optimizer: Strategy,
-                          loss_fn: Callable,
-                          inner_steps: int,
-                          seed: jax.Array,
-                          bounded: Optional[Tuple[float, float]],
-                          data_iter: Iterator,
-                          opt_state: Optional[optax.OptState],
-                          has_aux: bool,
-                          include_input: bool,
-                          pass_rng: bool,
-                          popsize: int,
-                          **kwargs
-                          ) -> Tuple[PyTree, PyTree, optax.OptState, PyTree]:
-
-    es_params = optimizer.default_params
-
-    if bounded is not None:
-        es_params = es_params.replace(clip_min=bounded[0], clip_max=bounded[1])
-
-    make_step = evosax_make_step(
-        static=static,
-        optimizer=optimizer,
-        loss_fn=loss_fn,
-        bounded=bounded,
-        has_aux=has_aux,
-        include_input=include_input,
-        pass_rng=pass_rng,
-        popsize=popsize,
-        es_params=es_params
-    )
+                 ) -> Tuple[PyTree, EvoState]:
 
     rng, rng_init = jrd.split(seed)
+
+    es_params = optimizer.default_params
+
+    if bounded is not None:
+        es_params = es_params.replace(clip_min=bounded[0], clip_max=bounded[1])
 
     if opt_state is None:
         opt_state = optimizer.initialize(rng=rng_init, params=es_params)
 
-    history_list = []
-    iter_loop = zip(range(inner_steps+1), data_iter)
+    if use_scan:
+        samples = unroll_batches(data_iter, inner_steps+1)
 
-    for _, sample in tqdm(iter_loop, total=inner_steps+1):
-        params, opt_state, rng, history = make_step(
-            params=params, opt_state=opt_state,
-            rng=rng, **sample)
+        scan_fn = evosax_scan(
+            static=static,
+            optimizer=optimizer,
+            loss_fn=loss_fn,
+            bounded=bounded,
+            has_aux=has_aux,
+            include_input=include_input,
+            pass_rng=pass_rng,
+            popsize=popsize,
+            es_params=es_params
+        )
 
-        history_list.append(history)
+        (_, opt_state, _), history = jax.lax.scan(
+            f=scan_fn,
+            init=(params, opt_state, rng),
+            xs=samples,
+            length=inner_steps+1,
+        )
 
-    history = jax.tree.map(lambda *xs: jnp.vstack(xs), *history_list)
+    else:
+        make_step = evosax_make_step(
+            static=static,
+            optimizer=optimizer,
+            loss_fn=loss_fn,
+            bounded=bounded,
+            has_aux=has_aux,
+            include_input=include_input,
+            pass_rng=pass_rng,
+            popsize=popsize,
+            es_params=es_params
+        )
 
-    history_params = history.get('params')
-    history_losses = history.get('loss')
-    history_aux = history.get('aux')
+        history_list = []
+        iter_loop = zip(range(inner_steps+1), data_iter)
 
-    return (tree_flatten_population_dim(history_params),
-            history_losses.flatten(), opt_state, history_aux)
+        for _, sample in tqdm(iter_loop, total=inner_steps+1):
+            params, opt_state, rng, history = make_step(
+                params=params, opt_state=opt_state,
+                rng=rng, **sample)
 
+            history_list.append(history)
 
-class EvoSaxUpdate(UpdateStep):
-    def __init__(self, optimizer: Strategy,
-                 seed: int,
-                 popsize: int,
-                 update_fn: Callable,
-                 include_input: bool,
-                 bounded: Optional[Tuple[float, float]] = None,
-                 pass_rng: bool = False,
-                 **hyperparameters):
-        self.optimizer_class = optimizer
-        self.update_fn = update_fn
-        self.include_input = include_input
-        self.bounded = bounded
-        self.popsize = popsize
-        self.hyperparameters = hyperparameters
-        self.pass_rng = pass_rng
-        self.opt_state = None
-        self.seed = jrd.key(seed)
+        history = jax.tree.map(lambda *xs: jnp.vstack(xs), *history_list)
 
-    def arm(self, data: ExperimentData) -> None:
-        x = [v.input_data for k, v in data[-self.popsize:]]
-        pop_x = dict_list_to_tree(x, name='x')
+    # Flatten population dimension
+    history['params'] = tree_flatten_population_dim(
+        history['params']) if include_input else None
 
-        self.params, self.static = eqx.partition(pop_x, eqx.is_inexact_array)
+    history['aux'] = tree_flatten_population_dim(
+        history['aux']) if has_aux else None
 
-        self.optimizer = self.optimizer_class(
-            popsize=self.popsize,
-            pholder_params=jt.map(lambda x: x[0], self.params),
-            **self.hyperparameters)
+    history['loss'] = history['loss'].flatten()
+
+    return history, opt_state
 
 # =============================================================================
 
 
+# =============================================================================
 OPT_MAPPING: Dict[str, Type[UpdateStep]] = {
     'adam': partial(UpdateStep, optimizer=optax.adam, update_fn=optax_adapt,
+                    use_scan=True,
                     popsize=1),
     'adam_forloop': partial(UpdateStep, optimizer=optax.adam,
-                            update_fn=optax_adapt_for_loop,
-                            popsize=1),
-    'cmaes': partial(EvoSaxUpdate, optimizer=CMA_ES, update_fn=evosax_adapt),
+                            update_fn=optax_adapt,
+                            popsize=1,
+                            use_scan=False),
+    'cmaes': partial(EvoSaxUpdate, optimizer=CMA_ES, update_fn=evosax_adapt,
+                     use_scan=True),
     'cmaes_forloop': partial(EvoSaxUpdate, optimizer=CMA_ES,
-                             update_fn=evosax_adapt_for_loop),
-    'pso': partial(EvoSaxUpdate, optimizer=PSO, update_fn=evosax_adapt),
+                             update_fn=evosax_adapt, use_scan=False),
+    'pso': partial(EvoSaxUpdate, optimizer=PSO, update_fn=evosax_adapt,
+                   use_scan=True),
     'pso_forloop': partial(EvoSaxUpdate, optimizer=PSO,
-                           update_fn=evosax_adapt_for_loop),
+                           update_fn=evosax_adapt, use_scan=False),
     'lbfgsb': partial(UpdateStep, optimizer=optax.lbfgs, update_fn=lbfgs_adapt,
-                      popsize=1),
+                      popsize=1, use_scan=True),
     'lbfgsb_forloop': partial(UpdateStep, optimizer=optax.lbfgs,
-                              update_fn=lbfgs_adapt_for_loop,
-                              popsize=1),
+                              update_fn=lbfgs_adapt,
+                              popsize=1, use_scan=False),
 }
