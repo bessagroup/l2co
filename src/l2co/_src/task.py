@@ -1,23 +1,17 @@
 from __future__ import annotations
 
+# Standard
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, TypedDict
+from typing import Any, Callable, Dict, Optional, TypedDict
 
+# Third-party
 import cloudpickle
 import equinox as eqx
-import jax
 import jax.numpy as jnp
-import jax.random as jr
 import jax.tree_util as jtu
-import numpy as np
-import pandas as pd
-from f3dasm import Block, ExperimentData
 from jaxtyping import PyTree
-from opfunu import create_benchmark_loss_function
-
-from ... import FUNCTION_MAPPING as MY_FUNCTION_MAPPING
 
 # =============================================================================
 
@@ -88,7 +82,6 @@ class Task:
         loss_fn: Callable,
         pass_rng: bool = False,
         dataset: Optional[DatasetDict] = None,
-        loss_fn_data: Optional[DatasetDict] = None,
         has_aux: bool = False,
         tag: Optional[Dict[str, Any]] = None,
     ):
@@ -105,29 +98,15 @@ class Task:
             self.dataset['dataset_path'] = str(Path(
                 self.dataset['dataset_path']).resolve())
 
-        # Loss fn data
-        if loss_fn_data is None:
-            self.loss_fn_data = {'dataset_path': None,
-                                 'batch_size': None, 'seed': None}
-        else:
-            self.loss_fn_data = loss_fn_data.copy()
-            # resolve relative path
-            self.loss_fn_data['dataset_path'] = str(Path(
-                self.loss_fn_data['dataset_path']).resolve())
-
         self.model = model
-        self.loss_fn = loss_fn
         self.pass_rng = pass_rng
+        self.loss_fn = loss_fn
         self.has_aux = has_aux
         self.tag = tag
 
     @property
     def loaded_dataset(self) -> Dict[str, Any] | None:
         return load_dataset(self.dataset['dataset_path'])
-
-    @property
-    def loaded_loss_fn_data(self) -> Dict[str, Any] | None:
-        return load_dataset(self.loss_fn_data['dataset_path'])
 
     @property
     def batch_size(self) -> int | None:
@@ -179,13 +158,11 @@ class Task:
             bytes.fromhex(data['loss_fn']))
 
         dataset = data.get('dataset', None)
-        loss_fn_data = data.get('loss_fn_data', None)
         tag = data.get('tag', None)
         has_aux = data['has_aux']
         pass_rng = data['pass_rng']
         return cls(model=model, pass_rng=pass_rng, loss_fn=loss_fn,
-                   dataset=dataset, loss_fn_data=loss_fn_data,
-                   has_aux=has_aux, tag=tag)
+                   dataset=dataset, has_aux=has_aux, tag=tag)
 
     def save_to_json(self, filepath: Path):
         with open(filepath.with_suffix('.json'), 'w') as f:
@@ -218,20 +195,11 @@ class Task:
             dataset['dataset_path'] = str(
                 Path(self.dataset['dataset_path']))
 
-        if self.loss_fn_data['dataset_path'] is None:
-            loss_fn_data = None
-
-        else:
-            loss_fn_data = self.loss_fn_data.copy()
-            loss_fn_data['dataset_path'] = str(
-                Path(self.loss_fn_data['dataset_path']))
-
         return {
             'model_path': model_path,
             'loss_fn': loss_fn,
             'pass_rng': self.pass_rng,
             'dataset': dataset,
-            'loss_fn_data': loss_fn_data,
             'tag': self.tag,
             'has_aux': self.has_aux
         }
@@ -263,86 +231,3 @@ class Task:
 
 
 # =============================================================================
-
-
-class BenchmarkFuncSampler(Block):
-    def __init__(self, noise_distribution: List[float]):
-        self.noise_distribution = noise_distribution
-
-    def call(self, data: ExperimentData, n_samples: int,
-             seed: int) -> ExperimentData:
-        dims = data.domain.input_space['dimensionality'].categories
-        fns = data.domain.input_space['fn_name'].categories
-        noises = data.domain.input_space['noise'].categories
-
-        dim_filters = {d: list(filter(
-            lambda f: MY_FUNCTION_MAPPING[f.lower()].is_dim_compatible(d)
-            and MY_FUNCTION_MAPPING[f.lower()].differentiable, list(fns)))
-            for d in dims}
-
-        rng = np.random.default_rng(seed=seed)
-
-        dims_list = rng.choice(
-            dims,
-            size=n_samples)
-        function_names_list = [rng.choice(dim_filters[d]) for d in dims_list]
-        noise_list = rng.choice(noises,
-                                size=n_samples,
-                                p=self.noise_distribution)
-        seed_list = rng.integers(0, 2**30, size=n_samples)
-
-        df = pd.DataFrame({
-            "dimensionality": dims_list,
-            "fn_name": function_names_list,
-            "noise": noise_list,
-            "seed": seed_list
-        })
-
-        return ExperimentData(domain=data.domain, input_data=df)
-
-
-def random_keys_dataset(dataset_size: int, *, key: jax.Array
-                        ) -> Dict[str, jax.Array]:
-    return {'key': jr.randint(key=key, shape=(dataset_size,),
-                              minval=0, maxval=2**16)}
-
-
-def create_benchmark_task(
-    fn_name: str, dataset_path: str, seed: int, noise: float,
-        dimensionality: int, offset: bool = True,
-        scale_output: bool = True, grad_noise: float = 0.0) -> Task:
-
-    if noise > 0.0:
-        # add '_seed' to dataset_path
-        _path = Path(dataset_path + f'_{seed}').with_suffix('.npz')
-
-        if not _path.exists():
-            dataset = random_keys_dataset(
-                dataset_size=1000, key=jr.key(seed))
-            save_dataset(dataset, _path)
-
-        loss_fn_data = {'dataset_path': _path,
-                        'batch_size': 1,
-                        'seed': seed}
-        pass_rng = True
-
-    else:
-        loss_fn_data = None
-        pass_rng = False
-
-    model, loss_fn, tag = create_benchmark_loss_function(
-        fn_name=str(fn_name),
-        seed=int(seed),
-        scale_bounds=jnp.tile(
-            jnp.array([0., 1.]), (dimensionality, 1)),
-        dimensionality=int(dimensionality),
-        noise=float(noise),
-        offset=offset,
-        scale_output=scale_output,
-        grad_noise=float(noise),
-    )
-
-    return Task(model=model, pass_rng=pass_rng,
-                loss_fn=loss_fn,
-                loss_fn_data=loss_fn_data,
-                tag=tag)

@@ -5,7 +5,9 @@ from typing import Dict
 import jax.numpy as jnp
 import jax.random as jr
 
-from l2co import Task
+from ..task import Task
+
+# =============================================================================
 
 
 def generate_dataset(dimensionality: int, *, key: jr.PRNGKey):

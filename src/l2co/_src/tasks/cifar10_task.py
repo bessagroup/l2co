@@ -4,8 +4,11 @@ import urllib.request
 from pathlib import Path
 from typing import Dict
 
+# Third-party
 import jax.numpy as jnp
 import numpy as np
+
+# =============================================================================
 
 # URL for CIFAR-10
 url = "https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz"

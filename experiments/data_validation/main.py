@@ -14,7 +14,7 @@ from f3dasm import ExperimentData
 from l2co import logger as l2co_logger
 from l2co._src.optimizerschedule import (OptimizationSchedule,
                                          OptimizationStep, step_n_iterations)
-from l2co._src.tasks.benchmarkfunctions.task import Task
+from l2co._src.task import Task
 
 
 @hydra.main(config_path=".", config_name="config")

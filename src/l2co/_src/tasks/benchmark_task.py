@@ -1,30 +1,21 @@
-"""
-Port of the opfunu functions to the PyBenchFunction class.
-
-Functions
----------
-OpfunuFunc
-    Base class for the opfunu functions.
-CEC_FUNCTIONS
-    Dictionary containing the CEC competition functions.
-NAMED_FUNCTIONS
-    Dictionary containing the named analytical functions.
-"""
-
-#                                                                       Modules
-# =============================================================================
-
 from __future__ import annotations
 
 # Standard
 from typing import List, Optional, Tuple
 
 # Third-party
-import autograd.numpy as np
+import jax.numpy as jnp
+import numpy as np
 import opfunu
+import pandas as pd
+from f3dasm import Block, ExperimentData
 from f3dasm._src.datageneration.functions.adapters.pybenchfunction import \
     PyBenchFunction
+from opfunu import create_benchmark_loss_function
 from opfunu.cec_based import CecBenchmark
+
+# Local
+from ..task import Task
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -270,3 +261,67 @@ CEC_FUNCTIONS = {
 NAMED_FUNCTIONS = {
     f.__name__.lower(): OpfunuFunc.from_partial(f)
     for f in opfunu.get_all_named_functions()}
+
+# =============================================================================
+
+MY_FUNCTION_MAPPING = {**CEC_FUNCTIONS, **NAMED_FUNCTIONS}
+
+
+class BenchmarkFuncSampler(Block):
+    def __init__(self, noise_distribution: List[float]):
+        self.noise_distribution = noise_distribution
+
+    def call(self, data: ExperimentData, n_samples: int,
+             seed: int) -> ExperimentData:
+        dims = data.domain.input_space['dimensionality'].categories
+        fns = data.domain.input_space['fn_name'].categories
+        noises = data.domain.input_space['noise'].categories
+
+        dim_filters = {d: list(filter(
+            lambda f: MY_FUNCTION_MAPPING[f.lower()].is_dim_compatible(d)
+            and MY_FUNCTION_MAPPING[f.lower()].differentiable, list(fns)))
+            for d in dims}
+
+        rng = np.random.default_rng(seed=seed)
+
+        dims_list = rng.choice(
+            dims,
+            size=n_samples)
+        function_names_list = [rng.choice(dim_filters[d]) for d in dims_list]
+        noise_list = rng.choice(noises,
+                                size=n_samples,
+                                p=self.noise_distribution)
+        seed_list = rng.integers(0, 2**30, size=n_samples)
+
+        df = pd.DataFrame({
+            "dimensionality": dims_list,
+            "fn_name": function_names_list,
+            "noise": noise_list,
+            "seed": seed_list
+        })
+
+        return ExperimentData(domain=data.domain, input_data=df)
+
+
+def create_benchmark_task(
+    fn_name: str, seed: int, noise: float,
+        dimensionality: int, offset: bool = True,
+        scale_output: bool = True, grad_noise: float = 0.0) -> Task:
+
+    pass_rng = True if noise > 0.0 else False
+
+    model, loss_fn, tag = create_benchmark_loss_function(
+        fn_name=str(fn_name),
+        seed=int(seed),
+        scale_bounds=jnp.tile(
+            jnp.array([0., 1.]), (dimensionality, 1)),
+        dimensionality=int(dimensionality),
+        noise=float(noise),
+        offset=offset,
+        scale_output=scale_output,
+        grad_noise=float(noise),
+    )
+
+    return Task(model=model, pass_rng=pass_rng,
+                loss_fn=loss_fn,
+                tag=tag)

@@ -21,23 +21,16 @@ from f3dasm.datageneration import DataGenerator
 from f3dasm.design import Domain
 from jaxtyping import PyTree
 
-from l2co._src.tasks.benchmarkfunctions.optimizers import unroll_batches
-from l2co._src.tasks.benchmarkfunctions.tree_utils import (dict_list_to_tree,
-                                                           tree_to_dict_list)
-
-from ..._logging import logger
-from ...data_loader import OptimizationDynamics
-from ...l2co_model import L2CO_model
-from ...optimizerschedule import (OptimizationSchedule, OptimizationStep,
-                                  step_n_iterations, step_n_iterations_equal)
-from .dataloader import batch_iter
-from .optimizers import OPT_MAPPING
+# Local
+from ._logging import logger
+from .batching import batch_iter
+from .data_loader import OptimizationDynamics
+from .l2co_model import L2CO_model
+from .optimizers import OPT_MAPPING, unroll_batches
+from .optimizerschedule import (OptimizationSchedule, OptimizationStep,
+                                step_n_iterations, step_n_iterations_equal)
 from .task import Task
-
-#                                                            Converter function
-# =============================================================================
-
-MAX_ITERATIONS = 2000
+from .tree_utils import dict_list_to_tree, tree_to_dict_list
 
 # =============================================================================
 
@@ -251,12 +244,8 @@ class EvaluateModel(Block):
                                n_evals=inner_steps,
                                batch_size=self.task.batch_size,
                                key=self.task.dataset['seed'])
-        loss_iter = batch_iter(dataset=self.task.loaded_loss_fn_data,
-                               n_evals=inner_steps, batch_size=1,
-                               key=self.task.loss_fn_data['seed'])
 
-        init_sample, samples = unroll_batches(data_iter, inner_steps)
-        init_loss_sample, loss_samples = unroll_batches(loss_iter, inner_steps)
+        samples = unroll_batches(data_iter, inner_steps)
 
         loss_fn = jax.vmap(self.task.loss_fn)
 
@@ -284,7 +273,7 @@ def run_optimization_schedule_multiple_realizations(
         include_input: bool = False,
         bounded: Optional[Tuple[float, float]] = None,
         sampler_cls: Optional[Type[Block]] = None,
-) -> xr.DataArray:
+) -> xr.Dataset:
     results_list: List[xr.DataArray] = []
 
     n_iterations = int(min(
@@ -343,7 +332,6 @@ def run_optimization_schedule(
     # Start with empty ExperimentData
     data = None
     loaded_dataset = task.loaded_dataset
-    loaded_loss_fn_data = task.loaded_loss_fn_data
 
     for step, step_iterations in zip(
         optimization_schedule,
@@ -361,18 +349,12 @@ def run_optimization_schedule(
             include_input=include_input,
             pass_rng=task.pass_rng)
 
-        loss_data = batch_iter(
-            dataset=loaded_loss_fn_data,
-            n_evals=step_iterations*update_step.popsize,
-            batch_size=update_step.popsize, key=seed)
-
         data = run_optimization(
             task=task,
             update_step=update_step,
             sampler=sampler,
             n_iterations=step_iterations,
             learning_data=learning_data,
-            loss_data=loss_data,
             popsize=update_step.popsize,
             x0_strategy=step.x0_strategy,
             seed=seed,
@@ -389,7 +371,6 @@ def run_optimization(
     sampler: Block,
     n_iterations: int,
     learning_data: Iterator,
-    loss_data: Iterator,
     popsize: int,
     x0_strategy: str,
     seed: int,
@@ -419,7 +400,7 @@ def run_optimization(
 
     iterates = update_step.call(
         data=data, fn=task.loss_fn, n_iterations=n_iterations,
-        data_iter=learning_data, loss_iter=loss_data, has_aux=task.has_aux)
+        data_iter=learning_data, has_aux=task.has_aux)
 
     data += iterates[popsize:]
 
@@ -665,7 +646,6 @@ def run_optimization_no_schedule(
     previous_step = None
     step_list.append(step)
     loaded_dataset = task.loaded_dataset
-    loaded_loss_fn_data = task.loaded_loss_fn_data
 
     for s, n_iterations_per_switch in enumerate(range(budgets)):
 
@@ -681,20 +661,12 @@ def run_optimization_no_schedule(
                 include_input=include_input,
                 pass_rng=task.pass_rng)
 
-        loss_data = batch_iter(
-            dataset=loaded_loss_fn_data,
-            n_evals=update_step.popsize*n_iterations_per_switch,
-            batch_size=update_step.popsize,
-            key=seed
-        )
-
         data = run_optimization(
             task=task,
             update_step=update_step,
             sampler=sampler,
             n_iterations=n_iterations_per_switch,
             learning_data=learning_data,
-            loss_data=loss_data,
             popsize=update_step.popsize,
             x0_strategy=step.x0_strategy,
             seed=seed,

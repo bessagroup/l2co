@@ -1,14 +1,19 @@
+# Local
 import math
 from pathlib import Path
 from typing import Dict
 
+# Third-party
 import jax.numpy as jnp
 import jax.random as jrd
 import jax.tree_util as jtu
 
-from l2co import Task
-from l2co._src.tasks.benchmarkfunctions.loss_fn import mse_loss_fn
-from l2co._src.tasks.benchmarkfunctions.models import rnn
+# Local
+from ..task import Task
+from .loss_fn import mse_loss_fn
+from .models import rnn
+
+# =============================================================================
 
 
 def spiral_dataset(dataset_size, *, key: jrd.PRNGKey):

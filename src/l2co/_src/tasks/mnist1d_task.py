@@ -6,11 +6,9 @@ import jax.random as jr
 import jax.tree_util as jtu
 from mnist1d.data import get_dataset_args, make_dataset
 
-from l2co._src.tasks.benchmarkfunctions.loss_fn import \
-    mean_categorical_cross_entropy_loss_fn
-
+from ..task import Task
+from .loss_fn import mean_categorical_cross_entropy_loss_fn
 from .models import mlp
-from .task import Task
 
 
 def mnist1d_dataset(dataset_size, seed: int):

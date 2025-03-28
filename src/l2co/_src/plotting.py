@@ -23,11 +23,12 @@ from f3dasm import ExperimentData
 from f3dasm.design import Domain
 from matplotlib.colors import LinearSegmentedColormap, LogNorm, SymLogNorm
 
+from l2co._src.run_optimization import (EvaluateModel, GridWeightSampler,
+                                        experimentdata_to_xarray)
+
 # Local
-from l2co._src.data_loader import DataLoader, OptimizationDynamics
-from l2co._src.tasks.benchmarkfunctions.run_optimization import (
-    EvaluateModel, GridWeightSampler, experimentdata_to_xarray)
-from l2co._src.tasks.benchmarkfunctions.task import Task
+from .data_loader import DataLoader, OptimizationDynamics
+from .task import Task
 
 #                                                          Authorship & Credits
 # =============================================================================

@@ -1,6 +1,8 @@
+# Standard
 import math
 from typing import Dict, Iterator, Optional
 
+# Third-party
 import grain.python as grain
 import jax.numpy as jnp
 

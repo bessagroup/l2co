@@ -321,7 +321,6 @@ experimentdata:
         low: 0
         high: 100000
 task_kwargs:
-  dataset_path: './data/keys' 
 data_generator:
   _target_: l2co._src.tasks.benchmarkfunctions.task.create_benchmark_task
   _partial_: True

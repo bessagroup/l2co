@@ -1,7 +1,10 @@
+# Third-party
 import jax
 import jax.numpy as jnp
 import optax
 from jaxtyping import PyTree
+
+# =============================================================================
 
 
 def mse_loss_fn(model: PyTree, x: jnp.ndarray, y: jnp.ndarray):

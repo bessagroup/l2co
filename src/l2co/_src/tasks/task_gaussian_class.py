@@ -1,15 +1,17 @@
+# Standard
 from functools import partial
 from pathlib import Path
 from typing import Dict
 
+# Third-party
 import jax
 import jax.numpy as jnp
 import jax.random as random
 import jax.random as jrd
 import jax.tree_util as jtu
 
-from l2co import Task
-
+# Local
+from ..task import Task
 from .loss_fn import mean_categorical_cross_entropy_loss_fn_l2
 from .models import mlp
 

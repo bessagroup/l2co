@@ -26,10 +26,10 @@ from sklearn.pipeline import Pipeline, make_pipeline
 
 # Local
 from ._logging import logger
+from .batching import batch_iter
 from .data_loader import OptimizationDynamics
 from .optimizerschedule import OptimizationStep
 from .preprocessing import DataFrameColumnTransformer, EnsureColumnsTransformer
-from .tasks.benchmarkfunctions.dataloader import batch_iter
 
 #                                                                Basis function
 # =============================================================================

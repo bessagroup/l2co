@@ -23,7 +23,8 @@ from ._src.data_loader import DataLoader, OptimizationDynamics
 from ._src.l2co_model import L2CO_model
 from ._src.optimizerschedule import OptimizationSchedule, OptimizationStep
 from ._src.preprocessing import preprocessing_factory
-from ._src.tasks.benchmarkfunctions.task import Task
+from ._src.run_optimization import RunOptimization
+from ._src.task import Task
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -42,6 +43,7 @@ __all__ = [
     "OptimizationSchedule",
     "OptimizationStep",
     "OptimizationDynamics",
+    "RunOptimization",
     "Task",
     "L2CO_model",
 ]

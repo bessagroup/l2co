@@ -3,8 +3,8 @@ from functools import partial
 from pathlib import Path
 from typing import Callable, Dict, Tuple
 
-import equinox as eqx
 # Third-party
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -13,9 +13,10 @@ from jax import Array
 from jaxtyping import PyTree
 
 # Local
-from l2co import Task
-
+from ..task import Task
 from .models import mlp
+
+# =============================================================================
 
 
 def mse(x: Array, y: Array) -> Array:

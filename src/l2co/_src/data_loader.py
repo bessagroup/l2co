@@ -34,10 +34,10 @@ from f3dasm import ExperimentData
 from scipy.linalg import svd
 from sklearn.model_selection import train_test_split
 
-from .optimizerschedule import OptimizationSchedule, OptimizationStep
 # Local
+from .optimizerschedule import OptimizationSchedule, OptimizationStep
 from .performance import scaling2
-from .tasks.benchmarkfunctions.task import Task
+from .task import Task
 
 #                                                          Authorship & Credits
 # =============================================================================

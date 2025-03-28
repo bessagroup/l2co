@@ -15,10 +15,7 @@ from mpi4py import MPI
 from omegaconf import DictConfig
 
 # Local
-from l2co import logger
-from l2co._src.optimizerschedule import OptimizationSchedule
-from l2co._src.tasks.benchmarkfunctions.run_optimization import RunOptimization
-from l2co._src.tasks.benchmarkfunctions.task import Task
+from l2co import OptimizationSchedule, RunOptimization, Task, logger
 
 # =============================================================================
 
