@@ -178,7 +178,7 @@ def optax_adapt(params: PyTree, static: PyTree,
                 has_aux: bool,
                 include_input: bool,
                 pass_rng: bool,
-                **kwargs) -> Tuple[PyTree, PyTree, optax.OptState]:
+                **kwargs) -> Tuple[PyTree, PyTree, optax.OptState, PyTree]:
 
     def scan_fn(carry, sample):
         inner_params, opt_state, rng = carry
@@ -263,79 +263,79 @@ def optax_adapt_for_loop(params: PyTree, static: PyTree,
                          optimizer: optax.GradientTransformation,
                          loss_fn: Callable,
                          inner_steps: int,
+                         seed: jax.Array,
                          bounded: Optional[Tuple[float, float]],
                          data_iter: Iterator,
-                         loss_iter: Iterator,
                          opt_state: Optional[optax.OptState],
                          has_aux: bool,
-                         **kwargs) -> Tuple[PyTree, PyTree, optax.OptState]:
+                         include_input: bool,
+                         pass_rng: bool,
+                         **kwargs
+                         ) -> Tuple[PyTree, PyTree, optax.OptState, PyTree]:
 
     @eqx.filter_jit
-    @eqx.debug.assert_max_traces(max_traces=1)
-    def make_step(model: eqx.Module, opt_state: optax.OptState,
-                  history_state: OptHistory, **batch
-                  ) -> Tuple[PyTree, optax.OptState, OptHistory]:
-        model = jax.tree_util.tree_unflatten(treedef_model, model)
-        opt_state = jax.tree_util.tree_unflatten(
-            treedef_opt_state, opt_state)
+    # @eqx.debug.assert_max_traces(max_traces=1)
+    def make_step(params: eqx.Module, opt_state: optax.OptState,
+                  rng: jax.Array, **batch
+                  ) -> Tuple[PyTree, optax.OptState, jax.Array,
+                             Dict[str, jax.Array]]:
 
-        aux = None
+        if pass_rng:
+            rng, _ = jrd.split(rng)
+            rng_sample = {'key': rng}
+        else:
+            rng_sample = {}
 
         if has_aux:
-            (loss, aux), grads = filtered_loss_fn(model,
-                                                  **batch)
+            (loss, aux), grads = filtered_loss_fn(eqx.combine(params, static),
+                                                  **batch, **rng_sample)
         else:
-            loss, grads = filtered_loss_fn(model, **batch)
+            loss, grads = filtered_loss_fn(eqx.combine(
+                params, static), **batch, **rng_sample)
+
         updates, opt_state = optimizer.update(grads, opt_state)
-        new_model = eqx.apply_updates(model, updates)
+        new_params = eqx.apply_updates(params, updates)
 
         if bounded is not None:
-            new_model = jax.tree_map(
-                lambda p: jnp.clip(p, bounded[0], bounded[1]), new_model)
+            new_params = jax.tree_map(
+                lambda p: jnp.clip(p, bounded[0], bounded[1]), new_params)
 
-        new_model = jax.tree_util.tree_leaves(new_model)
-        opt_state = jax.tree_util.tree_leaves(opt_state)
+        history = {'loss': loss}
 
-        new_history_state = OptHistory.append(history=history_state,
-                                              loss=loss, params=model,
-                                              aux=aux)
+        if include_input:
+            history.update({'params': params})
 
-        # new_history_state = jax.tree.map(
-        #     lambda x, y: tree_append(
-        #         x, y), history_state, (loss, new_model, aux)
-        # )
+        if has_aux:
+            history.update({'aux': aux})
 
-        return new_model, opt_state, new_history_state
+        return new_params, opt_state, rng, history
 
     if opt_state is None:
         opt_state = optimizer.init(params)
 
-    model = eqx.combine(params, static)
+    rng, _ = jrd.split(seed)
 
     filtered_loss_fn = eqx.filter_value_and_grad(
         loss_fn, has_aux=has_aux)
 
-    flat_model, treedef_model = jax.tree_util.tree_flatten(model)
-    flat_opt_state, treedef_opt_state = jax.tree_util.tree_flatten(opt_state)
+    history_list = []
 
-    history_state = OptHistory(
-        losses=jnp.zeros((inner_steps+1,)),  # Fixed shape
-        params=tree_expand_dims(model),
-        aux={} if has_aux else None,
-        index=0
-    )
+    for _, sample in zip(range(inner_steps+1), data_iter):
+        params, opt_state, rng, history = make_step(
+            params=params, opt_state=opt_state,
+            rng=rng, **sample)
 
-    for _, sample, loss_sample in zip(range(inner_steps+1),
-                                      data_iter, loss_iter):
-        flat_model, flat_opt_state, history_state = make_step(
-            flat_model, flat_opt_state, history_state, **sample, **loss_sample)
+        history_list.append(history)
 
-    # Remove the first element from history_state.params
-    history_state_params = jax.tree.map(
-        lambda x: tree_remove_first(x), history_state.params)
+    history = jax.tree.map(lambda *xs: jnp.vstack(xs), *history_list)
 
-    return (history_state_params, history_state.losses,
-            opt_state, history_state.aux)
+    history_params = jax.tree_map(
+        lambda x: x, history['params']) if include_input else None
+    history_losses = jax.tree_map(lambda x: x, history['loss'])
+    history_aux = jax.tree_map(
+        lambda x: x, history['aux']) if has_aux else None
+
+    return history_params, history_losses, opt_state, history_aux
 
 # =============================================================================
 
@@ -404,7 +404,7 @@ def evosax_adapt(params: PyTree, static: PyTree,
         f=scan_fn,
         init=(params, opt_state, seed),
         xs=samples,
-        length=int(inner_steps+1),
+        length=inner_steps+1,
     )
 
     history_params = jax.tree_map(

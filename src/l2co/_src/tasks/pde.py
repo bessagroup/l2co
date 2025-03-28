@@ -1,4 +1,5 @@
 # Standard
+from copy import deepcopy
 from functools import partial
 from pathlib import Path
 from typing import Callable, Dict, Tuple
@@ -9,6 +10,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.tree_util as jtu
+from f3dasm import Block, ExperimentData
+from f3dasm.design import Domain
 from jax import Array
 from jaxtyping import PyTree
 
@@ -228,10 +231,10 @@ def create_pde_task(
         num_bc_points: int,
         num_res_points: int,
         hidden_size: int,
-        **task_params) -> Task:
+        beta: float = jnp.nan,
+        rho: float = jnp.nan) -> Task:
     tag = {}
 
-    tag['seed'] = seed
     _path = Path(dataset_path + f'_{seed}').with_suffix('.npz')
 
     key = jr.key(int(seed))
@@ -241,7 +244,6 @@ def create_pde_task(
     tag['task_name'] = pde_task_name
 
     if pde_task_name == 'convection':
-        beta = task_params['beta']
         tag['beta'] = beta
 
         loss_fn = partial(convection_pde_loss, loss_fn_res=mse,
@@ -249,7 +251,6 @@ def create_pde_task(
         tag['loss_fn'] = 'convection_pde_loss'
 
     elif pde_task_name == 'reaction':
-        rho = task_params['rho']
         tag['rho'] = rho
 
         loss_fn = partial(reaction_pde_loss, loss_fn_res=mse,
@@ -257,7 +258,6 @@ def create_pde_task(
         tag['loss_fn'] = 'reaction_pde_loss'
 
     elif pde_task_name == 'wave':
-        beta = task_params['beta']
         tag['beta'] = beta
 
         loss_fn = partial(wave_pde_loss, loss_fn_res=mse,
@@ -294,3 +294,68 @@ def create_pde_task(
                  'seed': seed},
         tag=tag
     )
+
+
+class PDETaskSampler(Block):
+    def __init__(self, num_ic_points: int = 257, num_bc_points: int = 101,
+                 num_res_points: int = 10000, xgrid_resolution: int = 255,
+                 tgrid_resolution: int = 101):
+        self.num_ic_points = num_ic_points
+        self.num_bc_points = num_bc_points
+        self.num_res_points = num_res_points
+        self.xgrid_resolution = xgrid_resolution
+        self.tgrid_resolution = tgrid_resolution
+
+        self.convection_task = dict(pde_task_name='convection',
+                                    dataset_path='./data/convection',
+                                    x_range=(0., 2. * jnp.pi), t_range=(0., 1.),
+                                    beta=40)
+
+        self.reaction_task = dict(pde_task_name='reaction',
+                                  dataset_path='./data/reaction',
+                                  x_range=(0., 2. * jnp.pi), t_range=(0., 1.),
+                                  rho=5)
+
+        self.wave_task = dict(pde_task_name='wave',
+                              dataset_path='./data/wave',
+                              x_range=(0., 1.), t_range=(0., 1.),
+                              beta=5)
+
+    def call(self, data: ExperimentData, seed: int) -> ExperimentData:
+        hidden_size = data.domain.input_space['hidden_size'].categories
+
+        task_list = []
+
+        for task in [self.convection_task, self.reaction_task, self.wave_task]:
+            for h in hidden_size:
+                t = deepcopy(task)
+                t.update(
+                    dict(
+                        seed=seed,
+                        xgrid_resolution=self.xgrid_resolution,
+                        tgrid_resolution=self.tgrid_resolution,
+                        num_ic_points=self.num_ic_points,
+                        num_bc_points=self.num_bc_points,
+                        num_res_points=self.num_res_points,
+                        hidden_size=h
+                    )
+                )
+                task_list.append(t)
+
+        domain = Domain()
+        domain.add_parameter('pde_task_name')
+        domain.add_parameter('seed')
+        domain.add_parameter('dataset_path')
+        domain.add_parameter('hidden_size')
+        domain.add_parameter('x_range')
+        domain.add_parameter('t_range')
+        domain.add_parameter('xgrid_resolution')
+        domain.add_parameter('tgrid_resolution')
+        domain.add_parameter('num_ic_points')
+        domain.add_parameter('num_bc_points')
+        domain.add_parameter('num_res_points')
+        domain.add_parameter('beta')
+        domain.add_parameter('rho')
+
+        return ExperimentData(domain=domain, input_data=task_list,
+                              project_dir=data.project_dir)

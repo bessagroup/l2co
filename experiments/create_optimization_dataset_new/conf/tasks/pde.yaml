@@ -1,34 +1,20 @@
 sampler:
-  _target_: f3dasm.create_sampler
-  sampler: 'grid'
+  _target_: l2co._src.tasks.pde.PDETaskSampler
 sampler_kwargs:
+  seed: ${seed}
 experimentdata:
   domain:
     input:
-      pde_task_name:
+      hidden_size:
         type: category
         categories:
-          - 'convection'
-          - 'reaction'
+          - 50
+          - 100
+          - 200
+          - 400
 task_kwargs:
-  dataset_path: './data/pde'
-  seed: ${seed}
-  x_range:
-    - 0.
-    - 6.283185307179586
-  t_range:
-    - 0.
-    - 1.
-  xgrid_resolution: 255
-  tgrid_resolution: 101
-  num_ic_points: 257
-  num_bc_points: 101
-  num_res_points: 10000
-  beta: 40.0
-  rho: 5.0
-  hidden_size: 50
 data_generator:
-  _target_: l2co._src.tasks.benchmarkfunctions.pde.create_pde_task
+  _target_: l2co._src.tasks.pde.create_pde_task
   _partial_: True
 
 bounded:
