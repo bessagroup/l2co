@@ -155,9 +155,8 @@ def process(config: DictConfig):
     logger.debug("Loaded experiment_data")
 
     run_opt = RunOptimization(
+        budget_fn=instantiate(config.budgets),
         n_realizations=config.n_realizations,
-        n_evals_per_dim=config.n_evals_per_dim,
-        max_iterations=config.max_iterations,
         partition_factor=config.schedules.partition_factor,
         seed=int(config.seed),
         bounded=config.tasks.bounded,
