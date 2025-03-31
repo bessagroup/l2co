@@ -46,8 +46,8 @@ def main(config):
                 sleep(2)
                 process(config)
     elif config.mode == 'cluster':
-        pre_process()
-        process()
+        pre_process(config)
+        process(config)
 
 
 def pre_process(config: DictConfig):
