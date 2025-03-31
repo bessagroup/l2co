@@ -1,0 +1,44 @@
+optimizers:
+  adam_1e-1:
+    optimizer: adam
+    hyperparameters:
+      learning_rate: 1e-1
+  adam_1e-2:
+    optimizer: adam
+    hyperparameters:
+      learning_rate: 1e-2
+  adam_1e-3:
+    optimizer: adam
+    hyperparameters:
+      learning_rate: 1e-3
+  adam_1e-4:
+    optimizer: adam
+    hyperparameters:
+      learning_rate: 1e-4
+  adam_1e-5:
+    optimizer: adam
+    hyperparameters:
+      learning_rate: 1e-5
+
+
+schedules:
+  optimizer_1:
+    - _target_: l2co.OptimizationStep.from_yaml
+      config: ${schedules.optimizers.adam_1e-1}
+    - _target_: l2co.OptimizationStep.from_yaml
+      config: ${schedules.optimizers.adam_1e-2}
+    - _target_: l2co.OptimizationStep.from_yaml
+      config: ${schedules.optimizers.adam_1e-3}
+    - _target_: l2co.OptimizationStep.from_yaml
+      config: ${schedules.optimizers.adam_1e-4}
+    - _target_: l2co.OptimizationStep.from_yaml
+      config: ${schedules.optimizers.adam_1e-5}
+
+data_generation:
+  data_generator:
+    _target_: l2co._src.optimizerschedule.get_single
+    _partial_: True
+  kwargs:
+
+
+partition_factor: 1.0
