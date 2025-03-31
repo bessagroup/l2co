@@ -68,4 +68,4 @@ echo "Executing: python main.py ++hydra.run.dir=$run_dir ++model_dir=$model_dir 
 echo "======================================="
 
 # Run the Python script with MPI
-python main.py ++hydra.run.dir=$run_dir ++model_dir=$model_dir +mode=cluster "$@"
+python main.py ++hydra.run.dir=$run_dir ++model_dir=$model_dir ++mode=cluster "$@"
