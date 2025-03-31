@@ -1,13 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name="RunTaskOnSchedule"
+#SBATCH --job-name="RunTaskOnScheduleGPU"
 #SBATCH --partition=mbessa-gcondo
 #SBATCH --gres=gpu:1
 #SBATCH --time=6:00:00
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --mem=64GB
-#SBATCH --nodes=1-5
-#SBATCH --cpus-per-task=4
+#SBATCH --nodes=1
 #SBATCH --account=mbessa-gcondo
 #SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
 
