@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name="RunTaskOnSchedule"
-#SBATCH --partition=gpu
+#SBATCH --partition=mbessa-gcondo
 #SBATCH --gres=gpu:1
 #SBATCH --time=6:00:00
 #SBATCH --ntasks=1
