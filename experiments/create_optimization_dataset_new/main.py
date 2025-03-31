@@ -5,7 +5,6 @@ from time import sleep
 
 # Third-party
 import hydra
-import jax
 import numpy as np
 from f3dasm import Block, ExperimentData, datagenerator
 from f3dasm import logger as f3dasm_logger
@@ -26,26 +25,29 @@ from l2co import OptimizationSchedule, RunOptimization, Task, logger
 
 @hydra.main(config_path="./conf", config_name="config")
 def main(config):
-    comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()
-    size = comm.Get_size()
+    if config.mode == 'mpi':
+        comm = MPI.COMM_WORLD
+        rank = comm.Get_rank()
+        size = comm.Get_size()
 
-    logger.setLevel(config.log_level)
-    f3dasm_logger.setLevel(config.log_level)
+        logger.setLevel(config.log_level)
+        f3dasm_logger.setLevel(config.log_level)
 
-    f3dasm_logger.info(f"{jax.device_count()=} - {jax.local_device_count()=}")
+        f3dasm_logger.info(
+            f"[{rank}/{size}] Running on {socket.gethostname()}")
 
-    f3dasm_logger.info(f"[{rank}/{size}] Running on {socket.gethostname()}")
-
-    if rank == 0:
-        pre_process(config)
-        comm.bcast("ready", root=0)  # Signal other ranks to start
-        process(config)
-    else:
-        signal = comm.bcast(None, root=0)  # Ensure all ranks receive
-        if signal == "ready":
-            sleep(2)
+        if rank == 0:
+            pre_process(config)
+            comm.bcast("ready", root=0)  # Signal other ranks to start
             process(config)
+        else:
+            signal = comm.bcast(None, root=0)  # Ensure all ranks receive
+            if signal == "ready":
+                sleep(2)
+                process(config)
+    elif config.mode == 'cluster':
+        pre_process()
+        process()
 
 
 def pre_process(config: DictConfig):

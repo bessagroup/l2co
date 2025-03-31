@@ -8,6 +8,10 @@
 #SBATCH --account=mbessa-condo
 #SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
 
+echo $LD_LIBRARY_PATH
+unset LD_LIBRARY_PATH
+echo $LD_LIBRARY_PATH
+
 echo "======================================="
 echo " Slurm Job Information"
 echo "======================================="
