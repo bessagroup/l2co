@@ -29,6 +29,7 @@ echo "Memory per CPU:  $SLURM_MEM_PER_CPU"
 echo "======================================="
 
 # Load necessary modules
+module load cuda cudnn
 module load hpcx-mpi
 module load miniconda3/23.11.0s
 source /oscar/runtime/software/external/miniconda3/23.11.0/etc/profile.d/conda.sh 
