@@ -11,6 +11,7 @@ from f3dasm import Block, ExperimentData, datagenerator
 from f3dasm import logger as f3dasm_logger
 from f3dasm.design import Domain, grid
 from hydra.utils import instantiate
+from jax.extend.backend import get_backend
 from mpi4py import MPI
 from omegaconf import DictConfig
 
@@ -190,5 +191,7 @@ hostname = socket.gethostname()
 print((
     f"[Rank {rank}/{size}] Running on {hostname}")
 )
+
+print(f"[Rank {rank}/{size}] Jax backend used: {get_backend().platform}")
 
 main()
