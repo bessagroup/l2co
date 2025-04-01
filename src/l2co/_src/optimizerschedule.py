@@ -294,6 +294,7 @@ def get_all_combinations(steps: list[OptimizationStep],
 def get_combination(optimizer_1: OptimizationStep,
                     optimizer_2: OptimizationStep,
                     switch: float) -> OptimizationSchedule:
+
     # create copies
     optimizer_1 = optimizer_1.copy()
     optimizer_2 = optimizer_2.copy()

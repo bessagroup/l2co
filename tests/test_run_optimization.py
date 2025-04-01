@@ -21,7 +21,7 @@ def test_optimization_schedules(benchmark_task, bounded, optimization_schedule):
         n_realizations=2,
         include_input=False,
         bounded=bounded,
-        sampler_cls=None)
+        sampler=None)
 
     assert res is not None
     assert isinstance(res, xr.Dataset)

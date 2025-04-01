@@ -23,8 +23,8 @@ from f3dasm import ExperimentData
 from f3dasm.design import Domain
 from matplotlib.colors import LinearSegmentedColormap, LogNorm, SymLogNorm
 
-from l2co._src.run_optimization import (EvaluateModel, GridWeightSampler,
-                                        experimentdata_to_xarray)
+from l2co._src.run_optimization import EvaluateModel, experimentdata_to_xarray
+from l2co._src.sampler import GridWeightSampler
 
 # Local
 from .data_loader import DataLoader, OptimizationDynamics
@@ -368,7 +368,7 @@ def format_plot(ax: plt.Axes, xlim_right: int, ylabel: str,
 def plot_2d_loss_landscape(task: Task, plot_resolution: int = 100,
                            stepsize: float = 0.033, seed: int = 0):
     sampler = GridWeightSampler(
-        model=task.model, stepsize=stepsize, lower_bound=0.0, upper_bound=1.0)
+        stepsize=stepsize, lower_bound=0.0, upper_bound=1.0)
 
     evaluate_block = EvaluateModel(
         task=task,
@@ -380,7 +380,7 @@ def plot_2d_loss_landscape(task: Task, plot_resolution: int = 100,
     domain.add_output('y')
     data = ExperimentData(domain=domain)
 
-    data = sampler.call(data=data)
+    data = sampler.call(data=data, model=task.model)
     data = evaluate_block.call(data=data)
     data = experimentdata_to_xarray(data=data, popsizes=None, budgets=None,
                                     include_input=True, n_iterations=None)

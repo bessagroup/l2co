@@ -15,7 +15,8 @@ from mpi4py import MPI
 from omegaconf import DictConfig
 
 # Local
-from l2co import OptimizationSchedule, RunOptimization, Task, logger
+from l2co import (OptimizationSchedule, OptimizationStep, RunOptimization,
+                  Task, logger)
 
 # =============================================================================
 
@@ -78,7 +79,8 @@ def pre_process(config: DictConfig):
     # Schedule
     domain_schedule = Domain()
     for k, v in config.schedules.schedules.items():
-        domain_schedule.add_category(name=k, categories=instantiate(v))
+        domain_schedule.add_category(
+            name=k, categories=[OptimizationStep.from_yaml(opt) for opt in v])
 
     experiment_data_schedules = grid().call(
         data=ExperimentData(domain=domain_schedule))
@@ -157,14 +159,22 @@ def process(config: DictConfig):
 
     logger.debug("Loaded experiment_data")
 
+    # Check if the optimization is box constraint
+    if 'bounded' in config.tasks:
+        bounded = (config.tasks.bounded.lower_bound,
+                   config.tasks.bounded.upper_bound)
+    else:
+        bounded = None
+
     run_opt = RunOptimization(
         budget_fn=instantiate(config.budgets),
         n_realizations=config.n_realizations,
         partition_factor=config.schedules.partition_factor,
         seed=int(config.seed),
-        bounded=config.tasks.bounded,
+        bounded=bounded,
         include_input=False,
         clear_jax_cache=True,
+        verbose=config.verbose,
     )
 
     experiment_data = ExperimentData.from_file(project_dir=project_dir,

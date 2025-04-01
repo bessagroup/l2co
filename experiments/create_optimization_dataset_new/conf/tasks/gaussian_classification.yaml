@@ -20,5 +20,3 @@ task_kwargs:
 data_generator:
   _target_: l2co._src.tasks.benchmarkfunctions.task_gaussian_class.create_gaussian_task
   _partial_: True
-
-bounded:

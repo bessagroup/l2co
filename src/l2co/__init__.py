@@ -17,7 +17,7 @@ Author: Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)
 
 # Local
 
-from . import plotting
+from . import plotting, sampling
 from ._src._logging import logger
 from ._src.data_loader import DataLoader, OptimizationDynamics
 from ._src.l2co_model import L2CO_model
@@ -37,6 +37,7 @@ __status__ = 'Planning'
 
 __all__ = [
     "plotting",
+    "sampling",
     "logger",
     "DataLoader",
     "preprocessing_factory",

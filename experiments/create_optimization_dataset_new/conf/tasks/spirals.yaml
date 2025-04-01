@@ -19,5 +19,3 @@ task_kwargs:
 data_generator:
   _target_: l2co._src.tasks.benchmarkfunctions.spiral_task.create_spiral_task
   _partial_: True
-
-bounded:

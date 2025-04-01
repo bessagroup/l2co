@@ -1,4 +1,4 @@
-from typing import Callable, Dict, Tuple
+from typing import Callable, Dict, List, Tuple
 
 from jax import Array
 from jaxtyping import PyTree
@@ -14,3 +14,7 @@ ScanFunction = Callable[
 InitFunction = Callable[[], OptState]
 
 LossFunction = Callable[[PyTree], Array]
+
+PostFunction = Callable[[PyTree],
+                        Tuple[List[Dict[str, PyTree]],
+                              List[Dict[str, PyTree]]]]

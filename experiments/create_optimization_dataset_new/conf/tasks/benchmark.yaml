@@ -326,5 +326,5 @@ data_generator:
   _partial_: True
 
 bounded:
-  - 0.0
-  - 1.0
+  lower_bound: 0.0
+  upper_bound: 1.0

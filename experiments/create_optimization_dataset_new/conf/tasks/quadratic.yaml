@@ -19,5 +19,3 @@ task_kwargs:
 data_generator:
   _target_: l2co._src.tasks.benchmarkfunctions.quadratic_task.create_quadratic_task
   _partial_: True
-
-bounded:

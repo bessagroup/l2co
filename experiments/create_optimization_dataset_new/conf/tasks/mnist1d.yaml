@@ -18,5 +18,3 @@ task_kwargs:
 data_generator:
   _target_: l2co._src.tasks.benchmarkfunctions.mnist1d_task.create_mnist1d_task
   _partial_: True
-
-bounded:

@@ -1,7 +1,7 @@
 # Standard
 import gc
 import json
-from copy import deepcopy
+from functools import partial
 from pathlib import Path
 from time import time
 from typing import Callable, Iterator, List, Optional, Tuple, Type
@@ -9,11 +9,8 @@ from typing import Callable, Iterator, List, Optional, Tuple, Type
 # Third-party
 import equinox as eqx
 import jax
-import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jrd
-import jax.tree as jt
-import jax.tree_util as jtu
 import numpy as onp
 import xarray as xr
 from f3dasm import Block, ExperimentData, ExperimentSample
@@ -23,12 +20,13 @@ from jaxtyping import PyTree
 
 # Local
 from ._logging import logger
-from .batching import batch_iter
+from .batching import batch_iter, unroll_batches
 from .data_loader import OptimizationDynamics
 from .l2co_model import L2CO_model
-from .optimizers import OPT_MAPPING, unroll_batches
+from .optimizers import OPT_MAPPING
 from .optimizerschedule import (OptimizationSchedule, OptimizationStep,
                                 step_n_iterations, step_n_iterations_equal)
+from .sampler import NormalWeightSampler, RandomWeightSampler
 from .task import Task
 from .tree_utils import dict_list_to_tree, tree_to_dict_list
 
@@ -74,152 +72,6 @@ def experimentdata_to_xarray(data: ExperimentData,
 # =============================================================================
 
 
-class RandomWeightSampler(Block):
-    def __init__(self, model: PyTree, seed: jax.Array,
-                 lower_bound: float = 0.0,
-                 upper_bound: float = 1.0):
-        self.model = model
-        self.key = jrd.key(seed)
-        self.lower_bound = lower_bound
-        self.upper_bound = upper_bound
-
-    def call(self, data: ExperimentData, num_samples: int,
-             **kwargs) -> ExperimentData:
-        params, static = eqx.partition(self.model, eqx.is_inexact_array)
-        sample_list = []
-        key = deepcopy(self.key)
-
-        for _ in range(num_samples):
-            _, key = jrd.split(key)
-            sample = jt.map(lambda x: jrd.uniform(
-                key=key, shape=x.shape, minval=self.lower_bound,
-                maxval=self.upper_bound), params)
-
-            sample_list.append({'x': eqx.combine(sample, static)})
-
-        return ExperimentData(domain=data.domain, input_data=sample_list,
-                              project_dir=data.project_dir)
-
-
-class NormalWeightSampler(Block):
-    def __init__(self, model: PyTree, seed: jax.Array):
-        self.model = model
-        self.key = jrd.key(seed)
-
-    def call(self, data: ExperimentData, num_samples: int,
-             **kwargs) -> ExperimentData:
-        params, static = eqx.partition(self.model, eqx.is_inexact_array)
-        sample_list = []
-        key = deepcopy(self.key)
-        for _ in range(num_samples):
-            _, key = jrd.split(key)
-            sample = jt.map(lambda x: jrd.normal(
-                key, shape=x.shape), params)
-
-            sample_list.append({'x': eqx.combine(sample, static)})
-
-        return ExperimentData(domain=data.domain, input_data=sample_list,
-                              project_dir=data.project_dir)
-
-
-class GridWeightSampler(Block):
-    def __init__(self, model: PyTree, stepsize: float,
-                 lower_bound: float, upper_bound: float):
-        self.model = model
-        self.stepsize = stepsize
-        self.lower_bound = lower_bound
-        self.upper_bound = upper_bound
-
-        self.num_points = max(
-            2, int(round((self.upper_bound - self.lower_bound) / self.stepsize)
-                   ) + 1)
-
-    def generate_grid(self, params):
-        """Generate a grid of values for each parameter ensuring lower
-        & upper bounds are included."""
-        grid_params = []
-        for param in jtu.tree_leaves(params):
-            if param.ndim == 0:  # Scalar parameter
-                grid = jnp.linspace(
-                    self.lower_bound, self.upper_bound,
-                    num=self.num_points)
-            else:  # Tensor parameter
-                grid = jnp.meshgrid(
-                    *[jnp.linspace(
-                        self.lower_bound, self.upper_bound,
-                        num=self.num_points)] * param.size)
-                # Reshape into parameter shape
-                grid = jnp.stack(grid, axis=-1).reshape((-1,) + param.shape)
-            grid_params.append(grid)
-        return jtu.tree_unflatten(jtu.tree_structure(params), grid_params)
-
-    def call(self, data: ExperimentData, **kwargs) -> ExperimentData:
-        params, static = eqx.partition(self.model, eqx.is_inexact_array)
-
-        # Generate the grid of sampled parameter values
-        grid_samples = self.generate_grid(params)
-
-        sample_list = [{'x': eqx.combine(sample, static)}
-                       for sample in grid_samples]
-
-        return ExperimentData(domain=data.domain, input_data=sample_list,
-                              project_dir=data.project_dir)
-
-
-class XavierNormalWeightSampler:
-    def __init__(self, model: PyTree, seed: jax.Array):
-        self.model = model
-        self.key = jrd.key(seed)
-
-    def call(self, data: ExperimentData,
-             num_samples: int, **kwargs) -> ExperimentData:
-        def is_linear(x):
-            return isinstance(x, eqx.nn.Linear)
-
-        params, static = eqx.partition(self.model, eqx.is_inexact_array)
-
-        sample_list = []
-
-        key = deepcopy(self.key)
-
-        for _ in range(num_samples):
-            _, key = jrd.split(key)
-            wkey, bkey = jrd.split(key)
-            params = init_part(
-                params=params,
-                filter_fn=lambda m: [x.weight for x in jt.leaves(
-                    m, is_leaf=is_linear)
-                    if is_linear(x)],
-                init_fn=jnn.initializers.xavier_normal(),
-                key=wkey)
-            params = init_part(
-                params=params,
-                filter_fn=lambda m: [x.bias for x in jt.leaves(
-                    m, is_leaf=is_linear)
-                    if is_linear(x)],
-                init_fn=jnn.initializers.zeros,
-                key=bkey)
-
-            # Append the sample to the sample list
-            sample_list.append({'x': eqx.combine(params, static)})
-
-        # Return the ExperimentData with the updated domain and sampled data
-        return ExperimentData(domain=data.domain, input_data=sample_list,
-                              project_dir=data.project_dir)
-
-
-def init_part(
-    params: PyTree, filter_fn: Callable, init_fn: jnn.initializers.Initializer,
-    *, key=jrd.PRNGKey
-) -> PyTree:
-    w = filter_fn(params)
-    new_w = [
-        init_fn(subkey, weight.shape, weight.dtype)
-        for weight, subkey in zip(w, jrd.split(key, len(w)))
-    ]
-    return eqx.tree_at(filter_fn, params, new_w)
-
-
 #                                                                Evaluate Block
 # =============================================================================
 
@@ -245,14 +97,24 @@ class EvaluateModel(Block):
                                batch_size=self.task.batch_size,
                                key=self.task.dataset['seed'])
 
-        samples = unroll_batches(data_iter, inner_steps)
+        # Option 1: There is training data but no batching
+        if isinstance(data_iter, dict):
+            loss_fn = jax.vmap(partial(self.task.loss_fn, **data_iter))
 
-        loss_fn = jax.vmap(self.task.loss_fn)
+            if self.task.has_aux:
+                y, aux = loss_fn(models, **rng_sample)
+            else:
+                y = loss_fn(models, **rng_sample)
 
-        if self.task.has_aux:
-            y, aux = loss_fn(models, **samples, **rng_sample)
         else:
-            y = loss_fn(models, **samples, **rng_sample)
+            samples = unroll_batches(data_iter, inner_steps)
+
+            loss_fn = jax.vmap(self.task.loss_fn)
+
+            if self.task.has_aux:
+                y, aux = loss_fn(models, **samples, **rng_sample)
+            else:
+                y = loss_fn(models, **samples, **rng_sample)
 
         return ExperimentData(domain=data.domain, input_data=x,
                               output_data=tree_to_dict_list(y, name='y'),
@@ -271,28 +133,21 @@ def run_optimization_schedule_multiple_realizations(
         n_realizations: int = 1,
         include_input: bool = False,
         bounded: Optional[Tuple[float, float]] = None,
-        sampler_cls: Optional[Type[Block]] = None,
+        sampler: Optional[Block] = None,
+        verbose: bool = False
 ) -> xr.Dataset:
     results_list: List[xr.DataArray] = []
 
     n_iterations: int = int(budget_fn(task=task) * partition_factor)
 
     for s in range(n_realizations):
-        if sampler_cls is None:
+        if sampler is None:
             if bounded is None:
-                sampler = NormalWeightSampler(
-                    model=task.model,
-                    seed=seed + s,
-                )
+                sampler = NormalWeightSampler()
             else:
                 sampler = RandomWeightSampler(
-                    model=task.model,
-                    seed=seed + s,
                     lower_bound=bounded[0],
                     upper_bound=bounded[1])
-
-        else:
-            sampler = sampler_cls(model=task.model, seed=seed + s)
 
         data = run_optimization_schedule(
             task=task,
@@ -302,6 +157,7 @@ def run_optimization_schedule_multiple_realizations(
             bounded=bounded,
             sampler=sampler,
             include_input=include_input,
+            verbose=verbose,
         )
 
         results_list.append(experimentdata_to_xarray(
@@ -323,7 +179,8 @@ def run_optimization_schedule(
         seed: int,
         bounded: Optional[Tuple[float, float]],
         sampler: Block,
-        include_input: bool
+        include_input: bool,
+        verbose: bool,
 ) -> ExperimentData:
 
     # Start with empty ExperimentData
@@ -344,7 +201,8 @@ def run_optimization_schedule(
             **step.hyperparameters, seed=seed,
             bounded=bounded,
             include_input=include_input,
-            pass_rng=task.pass_rng)
+            pass_rng=task.pass_rng,
+            verbose=verbose)
 
         data = run_optimization(
             task=task,
@@ -382,8 +240,9 @@ def run_optimization(
         data = ExperimentData(domain=domain)
 
     # Create x0
-    x0 = create_x0(data=data, mode=x0_strategy, n_samples=popsize,
-                   sampler=sampler)
+    x0 = create_x0(data=data, model=task.model, mode=x0_strategy,
+                   n_samples=popsize,
+                   sampler=sampler, seed=seed)
 
     if x0_strategy == 'new':
         data_generator = EvaluateModel(task=task, seed=seed)
@@ -406,11 +265,12 @@ def run_optimization(
     return data
 
 
-def create_x0(data: ExperimentData, mode: str, n_samples: int,
-              sampler: Block) -> ExperimentData:
+def create_x0(data: ExperimentData, model: PyTree, mode: str, n_samples: int,
+              sampler: Block, seed: int) -> ExperimentData:
 
     if mode == 'new':
-        _data = sampler.call(data=data, num_samples=n_samples)
+        _data = sampler.call(data=data, model=model,
+                             num_samples=n_samples, seed=seed)
 
     elif mode == 'last':
         _data = data[-n_samples:]
@@ -432,6 +292,8 @@ class RunOptimization(DataGenerator):
                  bounded: Optional[Tuple[float, float]] = None,
                  include_input: bool = False,
                  clear_jax_cache: bool = True,
+                 sampler_cls: Optional[Type[Block]] = None,
+                 verbose: bool = False,
                  ):
         self.budget_fn = budget_fn
         self.bounded = bounded
@@ -440,6 +302,8 @@ class RunOptimization(DataGenerator):
         self.include_input = include_input
         self.clear_jax_cache = clear_jax_cache
         self.rng = onp.random.default_rng(seed=seed)
+        self.verbose = verbose
+        self.sampler_cls = sampler_cls
 
     def execute(self, experiment_sample: ExperimentSample) -> ExperimentSample:
         es = experiment_sample.input_data
@@ -492,6 +356,8 @@ class RunOptimization(DataGenerator):
             n_realizations=self.n_realizations,
             include_input=self.include_input,
             bounded=self.bounded,
+            sampler=self.sampler_cls,
+            verbose=self.verbose,
         )
 
         experiment_sample.store(
@@ -523,6 +389,7 @@ class RunOptimization(DataGenerator):
                 n_realizations=self.n_realizations,
                 include_input=self.include_input,
                 bounded=self.bounded,
+                verbose=self.verbose,
             )
 
         experiment_sample.store(
@@ -559,8 +426,8 @@ def run_optimization_no_schedule_multiple_realizations(
         n_realizations: int = 1,
         include_input: bool = False,
         bounded: Optional[Tuple[float, float]] = None,
-
-
+        sampler: Optional[Block] = None,
+        verbose: bool = False
 ) -> Tuple[xr.DataArray, List[OptimizationSchedule]]:
     schedule_list: List[OptimizationSchedule] = []
     results_list: List[xr.DataArray] = []
@@ -568,15 +435,13 @@ def run_optimization_no_schedule_multiple_realizations(
     n_iterations: int = int(budget_fn(task=task) * partition_factor)
 
     for s in range(n_realizations):
-        if bounded is None:
-            sampler = NormalWeightSampler(
-                model=task.model,
-                seed=seed + s,
-            )
-        else:
-            sampler = RandomWeightSampler(
-                model=task.model,
-                seed=seed + s, lower_bound=bounded[0], upper_bound=bounded[1])
+        if sampler is None:
+            if bounded is None:
+                sampler = NormalWeightSampler()
+            else:
+                sampler = RandomWeightSampler(
+                    lower_bound=bounded[0],
+                    upper_bound=bounded[1])
 
         data, schedule = run_optimization_no_schedule(
             trained_l2co_model=trained_l2co_model,
@@ -587,6 +452,7 @@ def run_optimization_no_schedule_multiple_realizations(
             n_switches=n_switches,
             n_iterations=n_iterations,
             include_input=include_input,
+            verbose=verbose,
         )
 
         results_list.append(experimentdata_to_xarray(
@@ -612,6 +478,7 @@ def run_optimization_no_schedule(
         n_switches: int,
         n_iterations: int,
         include_input: bool,
+        verbose: bool,
 ) -> Tuple[ExperimentData, OptimizationSchedule]:
 
     budgets = step_n_iterations_equal(
@@ -648,7 +515,8 @@ def run_optimization_no_schedule(
                 **step.hyperparameters, seed=seed,
                 bounded=bounded,
                 include_input=include_input,
-                pass_rng=task.pass_rng)
+                pass_rng=task.pass_rng,
+                verbose=verbose)
 
         data = run_optimization(
             task=task,

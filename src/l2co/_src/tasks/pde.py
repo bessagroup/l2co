@@ -306,10 +306,11 @@ class PDETaskSampler(Block):
         self.xgrid_resolution = xgrid_resolution
         self.tgrid_resolution = tgrid_resolution
 
-        self.convection_task = dict(pde_task_name='convection',
-                                    dataset_path='./data/convection',
-                                    x_range=(0., 2. * jnp.pi), t_range=(0., 1.),
-                                    beta=40)
+        self.convection_task = dict(
+            pde_task_name='convection',
+            dataset_path='./data/convection',
+            x_range=(0., 2. * jnp.pi), t_range=(0., 1.),
+            beta=40)
 
         self.reaction_task = dict(pde_task_name='reaction',
                                   dataset_path='./data/reaction',

@@ -2,7 +2,7 @@
 #SBATCH --job-name="RunTaskOnScheduleGPU"
 #SBATCH --partition=mbessa-gcondo
 #SBATCH --gres=gpu:1
-#SBATCH --time=6:00:00
+#SBATCH --time=12:00:00
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --mem=64GB

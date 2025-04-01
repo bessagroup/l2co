@@ -2,6 +2,8 @@ defaults:
 - tasks: gaussian_classification
 - schedules: single
 - budgets: based_on_dim
+- samplers: normal
+- optimizers: standard
 
 n_realizations: 5
 
@@ -9,3 +11,8 @@ seed: 467
 mode: mpi
 
 log_level: 20
+
+verbose: False
+
+path:
+model_dir: /home/martin/Documents/GitHub/L2CO/experiments/train_model/outputs

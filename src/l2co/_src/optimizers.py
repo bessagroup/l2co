@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Callable, Dict, Iterator, Optional, Tuple, Type
+from typing import Callable, Dict, Iterator, List, Optional, Tuple, Type
 
 import equinox as eqx
 import jax
@@ -14,8 +14,8 @@ from f3dasm import Block, ExperimentData
 from jaxtyping import PyTree
 from tqdm import tqdm
 
-from ._typing import InitFunction, LossFunction, ScanFunction
-from .batching import NoneIterator, unroll_batches
+from ._typing import InitFunction, LossFunction, PostFunction, ScanFunction
+from .batching import NoneIterator
 from .tree_utils import (dict_list_to_tree, tree_flatten_population_dim,
                          tree_to_dict_list)
 
@@ -26,10 +26,13 @@ class UpdateStep(Block):
     def __init__(self, optimizer: optax.GradientTransformation,
                  seed: int,
                  popsize: int,
-                 update_fn: Callable[[], Tuple[ScanFunction, InitFunction]],
+                 update_fn: Callable[
+                     [],
+                     Tuple[ScanFunction, InitFunction, PostFunction]],
                  include_input: bool,
                  pass_rng: bool,
                  bounded: Optional[Tuple[float, float]] = None,
+                 verbose: bool = False,
                  **hyperparameters):
 
         self.popsize = popsize
@@ -39,6 +42,7 @@ class UpdateStep(Block):
         self.seed = jr.key(seed)
         self.opt_state = None
         self.pass_rng = pass_rng
+        self.verbose = verbose
         self.optimizer = optimizer(**hyperparameters)
 
     def arm(self, data: ExperimentData, fn: LossFunction, has_aux: bool = False
@@ -47,7 +51,7 @@ class UpdateStep(Block):
             x = v.input_data['x']
         self.params, self.static = eqx.partition(x, eqx.is_inexact_array)
 
-        self.make_step, self.init_fn = self.update_fn(
+        self.make_step, self.init_fn, self.post_fn = self.update_fn(
             static=self.static,
             params=self.params,
             optimizer=self.optimizer,
@@ -66,21 +70,25 @@ class UpdateStep(Block):
         if self.opt_state is None:
             self.opt_state = self.init_fn()
 
+        # Option 1: There is no batching, hence we fix the sample and
+        # use scan
         if isinstance(data_iter, NoneIterator):
-            samples = unroll_batches(data_iter, n_iterations+1)
-
             (_, opt_state, _), history = jax.lax.scan(
-                f=self.make_step,
+                f=lambda carry, _: self.make_step(
+                    carry, sample=data_iter.data),
                 init=(self.params, self.opt_state, rng),
-                xs=samples,
+                xs=None,
                 length=n_iterations+1
             )
 
+        # Option 2: There is training data and batching
         else:
             history_list = []
-            iter_loop = zip(range(n_iterations+1), data_iter)
+            iter_loop = tqdm(zip(range(n_iterations+1), data_iter),
+                             total=n_iterations+1) if self.verbose else zip(
+                                 range(n_iterations+1), data_iter)
 
-            for _, sample in tqdm(iter_loop, total=n_iterations+1):
+            for _, sample in iter_loop:
                 (self.params, self.opt_state, rng), history = self.make_step(
                     (self.params, self.opt_state, rng), sample)
 
@@ -88,14 +96,7 @@ class UpdateStep(Block):
 
             history = jax.tree.map(lambda *xs: jnp.vstack(xs), *history_list)
 
-        if self.include_input:
-            models = jax.lax.map(lambda p: eqx.combine(
-                p, self.static), history['params'])
-            input_data = tree_to_dict_list(models, name='x')
-        else:
-            input_data = None
-
-        output_data = tree_to_dict_list(history['loss'], name='y')
+        input_data, output_data = self.post_fn(history)
 
         return ExperimentData(
             domain=data.domain,
@@ -112,6 +113,7 @@ class EvoSaxUpdate(UpdateStep):
                  include_input: bool,
                  pass_rng: bool,
                  bounded: Optional[Tuple[float, float]] = None,
+                 verbose: bool = False,
                  **hyperparameters):
         self.popsize = popsize
         self.bounded = bounded
@@ -121,6 +123,7 @@ class EvoSaxUpdate(UpdateStep):
         self.opt_state = None
         self.pass_rng = pass_rng
         self.optimizer_class = optimizer
+        self.verbose = verbose
         self.hyperparameters = hyperparameters
 
     def arm(self, data: ExperimentData, fn: LossFunction,
@@ -146,7 +149,7 @@ class EvoSaxUpdate(UpdateStep):
             es_params = es_params.replace(
                 clip_min=self.bounded[0], clip_max=self.bounded[1])
 
-        self.make_step, self.init_fn = self.update_fn(
+        self.make_step, self.init_fn, self.post_fn = self.update_fn(
             static=self.static,
             optimizer=self.optimizer,
             loss_fn=fn,
@@ -158,60 +161,6 @@ class EvoSaxUpdate(UpdateStep):
             es_params=es_params,
             seed=self.seed,
         )
-
-    def call(self, data: ExperimentData, n_iterations: int,
-             data_iter: Iterator, **kwargs) -> ExperimentData:
-
-        rng, _ = jr.split(self.seed)
-
-        if self.opt_state is None:
-            self.opt_state = self.init_fn()
-
-        if isinstance(data_iter, NoneIterator):
-            samples = unroll_batches(data_iter, n_iterations+1)
-
-            (_, opt_state, _), history = jax.lax.scan(
-                f=self.make_step,
-                init=(self.params, self.opt_state, rng),
-                xs=samples,
-                length=n_iterations+1
-            )
-
-        else:
-            history_list = []
-            iter_loop = zip(range(n_iterations+1), data_iter)
-
-            for _, sample in tqdm(iter_loop, total=n_iterations+1):
-                (self.params, self.opt_state, rng), history = self.make_step(
-                    (self.params, self.opt_state, rng), sample)
-
-                history_list.append(history)
-
-            history = jax.tree.map(lambda *xs: jnp.vstack(xs), *history_list)
-
-        # Flatten population dimension
-        history['params'] = tree_flatten_population_dim(
-            history['params']) if self.include_input else None
-
-        history['aux'] = tree_flatten_population_dim(
-            history['aux']) if self.has_aux else None
-
-        history['loss'] = history['loss'].flatten()
-
-        if self.include_input:
-            models = jax.lax.map(lambda p: eqx.combine(
-                p, self.static), history['params'])
-            input_data = tree_to_dict_list(models, name='x')
-        else:
-            input_data = None
-
-        output_data = tree_to_dict_list(history['loss'], name='y')
-
-        return ExperimentData(
-            domain=data.domain,
-            input_data=input_data,
-            output_data=output_data,
-            project_dir=data.project_dir)
 
 #                                                                Scan functions
 # =============================================================================
@@ -226,10 +175,10 @@ def lbfgs_scan(static: PyTree,
                include_input: bool,
                pass_rng: bool,
                **kwargs
-               ) -> Tuple[ScanFunction, InitFunction]:
+               ) -> Tuple[ScanFunction, InitFunction, PostFunction]:
 
     @jax.jit
-    def scan_fn(carry, sample):
+    def scan_fn(carry, sample, *args, **kwargs):
         inner_params, opt_state, rng = carry
 
         if pass_rng:
@@ -265,7 +214,19 @@ def lbfgs_scan(static: PyTree,
     def init_fn() -> optax.OptState:
         return optimizer.init(params)
 
-    return scan_fn, init_fn
+    def post_fn(history: PyTree) -> Tuple[List[Dict[str, PyTree] | None,
+                                               List[Dict[str, PyTree]]]]:
+        if include_input:
+            models = jax.lax.map(lambda p: eqx.combine(
+                p, static), history['params'])
+            input_data = tree_to_dict_list(models, name='x')
+        else:
+            input_data = None
+
+        output_data = tree_to_dict_list(history['loss'], name='y')
+        return input_data, output_data
+
+    return scan_fn, init_fn, post_fn
 
 
 def optax_scan(static: PyTree,
@@ -277,10 +238,10 @@ def optax_scan(static: PyTree,
                include_input: bool,
                pass_rng: bool,
                **kwargs
-               ) -> Tuple[ScanFunction, InitFunction]:
+               ) -> Tuple[ScanFunction, InitFunction, PostFunction]:
 
     @jax.jit
-    def scan_fn(carry, sample):
+    def scan_fn(carry, sample, *args, **kwargs):
         inner_params, opt_state, rng = carry
 
         model = eqx.combine(inner_params, static)
@@ -322,7 +283,19 @@ def optax_scan(static: PyTree,
     def init_fn() -> optax.OptState:
         return optimizer.init(params)
 
-    return scan_fn, init_fn
+    def post_fn(history: PyTree) -> Tuple[List[Dict[str, PyTree] | None,
+                                               List[Dict[str, PyTree]]]]:
+        if include_input:
+            models = jax.lax.map(lambda p: eqx.combine(
+                p, static), history['params'])
+            input_data = tree_to_dict_list(models, name='x')
+        else:
+            input_data = None
+
+        output_data = tree_to_dict_list(history['loss'], name='y')
+        return input_data, output_data
+
+    return scan_fn, init_fn, post_fn
 
 
 def evosax_scan(static: PyTree,
@@ -336,10 +309,10 @@ def evosax_scan(static: PyTree,
                 es_params: EvoParams,
                 seed: jax.Array,
                 **kwargs
-                ) -> Tuple[ScanFunction, InitFunction]:
+                ) -> Tuple[ScanFunction, InitFunction, PostFunction]:
 
     @jax.jit
-    def scan_fn(carry, sample):
+    def scan_fn(carry, sample, *args, **kwargs):
         inner_params, opt_state, rng = carry
 
         rng, rng_gen = jr.split(rng)
@@ -377,7 +350,29 @@ def evosax_scan(static: PyTree,
     def init_fn() -> EvoState:
         return optimizer.initialize(rng=seed, params=es_params)
 
-    return scan_fn, init_fn
+    def post_fn(history: PyTree
+                ) -> Tuple[List[Dict[str, PyTree] | None,
+                                List[Dict[str, PyTree]]]]:
+        # Flatten population dimension
+        history['params'] = tree_flatten_population_dim(
+            history['params']) if include_input else None
+
+        history['aux'] = tree_flatten_population_dim(
+            history['aux']) if has_aux else None
+
+        history['loss'] = history['loss'].flatten()
+
+        if include_input:
+            models = jax.lax.map(lambda p: eqx.combine(
+                p, static), history['params'])
+            input_data = tree_to_dict_list(models, name='x')
+        else:
+            input_data = None
+
+        output_data = tree_to_dict_list(history['loss'], name='y')
+        return input_data, output_data
+
+    return scan_fn, init_fn, post_fn
 
 # =============================================================================
 
