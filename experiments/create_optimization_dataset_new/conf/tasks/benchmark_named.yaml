@@ -154,9 +154,8 @@ experimentdata:
         categories:
           - 2
           - 10
-          - 50
+          - 250
           - 500
-          - 2000
       seed:
         type: int
         low: 0

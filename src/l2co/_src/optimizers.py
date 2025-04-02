@@ -383,7 +383,7 @@ def evosax_scan(static: PyTree,
 
 def choose_es(task: Task, popsize: int = None, **kwargs) -> Strategy:
     d = task.dimensionality
-    if d > 1000:
+    if d > 400:
         optimizer = partial(
             EvoSaxUpdate,
             optimizer=Sep_CMA_ES, update_fn=evosax_scan
