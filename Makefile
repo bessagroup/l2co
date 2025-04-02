@@ -12,7 +12,7 @@ PACKAGENAME   = l2co
 # Build package variables
 PACKAGEDIR    = dist
 
-.PHONY: help test test-html build upload build-upload
+.PHONY: help test test-html build upload build-upload panel
 
 help:
 	@echo "Please use \`make <target>' where <target> is one of"
@@ -24,6 +24,8 @@ help:
 	@echo "  test-html   	to run the tests with pytest and to create a HTML coverage report"
 	@echo "  build		to build the package"
 	@echo "  upload	to upload the package to the PyPi TEST index"
+	@echo "  upload-testpypi	to upload the package to the Test PyPI index"
+	@echo "  panel      	to run the panel server for the app"
 
 doc-clean:
 	-rm -rf $(BUILDDIR)/*
@@ -72,3 +74,6 @@ upload-testpypi:
 upload:
 	@echo "Uploading the package to PyPI via Twine ..."
 	twine upload $(PACKAGEDIR)/* --verbose
+
+panel:
+	panel serve src/${PACKAGENAME}/app.py --dev --show

@@ -24,7 +24,7 @@ import json
 from copy import deepcopy
 from pathlib import Path
 from time import perf_counter
-from typing import Dict, Iterable, Optional, Tuple
+from typing import Dict, Iterable, Literal, Optional, Tuple
 
 # Third-party
 import numpy as np
@@ -225,6 +225,34 @@ class DataLoader:
             t_start=t_start, t=t_start, t_end=t_end)
         dynamics.save(_path / 'first')
 
+    def to_spreadsheet(self, criteria: Literal['min', 'mean'] = 'min'):
+        ds = xr.Dataset({'task_labels': self.task_labels,
+                         'output_min': self.data.output_min})
+
+        if criteria == 'min':
+            df = ds.groupby('itemID').min().min('budget').isel(
+                output_dim=0).output_min.to_pandas()
+        elif criteria == 'mean':
+            df = ds.groupby('itemID').mean().min('budget').isel(
+                output_dim=0).output_min.to_pandas()
+
+        df.index = ds.groupby('itemID').min().min(
+            'budget').isel(output_dim=0).task_labels
+
+        # Function to highlight the smallest value per row
+        def highlight_min_row(row):
+            min_val = row.min()
+            return ['font-weight: bold' if val == min_val else '' for val in row]
+
+        # Apply styling and scientific notation formatting
+        styled_df = (
+            df.style
+            # Highlight smallest value per row
+            .apply(highlight_min_row, axis=1)
+            .format("{:.2e}")  # Display in scientific notation
+        )
+
+        return styled_df
 #                                                                    Properties
 # =============================================================================
 

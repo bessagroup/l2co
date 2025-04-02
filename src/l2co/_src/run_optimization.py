@@ -134,7 +134,8 @@ def run_optimization_schedule_multiple_realizations(
         include_input: bool = False,
         bounded: Optional[Tuple[float, float]] = None,
         sampler: Optional[Block] = None,
-        verbose: bool = False
+        verbose: bool = False,
+        use_scan: bool = True
 ) -> xr.Dataset:
     results_list: List[xr.DataArray] = []
 
@@ -158,6 +159,7 @@ def run_optimization_schedule_multiple_realizations(
             sampler=sampler,
             include_input=include_input,
             verbose=verbose,
+            use_scan=use_scan,
         )
 
         results_list.append(experimentdata_to_xarray(
@@ -181,6 +183,7 @@ def run_optimization_schedule(
         sampler: Block,
         include_input: bool,
         verbose: bool,
+        use_scan: bool,
 ) -> ExperimentData:
 
     # Start with empty ExperimentData
@@ -202,6 +205,7 @@ def run_optimization_schedule(
             bounded=bounded,
             include_input=include_input,
             pass_rng=task.pass_rng,
+            task=task,
             verbose=verbose)
 
         data = run_optimization(
@@ -213,6 +217,7 @@ def run_optimization_schedule(
             popsize=update_step.popsize,
             x0_strategy=step.x0_strategy,
             seed=seed,
+            use_scan=use_scan,
             data=data,
 
         )
@@ -229,6 +234,7 @@ def run_optimization(
     popsize: int,
     x0_strategy: str,
     seed: int,
+    use_scan: bool,
     data: Optional[ExperimentData] = None,
 ) -> ExperimentData:
 
@@ -256,7 +262,8 @@ def run_optimization(
 
     iterates = update_step.call(
         data=data, n_iterations=n_iterations,
-        data_iter=learning_data)
+        data_iter=learning_data,
+        use_scan=use_scan)
 
     data += iterates[popsize:]
 
@@ -294,6 +301,7 @@ class RunOptimization(DataGenerator):
                  clear_jax_cache: bool = True,
                  sampler_cls: Optional[Type[Block]] = None,
                  verbose: bool = False,
+                 use_scan: bool = True,
                  ):
         self.budget_fn = budget_fn
         self.bounded = bounded
@@ -304,6 +312,7 @@ class RunOptimization(DataGenerator):
         self.rng = onp.random.default_rng(seed=seed)
         self.verbose = verbose
         self.sampler_cls = sampler_cls
+        self.use_scan = use_scan
 
     def execute(self, experiment_sample: ExperimentSample) -> ExperimentSample:
         es = experiment_sample.input_data
@@ -358,6 +367,7 @@ class RunOptimization(DataGenerator):
             bounded=self.bounded,
             sampler=self.sampler_cls,
             verbose=self.verbose,
+            use_scan=self.use_scan
         )
 
         experiment_sample.store(
@@ -390,6 +400,7 @@ class RunOptimization(DataGenerator):
                 include_input=self.include_input,
                 bounded=self.bounded,
                 verbose=self.verbose,
+                use_scan=self.use_scan,
             )
 
         experiment_sample.store(
@@ -427,7 +438,8 @@ def run_optimization_no_schedule_multiple_realizations(
         include_input: bool = False,
         bounded: Optional[Tuple[float, float]] = None,
         sampler: Optional[Block] = None,
-        verbose: bool = False
+        verbose: bool = False,
+        use_scan: bool = True
 ) -> Tuple[xr.DataArray, List[OptimizationSchedule]]:
     schedule_list: List[OptimizationSchedule] = []
     results_list: List[xr.DataArray] = []
@@ -453,6 +465,7 @@ def run_optimization_no_schedule_multiple_realizations(
             n_iterations=n_iterations,
             include_input=include_input,
             verbose=verbose,
+            use_scan=use_scan,
         )
 
         results_list.append(experimentdata_to_xarray(
@@ -479,6 +492,7 @@ def run_optimization_no_schedule(
         n_iterations: int,
         include_input: bool,
         verbose: bool,
+        use_scan: bool,
 ) -> Tuple[ExperimentData, OptimizationSchedule]:
 
     budgets = step_n_iterations_equal(
@@ -527,6 +541,7 @@ def run_optimization_no_schedule(
             popsize=update_step.popsize,
             x0_strategy=step.x0_strategy,
             seed=seed,
+            use_scan=use_scan,
             data=data,
         )
 

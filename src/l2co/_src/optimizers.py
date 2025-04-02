@@ -9,13 +9,14 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.tree as jt
 import optax
-from evosax import CMA_ES, PSO, EvoParams, EvoState, Strategy
+from evosax import CMA_ES, PSO, EvoParams, EvoState, Sep_CMA_ES, Strategy
 from f3dasm import Block, ExperimentData
 from jaxtyping import PyTree
 from tqdm import tqdm
 
 from ._typing import InitFunction, LossFunction, PostFunction, ScanFunction
 from .batching import NoneIterator
+from .task import Task
 from .tree_utils import (dict_list_to_tree, tree_flatten_population_dim,
                          tree_to_dict_list)
 
@@ -32,6 +33,7 @@ class UpdateStep(Block):
                  include_input: bool,
                  pass_rng: bool,
                  bounded: Optional[Tuple[float, float]] = None,
+                 task: Optional[Task] = None,
                  verbose: bool = False,
                  **hyperparameters):
 
@@ -63,7 +65,8 @@ class UpdateStep(Block):
         )
 
     def call(self, data: ExperimentData, n_iterations: int,
-             data_iter: Iterator, **kwargs) -> ExperimentData:
+             data_iter: Iterator, use_scan: bool = True,
+             **kwargs) -> ExperimentData:
 
         rng, _ = jr.split(self.seed)
 
@@ -72,7 +75,7 @@ class UpdateStep(Block):
 
         # Option 1: There is no batching, hence we fix the sample and
         # use scan
-        if isinstance(data_iter, NoneIterator):
+        if isinstance(data_iter, NoneIterator) and use_scan:
             (_, opt_state, _), history = jax.lax.scan(
                 f=lambda carry, _: self.make_step(
                     carry, sample=data_iter.data),
@@ -114,6 +117,7 @@ class EvoSaxUpdate(UpdateStep):
                  pass_rng: bool,
                  bounded: Optional[Tuple[float, float]] = None,
                  verbose: bool = False,
+                 task: Optional[Task] = None,
                  **hyperparameters):
         self.popsize = popsize
         self.bounded = bounded
@@ -177,7 +181,7 @@ def lbfgs_scan(static: PyTree,
                **kwargs
                ) -> Tuple[ScanFunction, InitFunction, PostFunction]:
 
-    @jax.jit
+    @eqx.filter_jit
     def scan_fn(carry, sample, *args, **kwargs):
         inner_params, opt_state, rng = carry
 
@@ -240,7 +244,7 @@ def optax_scan(static: PyTree,
                **kwargs
                ) -> Tuple[ScanFunction, InitFunction, PostFunction]:
 
-    @jax.jit
+    @eqx.filter_jit
     def scan_fn(carry, sample, *args, **kwargs):
         inner_params, opt_state, rng = carry
 
@@ -311,7 +315,10 @@ def evosax_scan(static: PyTree,
                 **kwargs
                 ) -> Tuple[ScanFunction, InitFunction, PostFunction]:
 
-    @jax.jit
+    def combined_loss(params: PyTree, **rng_sample):
+        return loss_fn(eqx.combine(params, static), **rng_sample)
+
+    @eqx.filter_jit
     def scan_fn(carry, sample, *args, **kwargs):
         inner_params, opt_state, rng = carry
 
@@ -327,11 +334,8 @@ def evosax_scan(static: PyTree,
         else:
             rng_sample = {}
 
-        inner_models = jax.vmap(eqx.combine, in_axes=(
-            0, None))(new_params, static)
-
-        loss = jax.vmap(partial(loss_fn, **sample)
-                        )(inner_models, **rng_sample)
+        loss = jax.vmap(partial(combined_loss, **sample)
+                        )(new_params, **rng_sample)
 
         opt_state = optimizer.tell(
             x=new_params,
@@ -377,15 +381,34 @@ def evosax_scan(static: PyTree,
 # =============================================================================
 
 
+def choose_es(task: Task, popsize: int = None, **kwargs) -> Strategy:
+    d = task.dimensionality
+    if d > 1000:
+        optimizer = partial(
+            EvoSaxUpdate,
+            optimizer=Sep_CMA_ES, update_fn=evosax_scan
+        )
+    else:
+        optimizer = partial(
+            EvoSaxUpdate,
+            optimizer=CMA_ES, update_fn=evosax_scan
+        )
+
+    popsize = int(4+3*jnp.log(d))
+
+    return optimizer(**kwargs, popsize=popsize)
+
+
 # =============================================================================
 OPT_MAPPING: Dict[str, Type[UpdateStep]] = {
     'adam': partial(
         UpdateStep,
         optimizer=optax.adam, update_fn=optax_scan,
         popsize=1),
-    'cmaes': partial(
+    'cmaes': choose_es,
+    'sepcmaes': partial(
         EvoSaxUpdate,
-        optimizer=CMA_ES, update_fn=evosax_scan,
+        optimizer=Sep_CMA_ES, update_fn=evosax_scan,
     ),
     'pso': partial(
         EvoSaxUpdate,

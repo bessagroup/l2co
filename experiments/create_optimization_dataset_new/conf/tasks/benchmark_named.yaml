@@ -6,7 +6,7 @@ sampler:
     - 0.2
     - 0.2
 sampler_kwargs:
-  n_samples: 100
+  n_samples: 1000
   seed: ${seed}
 
 experimentdata:
@@ -153,9 +153,10 @@ experimentdata:
         type: category
         categories:
           - 2
-          - 5
           - 10
           - 50
+          - 500
+          - 2000
       seed:
         type: int
         low: 0
