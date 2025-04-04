@@ -20,7 +20,7 @@ from jaxtyping import PyTree
 
 # Local
 from ._logging import logger
-from .batching import batch_iter, unroll_batches
+from .batching import NoneIterator, batch_iter, unroll_batches
 from .data_loader import OptimizationDynamics
 from .l2co_model import L2CO_model
 from .optimizers import OPT_MAPPING
@@ -135,7 +135,7 @@ def run_optimization_schedule_multiple_realizations(
         bounded: Optional[Tuple[float, float]] = None,
         sampler: Optional[Block] = None,
         verbose: bool = False,
-        use_scan: bool = True
+        use_scan: Optional[bool] = None,
 ) -> xr.Dataset:
     results_list: List[xr.DataArray] = []
 
@@ -183,7 +183,7 @@ def run_optimization_schedule(
         sampler: Block,
         include_input: bool,
         verbose: bool,
-        use_scan: bool,
+        use_scan: Optional[bool],
 ) -> ExperimentData:
 
     # Start with empty ExperimentData
@@ -199,6 +199,12 @@ def run_optimization_schedule(
         learning_data = batch_iter(
             dataset=loaded_dataset, n_evals=step_iterations,
             batch_size=task.batch_size, key=seed)
+
+        if use_scan is None:
+            _use_scan = False if isinstance(
+                learning_data, NoneIterator) else True
+        else:
+            _use_scan = use_scan
 
         update_step = OPT_MAPPING[step.optimizer](
             **step.hyperparameters, seed=seed,
@@ -217,7 +223,7 @@ def run_optimization_schedule(
             popsize=update_step.popsize,
             x0_strategy=step.x0_strategy,
             seed=seed,
-            use_scan=use_scan,
+            use_scan=_use_scan,
             data=data,
 
         )
@@ -301,7 +307,7 @@ class RunOptimization(DataGenerator):
                  clear_jax_cache: bool = True,
                  sampler_cls: Optional[Type[Block]] = None,
                  verbose: bool = False,
-                 use_scan: bool = True,
+                 use_scan: Optional[bool] = None,
                  ):
         self.budget_fn = budget_fn
         self.bounded = bounded
@@ -439,7 +445,7 @@ def run_optimization_no_schedule_multiple_realizations(
         bounded: Optional[Tuple[float, float]] = None,
         sampler: Optional[Block] = None,
         verbose: bool = False,
-        use_scan: bool = True
+        use_scan: Optional[bool] = None
 ) -> Tuple[xr.DataArray, List[OptimizationSchedule]]:
     schedule_list: List[OptimizationSchedule] = []
     results_list: List[xr.DataArray] = []
@@ -492,7 +498,7 @@ def run_optimization_no_schedule(
         n_iterations: int,
         include_input: bool,
         verbose: bool,
-        use_scan: bool,
+        use_scan: Optional[bool],
 ) -> Tuple[ExperimentData, OptimizationSchedule]:
 
     budgets = step_n_iterations_equal(
@@ -523,6 +529,12 @@ def run_optimization_no_schedule(
             dataset=loaded_dataset, n_evals=n_iterations_per_switch,
             batch_size=task.batch_size, key=seed)
 
+        if use_scan is None:
+            _use_scan = False if isinstance(
+                learning_data, NoneIterator) else True
+        else:
+            _use_scan = use_scan
+
         if previous_step is None or \
                 previous_step.optimizer != step.optimizer:
             update_step = OPT_MAPPING[step.optimizer](
@@ -541,7 +553,7 @@ def run_optimization_no_schedule(
             popsize=update_step.popsize,
             x0_strategy=step.x0_strategy,
             seed=seed,
-            use_scan=use_scan,
+            use_scan=_use_scan,
             data=data,
         )
 
