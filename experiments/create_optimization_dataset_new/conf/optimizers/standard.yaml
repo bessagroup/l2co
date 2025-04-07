@@ -7,5 +7,5 @@
     learning_rate: 1e-1
 - optimizer: pso
   hyperparameters:
-    popsize: 100
+    popsize: 30
 - optimizer: lbfgsb
