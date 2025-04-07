@@ -9,8 +9,8 @@ from typing import Dict, Optional, Type
 import jax.numpy as jnp
 import optax
 from evosax import CMA_ES, PSO, Sep_CMA_ES, Strategy
-from f3dasm_optimize import (EvoSaxUpdate, UpdateStep, evosax_scan, lbfgs_scan,
-                             optax_scan)
+from f3dasm_optimize.jaxadapters import (EvoSaxUpdate, UpdateStep, evosax_scan,
+                                         lbfgs_scan, optax_scan)
 
 # Local
 from .task import Task
