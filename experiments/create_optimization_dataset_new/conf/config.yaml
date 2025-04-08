@@ -12,7 +12,8 @@ mode: mpi
 
 log_level: 20
 
-verbose: False
+verbose: True
+include_input: False
 
 path:
 model_dir: /home/martin/Documents/GitHub/L2CO/experiments/train_model/outputs

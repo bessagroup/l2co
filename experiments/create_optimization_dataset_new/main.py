@@ -172,7 +172,7 @@ def process(config: DictConfig):
         partition_factor=config.schedules.partition_factor,
         seed=int(config.seed),
         bounded=bounded,
-        include_input=False,
+        include_input=config.include_input,
         clear_jax_cache=True,
         verbose=config.verbose,
     )

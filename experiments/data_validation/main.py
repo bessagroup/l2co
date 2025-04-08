@@ -187,7 +187,9 @@ def create_optimization_data(
     df: pd.DataFrame = df.fillna(placeholder_path)
 
     def validation_fn(x: xr.Dataset):
-        popsizes = x.attrs['popsizes']
+        # QUICKFIX!!
+        # popsizes = x.attrs['popsizes']
+        popsizes = x.budget.size // x.attrs['n_iterations']
 
         if isinstance(popsizes, Integral):
             popsizes = [popsizes]
