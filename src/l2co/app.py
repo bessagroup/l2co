@@ -144,7 +144,7 @@ def update_widgets():
     default_colors = plt.cm.tab10.colors
     optimizer_color_map.update({optimizer: default_colors[i % len(
         default_colors)] for i, optimizer in enumerate(
-            list(d.optimizers.values))})
+            list(d.optimizers.sortby('optimizer').values))})
 
     task_df = retrieve_task_df()
     filter_panel.objects = [create_filter_widgets(task_df)]
@@ -208,8 +208,8 @@ def update_plot(selection, iterations, optimizers):
     # Generate plot
     fig, axes = plt.subplots(1, 2, figsize=(7, 5), sharey=True)
 
-    _rtd = rtd(performance)
-    _pp = performance_profile(performance)
+    _rtd = rtd(performance).sortby('optimizer')
+    _pp = performance_profile(performance).sortby('optimizer')
 
     for o in _rtd.optimizer.values:
         _rtd.sel(optimizer=o).isel(output_dim=0).plot(

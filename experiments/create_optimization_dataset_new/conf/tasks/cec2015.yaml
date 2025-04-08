@@ -29,8 +29,6 @@ experimentdata:
         categories:
           - 10
           - 30
-          - 50
-          - 100
 task_kwargs:
   seed: ${seed}
   noise: 0.0

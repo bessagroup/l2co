@@ -1,6 +1,5 @@
 sampler:
-  _target_: f3dasm.create_sampler
-  sampler: "grid"
+  _target_: l2co._src.tasks.benchmark_task.CEC2019Sampler
 sampler_kwargs:
 
 experimentdata:
@@ -18,6 +17,14 @@ experimentdata:
           - 'F72019'
           - 'F82019'
           - 'F92019'
+      dimensionality:
+        type: category
+        categories:
+          - 9
+          - 10
+          - 16
+          - 18
+
 task_kwargs:
   seed: ${seed}
   noise: 0.0

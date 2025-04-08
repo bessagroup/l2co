@@ -345,8 +345,9 @@ def format_plot(ax: plt.Axes, xlim_right: int, ylabel: str,
     legend = ax.get_legend()
     if legend:
         custom_labels = {
-            "adam": "Adam",
-            "pso": "PSO",
+            "adam_learning_rate=0.001": "Adam (lr=1e-3)",
+            "adam_learning_rate=0.1": "Adam (lr=1e-1)",
+            "pso_popsize=30": "PSO",
             "cmaes": "CMA-ES",
             "lbfgsb": "L-BFGS-B",
             "sbs": "Single Best Solver",

@@ -303,6 +303,32 @@ class BenchmarkFuncSampler(Block):
         return ExperimentData(domain=data.domain, input_data=df)
 
 
+class CEC2019Sampler(Block):
+    def __init__(self):
+        self.dim_mapping = {
+            'F12019': 9,
+            'F22019': 16,
+            'F32019': 18,
+            'F42019': 10,
+            'F52019': 10,
+            'F62019': 10,
+            'F72019': 10,
+            'F82019': 10,
+            'F92019': 10,
+            'F102019': 10,
+        }
+
+    def call(self, data: ExperimentData) -> ExperimentData:
+        fns = data.domain.input_space['fn_name'].categories
+
+        df = pd.DataFrame({
+            "dimensionality": [self.dim_mapping[f] for f in fns],
+            "fn_name": fns,
+        })
+
+        return ExperimentData(domain=data.domain, input_data=df)
+
+
 def create_benchmark_task(
     fn_name: str, seed: int, noise: float,
         dimensionality: int, offset: bool = True,
