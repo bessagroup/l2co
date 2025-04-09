@@ -12,3 +12,5 @@ data_generation:
 partition_factor: 0.20
 
 fraction_combinations: 0.75
+
+track_params: True

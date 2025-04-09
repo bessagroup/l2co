@@ -166,6 +166,11 @@ def process(config: DictConfig):
     else:
         bounded = None
 
+    if 'track_params' in config.schedules:
+        track_params = config.schedules.track_params
+    else:
+        track_params = False
+
     run_opt = RunOptimization(
         budget_fn=instantiate(config.budgets),
         n_realizations=config.n_realizations,
@@ -175,6 +180,7 @@ def process(config: DictConfig):
         include_input=config.include_input,
         clear_jax_cache=True,
         verbose=config.verbose,
+        track_params=track_params,
     )
 
     experiment_data = ExperimentData.from_file(project_dir=project_dir,

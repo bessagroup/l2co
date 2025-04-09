@@ -188,8 +188,8 @@ def create_optimization_data(
 
     def validation_fn(x: xr.Dataset):
         # QUICKFIX!!
-        # popsizes = x.attrs['popsizes']
-        popsizes = x.budget.size // x.attrs['n_iterations']
+        popsizes = x.attrs['popsizes']
+        # popsizes = x.budget.size // x.attrs['n_iterations']
 
         if isinstance(popsizes, Integral):
             popsizes = [popsizes]

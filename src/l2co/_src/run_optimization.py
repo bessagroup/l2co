@@ -136,6 +136,7 @@ def run_optimization_schedule_multiple_realizations(
         sampler: Optional[Block] = None,
         verbose: bool = False,
         use_scan: Optional[bool] = None,
+        track_params: bool = False,
 ) -> xr.Dataset:
     results_list: List[xr.DataArray] = []
 
@@ -150,21 +151,21 @@ def run_optimization_schedule_multiple_realizations(
                     lower_bound=bounded[0],
                     upper_bound=bounded[1])
 
-        data = run_optimization_schedule(
+        data, popsizes = run_optimization_schedule(
             task=task,
             optimization_schedule=optimization_schedule,
             n_iterations=n_iterations,
             seed=seed + s,
             bounded=bounded,
             sampler=sampler,
-            include_input=include_input,
+            include_input=track_params,
             verbose=verbose,
             use_scan=use_scan,
         )
 
         results_list.append(experimentdata_to_xarray(
             data=data,
-            popsizes=[step.popsize for step in optimization_schedule],
+            popsizes=popsizes,
             budgets=optimization_schedule.budgets,
             n_iterations=n_iterations,
             include_input=include_input))
@@ -184,11 +185,12 @@ def run_optimization_schedule(
         include_input: bool,
         verbose: bool,
         use_scan: Optional[bool],
-) -> ExperimentData:
+) -> Tuple[ExperimentData, List[int]]:
 
     # Start with empty ExperimentData
     data = None
     loaded_dataset = task.loaded_dataset
+    popsizes = []
 
     for step, step_iterations in zip(
         optimization_schedule,
@@ -201,8 +203,8 @@ def run_optimization_schedule(
             batch_size=task.batch_size, key=seed)
 
         if use_scan is None:
-            _use_scan = False if isinstance(
-                learning_data, NoneIterator) else True
+            _use_scan = True if isinstance(
+                learning_data, NoneIterator) else False
         else:
             _use_scan = use_scan
 
@@ -228,7 +230,9 @@ def run_optimization_schedule(
 
         )
 
-    return data
+        popsizes.append(update_step.popsize)
+
+    return data, popsizes
 
 
 def run_optimization(
@@ -308,6 +312,7 @@ class RunOptimization(DataGenerator):
                  sampler_cls: Optional[Type[Block]] = None,
                  verbose: bool = False,
                  use_scan: Optional[bool] = None,
+                 track_params: bool = False
                  ):
         self.budget_fn = budget_fn
         self.bounded = bounded
@@ -319,6 +324,7 @@ class RunOptimization(DataGenerator):
         self.verbose = verbose
         self.sampler_cls = sampler_cls
         self.use_scan = use_scan
+        self.track_params = track_params
 
     def execute(self, experiment_sample: ExperimentSample) -> ExperimentSample:
         es = experiment_sample.input_data
@@ -373,7 +379,8 @@ class RunOptimization(DataGenerator):
             bounded=self.bounded,
             sampler=self.sampler_cls,
             verbose=self.verbose,
-            use_scan=self.use_scan
+            use_scan=self.use_scan,
+            track_params=self.track_params
         )
 
         experiment_sample.store(
@@ -407,6 +414,7 @@ class RunOptimization(DataGenerator):
                 bounded=self.bounded,
                 verbose=self.verbose,
                 use_scan=self.use_scan,
+                track_params=self.track_params,
             )
 
         experiment_sample.store(
@@ -445,7 +453,8 @@ def run_optimization_no_schedule_multiple_realizations(
         bounded: Optional[Tuple[float, float]] = None,
         sampler: Optional[Block] = None,
         verbose: bool = False,
-        use_scan: Optional[bool] = None
+        use_scan: Optional[bool] = None,
+        track_params: bool = False
 ) -> Tuple[xr.DataArray, List[OptimizationSchedule]]:
     schedule_list: List[OptimizationSchedule] = []
     results_list: List[xr.DataArray] = []
@@ -461,7 +470,7 @@ def run_optimization_no_schedule_multiple_realizations(
                     lower_bound=bounded[0],
                     upper_bound=bounded[1])
 
-        data, schedule = run_optimization_no_schedule(
+        data, schedule, popsizes = run_optimization_no_schedule(
             trained_l2co_model=trained_l2co_model,
             seed=seed + s,
             bounded=bounded,
@@ -469,14 +478,14 @@ def run_optimization_no_schedule_multiple_realizations(
             task=task,
             n_switches=n_switches,
             n_iterations=n_iterations,
-            include_input=include_input,
+            include_input=track_params,
             verbose=verbose,
             use_scan=use_scan,
         )
 
         results_list.append(experimentdata_to_xarray(
             data=data,
-            popsizes=[step.popsize for step in schedule],
+            popsizes=popsizes,
             budgets=schedule.budgets,
             n_iterations=n_iterations,
             include_input=include_input))
@@ -499,7 +508,7 @@ def run_optimization_no_schedule(
         include_input: bool,
         verbose: bool,
         use_scan: Optional[bool],
-) -> Tuple[ExperimentData, OptimizationSchedule]:
+) -> Tuple[ExperimentData, OptimizationSchedule, List[int]]:
 
     budgets = step_n_iterations_equal(
         n_iterations=n_iterations, n_switches=n_switches)
@@ -522,6 +531,7 @@ def run_optimization_no_schedule(
     previous_step = None
     step_list.append(step)
     loaded_dataset = task.loaded_dataset
+    popsizes = []
 
     for s, n_iterations_per_switch in enumerate(range(budgets)):
 
@@ -557,6 +567,9 @@ def run_optimization_no_schedule(
             data=data,
         )
 
+        # Append population size
+        popsizes.append(update_step.popsize)
+
         if s == n_switches - 1:
             break
 
@@ -583,7 +596,7 @@ def run_optimization_no_schedule(
         f"Optimization finished with {n_iterations_per_switch*n_switches}"
         f"iterations!")
 
-    return data, schedule
+    return data, schedule, popsizes
 
 
 def save_schedules(object: List[OptimizationSchedule], path: str):
