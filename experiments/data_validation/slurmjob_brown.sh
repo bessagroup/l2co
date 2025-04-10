@@ -2,23 +2,11 @@
 #SBATCH --job-name="DataValidation"
 #SBATCH --partition=batch
 #SBATCH --nodes=1
+#SBATCH --mem=16GB
 #SBATCH --time=01:00:00
 #SBATCH --account=mbessa-condo
 #SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
 
-# # Parse arguments
-# while [[ "$#" -gt 0 ]]; do
-#     case $1 in
-#         --path) DATASET="$2"; shift ;;  # Capture --path argument
-#     esac
-#     shift
-# done
-
-# Set project folder manually
-# projectfolder="create_optimization_dataset_new"
-
-# Set run directory using provided --path
-# run_dir="${HOME}/scratch/${projectfolder}/${DATASET}"
 projectfolder=$(basename $(pwd))
 opt_dir="${HOME}/scratch/create_optimization_dataset_new/"
 run_dir="${HOME}/scratch/${projectfolder}/${SLURM_JOB_ID}"
@@ -53,12 +41,6 @@ source /oscar/runtime/software/external/miniconda3/23.11.0/etc/profile.d/conda.s
 conda activate l2co
 
 echo "Conda Environment: $(conda info --envs | grep '*' | awk '{print $1}')"
-
-# # Handle default SLURM_ARRAY_JOB_ID if not provided
-# if [ -z "$DATASET" ]; then
-#     echo "Error: --path argument not provided."
-#     exit 1
-# fi
 
 echo "======================================="
 echo " Execution Information"
