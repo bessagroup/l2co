@@ -254,7 +254,7 @@ class L2CO_model:
             stage1_models_optimizers[model_path.stem.split(
                 '_')[-1]] = optimizers
 
-            stage1_models[model_path.stem.split('_')[-1]] = model
+            stage1_models[model_path.stem.split('stage1_model_')[-1]] = model
 
         return cls(stage0_model=stage0_model,
                    stage0_model_optimizers=stage0_optimizers,
