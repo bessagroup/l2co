@@ -523,6 +523,7 @@ def run_optimization_no_schedule(
 
     # Start with empty ExperimentData
     data = None
+
     step_list = []
     # Create first optimization dynamics
     optimization_dynamics = OptimizationDynamics.from_task_and_run(
@@ -548,8 +549,8 @@ def run_optimization_no_schedule(
             batch_size=task.batch_size, key=seed)
 
         if use_scan is None:
-            _use_scan = False if isinstance(
-                learning_data, NoneIterator) else True
+            _use_scan = True if isinstance(
+                learning_data, NoneIterator) else False
         else:
             _use_scan = use_scan
 

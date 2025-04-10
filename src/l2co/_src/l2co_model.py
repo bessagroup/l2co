@@ -238,21 +238,22 @@ class L2CO_model:
         stage1_models_optimizers = {}
         for model_path in {p.with_suffix('') for p
                            in _path.glob('stage1_model_*')}:
-            with open(model_path.with_suffix('.pkl'), 'rb') as f:
+            with open(str(model_path) + '.pkl', 'rb') as f:
                 model_shape = cloudpickle.load(f)
 
-            model = eqx.tree_deserialise_leaves(model_path.with_suffix('.eqx'),
-                                                like=model_shape)
+            model = eqx.tree_deserialise_leaves(
+                str(model_path) + '.eqx',
+                like=model_shape)
 
-            with open(model_path.with_suffix('.json'), 'r') as f:
+            with open(str(model_path) + '.json', 'r') as f:
                 optimizers = {
                     k: OptimizationStep.from_dict(v)
                     for k, v in json.load(f).items()}
 
-            stage1_models_optimizers[model_path.stem.split(
-                '_')[-1]] = optimizers
+            stage1_models_optimizers[model_path.name.split(
+                'stage1_model_')[-1]] = optimizers
 
-            stage1_models[model_path.stem.split('stage1_model_')[-1]] = model
+            stage1_models[model_path.name.split('stage1_model_')[-1]] = model
 
         return cls(stage0_model=stage0_model,
                    stage0_model_optimizers=stage0_optimizers,
