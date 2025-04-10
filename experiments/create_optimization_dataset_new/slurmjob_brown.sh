@@ -51,6 +51,7 @@ if ! [ -n "${SLURM_ARRAY_TASK_ID+1}" ]; then
 fi
 
 model_dir="${HOME}/scratch/train_model/"
+project_dir="${HOME}/scratch/create_optimization_dataset_new/"
 
 
 # Get project folder
@@ -62,8 +63,8 @@ echo " Execution Information"
 echo "======================================="
 echo "Project Folder:   $projectfolder"
 echo "Run Directory:    $run_dir"
-echo "Executing: mpirun python main.py ++hydra.run.dir=$run_dir ++model_dir=$model_dir $@" 
+echo "Executing: mpirun python main.py ++hydra.run.dir=$run_dir ++model_dir=$model_dir ++project_dir=$project_dir $@" 
 echo "======================================="
 
 # Run the Python script with MPI
-mpirun python main.py ++hydra.run.dir=$run_dir ++model_dir=$model_dir "$@"
+mpirun python main.py ++hydra.run.dir=$run_dir ++model_dir=$model_dir ++project_dir=$project_dir "$@"

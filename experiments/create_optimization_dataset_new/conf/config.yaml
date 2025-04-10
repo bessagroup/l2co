@@ -17,3 +17,5 @@ include_input: False
 
 path:
 model_dir: /home/martin/Documents/GitHub/L2CO/experiments/train_model/outputs
+project_dir: /home/martin/Documents/GitHub/L2CO/experiments/create_optimization_dataset_new/outputs
+project_job:

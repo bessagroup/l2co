@@ -52,6 +52,11 @@ def main(config):
 
 
 def pre_process(config: DictConfig):
+    if config.project_job is None:
+        create_experimentdata(config)
+
+
+def create_experimentdata(config: DictConfig):
     logger.info("== PRE PROCESS ==")
     # Task
     experiment_data_tasks = ExperimentData.from_yaml(
@@ -155,10 +160,6 @@ def pre_process(config: DictConfig):
 def process(config: DictConfig):
     logger.info("== PROCESS ==")
 
-    project_dir = Path().cwd()
-
-    logger.debug("Loaded experiment_data")
-
     # Check if the optimization is box constraint
     if 'bounded' in config.tasks:
         bounded = (config.tasks.bounded.lower_bound,
@@ -182,6 +183,17 @@ def process(config: DictConfig):
         verbose=config.verbose,
         track_params=track_params,
     )
+
+    if config.project_job is None:
+        project_dir = Path().cwd()
+    else:
+        project_dir = Path(config.project_dir) / config.project_job
+
+    if not project_dir.exists():
+        raise FileNotFoundError(
+            f"Project directory {project_dir} does not exist.")
+
+    logger.info(f"Loaded experiment_data from {project_dir}")
 
     experiment_data = ExperimentData.from_file(project_dir=project_dir,
                                                wait_for_creation=True,
