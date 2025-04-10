@@ -190,11 +190,11 @@ class L2CO_model:
 
         # Stage0 model
         joblib.dump(
-            self.stage0_model, (_path / 'stage0_model').with_suffix('.pkl'))
+            self.stage0_model, str(_path / 'stage0_model') + '.pkl')
 
         # Stage0 model optimizers
         with open(
-                (_path / 'stage0_optimizers').with_suffix('.json'), 'w') as f:
+                str(_path / 'stage0_optimizers') + '.json', 'w') as f:
             json.dump({k: v.to_dict()
                       for k, v in self.stage0_optimizers.items()}, f, indent=4)
 
@@ -203,18 +203,16 @@ class L2CO_model:
             model_shape = eqx.filter_eval_shape(lambda x: model, None)
 
             # Stage1 model statics
-            with open((_path / f"stage1_model_{name}").with_suffix(
-                    '.pkl'), 'wb') as f:
+            with open(str(_path / f"stage1_model_{name}") + '.pkl', 'wb') as f:
                 cloudpickle.dump(model_shape, f)
 
             # Stage1 model params
             eqx.tree_serialise_leaves(
-                (_path / f"stage1_model_{name}").with_suffix('.eqx'), model)
+                str(_path / f"stage1_model_{name}") + '.eqx', model)
 
             # Stage1 model optimizers
             with open(
-                (_path / f"stage1_model_{name}").with_suffix('.json'),
-                    'w') as f:
+                    str(_path / f"stage1_model_{name}") + '.json', 'w') as f:
                 json.dump(
                     {k: v.to_dict()
                      for k, v in self.stage1_models_optimizers[name].items()
