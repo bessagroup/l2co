@@ -297,6 +297,13 @@ def create_x0(data: ExperimentData, model: PyTree, mode: str, n_samples: int,
             criterion=lambda es: es.output_data['y'],
             reverse=True)[-n_samples:].reset_index()
 
+    # Check if enough samples are returned
+    if len(_data) < n_samples:
+        _data += create_x0(
+            data=data, model=model, mode='new',
+            n_samples=n_samples - len(_data),
+            sampler=sampler, seed=seed)
+
     return _data
 
 
