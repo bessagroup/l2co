@@ -765,18 +765,18 @@ class OptimizationDynamics:
             The loaded optimization dynamics data.
         """
         _path = Path(path)
-        data = np.load(_path.with_suffix('.npz'), allow_pickle=True)
+        data = np.load(str(_path) + '.npz', allow_pickle=True)
         if (data['X_trajectory'].ndim == 0
                 and data['X_trajectory'].item() is None):
             X_trajectory = None
         else:
             X_trajectory = data['X_trajectory']
 
-        features = pd.read_csv(_path.with_suffix('.csv'), index_col=0,
+        features = pd.read_csv(str(_path) + '.csv', index_col=0,
                                header=0).convert_dtypes()
 
         # Open opt steps
-        with open(_path.with_suffix('.json'), 'r') as f:
+        with open(str(_path) + '.json', 'r') as f:
             opt_steps_dict = json.load(f)
 
         previous_step = opt_steps_dict.pop('previous_step', None)
