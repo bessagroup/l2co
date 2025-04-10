@@ -419,6 +419,7 @@ class RunOptimization(DataGenerator):
                 n_realizations=self.n_realizations,
                 include_input=self.include_input,
                 bounded=self.bounded,
+                sampler=self.sampler_cls,
                 verbose=self.verbose,
                 use_scan=self.use_scan,
                 track_params=self.track_params,
@@ -505,13 +506,13 @@ def run_optimization_no_schedule_multiple_realizations(
 
 
 def run_optimization_no_schedule(
+        task: Task,
         trained_l2co_model: L2CO_model,
+        n_switches: int,
+        n_iterations: int,
         seed: int,
         bounded: Optional[Tuple[float, float]],
         sampler: Block,
-        task: Task,
-        n_switches: int,
-        n_iterations: int,
         include_input: bool,
         verbose: bool,
         use_scan: Optional[bool],
@@ -540,7 +541,7 @@ def run_optimization_no_schedule(
     loaded_dataset = task.loaded_dataset
     popsizes = []
 
-    for s, n_iterations_per_switch in enumerate(range(budgets)):
+    for s, n_iterations_per_switch in enumerate(budgets):
 
         learning_data = batch_iter(
             dataset=loaded_dataset, n_evals=n_iterations_per_switch,
@@ -559,6 +560,7 @@ def run_optimization_no_schedule(
                 bounded=bounded,
                 include_input=include_input,
                 pass_rng=task.pass_rng,
+                task=task,
                 verbose=verbose)
 
         data = run_optimization(
@@ -596,8 +598,9 @@ def run_optimization_no_schedule(
 
         step_list.append(step)
 
+    # TODO: does this budgets correct?
     schedule = OptimizationSchedule(
-        steps=step_list, budgets=list(jnp.multiply(budgets, n_iterations)))
+        steps=step_list, budgets=[1/n_switches]*n_switches)
 
     logger.debug(
         f"Optimization finished with {n_iterations_per_switch*n_switches}"
