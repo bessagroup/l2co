@@ -242,7 +242,8 @@ class DataLoader:
         # Function to highlight the smallest value per row
         def highlight_min_row(row):
             min_val = row.min()
-            return ['font-weight: bold' if val == min_val else '' for val in row]
+            return ['font-weight: bold' if
+                    val == min_val else '' for val in row]
 
         # Apply styling and scientific notation formatting
         styled_df = (
@@ -739,8 +740,8 @@ class OptimizationDynamics:
             X_trajectory = None
 
         else:
-            X_trajectory = np.atleast_2d([es.output_data['y']
-                                          for _, es in data])
+            X_trajectory = np.vstack([es.output_data['y']
+                                      for _, es in data]).T
 
         return cls(X_features=X_features,
                    X_trajectory=X_trajectory,
@@ -792,7 +793,7 @@ class OptimizationDynamics:
                    opt_steps=opt_steps,
                    previous_step=previous_step)
 
-    def save(self, path: Path | str) -> None:
+    def save(self, path: str) -> None:
         """
         Save the model to a file
 
@@ -803,10 +804,10 @@ class OptimizationDynamics:
         """
         _path = Path(path)
         # Save trajectory and y
-        np.savez(_path.with_suffix('.npz'), **self.to_dict())
+        np.savez(str(_path) + '.npz', **self.to_dict())
 
         # Save features
-        self.X_features.to_csv(_path.with_suffix('.csv'))
+        self.X_features.to_csv(str(_path) + '.csv')
 
         opt_steps_dict = {k: v.to_dict()
                           for k, v in self.opt_steps.items()}
@@ -816,7 +817,7 @@ class OptimizationDynamics:
         else:
             opt_steps_dict['previous_step'] = None
 
-        with open(_path.with_suffix('.json'), 'w') as f:
+        with open(str(_path) + '.json', 'w') as f:
             json.dump(opt_steps_dict, f, indent=4)
 
     def Y_binary(self, rel_tolerance: float = 0.0):
