@@ -187,7 +187,7 @@ def process(config: DictConfig):
     if config.project_job is None:
         project_dir = Path().cwd()
     else:
-        project_dir = Path(config.project_dir) / config.project_job
+        project_dir = Path(config.project_dir) / str(config.project_job)
 
     if not project_dir.exists():
         raise FileNotFoundError(
