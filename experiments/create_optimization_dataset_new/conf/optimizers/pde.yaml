@@ -7,3 +7,7 @@
 - optimizer: lbfgsb
   hyperparameters:
     memory_size: 100
+- optimizer: cmaes
+- optimizer: pso
+  hyperparameters:
+    popsize: 30
