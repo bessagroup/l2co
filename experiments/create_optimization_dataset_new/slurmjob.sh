@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name="RunTaskOnSchedule"
 #SBATCH --partition=compute
-#SBATCH --time=12:00:00
-#SBATCH --nodes=2
+#SBATCH --time=24:00:00
+#SBATCH --ntasks=64
+#SBATCH --nodes=1-3
 #SBATCH --ntasks-per-node=4
-#SBATCH --cpus-per-task=12
-#SBATCH --mem-per-cpu=1GB
+#SBATCH --cpus-per-task=1
 #SBATCH --account=research-ME-mse
 #SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
 
@@ -27,9 +27,6 @@ module load 2023r1
 module load openmpi
 module load miniconda3
 
-# Set OpenMP threads
-export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
-
 echo "======================================="
 echo " Environment Information"
 echo "======================================="
@@ -41,7 +38,7 @@ echo "======================================="
 # Activate conda environment
 unset CONDA_SHLVL
 source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate f3dasm_env
+conda activate l2co
 echo "Conda Environment: $(conda info --envs | grep '*' | awk '{print $1}')"
 
 # Handle Slurm Array Job ID
@@ -49,6 +46,9 @@ if ! [ -n "${SLURM_ARRAY_TASK_ID+1}" ]; then
   SLURM_ARRAY_TASK_ID=-1
   SLURM_ARRAY_JOB_ID="${SLURM_JOB_ID}"
 fi
+
+model_dir="/scratch/${USER}/train_model/"
+project_dir="/scratch/${USER}/create_optimization_dataset_new/"
 
 # Get project folder
 projectfolder=$(basename $(pwd))
@@ -59,8 +59,8 @@ echo " Execution Information"
 echo "======================================="
 echo "Project Folder:   $projectfolder"
 echo "Run Directory:    $run_dir"
-echo "Executing: srun python main.py ++hydra.run.dir=$run_dir"
+echo "Executing: srun python main.py ++hydra.run.dir=$run_dir  ++model_dir=$model_dir ++project_dir=$project_dir $@"
 echo "======================================="
 
 # Run the Python script with MPI
-srun python main.py ++hydra.run.dir=$run_dir
+srun python main.py ++hydra.run.dir=$run_dir ++model_dir=$model_dir ++project_dir=$project_dir "$@"
