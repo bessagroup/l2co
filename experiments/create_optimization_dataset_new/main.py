@@ -17,6 +17,7 @@ from omegaconf import DictConfig
 # Local
 from l2co import (OptimizationSchedule, OptimizationStep, RunOptimization,
                   Task, logger)
+from l2co._src.tasks.continue_from_path import retrieve_tasks
 
 # =============================================================================
 
@@ -58,28 +59,38 @@ def pre_process(config: DictConfig):
 
 def create_experimentdata(config: DictConfig):
     logger.info("== PRE PROCESS ==")
+
     # Task
-    experiment_data_tasks = ExperimentData.from_yaml(
-        config.tasks.experimentdata)
+    if 'retrieve_tasks' in config.tasks:
+        experiment_data_tasks = retrieve_tasks(
+            experiment_data=ExperimentData.from_file(
+                project_dir=Path(
+                    config.project_dir) / str(config.tasks.path)
+            )
+        )
 
-    sampler = Block.from_yaml(init_config=config.tasks.sampler,
-                              call_config=config.tasks.sampler_kwargs)
-
-    sampler.arm(experiment_data_tasks)
-    experiment_data_tasks = sampler.call(data=experiment_data_tasks)
-
-    task_fn = datagenerator(output_names='task')(
-        instantiate(config.tasks.data_generator, _partial_=True)
-    )
-
-    if config.tasks.task_kwargs is None:
-        task_kwargs = {}
     else:
-        task_kwargs = config.tasks.task_kwargs
+        experiment_data_tasks = ExperimentData.from_yaml(
+            config.tasks.experimentdata)
 
-    experiment_data_tasks = task_fn.call(
-        data=experiment_data_tasks,
-        **task_kwargs)
+        sampler = Block.from_yaml(init_config=config.tasks.sampler,
+                                  call_config=config.tasks.sampler_kwargs)
+
+        sampler.arm(experiment_data_tasks)
+        experiment_data_tasks = sampler.call(data=experiment_data_tasks)
+
+        task_fn = datagenerator(output_names='task')(
+            instantiate(config.tasks.data_generator, _partial_=True)
+        )
+
+        if config.tasks.task_kwargs is None:
+            task_kwargs = {}
+        else:
+            task_kwargs = config.tasks.task_kwargs
+
+        experiment_data_tasks = task_fn.call(
+            data=experiment_data_tasks,
+            **task_kwargs)
 
     # Schedule
     domain_schedule = Domain()
