@@ -7,19 +7,20 @@
 #SBATCH -n 1
 #SBATCH --account=mbessa-condo
 
-# Job name variables
-JOB_NAME_1="R_l2co_1"
-JOB_NAME_2="V_l2co_2"
-
 # Parse command-line arguments with defaults
-tasks="${TASKS:?Error: TASKS not set. Exiting...}"
+tasks_path="${tasks_path:?Error: tasks_path not set. Exiting...}"
+tasks="continue"
 schedules="l2co"
-budgets="${BUDGETS:?Error: BUDGETS not set. Exiting...}"
+budgets="${budgets:?Error: budgets not set. Exiting...}"
 optimizers="l2co"
-samplers="${SAMPLERS:-random}"
-seed="${SEED:-42}"
-path="${PATH:-.}"
-mode="${MODE:-cpu}"
+samplers="${samplers:-random}"
+seed="${seed:-42}"
+path="${path:-.}"
+mode="${mode:-cpu}"
+
+# Job name variables
+JOB_NAME_1="R_l2co_$tasks_path"
+JOB_NAME_2="V_l2co_$tasks_path"
 
 # Set job script based on mode
 JOB_SCRIPT="slurmjob_brown.sh"
@@ -36,7 +37,7 @@ DIR_CREATE_OPT_DATA="$BASE_DIR/create_optimization_dataset_new"
 DIR_VALIDATION="$BASE_DIR/data_validation"
 
 # Submit first job
-jobID_1=$(cd $DIR_CREATE_OPT_DATA && sbatch --job-name=$JOB_NAME_1 $JOB_SCRIPT schedules=$schedules tasks=$tasks optimizers=$optimizers budgets=$budgets samplers=$samplers +path=$path ++seed=$seed | awk '{print $4}')
+jobID_1=$(cd $DIR_CREATE_OPT_DATA && sbatch --job-name=$JOB_NAME_1 $JOB_SCRIPT schedules=$schedules tasks=$tasks optimizers=$optimizers budgets=$budgets samplers=$samplers +path=$path +tasks.path=$tasks_path ++seed=$seed | awk '{print $4}')
 echo "First Job submitted: $jobID_1"
 
 # Submit second job (dependent on first job)
