@@ -63,4 +63,4 @@ echo "Executing: srun python main.py ++hydra.run.dir=$run_dir  ++model_dir=$mode
 echo "======================================="
 
 # Run the Python script with MPI
-srun python main.py ++hydra.run.dir=$run_dir ++model_dir=$model_dir ++project_dir=$project_dir "$@"
+mpirun python main.py ++hydra.run.dir=$run_dir ++model_dir=$model_dir ++project_dir=$project_dir "$@"
