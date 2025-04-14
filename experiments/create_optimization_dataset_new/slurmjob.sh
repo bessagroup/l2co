@@ -3,11 +3,10 @@
 #SBATCH --partition=compute
 #SBATCH --time=24:00:00
 #SBATCH --ntasks=64
-#SBATCH --nodes=1-3
-#SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=1
+#SBATCH --mem-per-cpu=3G
 #SBATCH --account=research-ME-mse
-#SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
+
 
 echo "======================================="
 echo " Slurm Job Information"
