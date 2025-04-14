@@ -145,13 +145,27 @@ class Task:
         return hashlib.sha256(str(t).encode()).hexdigest()[:16]
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> Task:
+    def from_dict(cls, data: Dict[str, Any],
+                  filepath: Optional[str] = None) -> Task:
 
         if 'model' in data['model_path']:
-            model = load_model(model_path=data['model_path']['model'],
-                               shape_path=data['model_path']['shape'])
+            try:
+                model = load_model(model_path=data['model_path']['model'],
+                                   shape_path=data['model_path']['shape'])
+            except FileNotFoundError:
+                new_path_model = Path(filepath).parent / \
+                    Path(data['model_path']['model']).name
+                new_path_shape = Path(filepath).parent / \
+                    Path(data['model_path']['shape']).name
+                model = load_model(model_path=new_path_model,
+                                   shape_path=new_path_shape)
         else:
-            model = load_jnparray(data['model_path']['array'])
+            try:
+                model = load_jnparray(data['model_path']['array'])
+            except FileNotFoundError:
+                new_path_array = Path(filepath).parent / \
+                    Path(data['model_path']['array']).name
+                model = load_jnparray(new_path_array)
 
         # Loss function is loaded with pickle from a hex string
         loss_fn = cloudpickle.loads(
@@ -208,7 +222,7 @@ class Task:
     def load(cls, filepath: str) -> Task:
         with open(filepath, 'r') as f:
             data = json.load(f)
-        return cls.from_dict(data)
+        return cls.from_dict(data, filepath)
 
     def __repr__(self):
         return (
