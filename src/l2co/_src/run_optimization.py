@@ -29,6 +29,7 @@ from .optimizerschedule import (OptimizationSchedule, OptimizationStep,
 from .sampler import NormalWeightSampler, RandomWeightSampler
 from .task import Task
 from .tree_utils import dict_list_to_tree, tree_to_dict_list
+from .validation import validation_fn
 
 # =============================================================================
 
@@ -491,12 +492,14 @@ def run_optimization_no_schedule_multiple_realizations(
             use_scan=use_scan,
         )
 
-        results_list.append(experimentdata_to_xarray(
+        ds = experimentdata_to_xarray(
             data=data,
             popsizes=popsizes,
             budgets=schedule.budgets,
             n_iterations=n_iterations,
-            include_input=include_input))
+            include_input=include_input)
+
+        results_list.append(validation_fn(ds))
 
         schedule_list.append(schedule)
 

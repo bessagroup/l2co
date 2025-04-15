@@ -1,7 +1,7 @@
 # import argparse
 import hashlib
 import json
-from numbers import Integral, Real
+from functools import partial
 from pathlib import Path
 from typing import Dict, Tuple
 
@@ -12,9 +12,9 @@ import xarray as xr
 from f3dasm import ExperimentData
 
 from l2co import logger as l2co_logger
-from l2co._src.optimizerschedule import (OptimizationSchedule,
-                                         OptimizationStep, step_n_iterations)
+from l2co._src.optimizerschedule import OptimizationSchedule, OptimizationStep
 from l2co._src.task import Task
+from l2co._src.validation import validation_fn
 
 
 @hydra.main(config_path=".", config_name="config")
@@ -186,51 +186,49 @@ def create_optimization_data(
     # Fill al nans with the placeholder path
     df: pd.DataFrame = df.fillna(placeholder_path)
 
-    def validation_fn(x: xr.Dataset):
-        # QUICKFIX!!
-        popsizes = x.attrs['popsizes']
-        # popsizes = x.budget.size // x.attrs['n_iterations']
+    # def validation_fn(x: xr.Dataset):
+    #     popsizes = x.attrs['popsizes']
 
-        if isinstance(popsizes, Integral):
-            popsizes = [popsizes]
+    #     if isinstance(popsizes, Integral):
+    #         popsizes = [popsizes]
 
-        budgets = x.attrs['budgets']
+    #     budgets = x.attrs['budgets']
 
-        if isinstance(budgets, Real):
-            budgets = [budgets]
+    #     if isinstance(budgets, Real):
+    #         budgets = [budgets]
 
-        n_iterations = x.attrs['n_iterations']
+    #     n_iterations = x.attrs['n_iterations']
 
-        iterations_per_step = step_n_iterations(n_iterations=n_iterations,
-                                                budgets=budgets)
+    #     iterations_per_step = step_n_iterations(n_iterations=n_iterations,
+    #                                             budgets=budgets)
 
-        bins = np.concatenate(([0], np.cumsum(
-            [i*pop for
-             pop, i in zip(popsizes, iterations_per_step)])))
+    #     bins = np.concatenate(([0], np.cumsum(
+    #         [i*pop for
+    #          pop, i in zip(popsizes, iterations_per_step)])))
 
-        bins[-1] += 1
+    #     bins[-1] += 1
 
-        y_bins = x['output'].groupby_bins(
-            "budget", bins=bins, include_lowest=True, right=False)
+    #     y_bins = x['output'].groupby_bins(
+    #         "budget", bins=bins, include_lowest=True, right=False)
 
-        y_coarsen = [y_group.coarsen(budget=pop)
-                     for (_, y_group), pop in zip(y_bins, popsizes)]
+    #     y_coarsen = [y_group.coarsen(budget=pop)
+    #                  for (_, y_group), pop in zip(y_bins, popsizes)]
 
-        y_mean: xr.DataArray = xr.concat(
-            [_y.mean() for _y in y_coarsen], dim='budget')
-        y_std = xr.concat([_y.std() for _y in y_coarsen], dim='budget')
-        y_min = xr.concat([_y.min() for _y in y_coarsen], dim='budget')
+    #     y_mean: xr.DataArray = xr.concat(
+    #         [_y.mean() for _y in y_coarsen], dim='budget')
+    #     y_std = xr.concat([_y.std() for _y in y_coarsen], dim='budget')
+    #     y_min = xr.concat([_y.min() for _y in y_coarsen], dim='budget')
 
-        x = xr.Dataset(
-            {'output_mean': y_mean,
-             'output_std': y_std,
-             'output_min': y_min},
-            coords={'budget': np.linspace(0., 1., n_iterations)})
+    #     x = xr.Dataset(
+    #         {'output_mean': y_mean,
+    #          'output_std': y_std,
+    #          'output_min': y_min},
+    #         coords={'budget': np.linspace(0., 1., n_iterations)})
 
-        x = x.interp(budget=np.linspace(
-            0., 1., budget_steps), method='nearest')
+    #     x = x.interp(budget=np.linspace(
+    #         0., 1., budget_steps), method='nearest')
 
-        return x
+    #     return x
 
     xarr_full = xr.open_mfdataset(
         df.to_numpy().tolist(),
@@ -240,7 +238,7 @@ def create_optimization_data(
                         df.columns], dims=['optimizer']),
                     ],
         parallel=True,
-        preprocess=validation_fn,
+        preprocess=partial(validation_fn, budget_steps=budget_steps),
         coords='minimal',
         join='outer',
     )
