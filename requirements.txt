@@ -1,4 +1,4 @@
-numpy
+numpy<2.0.0
 scipy
 f3dasm >= 2.0.1
 f3dasm_optimize
@@ -9,7 +9,7 @@ dask
 opfunu @ git+https://github.com/mpvanderschelling/opfunu@jaxnumpy
 tqdm
 optax
-evosax
+evosax==0.1.6
 equinox
 cloudpickle
 bottleneck
