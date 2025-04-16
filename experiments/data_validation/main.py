@@ -12,7 +12,7 @@ import xarray as xr
 from f3dasm import ExperimentData
 
 from l2co import logger as l2co_logger
-from l2co._src.optimizerschedule import OptimizationSchedule, OptimizationStep
+from l2co._src.optimizerschedule import OptimizationSchedule
 from l2co._src.task import Task
 from l2co._src.validation import validation_fn
 
@@ -22,25 +22,14 @@ def main(config):
     path = Path(config.opt_dir) / str(config.path)
 
     experimentdata = ExperimentData.from_file(path)
-    labels, opt_data, placeholder_path, step_dict = create_entire_dataset(
+    opt_data, placeholder_path = create_entire_dataset(
         experiment_data=experimentdata,
         budget_steps=config.budget_steps,)
 
     # Store the files
-    opt_data.to_netcdf(path / 'entire_dataset.nc')
+    opt_data.to_netcdf((path / 'entire_dataset').with_suffix('.nc'))
 
     l2co_logger.info(f"Entire dataset stored at {path / 'entire_dataset.nc'}")
-
-    labels.to_csv(path / 'labels.csv')
-
-    l2co_logger.info(f"Labels stored at {path / 'labels.csv'}")
-
-    experimentdata.store()
-
-    with open(path / 'steps.json', 'w') as f:
-        json.dump(step_dict, f, indent=4)
-
-    l2co_logger.info(f"Steps stored at {path / 'steps.json'}")
 
     # Remove placeholder
     placeholder_path.unlink()
@@ -55,7 +44,7 @@ def create_entire_dataset(
         seed_column_name: str = 'seed',
         optimizer_column_name: str = 'optimizer schedule',
         task_column_name: str = 'task'
-) -> Tuple[pd.DataFrame, xr.Dataset, Path, Dict[str, OptimizationStep]]:
+) -> Tuple[xr.Dataset, Path]:
     """
     Create an entire dataset from a given experiment data object.
 
@@ -132,11 +121,10 @@ def create_entire_dataset(
 
     # ============= Create the optimization data =============
 
-    labels = create_task_labels_df(pivot_table)
     opt_data, placeholder_path = create_optimization_data(
         pivot_table, budget_steps=budget_steps, step_dict=step_dict)
 
-    return labels, opt_data, placeholder_path, step_dict
+    return opt_data, placeholder_path
 
 
 def create_task_labels_df(pivot_table: pd.DataFrame) -> pd.DataFrame:

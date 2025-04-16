@@ -36,11 +36,16 @@ optimizer_line_style = {'sbs': '--'}
 optimizer_color_map = {'sbs': 'black'}
 
 # Define TextInput widgets for experiment and path
-experiment_single_optimizer_widget = pn.widgets.TextInput(
-    value=DEFAULT_EXPERIMENT, name="Data single optimizers")
+experiment_single_optimizer_widget = pn.widgets.Select(
+    name="Data single optimizer",
+    options=[],
+)
 
-experiment_l2co_widget = pn.widgets.TextInput(
-    value=DEFAULT_EXPERIMENT, name="Data L2CO model")
+experiment_l2co_widget = pn.widgets.MultiSelect(
+    name="Data L2CO model",
+    options=[],
+    size=6  # Adjust height
+)
 
 path_widget = pn.widgets.TextInput(value=DEFAULT_PATH, name="Path")
 
@@ -50,7 +55,7 @@ plot_button = pn.widgets.Button(name="Plot", button_type="primary")
 task_df_table = pn.widgets.Tabulator(
     pd.DataFrame(),
     height=500,
-    selectable='checkbox',  # 👈 Enables checkboxes
+    selectable='checkbox',
 )
 
 status_message = pn.pane.Markdown("Hello :)", sizing_mode="stretch_width")
@@ -61,11 +66,46 @@ optimizer_checkbox_group = pn.widgets.CheckBoxGroup(
 
 plot_output = pn.Column()
 
+# Spreadsheet tab widgets
+spreadsheet_button = pn.widgets.Button(
+    name="Generate Spreadsheet", button_type="success")
+spreadsheet_output = pn.Column()
+
+
 # Global variable to store the dataloader
 dataloader = None
 
-
 # ============================================================================
+
+
+def update_single_optimizer_options(event=None):
+    base_path = Path(path_widget.value) / DEFAULT_DATA_FOLDER
+    if not base_path.exists():
+        experiment_single_optimizer_widget.options = []
+        return
+    folders = [f.name for f in base_path.iterdir() if f.is_dir()]
+    experiment_single_optimizer_widget.options = folders
+
+
+path_widget.param.watch(update_single_optimizer_options, 'value')
+
+
+def update_l2co_files(event=None):
+    base_path = Path(path_widget.value) / DEFAULT_L2CO_FOLDER
+    if not experiment_single_optimizer_widget.value:
+        experiment_l2co_widget.options = []
+        return
+    folder = base_path / experiment_single_optimizer_widget.value
+    if not folder.exists():
+        experiment_l2co_widget.options = []
+        return
+    nc_files = [f.name for f in folder.glob("*.nc")]
+    experiment_l2co_widget.options = nc_files
+
+
+experiment_single_optimizer_widget.param.watch(update_l2co_files, 'value')
+
+
 def load_dataloader(event=None):
     global dataloader
     global optimizer_color_map
@@ -76,22 +116,24 @@ def load_dataloader(event=None):
 
     try:
         d_single = DataLoader.from_file(filepath_single)
-        status_message.object = f"✅ Loaded Single DataLoader from `{filepath_single}`"
+        status_message.object = f"✅ Loaded Single DataLoader from `{filepath_single}`\n"
     except FileNotFoundError:
         dataloader = None
         task_df_table.value = pd.DataFrame()
-        status_message.object = f"❌ Error: Single DataLoader not found at `{filepath_single}`"
+        status_message.object = f"❌ Error: Single DataLoader not found at `{filepath_single}`\n"
         return
 
-    filepath_l2co = Path(path_widget.value) / DEFAULT_L2CO_FOLDER / \
-        experiment_l2co_widget.value
-
-    try:
-        d_l2co = DataLoader.from_file(filepath_l2co)
-        status_message.object += f"\n✅ Loaded L2CO DataLoader from `{filepath_l2co}`"
-    except FileNotFoundError:
-        d_l2co = None
-        status_message.object += f"\n⚠️ L2CO DataLoader not found at `{filepath_l2co}`"
+    d_l2co = None
+    base_path = Path(path_widget.value) / DEFAULT_L2CO_FOLDER / \
+        experiment_single_optimizer_widget.value
+    for filename in experiment_l2co_widget.value:
+        try:
+            this_d = DataLoader.from_file(path=base_path,
+                                          data_filename=filename)
+            d_l2co = this_d if d_l2co is None else d_l2co + this_d
+            status_message.object += f"\n✅ Loaded L2CO DataLoader from `{filename}`\n"
+        except FileNotFoundError:
+            status_message.object += f"\n⚠️ Could not load `{filename}`\n"
 
     dataloader = d_single + d_l2co if d_l2co else d_single
     df = retrieve_task_df()
@@ -124,6 +166,26 @@ def retrieve_task_df():
             .set_index(dataloader.task_labels.itemID.values)
             .drop_duplicates()
             )
+
+
+def generate_spreadsheet(event=None):
+    global dataloader
+
+    if dataloader is None:
+        spreadsheet_output.objects = [
+            pn.pane.Markdown("### ❌ No Data Available")]
+        return
+
+    try:
+        styled_df = dataloader.to_spreadsheet()
+        spreadsheet_output.objects = [pn.pane.DataFrame(
+            styled_df, width=1000, height=600, sizing_mode="stretch_width")]
+    except Exception as e:
+        spreadsheet_output.objects = [
+            pn.pane.Markdown(f"### ❌ Error:\n```{e}```")]
+
+
+spreadsheet_button.on_click(generate_spreadsheet)
 
 
 MAX_LABEL_LENGTH = 20  # Adjust as needed
@@ -212,20 +274,46 @@ def update_plot(event=None):
 plot_button.on_click(update_plot)
 
 
-# filter_panel = pn.Column(*filter_widgets.values())
-# Layout definition
-left_panel = pn.Column(
-    "## Experiment Path", path_widget, experiment_single_optimizer_widget, experiment_l2co_widget,
+update_single_optimizer_options()
+update_l2co_files()
+
+
+# First tab: Load data
+load_tab = pn.Column(
+    "## Experiment Path",
+    path_widget,
+    experiment_single_optimizer_widget,
+    experiment_l2co_widget,
     pn.Spacer(height=10),
     status_message,
     load_button,
+    "### Select Optimizers",
+    optimizer_checkbox_group,
+    "### Select Problems",
+    task_df_table,
+)
+
+# Second tab: Selection & Plotting
+plot_tab = pn.Column(
+    "## Plotting",
     plot_button,
     pn.Spacer(height=10),
-    "## Optimizers", optimizer_checkbox_group,
-    "## Problems", task_df_table,
+    plot_output
+)
+
+# Third tab: Spreadsheet view
+spreadsheet_tab = pn.Column(
+    "## Export to Spreadsheet",
+    spreadsheet_button,
+    spreadsheet_output
+)
+
+tabs = pn.Tabs(
+    ("📂 Load Data", load_tab),
+    ("📊 Performance Plots", plot_tab),
+    ("🧾 Spreadsheet", spreadsheet_tab),
+    dynamic=True,
 )
 
 
-# Full layout
-layout = pn.Row(left_panel, plot_output)
-layout.servable()
+tabs.servable()

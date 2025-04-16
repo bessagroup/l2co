@@ -602,13 +602,168 @@ def run_optimization_no_schedule(
 
         step_list.append(step)
 
-    # TODO: does this budgets correct?
     schedule = OptimizationSchedule(
         steps=step_list, budgets=[1/n_switches]*n_switches)
 
     logger.debug(
         f"Optimization finished with {n_iterations_per_switch*n_switches}"
         f"iterations!")
+
+    return data, schedule, popsizes
+
+
+def run_optimization_random_schedule_multiple_realizations(
+        task: Task,
+        budget_fn: Callable[[], int],
+        partition_factor: float,
+        seed: int,
+        trained_l2co_model: L2CO_model,
+        n_switches: int = 1,
+        n_realizations: int = 1,
+        include_input: bool = False,
+        bounded: Optional[Tuple[float, float]] = None,
+        sampler: Optional[Block] = None,
+        verbose: bool = False,
+        use_scan: Optional[bool] = None,
+        track_params: bool = False
+) -> Tuple[xr.DataArray, List[OptimizationSchedule]]:
+    schedule_list: List[OptimizationSchedule] = []
+    results_list: List[xr.DataArray] = []
+
+    n_iterations: int = int(budget_fn(task=task) * partition_factor)
+
+    for s in range(n_realizations):
+        if sampler is None:
+            if bounded is None:
+                sampler = NormalWeightSampler()
+            else:
+                sampler = RandomWeightSampler(
+                    lower_bound=bounded[0],
+                    upper_bound=bounded[1])
+
+        data, schedule, popsizes = run_optimization_random_schedule(
+            trained_l2co_model=trained_l2co_model,
+            seed=seed + s,
+            bounded=bounded,
+            sampler=sampler,
+            task=task,
+            n_switches=n_switches,
+            n_iterations=n_iterations,
+            include_input=track_params,
+            verbose=verbose,
+            use_scan=use_scan,
+        )
+
+        ds = experimentdata_to_xarray(
+            data=data,
+            popsizes=popsizes,
+            budgets=schedule.budgets,
+            n_iterations=n_iterations,
+            include_input=include_input)
+
+        results_list.append(validation_fn(ds))
+
+        schedule_list.append(schedule)
+
+    results = xr.concat(results_list, dim='realization')
+
+    return results, schedule_list
+
+
+def run_optimization_random_schedule(
+        task: Task,
+        trained_l2co_model: L2CO_model,
+        n_switches: int,
+        n_iterations: int,
+        seed: int,
+        bounded: Optional[Tuple[float, float]],
+        sampler: Block,
+        include_input: bool,
+        verbose: bool,
+        use_scan: Optional[bool],
+) -> Tuple[ExperimentData, OptimizationSchedule, List[int]]:
+
+    gen = onp.random.default_rng(seed)
+
+    budgets = step_n_iterations_equal(
+        n_iterations=n_iterations, n_switches=n_switches)
+
+    # Start with empty ExperimentData
+    data = None
+
+    step_list = []
+
+    # Predict the first optimizer
+    step: OptimizationStep = gen.choice(
+        list(trained_l2co_model.stage0_optimizers.items()))
+
+    logger.debug(
+        f"[window 0/{n_switches}] Predicted optimizer: {step.optimizer}")
+
+    previous_step = None
+    step_list.append(step)
+    loaded_dataset = task.loaded_dataset
+    popsizes = []
+
+    for s, n_iterations_per_switch in enumerate(budgets):
+
+        learning_data = batch_iter(
+            dataset=loaded_dataset, n_evals=n_iterations_per_switch,
+            batch_size=task.batch_size, key=seed)
+
+        if use_scan is None:
+            _use_scan = True if isinstance(
+                learning_data, NoneIterator) else False
+        else:
+            _use_scan = use_scan
+
+        if previous_step is None or \
+                previous_step.optimizer != step.optimizer:
+            update_step = OPT_MAPPING[step.optimizer](
+                **step.hyperparameters, seed=seed,
+                bounded=bounded,
+                include_input=include_input,
+                pass_rng=task.pass_rng,
+                task=task,
+                verbose=verbose)
+
+        data = run_optimization(
+            task=task,
+            update_step=update_step,
+            sampler=sampler,
+            n_iterations=n_iterations_per_switch,
+            learning_data=learning_data,
+            popsize=update_step.popsize,
+            x0_strategy=step.x0_strategy,
+            seed=seed,
+            use_scan=_use_scan,
+            data=data,
+        )
+
+        # Append population size
+        popsizes.append(update_step.popsize)
+
+        if s == n_switches - 1:
+            break
+
+        previous_step = step.copy()
+
+        step: OptimizationStep = gen.choice(
+            list(
+                trained_l2co_model.stage1_models_optimizers[
+                    previous_step.name].values()))
+
+        logger.debug(
+            f"[window {s}/{n_switches}] Predicted optimizer: {step.optimizer}")
+
+        step_list.append(step)
+
+    schedule = OptimizationSchedule(
+        steps=step_list, budgets=[1/n_switches]*n_switches)
+
+    logger.debug(
+        f"Optimization finished with {n_iterations_per_switch*n_switches}"
+        f"iterations! (random choices)")
 
     return data, schedule, popsizes
 

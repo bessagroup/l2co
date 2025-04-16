@@ -92,9 +92,62 @@ class DataLoader:
 #                                                      Alternative Constructors
 # =============================================================================
 
-
     @classmethod
     def from_file(
+        cls, path: str, data_filename: str = 'entire_dataset'
+    ) -> DataLoader:
+        # Create path object
+        _path = Path(path)
+
+        if (_path / 'steps.json').exists():
+            return cls.from_file_legacy(path=path, data_filename=data_filename)
+
+        # Retrieve the optimization dynamics data
+        data = xr.open_dataset(
+            (_path / data_filename).with_suffix('.nc'))
+
+        def parse_mixed_value(val: str):
+            """Try to convert a string into int, float, or leave as string."""
+            if val.lower() == "true":
+                return True
+            elif val.lower() == "false":
+                return False
+            try:
+                if "." in val or "e" in val.lower():
+                    return float(val)
+                return int(val)
+            except ValueError:
+                return val
+
+        def my_f(x):
+            return np.vectorize(parse_mixed_value)(x)
+
+        task_labels = xr.apply_ufunc(
+            my_f,
+            data['task_labels'],
+            input_core_dims=[["problem"]],
+            output_core_dims=[["problem"]],
+            vectorize=True,
+            dask="allowed",
+            output_dtypes=[object],
+        ).T
+
+        # Opt steps
+        opt_steps = {name: OptimizationSchedule.from_json_string(
+            opt) for name, opt in data['opt_steps'].to_series().items()}
+
+        # delete opt_step and task_labels from data
+        data = data.drop_vars(
+            ['opt_steps', 'task_labels']).drop_dims('features')
+
+        return cls(
+            data=data,
+            task_labels=task_labels,
+            opt_steps=dict(sorted(opt_steps.items())),
+        )
+
+    @classmethod
+    def from_file_legacy(
         cls, path: str, labels_filename: str = 'labels',
             data_filename: str = 'entire_dataset',
             opt_steps_filename: str = 'steps'):
