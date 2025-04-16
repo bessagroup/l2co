@@ -112,7 +112,8 @@ def create_entire_dataset(
         schedules.append(schedule.tag_hashable)
         del schedule
 
-    step_dict = {schedule.name: schedule.to_dict() for schedule in step_list}
+    step_dict: Dict[str, OptimizationSchedule] = {
+        schedule.name: schedule.to_dict() for schedule in step_list}
 
     df_schedules = pd.DataFrame(
         schedules, columns=[f"schedule{i}" for i in range(len(schedules[0]))])
@@ -133,7 +134,7 @@ def create_entire_dataset(
 
     labels = create_task_labels_df(pivot_table)
     opt_data, placeholder_path = create_optimization_data(
-        pivot_table, budget_steps=budget_steps)
+        pivot_table, budget_steps=budget_steps, step_dict=step_dict)
 
     return labels, opt_data, placeholder_path, step_dict
 
@@ -161,13 +162,20 @@ def create_task_labels_df(pivot_table: pd.DataFrame) -> pd.DataFrame:
 
 def create_optimization_data(
         pivot_table: pd.DataFrame,
-        budget_steps: int) -> Tuple[xr.Dataset, Path]:
+        budget_steps: int,
+        step_dict: Dict[str, OptimizationSchedule]) -> Tuple[xr.Dataset, Path]:
 
     df = pivot_table.copy(deep=True)
-
-    # Hashing
     df_labels = create_task_labels_df(df)
 
+    # Task labels
+    xarr_task_labels = xr.DataArray(df_labels.values,
+                                    coords={'itemID': df_labels.index,
+                                            'features': df_labels.columns},
+                                    dims=['itemID', 'features'],
+                                    )
+
+    # Hashing
     df.index = df_labels.index
     df.columns = pd.DataFrame([{v[0]: v[1] for v in col}
                               for col in df.columns.droplevel(0)])['opt_name']
@@ -185,50 +193,6 @@ def create_optimization_data(
 
     # Fill al nans with the placeholder path
     df: pd.DataFrame = df.fillna(placeholder_path)
-
-    # def validation_fn(x: xr.Dataset):
-    #     popsizes = x.attrs['popsizes']
-
-    #     if isinstance(popsizes, Integral):
-    #         popsizes = [popsizes]
-
-    #     budgets = x.attrs['budgets']
-
-    #     if isinstance(budgets, Real):
-    #         budgets = [budgets]
-
-    #     n_iterations = x.attrs['n_iterations']
-
-    #     iterations_per_step = step_n_iterations(n_iterations=n_iterations,
-    #                                             budgets=budgets)
-
-    #     bins = np.concatenate(([0], np.cumsum(
-    #         [i*pop for
-    #          pop, i in zip(popsizes, iterations_per_step)])))
-
-    #     bins[-1] += 1
-
-    #     y_bins = x['output'].groupby_bins(
-    #         "budget", bins=bins, include_lowest=True, right=False)
-
-    #     y_coarsen = [y_group.coarsen(budget=pop)
-    #                  for (_, y_group), pop in zip(y_bins, popsizes)]
-
-    #     y_mean: xr.DataArray = xr.concat(
-    #         [_y.mean() for _y in y_coarsen], dim='budget')
-    #     y_std = xr.concat([_y.std() for _y in y_coarsen], dim='budget')
-    #     y_min = xr.concat([_y.min() for _y in y_coarsen], dim='budget')
-
-    #     x = xr.Dataset(
-    #         {'output_mean': y_mean,
-    #          'output_std': y_std,
-    #          'output_min': y_min},
-    #         coords={'budget': np.linspace(0., 1., n_iterations)})
-
-    #     x = x.interp(budget=np.linspace(
-    #         0., 1., budget_steps), method='nearest')
-
-    #     return x
 
     xarr_full = xr.open_mfdataset(
         df.to_numpy().tolist(),
@@ -248,6 +212,21 @@ def create_optimization_data(
 
     # Open the whole thing:
     l2co_logger.info("Opening the whole thing")
+
+    xarr_full['task_labels'] = xarr_task_labels.sel(itemID=xarr_full.itemID)
+
+    # Schedules
+    o = {name: json.dumps(schedule.to_dict())
+         for name, schedule in step_dict.items()}
+
+    xarr_opt_steps = xr.DataArray(
+        data=list(o.values()),
+        coords={'optimizer': list(o.keys())},
+        dims='optimizer',
+        name='schedules'
+    )
+
+    xarr_full['opt_steps'] = xarr_opt_steps
 
     if 'input_dim' in xarr_full.coords:
         return xarr_full.drop('input_dim'), placeholder_path

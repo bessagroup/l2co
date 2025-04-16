@@ -78,6 +78,9 @@ class DataLoader:
         self.opt_steps = opt_steps
 
     def __add__(self, __o: DataLoader) -> DataLoader:
+        if __o is None:
+            return self
+
         data = xr.concat([self.data, __o.data], dim='problem')
         task_labels = xr.concat([self.task_labels, __o.task_labels],
                                 dim='problem')
@@ -85,8 +88,10 @@ class DataLoader:
         return DataLoader(data=data, task_labels=task_labels,
                           opt_steps=opt_steps)
 
+
 #                                                      Alternative Constructors
 # =============================================================================
+
 
     @classmethod
     def from_file(
@@ -341,7 +346,6 @@ class DataLoader:
 #                                                            Selecting problems
 # =============================================================================
 
-
     def select_itemIDs(self, itemIDs: str | Iterable[str]) -> DataLoader:
 
         if len(itemIDs) == 0:
@@ -470,7 +474,6 @@ class DataLoader:
 #                                                          Selecting optimizers
 # =============================================================================
 
-
     def select_single_optimizers(
             self, squash: bool = False) -> DataLoader:
         """
@@ -575,6 +578,7 @@ class DataLoader:
 
 #                                                           Performance metrics
 # =============================================================================
+
 
     def performance_profile(
             self, max_f_value: int = 2.0, include_best: bool = False,

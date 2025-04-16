@@ -200,6 +200,11 @@ class OptimizationSchedule:
             step_data) for step_data in data['steps']]
         return cls(steps=steps, budgets=data['budgets'])
 
+    @classmethod
+    def from_json_string(cls, json_string: str) -> OptimizationSchedule:
+        data = json.loads(json_string)
+        return cls.from_dict(data)
+
     def save_to_json(self, filepath: Path | str):
         with open(Path(filepath).with_suffix('.json'), 'w') as f:
             json.dump(self.to_dict(), f, indent=4)
