@@ -3,7 +3,7 @@ import hashlib
 import json
 from functools import partial
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple
 
 import hydra
 import numpy as np
@@ -112,7 +112,7 @@ def create_entire_dataset(
         schedules.append(schedule.tag_hashable)
         del schedule
 
-    step_dict: Dict[str, OptimizationSchedule] = {
+    step_dict: Dict[str, Dict[str, Any]] = {
         schedule.name: schedule.to_dict() for schedule in step_list}
 
     df_schedules = pd.DataFrame(
@@ -216,8 +216,8 @@ def create_optimization_data(
     xarr_full['task_labels'] = xarr_task_labels.sel(itemID=xarr_full.itemID)
 
     # Schedules
-    o = {name: json.dumps(schedule.to_dict())
-         for name, schedule in step_dict.items()}
+    o = {name: json.dumps(schedule_dict)
+         for name, schedule_dict in step_dict.items()}
 
     xarr_opt_steps = xr.DataArray(
         data=list(o.values()),
