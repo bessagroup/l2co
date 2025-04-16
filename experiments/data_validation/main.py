@@ -213,7 +213,8 @@ def create_optimization_data(
     # Open the whole thing:
     l2co_logger.info("Opening the whole thing")
 
-    xarr_full['task_labels'] = xarr_task_labels.sel(itemID=xarr_full.itemID)
+    xarr_full['task_labels'] = xarr_task_labels.sel(
+        itemID=xarr_full.itemID).astype(str)
 
     # Schedules
     o = {name: json.dumps(schedule_dict)
