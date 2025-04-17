@@ -63,6 +63,8 @@ status_message = pn.pane.Markdown("Hello :)", sizing_mode="stretch_width")
 optimizer_checkbox_group = pn.widgets.CheckBoxGroup(
     name="Optimizers", value=[], options=[])
 
+exclude_optimizer_checkbox_group = pn.widgets.CheckBoxGroup(
+    name="Optimizers", value=[], options=[])
 
 plot_output = pn.Column()
 
@@ -71,6 +73,10 @@ spreadsheet_button = pn.widgets.Button(
     name="Generate Spreadsheet", button_type="success")
 spreadsheet_output = pn.Column()
 
+# Optimizer choices tab widgets
+opt_choices_button = pn.widgets.Button(
+    name="Generate SBS Choices", button_type="success")
+opt_choices_output = pn.Column()
 
 # Global variable to store the dataloader
 dataloader = None
@@ -147,6 +153,7 @@ def load_dataloader(event=None):
                 list(dataloader.optimizers.sortby('optimizer').values))})
         opts = list(dataloader.optimizers.values)
         optimizer_checkbox_group.options = opts
+        exclude_optimizer_checkbox_group.options = opts
         optimizer_checkbox_group.value = opts  # Optional: pre-select all
 
 
@@ -188,6 +195,39 @@ def generate_spreadsheet(event=None):
 spreadsheet_button.on_click(generate_spreadsheet)
 
 
+def generate_opt_choices(event=None):
+    global dataloader
+
+    if dataloader is None:
+        opt_choices_output.objects = [
+            pn.pane.Markdown("### ❌ No Data Available")]
+        return
+
+    exclude_optimizers = exclude_optimizer_checkbox_group.value
+
+    if not exclude_optimizers:
+        exclude_optimizers = None
+
+    try:
+        opt_choices_df = dataloader.display_sbs_table(
+            exclude_optimizer=exclude_optimizers)
+        # opt_choices_output.objects = [pn.pane.DataFrame(
+        #     opt_choices_df, width=1000, height=600, sizing_mode="stretch_width")]
+
+        opt_choices_output.objects = [pn.widgets.Tabulator(
+            opt_choices_df,
+            width=1000,
+            height=600,
+            sizing_mode="stretch_width"
+        )]
+
+    except Exception as e:
+        opt_choices_output.objects = [
+            pn.pane.Markdown(f"### ❌ Error:\n```{e}```")]
+
+
+opt_choices_button.on_click(generate_opt_choices)
+
 MAX_LABEL_LENGTH = 20  # Adjust as needed
 
 
@@ -213,6 +253,10 @@ def update_plot(event=None):
     selected_itemIDs = task_df_table.value.iloc[selected_indices].index.tolist(
     )
     selected_optimizers = optimizer_checkbox_group.value
+    exclude_optimizers = exclude_optimizer_checkbox_group.value
+
+    if not exclude_optimizers:
+        exclude_optimizers = None
 
     if not selected_optimizers:
         plot_output.objects = [pn.pane.Markdown(
@@ -223,7 +267,9 @@ def update_plot(event=None):
     filtered_d = dataloader.select_itemIDs(
         selected_itemIDs).select_optimizer(optimizers=selected_optimizers)
 
-    performance = filtered_d._performance(include_best=False)
+    performance = filtered_d._performance(
+        include_best=True,
+        exclude_optimizer=exclude_optimizers)
 
     # Plotting
     # Create figure with extra space for legend
@@ -296,6 +342,8 @@ load_tab = pn.Column(
 # Second tab: Selection & Plotting
 plot_tab = pn.Column(
     "## Plotting",
+    "### Exclude Optimizers for SBS",
+    exclude_optimizer_checkbox_group,
     plot_button,
     pn.Spacer(height=10),
     plot_output
@@ -305,13 +353,21 @@ plot_tab = pn.Column(
 spreadsheet_tab = pn.Column(
     "## Export to Spreadsheet",
     spreadsheet_button,
-    spreadsheet_output
+    spreadsheet_output,
+)
+
+opt_choices_tab = pn.Column(
+    '## Optimizer Choices',
+    exclude_optimizer_checkbox_group,
+    opt_choices_button,
+    opt_choices_output,
 )
 
 tabs = pn.Tabs(
     ("📂 Load Data", load_tab),
     ("📊 Performance Plots", plot_tab),
     ("🧾 Spreadsheet", spreadsheet_tab),
+    ("🗂️ Optimizer Choices", opt_choices_tab),
     dynamic=True,
 )
 

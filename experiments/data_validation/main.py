@@ -22,7 +22,7 @@ def main(config):
     path = Path(config.opt_dir) / str(config.path)
 
     experimentdata = ExperimentData.from_file(path)
-    opt_data, placeholder_path = create_entire_dataset(
+    opt_data, pivot_table_schedules, placeholder_path = create_entire_dataset(
         experiment_data=experimentdata,
         budget_steps=config.budget_steps,)
 
@@ -34,6 +34,13 @@ def main(config):
     # Remove placeholder
     placeholder_path.unlink()
 
+    if pivot_table_schedules is not None:
+        pivot_table_schedules.to_csv(
+            (path / 'entire_dataset_schedules').with_suffix('.csv'))
+
+        l2co_logger.info(
+            f"Entire dataset schedules stored at {path / 'entire_dataset_schedules.csv'}")
+
     l2co_logger.info("End of the program")
 
 
@@ -43,8 +50,9 @@ def create_entire_dataset(
     loss_column_name: str = 'loss history',
         seed_column_name: str = 'seed',
         optimizer_column_name: str = 'optimizer schedule',
-        task_column_name: str = 'task'
-) -> Tuple[xr.Dataset, Path]:
+        task_column_name: str = 'task',
+        l2co_schedules_column_name: str = 'l2co schedules',
+) -> Tuple[xr.Dataset, pd.DataFrame | None, Path]:
     """
     Create an entire dataset from a given experiment data object.
 
@@ -72,16 +80,73 @@ def create_entire_dataset(
     experiment_data = experiment_data.select_with_status(
         'finished').reset_index()
 
-    df, df_output = experiment_data.to_pandas(keep_references=True)
-
-    df[loss_column_name] = df_output[loss_column_name]
+    df_input, df_output = experiment_data.to_pandas(keep_references=True)
 
     # preceed every entry of df_output with experimentdata.project_dir
-    df = df.map(
+    df_input = df_input.map(
         lambda x: experiment_data.project_dir / 'experiment_data' / x,
         na_action='ignore')
 
+    df_output = df_output.map(
+        lambda x: experiment_data.project_dir / 'experiment_data' / x,
+        na_action='ignore')
+
+    df = pd.concat([
+        df_input[task_column_name],
+        df_input[optimizer_column_name],
+        df_output[loss_column_name]
+    ], axis=1)
+
     # ============= Create the labels =============
+
+    pivot_table, step_dict = create_pivot_table(
+        df=df, loss_column_name=loss_column_name,
+        optimizer_column_name=optimizer_column_name,
+        task_column_name=task_column_name)
+
+    # ============= Create the optimization data =============
+
+    opt_data, placeholder_path = create_optimization_data(
+        pivot_table, budget_steps=budget_steps, step_dict=step_dict)
+
+    if 'l2co schedules' in experiment_data.domain.output_names:
+        df_schedules = pd.concat([
+            df_input[task_column_name],
+            df_input[optimizer_column_name],
+            df_output[l2co_schedules_column_name]
+        ], axis=1)
+
+        pivot_table_schedules, _ = create_pivot_table(
+            df=df_schedules, loss_column_name=l2co_schedules_column_name,
+            optimizer_column_name=optimizer_column_name,
+            task_column_name=task_column_name)
+
+        pivot_table_schedules.index = create_task_labels_df(
+            pivot_table_schedules).index
+
+        pivot_table_schedules.columns = pd.DataFrame(
+            [{v[0]: v[1] for v in col}
+             for col in pivot_table_schedules.columns.droplevel(0)]
+        )['opt_name']
+
+        def convert_to_json_str(x):
+            with open(x) as f:
+                data = json.load(f)
+            return json.dumps(data)
+
+        pivot_table_schedules = pivot_table_schedules.map(convert_to_json_str)
+    else:
+        pivot_table_schedules = None
+
+    return opt_data, pivot_table_schedules, placeholder_path
+
+
+def create_pivot_table(
+    df: pd.DataFrame,
+        loss_column_name: str = 'loss history',
+        optimizer_column_name: str = 'optimizer schedule',
+        task_column_name: str = 'task'
+) -> Tuple[pd.DataFrame, Dict[str, Dict[str, Any]]]:
 
     labels = []
     for task_path in df[task_column_name]:
@@ -119,12 +184,7 @@ def create_entire_dataset(
         aggfunc='first'
     )
 
-    # ============= Create the optimization data =============
-
-    opt_data, placeholder_path = create_optimization_data(
-        pivot_table, budget_steps=budget_steps, step_dict=step_dict)
-
-    return opt_data, placeholder_path
+    return pivot_table, step_dict
 
 
 def create_task_labels_df(pivot_table: pd.DataFrame) -> pd.DataFrame:

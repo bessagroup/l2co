@@ -69,6 +69,15 @@ def experimentdata_to_xarray(data: ExperimentData,
     ds.attrs['budgets'] = budgets
     ds.attrs['n_iterations'] = n_iterations
     return ds
+
+
+def schedule_to_xarray(data: OptimizationSchedule) -> xr.DataArray:
+    x = xr.DataArray(
+        [json.dumps(data.to_dict())],
+        dims=['schedule']
+    )
+    return x
+
 #                                                               Sampling Blocks
 # =============================================================================
 
@@ -409,7 +418,7 @@ class RunOptimization(DataGenerator):
             task: Task, trained_l2co_model: L2CO_model, seed: int,
             n_switches: int) -> ExperimentSample:
         t1 = time()
-        data_xarr, schedule_list = \
+        data_xarr, schedule_xarr = \
             run_optimization_no_schedule_multiple_realizations(
                 task=task,
                 budget_fn=self.budget_fn,
@@ -432,11 +441,8 @@ class RunOptimization(DataGenerator):
 
         experiment_sample.store(
             name='l2co schedules',
-            object=schedule_list,
-            to_disk=True,
-            store_function=save_schedules,
-            load_function=load_schedules,
-        )
+            object=schedule_xarr,
+            to_disk=True)
 
         logger.info((
             f"Finished L2CO optimization: task {task.name} with"
@@ -465,7 +471,7 @@ def run_optimization_no_schedule_multiple_realizations(
         use_scan: Optional[bool] = None,
         track_params: bool = False
 ) -> Tuple[xr.DataArray, List[OptimizationSchedule]]:
-    schedule_list: List[OptimizationSchedule] = []
+    schedules_list: List[xr.DataArray] = []
     results_list: List[xr.DataArray] = []
 
     n_iterations: int = int(budget_fn(task=task) * partition_factor)
@@ -501,11 +507,13 @@ def run_optimization_no_schedule_multiple_realizations(
 
         results_list.append(validation_fn(ds))
 
-        schedule_list.append(schedule)
+        schedules_list.append(schedule_to_xarray(
+            data=schedule))
 
     results = xr.concat(results_list, dim='realization')
+    schedules = xr.concat(schedules_list, dim='realization')
 
-    return results, schedule_list
+    return results, schedules
 
 
 def run_optimization_no_schedule(
@@ -557,8 +565,7 @@ def run_optimization_no_schedule(
         else:
             _use_scan = use_scan
 
-        if previous_step is None or \
-                previous_step.optimizer != step.optimizer:
+        if previous_step is None or previous_step.optimizer != step.optimizer:
             update_step = OPT_MAPPING[step.optimizer](
                 **step.hyperparameters, seed=seed,
                 bounded=bounded,
@@ -717,8 +724,7 @@ def run_optimization_random_schedule(
         else:
             _use_scan = use_scan
 
-        if previous_step is None or \
-                previous_step.optimizer != step.optimizer:
+        if previous_step is None or previous_step.optimizer != step.optimizer:
             update_step = OPT_MAPPING[step.optimizer](
                 **step.hyperparameters, seed=seed,
                 bounded=bounded,

@@ -312,6 +312,18 @@ class DataLoader:
         )
 
         return styled_df
+
+    def display_sbs_table(
+            self, exclude_optimizer: str | Iterable[str]) -> pd.DataFrame:
+        sbs = self._calculate_sbs(performance=self.performance,
+                                  exclude_optimizer=exclude_optimizer)
+        ds = xr.Dataset({'sbs': sbs,
+                         'task_labels': self.task_labels, })
+
+        df_task_labels = ds.groupby('itemID').min().task_labels.to_pandas()
+        df_sbs = ds.groupby('itemID').min().sbs.to_pandas().rename('sbs')
+
+        return pd.concat([df_task_labels, df_sbs], axis=1)
 #                                                                    Properties
 # =============================================================================
 
@@ -368,27 +380,33 @@ class DataLoader:
         performance = performance.ffill(dim='budget')
 
         if include_best:
-
-            if exclude_optimizer is not None:
-                check_sbs = performance.where(
-                    performance.optimizer != exclude_optimizer, drop=True)
-            else:
-                check_sbs = performance
-
-            sbs = check_sbs.groupby('itemID').map(
-                lambda x: x.mean('problem').isel(
-                    budget=-1, drop=True).idxmin(
-                    'optimizer').expand_dims(problem=x.problem)).isel(
-                output_dim=0, drop=True).assign_coords(
-                        {'problem': performance.problem})
-
-            sbs = sbs.fillna(performance.optimizer.values[0])
+            sbs = self._calculate_sbs(self, performance=performance,
+                                      exclude_optimizer=exclude_optimizer)
             perf_sbs = performance.sel(optimizer=sbs, drop=True).reset_coords(
                 'optimizer', drop=True).expand_dims(optimizer=['sbs'])
             performance = xr.merge([performance, perf_sbs]).output_min
 
         print(f"Performance calculation took: {perf_counter()-t_start:0.2f}")
         return performance
+
+    def _calculate_sbs(self, performance: xr.DataArray, exclude_optimizer: str | Iterable[str]) -> xr.DataArray:
+        if exclude_optimizer is not None:
+            if isinstance(exclude_optimizer, str):
+                exclude_optimizer = [exclude_optimizer]
+
+            check_sbs = performance.where(
+                ~performance.optimizer.isin(exclude_optimizer), drop=True)
+        else:
+            check_sbs = performance
+
+        sbs = check_sbs.groupby('itemID').map(
+            lambda x: x.mean('problem').isel(
+                budget=-1, drop=True).idxmin(
+                'optimizer').expand_dims(problem=x.problem)).isel(
+            output_dim=0, drop=True).assign_coords(
+                    {'problem': performance.problem})
+        sbs = sbs.fillna(performance.optimizer.values[0])
+        return sbs
 
     @property
     def performance(self) -> xr.DataArray:
