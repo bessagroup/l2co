@@ -3,7 +3,7 @@ import hashlib
 import json
 from functools import partial
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import hydra
 import numpy as np
@@ -16,30 +16,36 @@ from l2co._src.optimizerschedule import OptimizationSchedule
 from l2co._src.task import Task
 from l2co._src.validation import validation_fn
 
+OPTIMIZATION_DATA_SUFFIX = '.odata'
+OPTIMIZATION_SCHEDULE_SUFFIX = '.osched'
+
 
 @hydra.main(config_path=".", config_name="config")
 def main(config):
     path = Path(config.opt_dir) / str(config.path)
 
     experimentdata = ExperimentData.from_file(path)
-    opt_data, pivot_table_schedules, placeholder_path = create_entire_dataset(
+    opt_data, schedule_data, placeholder_path = create_entire_dataset(
         experiment_data=experimentdata,
         budget_steps=config.budget_steps,)
 
     # Store the files
-    opt_data.to_netcdf((path / 'entire_dataset').with_suffix('.nc'))
+    opt_data.to_netcdf(
+        (path / 'entire_dataset').with_suffix(OPTIMIZATION_DATA_SUFFIX))
 
-    l2co_logger.info(f"Entire dataset stored at {path / 'entire_dataset.nc'}")
+    l2co_logger.info(
+        f"Entire dataset stored at {(path / 'entire_dataset').with_suffix(OPTIMIZATION_DATA_SUFFIX)}")
 
     # Remove placeholder
     placeholder_path.unlink()
 
-    if pivot_table_schedules is not None:
-        pivot_table_schedules.to_csv(
-            (path / 'entire_dataset_schedules').with_suffix('.csv'))
+    if schedule_data is not None:
+        schedule_data.to_netcdf(
+            (path / 'entire_dataset_schedules').with_suffix(OPTIMIZATION_SCHEDULE_SUFFIX))
 
-        l2co_logger.info(
-            f"Entire dataset schedules stored at {path / 'entire_dataset_schedules.csv'}")
+        l2co_logger.info((
+            f"Entire dataset schedules stored at "
+            f"{(path / 'entire_dataset_schedules').with_suffix(OPTIMIZATION_SCHEDULE_SUFFIX)}"))
 
     l2co_logger.info("End of the program")
 
@@ -52,7 +58,7 @@ def create_entire_dataset(
         optimizer_column_name: str = 'optimizer schedule',
         task_column_name: str = 'task',
         l2co_schedules_column_name: str = 'l2co schedules',
-) -> Tuple[xr.Dataset, pd.DataFrame | None, Path]:
+) -> Tuple[xr.Dataset, xr.Dataset | None, Path]:
     """
     Create an entire dataset from a given experiment data object.
 
@@ -107,7 +113,36 @@ def create_entire_dataset(
     # ============= Create the optimization data =============
 
     opt_data, placeholder_path = create_optimization_data(
-        pivot_table, budget_steps=budget_steps, step_dict=step_dict)
+        pivot_table,
+        validation_fn=partial(validation_fn, budget_steps=budget_steps))
+
+    df_labels = create_task_labels_df(pivot_table)
+
+    # Task labels
+    xarr_task_labels = xr.DataArray(df_labels.values,
+                                    coords={'itemID': df_labels.index,
+                                            'features': df_labels.columns},
+                                    dims=['itemID', 'features'],
+                                    )
+
+    opt_data['task_labels'] = xarr_task_labels.sel(
+        itemID=opt_data.itemID).astype(str)
+
+    # Schedules
+    o = {name: json.dumps(schedule_dict)
+         for name, schedule_dict in step_dict.items()}
+
+    xarr_opt_steps = xr.DataArray(
+        data=list(o.values()),
+        coords={'optimizer': list(o.keys())},
+        dims='optimizer',
+        name='schedules'
+    )
+
+    opt_data['opt_steps'] = xarr_opt_steps
+
+    if 'input_dim' in opt_data.coords:
+        opt_data = opt_data.drop('input_dim')
 
     if 'l2co schedules' in experiment_data.domain.output_names:
         df_schedules = pd.concat([
@@ -121,24 +156,18 @@ def create_entire_dataset(
             optimizer_column_name=optimizer_column_name,
             task_column_name=task_column_name)
 
-        pivot_table_schedules.index = create_task_labels_df(
-            pivot_table_schedules).index
+        schedule_data, placeholder_path = create_optimization_data(
+            pivot_table_schedules,
+            validation_fn=None
+        )
 
-        pivot_table_schedules.columns = pd.DataFrame(
-            [{v[0]: v[1] for v in col}
-             for col in pivot_table_schedules.columns.droplevel(0)]
-        )['opt_name']
+        schedule_data = schedule_data['__xarray_dataarray_variable__'].rename(
+            "schedules")
 
-        def convert_to_json_str(x):
-            with open(x) as f:
-                data = json.load(f)
-            return json.dumps(data)
-
-        pivot_table_schedules = pivot_table_schedules.map(convert_to_json_str)
     else:
-        pivot_table_schedules = None
+        schedule_data = None
 
-    return opt_data, pivot_table_schedules, placeholder_path
+    return opt_data, schedule_data, placeholder_path
 
 
 def create_pivot_table(
@@ -210,18 +239,10 @@ def create_task_labels_df(pivot_table: pd.DataFrame) -> pd.DataFrame:
 
 def create_optimization_data(
         pivot_table: pd.DataFrame,
-        budget_steps: int,
-        step_dict: Dict[str, OptimizationSchedule]) -> Tuple[xr.Dataset, Path]:
+        validation_fn: Optional[Callable] = None) -> Tuple[xr.Dataset, Path]:
 
     df = pivot_table.copy(deep=True)
     df_labels = create_task_labels_df(df)
-
-    # Task labels
-    xarr_task_labels = xr.DataArray(df_labels.values,
-                                    coords={'itemID': df_labels.index,
-                                            'features': df_labels.columns},
-                                    dims=['itemID', 'features'],
-                                    )
 
     # Hashing
     df.index = df_labels.index
@@ -250,7 +271,7 @@ def create_optimization_data(
                         df.columns], dims=['optimizer']),
                     ],
         parallel=True,
-        preprocess=partial(validation_fn, budget_steps=budget_steps),
+        preprocess=validation_fn,
         coords='minimal',
         join='outer',
     )
@@ -261,27 +282,7 @@ def create_optimization_data(
     # Open the whole thing:
     l2co_logger.info("Opening the whole thing")
 
-    xarr_full['task_labels'] = xarr_task_labels.sel(
-        itemID=xarr_full.itemID).astype(str)
-
-    # Schedules
-    o = {name: json.dumps(schedule_dict)
-         for name, schedule_dict in step_dict.items()}
-
-    xarr_opt_steps = xr.DataArray(
-        data=list(o.values()),
-        coords={'optimizer': list(o.keys())},
-        dims='optimizer',
-        name='schedules'
-    )
-
-    xarr_full['opt_steps'] = xarr_opt_steps
-
-    if 'input_dim' in xarr_full.coords:
-        return xarr_full.drop('input_dim'), placeholder_path
-
-    else:
-        return xarr_full, placeholder_path
+    return xarr_full, placeholder_path
 
 
 if __name__ == '__main__':

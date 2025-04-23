@@ -61,7 +61,8 @@ class DataLoader:
         self,
         data: xr.Dataset,
         task_labels: xr.DataArray,
-        opt_steps: Dict[str, OptimizationSchedule]
+        opt_steps: Dict[str, OptimizationSchedule],
+        l2co_schedules: Optional[xr.Dataset] = None,
     ):
         """
         A data loader class for stage0 of the L2CO framework.
@@ -76,6 +77,7 @@ class DataLoader:
         self.data = data
         self.task_labels = task_labels
         self.opt_steps = opt_steps
+        self.l2co_schedules = l2co_schedules
 
     def __add__(self, __o: DataLoader) -> DataLoader:
         if __o is None:
@@ -85,8 +87,15 @@ class DataLoader:
         task_labels = xr.concat([self.task_labels, __o.task_labels],
                                 dim='problem')
         opt_steps = {**self.opt_steps, **__o.opt_steps}
+
+        if self.l2co_schedules is not None:
+            l2co_schedules = xr.concat(
+                [self.l2co_schedules, __o.l2co_schedules], dim='problem')
+        else:
+            l2co_schedules = __o.l2co_schedules
+
         return DataLoader(data=data, task_labels=task_labels,
-                          opt_steps=opt_steps)
+                          opt_steps=opt_steps, l2co_schedules=l2co_schedules)
 
 
 #                                                      Alternative Constructors
@@ -103,8 +112,31 @@ class DataLoader:
             return cls.from_file_legacy(path=path, data_filename=data_filename)
 
         # Retrieve the optimization dynamics data
-        data = xr.open_dataset(
-            (_path / data_filename).with_suffix('.nc'))
+        try:
+            data = xr.open_dataset(
+                (_path / data_filename).with_suffix('.nc'))
+        except FileNotFoundError:
+            data = xr.open_dataset(
+                (_path / data_filename).with_suffix('.odata'))
+
+        if (_path / 'entire_dataset_schedules').with_suffix(
+                '.osched').exists():
+            l2co_schedules = xr.open_dataset(
+                (_path / 'entire_dataset_schedules').with_suffix('.osched'))
+
+            # Assuming 'schedules' is the variable with JSON strings
+            def parse_schedule(json_str):
+                return OptimizationSchedule.from_json_string(json_str)
+
+            # This gives you a DataArray of Python objects (OptimizationSchedule instances)
+            l2co_schedules = xr.apply_ufunc(
+                parse_schedule,
+                l2co_schedules["schedules"],
+                vectorize=True,
+                output_dtypes=[object]
+            )
+        else:
+            l2co_schedules = None
 
         def parse_mixed_value(val: str):
             """Try to convert a string into int, float, or leave as string."""
@@ -144,6 +176,7 @@ class DataLoader:
             data=data,
             task_labels=task_labels,
             opt_steps=dict(sorted(opt_steps.items())),
+            l2co_schedules=l2co_schedules
         )
 
     @classmethod
@@ -324,6 +357,32 @@ class DataLoader:
         df_sbs = ds.groupby('itemID').min().sbs.to_pandas().rename('sbs')
 
         return pd.concat([df_task_labels, df_sbs], axis=1)
+
+    def display_l2co_schedules_table(self) -> pd.DataFrame:
+
+        task_labels_l2co = self.task_labels.groupby('itemID').min().sel(
+            itemID=self.l2co_schedules.itemID)
+
+        ds = xr.Dataset({'task_labels': task_labels_l2co,
+                        'schedules': self.l2co_schedules, }
+                        ).sortby('itemID')
+
+        df_schedules = ds.schedules.isel(schedule=0, optimizer=0).to_pandas()
+
+        df_schedules = df_schedules.apply(
+            lambda row: [s.name for s in row.steps])
+        df_schedules = pd.DataFrame(
+            df_schedules.tolist(), index=df_schedules.index)
+
+        df_itemID = ds.task_labels.itemID.to_pandas()
+        df_itemID.name = 'itemID'
+
+        return pd.concat([
+            df_itemID,
+            ds.task_labels.to_pandas(),
+            df_schedules
+        ], axis=1)
+
 #                                                                    Properties
 # =============================================================================
 
@@ -380,7 +439,7 @@ class DataLoader:
         performance = performance.ffill(dim='budget')
 
         if include_best:
-            sbs = self._calculate_sbs(self, performance=performance,
+            sbs = self._calculate_sbs(performance=performance,
                                       exclude_optimizer=exclude_optimizer)
             perf_sbs = performance.sel(optimizer=sbs, drop=True).reset_coords(
                 'optimizer', drop=True).expand_dims(optimizer=['sbs'])
@@ -389,7 +448,8 @@ class DataLoader:
         print(f"Performance calculation took: {perf_counter()-t_start:0.2f}")
         return performance
 
-    def _calculate_sbs(self, performance: xr.DataArray, exclude_optimizer: str | Iterable[str]) -> xr.DataArray:
+    def _calculate_sbs(self, performance: xr.DataArray,
+                       exclude_optimizer: str | Iterable[str]) -> xr.DataArray:
         if exclude_optimizer is not None:
             if isinstance(exclude_optimizer, str):
                 exclude_optimizer = [exclude_optimizer]
@@ -432,10 +492,18 @@ class DataLoader:
             [group for i, group in self.data.groupby(
                 'itemID') if i in itemIDs], dim="problem")
 
+        if self.l2co_schedules is not None:
+            l2co_schedules = xr.concat(
+                [group for i, group in self.l2co_schedules.groupby(
+                    'itemID') if i in itemIDs], dim="problem")
+        else:
+            l2co_schedules = None
+
         return DataLoader(
             task_labels=task_labels,
             data=data,
             opt_steps=self.opt_steps,
+            l2co_schedules=l2co_schedules
         )
 
     def select_problems(self, problem_indices: xr.DataArray) -> DataLoader:
@@ -459,10 +527,16 @@ class DataLoader:
         """
         _problem_indices = problem_indices.sortby('itemID')
 
+        if self.l2co_schedules is not None:
+            l2co_schedules = self.l2co_schedules.sel(problem=_problem_indices)
+        else:
+            l2co_schedules = None
+
         return DataLoader(
             task_labels=self.task_labels.sel(problem=_problem_indices),
             data=self.data.sel(problem=_problem_indices),
             opt_steps=self.opt_steps,
+            l2co_schedules=l2co_schedules
         )
 
     def isel(self, problems: Iterable[int]) -> DataLoader:
@@ -484,10 +558,17 @@ class DataLoader:
         Selects on the problem dimension. Also sorts the problem indices on
         itemID.
         """
+
+        if self.l2co_schedules is not None:
+            l2co_schedules = self.l2co_schedules.isel(problem=problems)
+        else:
+            l2co_schedules = None
+
         return DataLoader(
             task_labels=self.task_labels.isel(problem=problems),
             data=self.data.isel(problem=problems),
             opt_steps=self.opt_steps,
+            l2co_schedules=l2co_schedules
         )
 
     def train_test_split(
@@ -538,7 +619,8 @@ class DataLoader:
         return DataLoader(
             task_labels=self.task_labels,
             data=self.data.sel(budget=slice(t_start, t)),
-            opt_steps=self.opt_steps
+            opt_steps=self.opt_steps,
+            l2co_schedules=self.l2co_schedules
         )
 
 
@@ -597,7 +679,8 @@ class DataLoader:
         return DataLoader(
             task_labels=self.task_labels,
             data=data,
-            opt_steps=dict(sorted(opt_steps.items()))
+            opt_steps=dict(sorted(opt_steps.items())),
+            l2co_schedules=self.l2co_schedules
         )
 
     def query_optimizer(self, optimizer: str) -> DataLoader:
@@ -643,7 +726,8 @@ class DataLoader:
         return DataLoader(
             task_labels=self.task_labels,
             data=data_selected,
-            opt_steps=dict(sorted(new_schedules.items()))
+            opt_steps=dict(sorted(new_schedules.items())),
+            l2co_schedules=self.l2co_schedules,
         )
 
 

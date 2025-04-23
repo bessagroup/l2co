@@ -78,6 +78,11 @@ opt_choices_button = pn.widgets.Button(
     name="Generate SBS Choices", button_type="success")
 opt_choices_output = pn.Column()
 
+# L2CO choices tab widgets
+l2co_choices_button = pn.widgets.Button(
+    name="Show L2CO choices", button_type="success")
+l2co_choices_output = pn.Column()
+
 # Global variable to store the dataloader
 dataloader = None
 
@@ -105,7 +110,7 @@ def update_l2co_files(event=None):
     if not folder.exists():
         experiment_l2co_widget.options = []
         return
-    nc_files = [f.name for f in folder.glob("*.nc")]
+    nc_files = [f.name for f in folder.glob("*.odata")]
     experiment_l2co_widget.options = nc_files
 
 
@@ -211,8 +216,6 @@ def generate_opt_choices(event=None):
     try:
         opt_choices_df = dataloader.display_sbs_table(
             exclude_optimizer=exclude_optimizers)
-        # opt_choices_output.objects = [pn.pane.DataFrame(
-        #     opt_choices_df, width=1000, height=600, sizing_mode="stretch_width")]
 
         opt_choices_output.objects = [pn.widgets.Tabulator(
             opt_choices_df,
@@ -227,6 +230,33 @@ def generate_opt_choices(event=None):
 
 
 opt_choices_button.on_click(generate_opt_choices)
+
+
+def generate_l2co_choices(event=None):
+    global dataloader
+
+    if dataloader is None:
+        l2co_choices_output.objects = [
+            pn.pane.Markdown("### ❌ No Data Available")]
+        return
+
+    try:
+        l2co_choices_df = dataloader.display_l2co_schedules_table()
+
+        l2co_choices_output.objects = [pn.widgets.Tabulator(
+            l2co_choices_df,
+            width=1000,
+            height=600,
+            sizing_mode="stretch_width"
+        )]
+
+    except Exception as e:
+        l2co_choices_output.objects = [
+            pn.pane.Markdown(f"### ❌ Error:\n```{e}```")]
+
+
+l2co_choices_button.on_click(generate_l2co_choices)
+
 
 MAX_LABEL_LENGTH = 20  # Adjust as needed
 
@@ -363,11 +393,18 @@ opt_choices_tab = pn.Column(
     opt_choices_output,
 )
 
+l2co_choices_tab = pn.Column(
+    '## L2CO Choices',
+    l2co_choices_button,
+    l2co_choices_output,
+)
+
 tabs = pn.Tabs(
     ("📂 Load Data", load_tab),
     ("📊 Performance Plots", plot_tab),
     ("🧾 Spreadsheet", spreadsheet_tab),
     ("🗂️ Optimizer Choices", opt_choices_tab),
+    ("🗂️ L2CO Choices", l2co_choices_tab),
     dynamic=True,
 )
 
