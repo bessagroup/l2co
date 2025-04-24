@@ -119,16 +119,15 @@ class DataLoader:
             data = xr.open_dataset(
                 (_path / data_filename).with_suffix('.odata'))
 
-        if (_path / 'entire_dataset_schedules').with_suffix(
+        if (_path / data_filename).with_suffix(
                 '.osched').exists():
             l2co_schedules = xr.open_dataset(
-                (_path / 'entire_dataset_schedules').with_suffix('.osched'))
+                (_path / data_filename).with_suffix('.osched'))
 
             # Assuming 'schedules' is the variable with JSON strings
             def parse_schedule(json_str):
                 return OptimizationSchedule.from_json_string(json_str)
 
-            # This gives you a DataArray of Python objects (OptimizationSchedule instances)
             l2co_schedules = xr.apply_ufunc(
                 parse_schedule,
                 l2co_schedules["schedules"],

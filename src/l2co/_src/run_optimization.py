@@ -270,7 +270,7 @@ def run_optimization(
                    n_samples=popsize,
                    sampler=sampler, seed=seed)
 
-    if x0_strategy == 'new':
+    if x0_strategy in ['new', 'best_one']:
         data_generator = EvaluateModel(task=task, seed=seed)
         data_generator.arm(x0)
         x0 = data_generator.call(data=x0)
@@ -306,6 +306,11 @@ def create_x0(data: ExperimentData, model: PyTree, mode: str, n_samples: int,
         _data = data.sort(
             criterion=lambda es: es.output_data['y'],
             reverse=True)[-n_samples:].reset_index()
+
+    elif mode == 'best_one':
+        _data = data.sort(
+            criterion=lambda es: es.output_data['y'],
+            reverse=True)[-1:].reset_index()
 
     # Check if enough samples are returned
     if len(_data) < n_samples:

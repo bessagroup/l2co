@@ -21,10 +21,9 @@ import numpy as np
 import xarray as xr
 from f3dasm import ExperimentData
 from f3dasm.design import Domain
-from matplotlib.colors import LinearSegmentedColormap, LogNorm, SymLogNorm
-
 from l2co._src.run_optimization import EvaluateModel, experimentdata_to_xarray
 from l2co._src.sampler import GridWeightSampler
+from matplotlib.colors import LinearSegmentedColormap, LogNorm, SymLogNorm
 
 # Local
 from .data_loader import DataLoader, OptimizationDynamics

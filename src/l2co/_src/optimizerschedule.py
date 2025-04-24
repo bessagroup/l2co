@@ -253,6 +253,9 @@ def get_handshake(optimizer_1: str, optimizer_2: str) -> str:
     if optimizer_1.lower() == 'randomsearch':
         return 'best'
 
+    if optimizer_2.lower() in ['cmaes', 'pso', 'sepcmaes']:
+        return 'best_one'
+
     if optimizer_1.lower() == 'cmaes' and optimizer_2.lower() == 'pso':
         return 'last'
 

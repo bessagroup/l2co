@@ -1,13 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name="RunTaskOnScheduleGPU"
-#SBATCH --partition=mbessa-gcondo
+#SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
 #SBATCH --time=12:00:00
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --mem=64GB
 #SBATCH --nodes=1
-#SBATCH --account=mbessa-gcondo
+#SBATCH --account=default
 #SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
 
 echo $LD_LIBRARY_PATH
@@ -53,7 +53,7 @@ if ! [ -n "${SLURM_ARRAY_TASK_ID+1}" ]; then
 fi
 
 model_dir="${HOME}/scratch/train_model/"
-
+project_dir="${HOME}/scratch/create_optimization_dataset_new/"
 
 # Get project folder
 projectfolder=$(basename $(pwd))
@@ -68,4 +68,4 @@ echo "Executing: python main.py ++hydra.run.dir=$run_dir ++model_dir=$model_dir 
 echo "======================================="
 
 # Run the Python script with MPI
-python main.py ++hydra.run.dir=$run_dir ++model_dir=$model_dir ++mode=cluster "$@"
+python main.py ++hydra.run.dir=$run_dir ++model_dir=$model_dir ++project_dir=$project_dir ++mode=cluster "$@"

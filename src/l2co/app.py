@@ -58,6 +58,12 @@ task_df_table = pn.widgets.Tabulator(
     selectable='checkbox',
 )
 
+task_individual_df_table = pn.widgets.Tabulator(
+    pd.DataFrame(),
+    height=500,
+    selectable='checkbox',
+)
+
 status_message = pn.pane.Markdown("Hello :)", sizing_mode="stretch_width")
 
 optimizer_checkbox_group = pn.widgets.CheckBoxGroup(
@@ -82,6 +88,13 @@ opt_choices_output = pn.Column()
 l2co_choices_button = pn.widgets.Button(
     name="Show L2CO choices", button_type="success")
 l2co_choices_output = pn.Column()
+
+
+# Single plotter tab widgets
+single_plot_button = pn.widgets.Button(
+    name="Plot Single", button_type="success")
+
+single_plot_output = pn.Column()
 
 # Global variable to store the dataloader
 dataloader = None
@@ -148,7 +161,9 @@ def load_dataloader(event=None):
 
     dataloader = d_single + d_l2co if d_l2co else d_single
     df = retrieve_task_df()
+    df_individual = retrieve_task_df_individual()
     task_df_table.value = df
+    task_individual_df_table.value = df_individual
 
     if hasattr(dataloader, "optimizers"):
 
@@ -177,6 +192,16 @@ def retrieve_task_df():
             .convert_dtypes()
             .set_index(dataloader.task_labels.itemID.values)
             .drop_duplicates()
+            )
+
+
+def retrieve_task_df_individual():
+    global dataloader
+    if dataloader is None:
+        return pd.DataFrame()
+    return (dataloader.task_labels.to_pandas()
+            .infer_objects()
+            .convert_dtypes()
             )
 
 
@@ -350,6 +375,64 @@ def update_plot(event=None):
 plot_button.on_click(update_plot)
 
 
+# d.data.isel(problem=0, output_dim=0)
+
+
+def update_single_plot(event=None):
+    global dataloader
+    if dataloader is None:
+        single_plot_output.objects = [
+            pn.pane.Markdown("### ❌ No Data Available")]
+        return
+
+    problem = task_individual_df_table.selection[0]
+    log_scale = True
+    fig = plt.figure(figsize=(7, 6))
+    gs = gridspec.GridSpec(2, 2, height_ratios=[5, 1])
+    ax_1 = fig.add_subplot(gs[0, 0])
+    ax_2 = fig.add_subplot(gs[0, 1], sharey=ax_1)
+    ax_legend = fig.add_subplot(gs[1, :])
+    ax_legend.axis("off")
+
+    handles = []
+    labels = []
+
+    for o in dataloader.optimizers.values:
+        line, = dataloader.data.sel(optimizer=o).isel(
+            problem=problem, output_dim=0).output_min.plot(ax=ax_1, label=o)
+
+        m = dataloader.data.sel(optimizer=o).isel(
+            problem=problem, output_dim=0).output_mean
+        std = dataloader.data.sel(optimizer=o).isel(
+            problem=problem, output_dim=0).output_std
+
+        dataloader.data.sel(optimizer=o).isel(
+            problem=problem, output_dim=0).output_mean.plot(ax=ax_2, label=o)
+
+        # 95% confidence interval
+        ax_2.fill_between(m.budget, m - 2 * std, m + 2 * std, alpha=0.2)
+
+        handles.append(line)
+        labels.append(trim_label(o))
+
+    ax_legend.legend(handles, labels, ncol=3, loc="center", frameon=False)
+
+    if log_scale:
+        ax_1.set_yscale('log')
+        ax_2.set_yscale('log')
+    ax_1.set_ylabel('Objective value')
+
+    ax_1.set_title(f'Minimum loss: Problem {problem}')
+    ax_2.set_title(f'Mean + std loss: Problem {problem}')
+
+    plt.tight_layout()
+    plt.close(fig)
+
+    single_plot_output.objects = [pn.pane.Matplotlib(fig, tight=True)]
+
+
+single_plot_button.on_click(update_single_plot)
+
 update_single_optimizer_options()
 update_l2co_files()
 
@@ -399,12 +482,21 @@ l2co_choices_tab = pn.Column(
     l2co_choices_output,
 )
 
+single_plot_tab = pn.Column(
+    '## Single Plot',
+    single_plot_button,
+    task_individual_df_table,
+    single_plot_output,
+
+)
+
 tabs = pn.Tabs(
     ("📂 Load Data", load_tab),
     ("📊 Performance Plots", plot_tab),
     ("🧾 Spreadsheet", spreadsheet_tab),
     ("🗂️ Optimizer Choices", opt_choices_tab),
     ("🗂️ L2CO Choices", l2co_choices_tab),
+    ("📊 Single run", single_plot_tab),
     dynamic=True,
 )
 

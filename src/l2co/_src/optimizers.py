@@ -53,6 +53,20 @@ def choose_es(task: Task, popsize: Optional[int] = None, **kwargs) -> Strategy:
     return optimizer(**kwargs, popsize=popsize)
 
 
+def sepcmaes_variable_popsize(
+        task: Task, popsize: Optional[int] = None, **kwargs) -> Strategy:
+    d = task.dimensionality
+
+    optimizer = partial(
+        EvoSaxUpdate,
+        optimizer=Sep_CMA_ES, update_fn=evosax_scan
+    )
+
+    popsize = int(4+3*jnp.log(d))
+
+    return optimizer(**kwargs, popsize=popsize)
+
+
 # =============================================================================
 
 OPT_MAPPING: Dict[str, Type[UpdateStep]] = {
@@ -61,10 +75,7 @@ OPT_MAPPING: Dict[str, Type[UpdateStep]] = {
         optimizer=optax.adam, update_fn=optax_scan,
         popsize=1),
     'cmaes': choose_es,
-    'sepcmaes': partial(
-        EvoSaxUpdate,
-        optimizer=Sep_CMA_ES, update_fn=evosax_scan,
-    ),
+    'sepcmaes': sepcmaes_variable_popsize,
     'pso': partial(
         EvoSaxUpdate,
         optimizer=PSO, update_fn=evosax_scan,
