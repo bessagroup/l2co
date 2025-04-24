@@ -9,8 +9,8 @@ data_generation:
   kwargs:
     switch: 0.5
 
-partition_factor: 0.20
+partition_factor: 0.50
 
-fraction_combinations: 0.75
+fraction_combinations: 1.0
 
 track_params: True
