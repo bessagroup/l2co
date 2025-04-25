@@ -55,6 +55,25 @@ def main(config):
 def pre_process(config: DictConfig):
     if config.project_job is None:
         create_experimentdata(config)
+    else:
+        project_dir = Path(config.project_dir) / str(config.project_job)
+        if not project_dir.exists():
+            raise FileNotFoundError(
+                f"Project directory {project_dir} does not exist.")
+
+        logger.info(f"Loaded experiment_data from {project_dir}")
+
+        experiment_data = ExperimentData.from_file(project_dir=project_dir,
+                                                   wait_for_creation=True,
+                                                   max_tries=500)
+
+        in_progress_indices = experiment_data.select_with_status(
+            'in_progress').index
+
+        experiment_data.mark(indices=in_progress_indices, status='open',
+                             in_place=True)
+
+        experiment_data.store(project_dir=project_dir)
 
 
 def create_experimentdata(config: DictConfig):
