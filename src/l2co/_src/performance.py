@@ -74,7 +74,8 @@ def scaling2(data: xr.Dataset) -> xr.DataArray:
 
     # Cap the quality indicator value at 1e-8
     ds_output = ds_output.where(
-        (ds_output > 1e-8) | ds_output.isnull(), other=1e-8)
+        (ds_output > 1e-8) | (ds_output <= 0.) | ds_output.isnull(),
+        other=1e-8)
 
     # 2. Make sure the loss is non-negative and non-zero
     group_by_realizations = ds_output.groupby('itemID')

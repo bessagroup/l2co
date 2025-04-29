@@ -22,12 +22,14 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from functools import partial
 from pathlib import Path
 from time import perf_counter
 from typing import Dict, Iterable, Literal, Optional, Tuple
 
 # Third-party
 import numpy as np
+import optax
 import pandas as pd
 import xarray as xr
 from f3dasm import ExperimentData
@@ -35,6 +37,7 @@ from scipy.linalg import svd
 from sklearn.model_selection import train_test_split
 
 # Local
+from .latent_space import fit_gpr
 from .optimizerschedule import OptimizationSchedule, OptimizationStep
 from .performance import scaling2
 from .task import Task
@@ -100,6 +103,7 @@ class DataLoader:
 
 #                                                      Alternative Constructors
 # =============================================================================
+
 
     @classmethod
     def from_file(
@@ -286,6 +290,11 @@ class DataLoader:
                 output_dim=0, drop=True).sortby(
                     'optimizer')
             previous_step = self.opt_steps[optimizer].steps[0]
+
+            X_trajectory = X_trajectory.isel(
+                output_dim=0, drop=True).rename(
+                'trajectory').transpose(
+                'optimizer', 'budget', 'problem')
 
         return OptimizationDynamics.from_data(
             X_features=self.task_labels,
@@ -476,6 +485,7 @@ class DataLoader:
 #                                                            Selecting problems
 # =============================================================================
 
+
     def select_itemIDs(self, itemIDs: str | Iterable[str]) -> DataLoader:
 
         if len(itemIDs) == 0:
@@ -626,6 +636,7 @@ class DataLoader:
 #                                                          Selecting optimizers
 # =============================================================================
 
+
     def select_single_optimizers(
             self, squash: bool = False) -> DataLoader:
         """
@@ -732,7 +743,6 @@ class DataLoader:
 
 #                                                           Performance metrics
 # =============================================================================
-
 
     def performance_profile(
             self, max_f_value: int = 2.0, include_best: bool = False,
@@ -1058,15 +1068,43 @@ def compute_X_trajectory(data: xr.Dataset) -> xr.DataArray:
 
     trajectory: xr.Dataset = xr.apply_ufunc(
         scale,
-        data,
-        input_core_dims=[['budget', 'output_dim']],
-        output_core_dims=[['budget', 'output_dim']],
+        data.output_mean,
+        # input_core_dims=[['budget', 'output_dim']],
+        input_core_dims=[['budget']],
+        # output_core_dims=[['budget', 'output_dim']],
+        output_core_dims=[['budget']],
         vectorize=True,
         dask='parallelized',
         dask_gufunc_kwargs={'allow_rechunk': True}  # False
     )
 
-    return trajectory.output_mean.isel(
-        output_dim=0, drop=True).rename(
-            'trajectory').transpose(
-                'optimizer', 'budget', 'problem')
+    # return trajectory.output_mean.isel(
+    #     output_dim=0, drop=True).rename(
+    #         'trajectory').transpose(
+    #             'optimizer', 'budget', 'problem')
+
+    return trajectory
+
+
+def compute_parameters(trajectory: xr.DataArray) -> xr.DataArray:
+    """
+    Compute the parameters of the optimization trajectory.
+
+    Parameters
+    ----------
+    data : xarray.Dataset
+        The optimization trajectory data.
+    Returns
+    -------
+    xarray.DataArray
+        The selected trajectory.
+    """
+
+    return xr.apply_ufunc(
+        partial(fit_gpr, optimizer=optax.adamw(1e-2)),
+        trajectory,
+        input_core_dims=[['budget']],
+        output_core_dims=[['fit_params']],
+        vectorize=True,
+        dask='parallelized',
+    )
