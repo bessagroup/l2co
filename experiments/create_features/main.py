@@ -21,7 +21,7 @@ def main(config):
 
     l2co_logger.info(f"X trajectories computed from {path}")
 
-    X_params = compute_parameters(X_trajectories.isel(problem=range(3)))
+    X_params = compute_parameters(X_trajectories)
 
     l2co_logger.info(f"X parameters computed from {path}")
 
