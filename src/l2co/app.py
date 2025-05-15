@@ -14,7 +14,7 @@ from l2co import DataLoader
 from l2co._src.data_loader import performance_profile, rtd
 from l2co.plotting import format_plot
 
-# ============================================================================
+# =============================================================================
 
 # Enable Panel extensions
 pn.extension('tabulator')
@@ -99,7 +99,7 @@ single_plot_output = pn.Column()
 # Global variable to store the dataloader
 dataloader = None
 
-# ============================================================================
+# =============================================================================
 
 
 def update_single_optimizer_options(event=None):
@@ -140,11 +140,13 @@ def load_dataloader(event=None):
 
     try:
         d_single = DataLoader.from_file(filepath_single)
-        status_message.object = f"✅ Loaded Single DataLoader from `{filepath_single}`\n"
+        status_message.object = (
+            f"✅ Loaded Single DataLoader from `{filepath_single}`\n")
     except FileNotFoundError:
         dataloader = None
         task_df_table.value = pd.DataFrame()
-        status_message.object = f"❌ Error: Single DataLoader not found at `{filepath_single}`\n"
+        status_message.object = (
+            f"❌ Error: Single DataLoader not found at `{filepath_single}`\n")
         return
 
     d_l2co = None
@@ -155,7 +157,8 @@ def load_dataloader(event=None):
             this_d = DataLoader.from_file(path=base_path,
                                           data_filename=filename)
             d_l2co = this_d if d_l2co is None else d_l2co + this_d
-            status_message.object += f"\n✅ Loaded L2CO DataLoader from `{filename}`\n"
+            status_message.object += (
+                f"\n✅ Loaded L2CO DataLoader from `{filename}`\n")
         except FileNotFoundError:
             status_message.object += f"\n⚠️ Could not load `{filename}`\n"
 

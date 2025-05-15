@@ -25,11 +25,13 @@ from copy import deepcopy
 from functools import partial
 from pathlib import Path
 from time import perf_counter
-from typing import Dict, Iterable, Literal, Optional, Tuple
+from typing import Dict, Iterable, Literal, Optional, Tuple, Type
 
 # Third-party
 import numpy as np
 import optax
+import jax
+import jax.numpy as jnp
 import pandas as pd
 import xarray as xr
 from f3dasm import ExperimentData
@@ -37,9 +39,9 @@ from scipy.linalg import svd
 from sklearn.model_selection import train_test_split
 
 # Local
-from .latent_space import fit_gpr
+from .latent_space import fit_gpr, fit_basis_function
 from .optimizerschedule import OptimizationSchedule, OptimizationStep
-from .performance import scaling2
+from .performance import scaling2, scaling3, output_cummin
 from .task import Task
 
 #                                                          Authorship & Credits
@@ -112,16 +114,9 @@ class DataLoader:
         # Create path object
         _path = Path(path)
 
-        if (_path / 'steps.json').exists():
-            return cls.from_file_legacy(path=path, data_filename=data_filename)
-
         # Retrieve the optimization dynamics data
-        try:
-            data = xr.open_dataset(
-                (_path / data_filename).with_suffix('.nc'))
-        except FileNotFoundError:
-            data = xr.open_dataset(
-                (_path / data_filename).with_suffix('.odata'))
+        data = xr.open_dataset(
+            (_path / data_filename).with_suffix('.odata'))
 
         if (_path / data_filename).with_suffix(
                 '.osched').exists():
@@ -154,11 +149,11 @@ class DataLoader:
             except ValueError:
                 return val
 
-        def my_f(x):
-            return np.vectorize(parse_mixed_value)(x)
+        # def my_f(x):
+        #     return np.vectorize(parse_mixed_value)(x)
 
         task_labels = xr.apply_ufunc(
-            my_f,
+            np.vectorize(parse_mixed_value),
             data['task_labels'],
             input_core_dims=[["problem"]],
             output_core_dims=[["problem"]],
@@ -182,147 +177,85 @@ class DataLoader:
             l2co_schedules=l2co_schedules
         )
 
-    @classmethod
-    def from_file_legacy(
-        cls, path: str, labels_filename: str = 'labels',
-            data_filename: str = 'entire_dataset',
-            opt_steps_filename: str = 'steps'):
-        """
-        Create a data loader from saved files.
-
-        Parameters
-        ----------
-        path : str
-            The path to the saved files.
-
-        Returns
-        -------
-        DataLoader
-            The resulting data loader.
-
-        Notes
-        -----
-        The saved files should be in the path provided, in the NetCDF format
-        and named 'entire_dataset.nc' for the optimization trajectories and
-        'entire_dataset_samples.nc' for the roll-outs of random search.
-        """
-        # Create path object
-        _path = Path(path)
-
-        # Retrieve the optimization dynamics data
-        data = xr.open_dataset(
-            (_path / data_filename).with_suffix('.nc'))
-
-        df_task_labels = pd.read_csv(
-            (_path / labels_filename).with_suffix('.csv'),
-            index_col=0, header=0)
-
-        task_labels = xr.DataArray(df_task_labels.values,
-                                   coords={'itemID': df_task_labels.index,
-                                           'features': df_task_labels.columns},
-                                   dims=['itemID', 'features'],
-                                   )
-
-        # Expand itemID dim to match problem dim
-        task_labels = task_labels.sel(itemID=data.itemID)
-
-        # Open opt steps
-        with open(Path(_path / opt_steps_filename
-                       ).with_suffix('.json'), 'r') as f:
-            opt_steps = {k: OptimizationSchedule.from_dict(
-                v) for k, v in json.load(f).items()}
-
-        return cls(data=data,
-                   task_labels=task_labels,
-                   opt_steps=dict(sorted(opt_steps.items())),
-                   )
-
 #                                                         Storing and exporting
 # =============================================================================
 
-    def to_learning_data(
-            self, t: float, t_start: float = 0.0, t_end: float = 1.0,
-            optimizer: Optional[str] = None) -> OptimizationDynamics:
-        """
-        Convert the data loader to learning data.
-
-        Parameters
-        ----------
-        optimizer : str
-            The optimizer to select.
-        t : float
-            The budget to select.
-        t_start : int, optional
-            The starting budget number of the requested trajectory,
-            by default 0.0
-        t_end : int, optional
-            The ending budget number of the requested trajectory,
-            by default 0.0
-
-        Returns
-        -------
-        OptimizationDynamics
-            The resulting optimization dynamics.
-
-        Notes
-        -----
-        OptimizationDynamics is a pytorch Dataset object.
-        """
-        if optimizer is None:
-            X_trajectory = None
-            Y_data = self.select_single_optimizers(squash=True).select_t(
-                t_start=t, t=t_end)
-
-            Y = Y_data.performance.sel(
-                budget=t_end, method='nearest', drop=True).isel(
-                output_dim=0, drop=True).sortby(
-                    'optimizer')
-            previous_step = None
-
-        else:
-            X_trajectory = compute_X_trajectory(self.select_optimizer(
-                optimizer, squash=True).select_t(
-                t_start=t_start, t=t).data)
-            Y_data = self.query_optimizer(optimizer)
-
-            Y = Y_data.performance.sel(
-                budget=t_end, method='nearest', drop=True).isel(
-                output_dim=0, drop=True).sortby(
-                    'optimizer')
-            previous_step = self.opt_steps[optimizer].steps[0]
-
-            X_trajectory = X_trajectory.isel(
-                output_dim=0, drop=True).rename(
-                'trajectory').transpose(
-                'optimizer', 'budget', 'problem')
-
-        return OptimizationDynamics.from_data(
-            X_features=self.task_labels,
-            X_trajectory=X_trajectory,
-            Y=Y,
-            opt_steps={k: v.steps[0] for k, v in Y_data.opt_steps.items()},
-            previous_step=previous_step,
-        )
-
-    def export_all_and_store(
-            self, path: str, t: int, t_start: int, t_end: int):
-
-        _path = Path(path)
-        _path.mkdir(parents=True, exist_ok=True)
+    def to_all_params(self,
+                      t: float, t_start: float = 0.0, t_end: float = 1.0
+                      ) -> Tuple[OptimizationDynamics2, OptimizationDynamics2]:
 
         optimizers = self.select_single_optimizers().optimizers.values
 
-        for optimizer in optimizers:
-            dynamics = self.to_learning_data(
-                optimizer=optimizer,
-                t=t, t_start=t_start, t_end=t_end)
+        ds_switch = xr.concat(
+            [
+                self.query_optimizer(optimizer).to_params(
+                    optimizer=optimizer,
+                    t=t, t_start=t_start, t_end=t_end)
+                for optimizer in optimizers
+            ],
+            dim='problem')
 
-            dynamics.save(_path / str(optimizer))
-            del dynamics
+        # for optimizer in optimizers:
+        #     dynamics.append(
+        #         self.query_optimizer(optimizer).to_params(
+        #             optimizer=optimizer,
+        #             t=t, t_start=t_start, t_end=t_end)
+        #     )
 
-        dynamics = self.to_learning_data(
-            t_start=t_start, t=t_start, t_end=t_end)
-        dynamics.save(_path / 'first')
+        # ds_switch = xr.concat(dynamics, dim='problem')
+
+        ds_first = self.select_single_optimizers(squash=True).to_params(
+            t=t_start, t_start=t_start, t_end=t_end)
+        return (
+            OptimizationDynamics2.from_data(ds_first),
+            OptimizationDynamics2.from_data(ds_switch),
+        )
+
+    def to_params(self, t: float, t_start: float = 0.0, t_end: float = 1.0,
+                  optimizer: Optional[str] = None,) -> xr.Dataset:
+
+        vars = {}
+
+        vars['task_labels'] = self.task_labels
+        # Calculate the performance labels
+        vars['performance'] = self.select_t(
+            t_start=t, t=t_end).performance.sel(
+            budget=t_end, method='nearest', drop=True)
+
+        if optimizer is not None:
+            # Fit the shape of the trajectory
+            params = compute_parameters(
+                self.select_t(t_start=t_start, t=t).trajectory)
+            vars['shape'] = _squash(params, reduce_dim='optimizer')
+
+            # staircase_params = compute_staircase_parameters(
+            #     self.select_t(t_start=t_start, t=t).staircase)
+
+            staircase_params = self.select_t(t_start=t_start, t=t).staircase
+            vars['staircase'] = _squash(
+                staircase_params, reduce_dim='optimizer')
+
+            # Calculate the relative improvement of the window
+            lri = log_relative_improvement(self.data)
+            vars['improvement'] = _squash(lri, reduce_dim='optimizer')
+
+            # Create a tag of the optimizer used for the trajectory
+            vars['opt'] = xr.DataArray(
+                np.full(len(self.data.itemID), optimizer, dtype=object),
+                dims='problem',
+                coords={"itemID": self.data.itemID}
+            )
+
+        # Put everything together in a dataset
+        ds = xr.Dataset(vars)
+
+        # Transpose dims
+        desired_order = ('problem', 'output_dim', 'optimizer')
+
+        return ds.map(lambda var: var.transpose(
+            *[d for d in desired_order if d in var.dims],
+            *[d for d in var.dims if d not in desired_order])
+        )
 
     def to_spreadsheet(self, criteria: Literal['min', 'mean'] = 'min'):
         ds = xr.Dataset({'task_labels': self.task_labels,
@@ -362,7 +295,7 @@ class DataLoader:
                          'task_labels': self.task_labels, })
 
         df_task_labels = ds.groupby('itemID').min().task_labels.to_pandas()
-        df_sbs = ds.groupby('itemID').min().sbs.to_pandas().rename('sbs')
+        df_sbs = ds.groupby('itemID').min()['sbs'].to_pandas().rename('sbs')
 
         return pd.concat([df_task_labels, df_sbs], axis=1)
 
@@ -438,6 +371,15 @@ class DataLoader:
         """
         return self.data.optimizer
 
+    @property
+    def staircase(self) -> xr.DataArray:
+        return output_cummin(compute_X_trajectory(
+            self.data['output_min'])).ffill('budget')
+
+    @property
+    def trajectory(self) -> xr.DataArray:
+        return compute_X_trajectory(self.data['output_mean'])
+
     def _performance(self, include_best: bool,
                      exclude_optimizer: Optional[str] = None) -> xr.DataArray:
         t_start = perf_counter()
@@ -481,10 +423,17 @@ class DataLoader:
         return self._performance(include_best=False,
                                  exclude_optimizer=None)
 
+    @property
+    def performance_per_realization(self) -> xr.DataArray:
+
+        t_start = perf_counter()
+        print("Triggered performance")
+        performance = scaling3(self.data).ffill('budget')
+        print(f"Performance calculation took: {perf_counter()-t_start:0.2f}")
+        return performance
 
 #                                                            Selecting problems
 # =============================================================================
-
 
     def select_itemIDs(self, itemIDs: str | Iterable[str]) -> DataLoader:
 
@@ -820,6 +769,149 @@ def rtd(performance: xr.DataArray) -> xr.DataArray:
 # =============================================================================
 
 
+class OptimizationDynamics2:
+    def __init__(self,
+                 X_features: pd.DataFrame,
+                 X_trajectory: Optional[jax.Array],
+                 Y: jax.Array,
+                 previous_step: Optional[np.ndarray]):
+        self.X_features = X_features  # shape = (n_problems, n_features)
+        self.X_trajectory = X_trajectory  # shape = (n_problems, n_params)
+        self.Y = Y  # shape = (n_problems, n_optimizers)
+        self.previous_step = previous_step  # shape = (n_problem,)
+
+    @classmethod
+    def from_data(cls: Type[OptimizationDynamics2],
+                  dynamics: xr.Dataset,
+                  ) -> OptimizationDynamics2:
+
+        # Fill in missing performance values
+        dynamics['performance'] = xr.apply_ufunc(
+            impute_missing_values_svd,
+            dynamics['performance'],
+            input_core_dims=[['problem', 'optimizer']],
+            output_core_dims=[['problem', 'optimizer']],
+            vectorize=True,
+        )
+
+        # Check for NaNs in each variable and reduce over all dims
+        # except 'problem'
+        nan_flags = [
+            var.isnull().any(dim=set(var.dims) - {'problem'})
+            for var in dynamics.data_vars.values()
+        ]
+
+        # Combine all flags: True where any variable has NaNs in that problem
+        has_nan_anywhere = xr.concat(nan_flags, dim='_vars').any(dim='_vars')
+
+        # Filter out nans
+        dynamics = dynamics.sel(problem=~has_nan_anywhere)
+
+        # Select first output_dim
+        dynamics = dynamics.isel(output_dim=0, drop=True)
+
+        X_features = dynamics['task_labels'].to_pandas(
+        ).infer_objects().convert_dtypes()
+
+        Y = jnp.array(dynamics['performance'])
+
+        if 'opt' in dynamics:
+            X_trajectory = jnp.concat(
+                [
+                    dynamics['staircase'].values,
+                    dynamics['shape'].values,
+                    dynamics['improvement'].values[:, None,],
+                ], axis=1
+            )
+            previous_step = np.array(dynamics['opt'])
+        else:
+            X_trajectory = None
+            previous_step = None
+
+        return cls(X_features=X_features,
+                   X_trajectory=X_trajectory,
+                   Y=Y,
+                   previous_step=previous_step)
+
+    @classmethod
+    def from_task_and_run(
+            cls: Type[OptimizationDynamics2],
+            task: Task,
+            previous_step: Optional[str] = None,
+            data: Optional[ExperimentData] = None,
+    ) -> OptimizationDynamics2:
+        X_features = pd.DataFrame([task.tag])
+        previous_step = np.ndarray(
+            [previous_step]) if previous_step is not None else None
+        if data is None:
+            X_trajectory = None
+
+        else:
+            X_trajectory = jnp.vstack([es.output_data['y']
+                                      for _, es in data]).T
+
+        return cls(X_features=X_features,
+                   X_trajectory=X_trajectory,
+                   Y=None,
+                   opt_steps=None,
+                   )
+
+    def to_dict(self) -> Dict[str, np.ndarray]:
+        return {'X_trajectory': self.X_trajectory,
+                'Y': self.Y,
+                'previous_step': self.previous_step, }
+
+    def save(self, path: str) -> None:
+        """
+        Save the model to a file
+
+        Parameters
+        ----------
+        path : Path
+            The path to the model
+        """
+        _path = Path(path)
+        # Save trajectory and y
+        np.savez(str(_path) + '.npz', **self.to_dict())
+
+        # Save features
+        self.X_features.to_csv(str(_path) + '.csv')
+
+    @classmethod
+    def load(cls: Type[OptimizationDynamics2], path: Path | str
+             ) -> OptimizationDynamics2:
+        """
+        Load the model from a file
+
+        Parameters
+        ----------
+        path : Path
+            The path to the data
+
+        Returns
+        -------
+        OptimizationDynamics
+            The loaded optimization dynamics data.
+        """
+        _path = Path(path)
+        data = np.load(str(_path) + '.npz', allow_pickle=True)
+        if (data['X_trajectory'].ndim == 0
+                and data['X_trajectory'].item() is None):
+            X_trajectory = None
+            previous_step = None
+        else:
+            X_trajectory = data['X_trajectory']
+            previous_step = data['previous_step']
+
+        features = pd.read_csv(str(_path) + '.csv', index_col=0,
+                               header=0).convert_dtypes()
+
+        return cls(X_features=features,
+                   X_trajectory=jnp.array(X_trajectory),
+                   Y=jnp.array(data['Y']),
+                   previous_step=previous_step)
+
+
 class OptimizationDynamics:
     def __init__(self,
                  X_features: pd.DataFrame,
@@ -1040,7 +1132,7 @@ def impute_missing_values_svd(y: np.ndarray, k=2):
 
 
 # @ lru_cache(maxsize=1)
-def compute_X_trajectory(data: xr.Dataset) -> xr.DataArray:
+def compute_X_trajectory(data: xr.DataArray) -> xr.DataArray:
     """
     Select the history of an optimization trajectory.
 
@@ -1068,7 +1160,7 @@ def compute_X_trajectory(data: xr.Dataset) -> xr.DataArray:
 
     trajectory: xr.Dataset = xr.apply_ufunc(
         scale,
-        data.output_mean,
+        data,
         # input_core_dims=[['budget', 'output_dim']],
         input_core_dims=[['budget']],
         # output_core_dims=[['budget', 'output_dim']],
@@ -1086,7 +1178,10 @@ def compute_X_trajectory(data: xr.Dataset) -> xr.DataArray:
     return trajectory
 
 
-def compute_parameters(trajectory: xr.DataArray) -> xr.DataArray:
+def compute_parameters(
+        trajectory: xr.DataArray,
+        optimizer: optax.GradientTransformation = optax.adam(1e-01),
+        inducing_points: int = 10, num_iters: int = 300) -> xr.DataArray:
     """
     Compute the parameters of the optimization trajectory.
 
@@ -1099,12 +1194,87 @@ def compute_parameters(trajectory: xr.DataArray) -> xr.DataArray:
     xarray.DataArray
         The selected trajectory.
     """
+    x = jnp.array(trajectory.values.reshape(-1, trajectory.budget.size))
+
+    params = jax.vmap(
+        partial(fit_gpr, optimizer=optimizer,
+                inducing_points=inducing_points, num_iters=num_iters)
+    )(x)
+
+    params = params.reshape(
+        trajectory.optimizer.size, trajectory.problem.size,
+        trajectory.output_dim.size, -1
+    )
+
+    return xr.DataArray(
+        params,
+        dims=['optimizer', 'problem', 'output_dim', 'fit_params'],
+        coords={
+            'optimizer': trajectory.optimizer,
+            'itemID': trajectory.itemID,
+            'output_dim': trajectory.output_dim,
+        }
+    )
+
+
+def compute_staircase_parameters(
+        staircase: xr.DataArray,
+        num_iters: int = 50) -> xr.DataArray:
+    x = jnp.array(staircase.values.reshape(-1, staircase.budget.size))
+
+    params = jax.vmap(
+        partial(fit_basis_function, max_iter=num_iters)
+    )(x)
+
+    params = params.reshape(
+        staircase.optimizer.size, staircase.problem.size,
+        staircase.output_dim.size, -1
+    )
+
+    return xr.DataArray(
+        params,
+        dims=['optimizer', 'problem', 'output_dim', 'staircase_fit_params'],
+        coords={
+            'optimizer': staircase.optimizer,
+            'itemID': staircase.itemID,
+            'output_dim': staircase.output_dim,
+        }
+    )
+
+
+def log_relative_improvement(data: xr.Dataset) -> xr.DataArray:
+    def compute_log_relative_improvement(x, b):
+        impv = -(x[0] - x[-1]) / (b[0] - b[-1]) / (abs(x[0]) + 1e-8)
+        t = np.log(impv + 1e-8)
+        return np.atleast_1d(t)
 
     return xr.apply_ufunc(
-        partial(fit_gpr, optimizer=optax.adamw(1e-2)),
-        trajectory,
-        input_core_dims=[['budget']],
-        output_core_dims=[['fit_params']],
+        compute_log_relative_improvement,
+        output_cummin(data.output_min),
+        data.budget,
+        input_core_dims=[["budget"], ["budget"]],
+        # output_core_dims=[["log_relative_improvement"]],
         vectorize=True,
-        dask='parallelized',
+    )
+
+
+def _squash(da: xr.DataArray, reduce_dim: str,
+            vector_dim: str = 'problem'):
+    def f(x):
+        for val in x:
+            if not np.isnan(val).any():
+                return val
+        return val
+
+    # Define dimension names
+    all_dims = list(da.dims)
+    keep_dims = [d for d in all_dims if d not in [reduce_dim, vector_dim]]
+
+    return xr.apply_ufunc(
+        f,
+        da,
+        input_core_dims=[[reduce_dim] + keep_dims],
+        output_core_dims=[keep_dims],
+        vectorize=True,
+        dask="allowed"  # Optional: if using dask
     )

@@ -35,6 +35,8 @@ __credits__ = ['Martin van der Schelling']
 __status__ = 'Planning'
 # =============================================================================
 
+EPSILON = 1e-8
+
 
 def output_cummin(da: xr.DataArray):
     """
@@ -74,8 +76,8 @@ def scaling2(data: xr.Dataset) -> xr.DataArray:
 
     # Cap the quality indicator value at 1e-8
     ds_output = ds_output.where(
-        (ds_output > 1e-8) | (ds_output <= 0.) | ds_output.isnull(),
-        other=1e-8)
+        (ds_output > EPSILON) | (ds_output <= 0.) | ds_output.isnull(),
+        other=EPSILON)
 
     # 2. Make sure the loss is non-negative and non-zero
     group_by_realizations = ds_output.groupby('itemID')
@@ -85,15 +87,51 @@ def scaling2(data: xr.Dataset) -> xr.DataArray:
         p = (x - x.min())
         # 4. Add epsilon to make quality indicator value non-zero
         # the 1e-2 is to prevent really big differences in quality values
-        eps = p.where(p > 0.0, p.max()+1e-16).min() + 1e-2
+        eps = p.where(p > 0.0, p.max()+EPSILON).min() + EPSILON
         x_log10 = np.log10(p + eps)
 
         # 5. Min-max scaling of the data
         x_min = x_log10.min()
         x_max = x_log10.max(['budget'])
-        return (x_log10 - x_min) / (x_max - x_min + 1e-16)
-
-    ds_log10_positive = group_by_realizations.map(min_custom).assign_coords({
-        'problem': ds_output.problem})
+        return (x_log10 - x_min) / (x_max - x_min + EPSILON)
+    ds_log10_positive = group_by_realizations.map(
+        min_custom)  # .assign_coords({
+    #    'problem': ds_output.problem})
 
     return ds_log10_positive
+
+
+def scaling3(data: xr.Dataset) -> xr.DataArray:
+
+    # 1. Calculate cumulative minimum (quality indictor value)
+    ds_output = output_cummin(data.output_min)  # .chunk('auto')
+
+    # Cap the quality indicator value at 1e-8
+    ds_output = ds_output.where(
+        (ds_output > EPSILON) | (ds_output <= 0.) | ds_output.isnull(),
+        other=EPSILON)
+
+    def f(x):
+        p = (x - x.min())
+        eps = (np.where(p > 0.0, p, p.max()+EPSILON)).min() + EPSILON
+        x_log10 = np.log10(p + eps)
+
+        # 5. Min-max scaling of the data
+        x_min = x_log10.min()
+        x_max = x_log10.max(axis=0)
+        return (x_log10 - x_min) / (x_max - x_min + EPSILON)
+
+    data_scaled = xr.apply_ufunc(
+        f,
+        ds_output,
+        input_core_dims=[['budget', 'optimizer', 'output_dim']],
+        output_core_dims=[['budget', 'optimizer', 'output_dim']],
+        vectorize=True,
+        dask='parallelized',
+        output_dtypes=[ds_output.dtype],
+        dask_gufunc_kwargs={'allow_rechunk': True}
+
+    )
+
+    return data_scaled.transpose(
+        'optimizer', 'output_dim', 'problem', 'budget')

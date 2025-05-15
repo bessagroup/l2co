@@ -1,9 +1,88 @@
 # Third-party
+import json
+from typing import List
+
 import jax
+import jax.numpy as jnp
 import jax.tree as jt
+import xarray as xr
+from f3dasm import ExperimentData
 from jaxtyping import PyTree
 
+from .optimizerschedule import OptimizationSchedule
+
 # =============================================================================
+
+
+def experimentdata_to_xarray(data: ExperimentData,
+                             popsizes: List[int],
+                             budgets: List[float] | float,
+                             n_iterations: int,
+                             include_input: bool = False) -> xr.Dataset:
+    y_arr = jnp.vstack([es.output_data['y']
+                        for _, es in data]).T
+
+    y = xr.DataArray(
+        y_arr,
+        dims=['output_dim', 'budget'],
+        coords={'output_dim': ['y']})
+
+    if include_input:
+        x_arr = jnp.vstack([es.input_data['x']
+                            for _, es in data]).T
+
+        x = xr.DataArray(
+            x_arr,
+            dims=['input_dim', 'budget'],
+            coords={'input_dim': [f"x{i}" for i in range(x_arr.shape[0])]})
+
+        ds = xr.Dataset({'input': x,
+                         'output': y,
+                         })
+
+    else:
+        ds = xr.Dataset({
+            'output': y,
+        })
+
+    ds.attrs['popsizes'] = popsizes
+    ds.attrs['budgets'] = budgets
+    ds.attrs['n_iterations'] = n_iterations
+    return ds
+
+
+def schedule_to_xarray(data: OptimizationSchedule) -> xr.DataArray:
+    x = xr.DataArray(
+        [json.dumps(data.to_dict())],
+        dims=['schedule']
+    )
+    return x
+
+
+def tree_flatten_population_dim(params: PyTree) -> PyTree:
+    """
+    Flatten the population dimension of a PyTree.
+
+    Parameters
+    ----------
+    params : PyTree
+        The PyTree with a population dimension to flatten.
+
+    Returns
+    -------
+    PyTree
+        The PyTree with the population dimension flattened.
+    """
+    def flatten_fn(x):
+        # Get the shape of the parameter
+        shape = x.shape
+        # Assuming the shape is (batch_size, population_dim, *other_dims)
+        batch_size, population_dim, *other_dims = shape
+        # Reshape to (batch_size * population_dim, *other_dims)
+        return x.reshape((batch_size * population_dim, *other_dims))
+
+    # Apply flatten_fn to each element of the parameter tree
+    return jax.tree_util.tree_map(flatten_fn, params)
 
 
 def tree_to_dict_list(tree: PyTree, name: str) -> list[dict[str, PyTree]]:

@@ -1,16 +1,13 @@
 # Standard
 import gc
 import json
-from functools import partial
 from pathlib import Path
 from time import time
-from typing import Callable, Iterator, List, Optional, Tuple, Type
+from typing import Callable, Dict, Iterator, List, Optional, Tuple, Type
 
 # Third-party
 import equinox as eqx
 import jax
-import jax.numpy as jnp
-import jax.random as jrd
 import numpy as onp
 import xarray as xr
 from f3dasm import Block, ExperimentData, ExperimentSample
@@ -20,115 +17,19 @@ from jaxtyping import PyTree
 
 # Local
 from ._logging import logger
-from .batching import NoneIterator, batch_iter, unroll_batches
+from .batching import NoneIterator, batch_iter
 from .data_loader import OptimizationDynamics
 from .l2co_model import L2CO_model
-from .optimizers import OPT_MAPPING
+from .optimizers import OPT_MAPPING, UpdateStep
 from .optimizerschedule import (OptimizationSchedule, OptimizationStep,
                                 step_n_iterations, step_n_iterations_equal)
 from .sampler import NormalWeightSampler, RandomWeightSampler
 from .task import Task
-from .tree_utils import dict_list_to_tree, tree_to_dict_list
+from .tree_utils import experimentdata_to_xarray, schedule_to_xarray
 from .validation import validation_fn
-
-# =============================================================================
-
-
-def experimentdata_to_xarray(data: ExperimentData,
-                             popsizes: List[int],
-                             budgets: List[float] | float,
-                             n_iterations: int,
-                             include_input: bool = False) -> xr.Dataset:
-    y_arr = jnp.vstack([es.output_data['y']
-                        for _, es in data]).T
-
-    y = xr.DataArray(
-        y_arr,
-        dims=['output_dim', 'budget'],
-        coords={'output_dim': ['y']})
-
-    if include_input:
-        x_arr = jnp.vstack([es.input_data['x']
-                            for _, es in data]).T
-
-        x = xr.DataArray(
-            x_arr,
-            dims=['input_dim', 'budget'],
-            coords={'input_dim': [f"x{i}" for i in range(x_arr.shape[0])]})
-
-        ds = xr.Dataset({'input': x,
-                         'output': y,
-                         })
-
-    else:
-        ds = xr.Dataset({
-            'output': y,
-        })
-
-    ds.attrs['popsizes'] = popsizes
-    ds.attrs['budgets'] = budgets
-    ds.attrs['n_iterations'] = n_iterations
-    return ds
-
-
-def schedule_to_xarray(data: OptimizationSchedule) -> xr.DataArray:
-    x = xr.DataArray(
-        [json.dumps(data.to_dict())],
-        dims=['schedule']
-    )
-    return x
-
-#                                                               Sampling Blocks
-# =============================================================================
-
 
 #                                                                Evaluate Block
 # =============================================================================
-
-class EvaluateModel(Block):
-    def __init__(self, task: Task, seed: int = 0):
-        self.task = task
-        self.seed = seed
-
-    def call(self, data: ExperimentData) -> ExperimentData:
-        x = [v.input_data for k, v in data]
-        models = dict_list_to_tree(x, name='x')
-
-        inner_steps = len(data)
-
-        if self.task.pass_rng:
-            rng_sample = {'key': jrd.split(
-                jrd.key(self.seed), num=inner_steps)}
-        else:
-            rng_sample = {}
-
-        data_iter = batch_iter(dataset=self.task.loaded_dataset,
-                               n_evals=inner_steps,
-                               batch_size=self.task.batch_size,
-                               key=self.task.dataset['seed'])
-
-        # Option 1: There is training data but no batching
-        if isinstance(data_iter, dict):
-            loss_fn = jax.vmap(partial(self.task.loss_fn, **data_iter))
-
-            if self.task.has_aux:
-                y, aux = loss_fn(models, **rng_sample)
-            else:
-                y = loss_fn(models, **rng_sample)
-
-        else:
-            samples = unroll_batches(data_iter, inner_steps)
-
-            loss_fn = jax.vmap(self.task.loss_fn)
-
-            if self.task.has_aux:
-                y, aux = loss_fn(models, **samples, **rng_sample)
-            else:
-                y = loss_fn(models, **samples, **rng_sample)
-
-        return ExperimentData(domain=data.domain, input_data=x,
-                              output_data=tree_to_dict_list(y, name='y'),
-                              project_dir=data.project_dir)
 
 
 # =============================================================================
@@ -152,14 +53,15 @@ def run_optimization_schedule_multiple_realizations(
 
     n_iterations: int = int(budget_fn(task=task) * partition_factor)
 
+    if sampler is None:
+        if bounded is None:
+            sampler = NormalWeightSampler()
+        else:
+            sampler = RandomWeightSampler(
+                lower_bound=bounded[0],
+                upper_bound=bounded[1])
+
     for s in range(n_realizations):
-        if sampler is None:
-            if bounded is None:
-                sampler = NormalWeightSampler()
-            else:
-                sampler = RandomWeightSampler(
-                    lower_bound=bounded[0],
-                    upper_bound=bounded[1])
 
         data, popsizes = run_optimization_schedule(
             task=task,
@@ -201,103 +103,130 @@ def run_optimization_schedule(
     data = None
     loaded_dataset = task.loaded_dataset
     popsizes = []
+    previous_step = None
+    optimizer_dict: Dict[OptimizationStep, UpdateStep] = {}
 
-    for step, step_iterations in zip(
+    for i, (step, step_iterations) in enumerate(zip(
         optimization_schedule,
         step_n_iterations(
             n_iterations=n_iterations,
-            budgets=optimization_schedule.budgets)):
+            budgets=optimization_schedule.budgets))):
 
         learning_data = batch_iter(
             dataset=loaded_dataset, n_evals=step_iterations,
             batch_size=task.batch_size, key=seed)
 
+        if step in optimizer_dict:
+            update_step = optimizer_dict[step]
+        else:
+            update_step = OPT_MAPPING[step.optimizer](
+                **step.hyperparameters, seed=seed,
+                bounded=bounded,
+                include_input=include_input,
+                pass_rng=task.pass_rng,
+                task=task,
+                verbose=verbose)
+
+            optimizer_dict[step] = update_step
+
+        # Check if we have to use scan or not
         if use_scan is None:
             _use_scan = True if isinstance(
                 learning_data, NoneIterator) else False
         else:
             _use_scan = use_scan
 
-        update_step = OPT_MAPPING[step.optimizer](
-            **step.hyperparameters, seed=seed,
-            bounded=bounded,
-            include_input=include_input,
-            pass_rng=task.pass_rng,
-            task=task,
-            verbose=verbose)
-
         data = run_optimization(
             task=task,
             update_step=update_step,
+            previous_step=previous_step,
             sampler=sampler,
             n_iterations=step_iterations,
             learning_data=learning_data,
-            popsize=update_step.popsize,
-            x0_strategy=step.x0_strategy,
-            seed=seed,
             use_scan=_use_scan,
+            seed=seed + i,
             data=data,
 
         )
 
         popsizes.append(update_step.popsize)
+        previous_step = update_step
 
     return data, popsizes
 
 
 def run_optimization(
     task: Task,
-    update_step: Block,
+    update_step: UpdateStep,
+    previous_step: Optional[UpdateStep],
     sampler: Block,
     n_iterations: int,
-    learning_data: Iterator,
-    popsize: int,
-    x0_strategy: str,
-    seed: int,
+    learning_data: Iterator | NoneIterator,
     use_scan: bool,
+    seed: int,
     data: Optional[ExperimentData] = None,
 ) -> ExperimentData:
 
+    # If no data is given, create data
     if data is None:
-        # Create data
         domain = Domain()
         domain.add_parameter(name='x')
         domain.add_output(name='y')
         data = ExperimentData(domain=domain)
 
-    # Create x0
-    x0 = create_x0(data=data, model=task.model, mode=x0_strategy,
-                   n_samples=popsize,
-                   sampler=sampler, seed=seed)
-
-    if x0_strategy in ['new', 'best_one']:
-        data_generator = EvaluateModel(task=task, seed=seed)
-        data_generator.arm(x0)
-        x0 = data_generator.call(data=x0)
-        n_iterations -= 1
-        data += x0
-
     # Arm update step
-    update_step.arm(data=x0, fn=task.loss_fn, has_aux=task.has_aux)
+    update_step.arm(data=data, previous_step=previous_step, sampler=sampler,
+                    seed=seed)
 
     iterates = update_step.call(
         data=data, n_iterations=n_iterations,
         data_iter=learning_data,
         use_scan=use_scan)
 
-    data += iterates[popsize:]
+    # Don't add the first population, since it is not based on the iteration
+    # of the optimizer
+    data += iterates[update_step.popsize:]
 
     logger.debug(f"Optimization finished with {n_iterations} evaluations")
 
     return data
 
 
-def create_x0(data: ExperimentData, model: PyTree, mode: str, n_samples: int,
-              sampler: Block, seed: int) -> ExperimentData:
+def create_x0(data: Optional[ExperimentData], model: PyTree,
+              mode: str, n_samples: int, sampler: Block,
+              seed: int) -> ExperimentData:
+    """
+    Create the initial solutions for optimizing a problem according to some
+    initial strategy.
+
+    Parameters
+    ----------
+    data : Optional[ExperimentData]
+        The ExperimentData object to create the initial solutions from.
+        If None, a new ExperimentData object will be created.
+    model : PyTree
+        The structure of the model to create input parameters for
+    mode : str
+        The strategy to which we create the initial samples
+    n_samples : int
+        number of initial solutions to create
+    sampler : Block
+        Sampler object to use as sampling technique
+    seed : int
+        Seed for the pseudo-random number generator
+
+    Returns
+    -------
+    ExperimentData
+        The initial solutions in ExperimentData format
+    """
+
+    has_created_flag = False
 
     if mode == 'new':
         _data = sampler.call(data=data, model=model,
                              num_samples=n_samples, seed=seed)
+        has_created_flag = True
 
     elif mode == 'last':
         _data = data[-n_samples:]
@@ -314,12 +243,13 @@ def create_x0(data: ExperimentData, model: PyTree, mode: str, n_samples: int,
 
     # Check if enough samples are returned
     if len(_data) < n_samples:
-        _data += create_x0(
-            data=data, model=model, mode='new',
+        _additional_samples, has_created_flag = create_x0(
+            data=_data, model=model, mode='new',
             n_samples=n_samples - len(_data),
             sampler=sampler, seed=seed)
+        _data += _additional_samples
 
-    return _data
+    return _data, has_created_flag
 
 
 class RunOptimization(DataGenerator):
@@ -585,7 +515,6 @@ def run_optimization_no_schedule(
             sampler=sampler,
             n_iterations=n_iterations_per_switch,
             learning_data=learning_data,
-            popsize=update_step.popsize,
             x0_strategy=step.x0_strategy,
             seed=seed,
             use_scan=_use_scan,
@@ -744,7 +673,6 @@ def run_optimization_random_schedule(
             sampler=sampler,
             n_iterations=n_iterations_per_switch,
             learning_data=learning_data,
-            popsize=update_step.popsize,
             x0_strategy=step.x0_strategy,
             seed=seed,
             use_scan=_use_scan,
