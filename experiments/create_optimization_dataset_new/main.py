@@ -151,17 +151,17 @@ def create_experimentdata(config: DictConfig):
     experiment_data_combined = grid().call(
         data=ExperimentData(domain=domain_grid_sampling))
 
-    # if applicable, select a subset of all combinations
-    if 'fraction_combinations' in config.schedules:
-        rng = np.random.default_rng(int(config.seed))
-        indices = rng.integers(
-            len(experiment_data_combined),
-            size=int(
-                len(experiment_data_combined)
-                * config.schedules.fraction_combinations))
-        experiment_data_combined = experiment_data_combined[indices]
+    # # if applicable, select a subset of all combinations
+    # if 'fraction_combinations' in config.schedules:
+    #     rng = np.random.default_rng(int(config.seed))
+    #     indices = rng.integers(
+    #         len(experiment_data_combined),
+    #         size=int(
+    #             len(experiment_data_combined)
+    #             * config.schedules.fraction_combinations))
+    #     experiment_data_combined = experiment_data_combined[indices]
 
-        # Save everything
+    # Save everything
     domain_combined = Domain()
     domain_combined.add_parameter(
         name='task', to_disk=True,

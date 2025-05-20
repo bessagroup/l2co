@@ -27,11 +27,11 @@ from pathlib import Path
 from time import perf_counter
 from typing import Dict, Iterable, Literal, Optional, Tuple, Type
 
+import jax
+import jax.numpy as jnp
 # Third-party
 import numpy as np
 import optax
-import jax
-import jax.numpy as jnp
 import pandas as pd
 import xarray as xr
 from f3dasm import ExperimentData
@@ -39,9 +39,9 @@ from scipy.linalg import svd
 from sklearn.model_selection import train_test_split
 
 # Local
-from .latent_space import fit_gpr, fit_basis_function
+from .latent_space import fit_basis_function, fit_gpr
 from .optimizerschedule import OptimizationSchedule, OptimizationStep
-from .performance import scaling2, scaling3, output_cummin
+from .performance import output_cummin, scaling2, scaling3
 from .task import Task
 
 #                                                          Authorship & Credits
@@ -574,9 +574,22 @@ class DataLoader:
         DataLoader
             The selected data loader.
         """
+
+        # Check if there are budget coordinate values below t_start
+        prior = self.data['budget'].where(
+            self.data['budget'] < t_start, drop=True)
+
+        # If so, take the value before t_start
+        if prior.sizes['budget'] > 0:
+            t_prior = prior[-1].item()
+
+        # If not, do nothing
+        else:
+            t_prior = t_start
+
         return DataLoader(
             task_labels=self.task_labels,
-            data=self.data.sel(budget=slice(t_start, t)),
+            data=self.data.sel(budget=slice(t_prior, t)),
             opt_steps=self.opt_steps,
             l2co_schedules=self.l2co_schedules
         )

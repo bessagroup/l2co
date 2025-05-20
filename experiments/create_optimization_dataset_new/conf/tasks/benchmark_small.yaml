@@ -1,0 +1,37 @@
+sampler:
+  _target_: f3dasm.create_sampler
+  sampler: "grid"
+sampler_kwargs:
+
+experimentdata:
+  domain:
+    input:
+      fn_name:
+        type: category
+        categories: [
+          'ackley',
+          'beale',
+          'bohachevsky1',
+          'branin01',
+          'camelthreehump',
+          'eggholder',
+          'levy',
+          'rastrigin',
+          'rosenbrock',
+          'schwefel',
+          'sphere',
+          'styblinskitang',
+          ]
+task_kwargs:
+  seed: ${seed}
+  noise: 0.0
+  offset: False
+  dimensionality: 2
+
+data_generator:
+  _target_: l2co._src.tasks.benchmark_task.create_benchmark_task
+  _partial_: True
+
+bounded:
+  lower_bound: 0.0
+  upper_bound: 1.0

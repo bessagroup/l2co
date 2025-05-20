@@ -122,7 +122,6 @@ class UpdateStep(Block):
                      [],
                      Tuple[ScanFunction, InitFunction, PostFunction]],
                  include_input: bool,
-                 pass_rng: bool,
                  name: str,
                  bounded: Optional[Tuple[float, float]] = None,
                  task: Optional[Task] = None,
@@ -135,13 +134,10 @@ class UpdateStep(Block):
         self.update_fn = update_fn
         self.seed = seed
         self.opt_state = None
-        self.pass_rng = pass_rng
         self.verbose = verbose
         self.task = task
         self.name = name
         self.optimizer = optimizer(**hyperparameters)
-        self.x0 = None
-        self.has_created_flag = False
 
     def arm(self, data: ExperimentData, previous_step: Optional[UpdateStep],
             sampler: Block, seed: int) -> None:
@@ -167,7 +163,7 @@ class UpdateStep(Block):
                                     current_step=self)
 
         # Create or select the initial solutions
-        self.x0, self.has_created_flag = create_x0(
+        x0, self.has_created_flag = create_x0(
             data=data, model=self.task.model,
             mode=x0_strategy, n_samples=self.popsize,
             sampler=sampler, seed=seed
@@ -175,11 +171,11 @@ class UpdateStep(Block):
 
         if self.has_created_flag:
             data_generator = EvaluateModel(task=self.task, seed=self.seed)
-            data_generator.arm(self.x0)
-            self.x0 = data_generator.call(data=self.x0)
+            data_generator.arm(x0)
+            x0 = data_generator.call(data=x0)
 
         # Set the params
-        for k, v in self.x0[-self.popsize:]:
+        for k, v in x0[-self.popsize:]:
             x = v.input_data['x']
         self.params, self.static = eqx.partition(x, eqx.is_inexact_array)
 
@@ -191,7 +187,7 @@ class UpdateStep(Block):
             bounded=self.bounded,
             has_aux=self.task.has_aux,
             include_input=self.include_input,
-            pass_rng=self.pass_rng,
+            pass_rng=self.task.pass_rng,
         )
 
         if self.opt_state is None:
@@ -226,9 +222,6 @@ class UpdateStep(Block):
         """
         key = jr.key(self.seed)
         rng, _ = jr.split(key)
-
-        if self.has_created_flag:
-            data += self.x0
 
         # Option 1: There is no batching, hence we fix the sample and
         # use scan
@@ -298,7 +291,6 @@ class EvoSaxUpdate(UpdateStep):
                  popsize: int,
                  update_fn: Callable[[], Tuple[ScanFunction, InitFunction]],
                  include_input: bool,
-                 pass_rng: bool,
                  name: str,
                  bounded: Optional[Tuple[float, float]] = None,
                  verbose: bool = False,
@@ -310,7 +302,6 @@ class EvoSaxUpdate(UpdateStep):
         self.update_fn = update_fn
         self.seed = seed
         self.opt_state = None
-        self.pass_rng = pass_rng
         self.optimizer_class = optimizer
         self.verbose = verbose
         self.task = task
@@ -345,7 +336,7 @@ class EvoSaxUpdate(UpdateStep):
                                     current_step=self)
 
         # Create or select the initial solutions
-        self.x0, self.has_created_flag = create_x0(
+        x0, self.has_created_flag = create_x0(
             data=data, model=self.task.model,
             mode=x0_strategy, n_samples=self.popsize,
             sampler=sampler, seed=seed
@@ -353,10 +344,10 @@ class EvoSaxUpdate(UpdateStep):
 
         if self.has_created_flag:
             data_generator = EvaluateModel(task=self.task, seed=self.seed)
-            data_generator.arm(self.x0)
-            self.x0 = data_generator.call(data=self.x0)
+            data_generator.arm(x0)
+            x0 = data_generator.call(data=x0)
 
-        x = [v.input_data for k, v in self.x0[-self.popsize:]]
+        x = [v.input_data for k, v in x0[-self.popsize:]]
         pop_x = dict_list_to_tree(x, name='x')
 
         self.params, self.static = eqx.partition(pop_x, eqx.is_inexact_array)
@@ -379,7 +370,7 @@ class EvoSaxUpdate(UpdateStep):
             bounded=self.bounded,
             has_aux=self.task.has_aux,
             include_input=self.include_input,
-            pass_rng=self.pass_rng,
+            pass_rng=self.task.pass_rng,
             popsize=self.popsize,
             es_params=es_params,
             key=jr.key(self.seed),

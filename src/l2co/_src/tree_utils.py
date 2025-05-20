@@ -1,14 +1,15 @@
-# Third-party
+# Standard
 import json
 from typing import List
 
+# Third-party
 import jax
 import jax.numpy as jnp
-import jax.tree as jt
 import xarray as xr
 from f3dasm import ExperimentData
 from jaxtyping import PyTree
 
+# Local
 from .optimizerschedule import OptimizationSchedule
 
 # =============================================================================
@@ -125,5 +126,6 @@ def dict_list_to_tree(dict_list: list[dict[str, PyTree]], name: str) -> PyTree:
     PyTree
         The resulting PyTree.
     """
-    return jt.map(lambda *params: jax.numpy.stack(params, axis=0),
-                  *[d[name] for d in dict_list])
+    return jax.tree_util.tree_map(
+        lambda *params: jax.numpy.stack(params, axis=0),
+        *[d[name] for d in dict_list])

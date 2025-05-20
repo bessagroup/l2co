@@ -123,7 +123,6 @@ def run_optimization_schedule(
                 **step.hyperparameters, seed=seed,
                 bounded=bounded,
                 include_input=include_input,
-                pass_rng=task.pass_rng,
                 task=task,
                 verbose=verbose)
 
@@ -183,9 +182,13 @@ def run_optimization(
         data_iter=learning_data,
         use_scan=use_scan)
 
-    # Don't add the first population, since it is not based on the iteration
-    # of the optimizer
-    data += iterates[update_step.popsize:]
+    # If the optimizer created new x0 samples, include them but remove the
+    # last iterate to keep it even
+    if update_step.has_created_flag:
+        data += iterates[:-update_step.popsize]
+    # If not, remove the x0 samples
+    else:
+        data += iterates[update_step.popsize:]
 
     logger.debug(f"Optimization finished with {n_iterations} evaluations")
 
@@ -272,7 +275,7 @@ class RunOptimization(DataGenerator):
         self.partition_factor = partition_factor
         self.include_input = include_input
         self.clear_jax_cache = clear_jax_cache
-        self.rng = onp.random.default_rng(seed=seed)
+        self.seed = seed
         self.verbose = verbose
         self.sampler_cls = sampler_cls
         self.use_scan = use_scan
@@ -282,7 +285,6 @@ class RunOptimization(DataGenerator):
         es = experiment_sample.input_data
         task: Task = es['task']
         schedule: OptimizationSchedule = es['optimizer schedule']
-        seed: int = self.rng.integers(0, 2**30)
 
         if schedule.name.startswith('l2co'):
             n_switches = schedule.steps[0].hyperparameters['n_switches']
@@ -296,7 +298,7 @@ class RunOptimization(DataGenerator):
                 experiment_sample=experiment_sample,
                 task=task,
                 trained_l2co_model=trained_l2co_model,
-                seed=seed,
+                seed=self.seed,
                 n_switches=n_switches,
             )
 
@@ -305,7 +307,6 @@ class RunOptimization(DataGenerator):
                 experiment_sample=experiment_sample,
                 task=task,
                 schedule=schedule,
-                seed=seed,
             )
 
         if self.clear_jax_cache:
@@ -316,15 +317,14 @@ class RunOptimization(DataGenerator):
         return experiment_sample
 
     def run_optimization(
-        self, experiment_sample: ExperimentSample, task: Task,
-        schedule: OptimizationSchedule,
-            seed: int) -> ExperimentSample:
+            self, experiment_sample: ExperimentSample, task: Task,
+            schedule: OptimizationSchedule) -> ExperimentSample:
         t1 = time()
         data_xarr = run_optimization_schedule_multiple_realizations(
             task=task,
             optimization_schedule=schedule,
             budget_fn=self.budget_fn,
-            seed=seed,
+            seed=self.seed,
             partition_factor=self.partition_factor,
             n_realizations=self.n_realizations,
             include_input=self.include_input,
@@ -350,7 +350,7 @@ class RunOptimization(DataGenerator):
 
     def run_optimization_l2co(
         self, experiment_sample: ExperimentSample,
-            task: Task, trained_l2co_model: L2CO_model, seed: int,
+            task: Task, trained_l2co_model: L2CO_model,
             n_switches: int) -> ExperimentSample:
         t1 = time()
         data_xarr, schedule_xarr = \
@@ -358,7 +358,7 @@ class RunOptimization(DataGenerator):
                 task=task,
                 budget_fn=self.budget_fn,
                 partition_factor=self.partition_factor,
-                seed=seed,
+                seed=self.seed,
                 trained_l2co_model=trained_l2co_model,
                 n_switches=n_switches,
                 n_realizations=self.n_realizations,
