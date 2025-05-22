@@ -25,7 +25,7 @@ from copy import deepcopy
 from functools import partial
 from pathlib import Path
 from time import perf_counter
-from typing import Dict, Iterable, Literal, Optional, Tuple, Type
+from typing import Callable, Dict, Iterable, Literal, Optional, Tuple, Type
 
 import jax
 import jax.numpy as jnp
@@ -106,7 +106,6 @@ class DataLoader:
 #                                                      Alternative Constructors
 # =============================================================================
 
-
     @classmethod
     def from_file(
         cls, path: str, data_filename: str = 'entire_dataset'
@@ -148,9 +147,6 @@ class DataLoader:
                 return int(val)
             except ValueError:
                 return val
-
-        # def my_f(x):
-        #     return np.vectorize(parse_mixed_value)(x)
 
         task_labels = xr.apply_ufunc(
             np.vectorize(parse_mixed_value),
@@ -195,15 +191,6 @@ class DataLoader:
             ],
             dim='problem')
 
-        # for optimizer in optimizers:
-        #     dynamics.append(
-        #         self.query_optimizer(optimizer).to_params(
-        #             optimizer=optimizer,
-        #             t=t, t_start=t_start, t_end=t_end)
-        #     )
-
-        # ds_switch = xr.concat(dynamics, dim='problem')
-
         ds_first = self.select_single_optimizers(squash=True).to_params(
             t=t_start, t_start=t_start, t_end=t_end)
         return (
@@ -219,25 +206,27 @@ class DataLoader:
         vars['task_labels'] = self.task_labels
         # Calculate the performance labels
         vars['performance'] = self.select_t(
-            t_start=t, t=t_end).performance.sel(
+            t_start=t, t=t_end).performance_per_realization.sel(
             budget=t_end, method='nearest', drop=True)
 
         if optimizer is not None:
             # Fit the shape of the trajectory
-            params = compute_parameters(
-                self.select_t(t_start=t_start, t=t).trajectory)
-            vars['shape'] = _squash(params, reduce_dim='optimizer')
+            # params = compute_parameters(
+            #     self.select_t(t_start=t_start, t=t).trajectory)
+            # vars['shape'] = _squash(params, reduce_dim='optimizer')
 
             # staircase_params = compute_staircase_parameters(
             #     self.select_t(t_start=t_start, t=t).staircase)
+            trajectory = self.select_t(t_start=t_start, t=t).trajectory
+            vars['trajectory'] = _squash(trajectory, reduce_dim='optimizer')
 
-            staircase_params = self.select_t(t_start=t_start, t=t).staircase
+            staircase = self.select_t(t_start=t_start, t=t).staircase
             vars['staircase'] = _squash(
-                staircase_params, reduce_dim='optimizer')
+                staircase, reduce_dim='optimizer')
 
             # Calculate the relative improvement of the window
-            lri = log_relative_improvement(self.data)
-            vars['improvement'] = _squash(lri, reduce_dim='optimizer')
+            # lri = log_relative_improvement(self.data)
+            # vars['improvement'] = _squash(lri, reduce_dim='optimizer')
 
             # Create a tag of the optimizer used for the trajectory
             vars['opt'] = xr.DataArray(
@@ -263,13 +252,13 @@ class DataLoader:
 
         if criteria == 'min':
             df = ds.groupby('itemID').min().min('budget').isel(
-                output_dim=0).output_min.to_pandas()
+                output_dim=0)['output_min'].to_pandas()
         elif criteria == 'mean':
             df = ds.groupby('itemID').mean().min('budget').isel(
-                output_dim=0).output_min.to_pandas()
+                output_dim=0)['output_min'].to_pandas()
 
         df.index = ds.groupby('itemID').min().min(
-            'budget').isel(output_dim=0).task_labels
+            'budget').isel(output_dim=0)['task_labels']
 
         # Function to highlight the smallest value per row
         def highlight_min_row(row):
@@ -294,7 +283,7 @@ class DataLoader:
         ds = xr.Dataset({'sbs': sbs,
                          'task_labels': self.task_labels, })
 
-        df_task_labels = ds.groupby('itemID').min().task_labels.to_pandas()
+        df_task_labels = ds.groupby('itemID').min()['task_labels'].to_pandas()
         df_sbs = ds.groupby('itemID').min()['sbs'].to_pandas().rename('sbs')
 
         return pd.concat([df_task_labels, df_sbs], axis=1)
@@ -329,11 +318,11 @@ class DataLoader:
 
     @property
     def n_iterations(self) -> int:
-        return self.data.budget.size
+        return self.data['budget'].size
 
     @property
     def n_realization(self) -> int:
-        return np.unique(self.data.realization).size
+        return np.unique(self.data['realization']).size
 
     @property
     def features(self) -> xr.DataArray:
@@ -345,7 +334,7 @@ class DataLoader:
         xarray.DataArray
             The features coordinate.
         """
-        return self.task_labels.features
+        return self.task_labels['features']
 
     @property
     def problems(self) -> xr.DataArray:
@@ -357,7 +346,7 @@ class DataLoader:
         xarray.DataArray
             The problem coordinate.
         """
-        return self.task_labels.problem
+        return self.task_labels['problem']
 
     @property
     def optimizers(self) -> xr.DataArray:
@@ -369,31 +358,31 @@ class DataLoader:
         xarray.DataArray
             The optimizers coordinate.
         """
-        return self.data.optimizer
+        return self.data['optimizer']
 
     @property
     def staircase(self) -> xr.DataArray:
-        return output_cummin(compute_X_trajectory(
+        return scaling3(output_cummin(
             self.data['output_min'])).ffill('budget')
 
     @property
     def trajectory(self) -> xr.DataArray:
-        return compute_X_trajectory(self.data['output_mean'])
+        return scaling3(self.data['output_mean'])
 
     def _performance(self, include_best: bool,
                      exclude_optimizer: Optional[str] = None) -> xr.DataArray:
         t_start = perf_counter()
         print("Triggered performance")
-        performance = scaling2(self.data)
 
-        performance = performance.ffill(dim='budget')
+        performance = scaling2(output_cummin(
+            self.data['output_min'])).ffill('budget')
 
         if include_best:
             sbs = self._calculate_sbs(performance=performance,
                                       exclude_optimizer=exclude_optimizer)
             perf_sbs = performance.sel(optimizer=sbs, drop=True).reset_coords(
                 'optimizer', drop=True).expand_dims(optimizer=['sbs'])
-            performance = xr.merge([performance, perf_sbs]).output_min
+            performance = xr.merge([performance, perf_sbs])['output_min']
 
         print(f"Performance calculation took: {perf_counter()-t_start:0.2f}")
         return performance
@@ -428,7 +417,9 @@ class DataLoader:
 
         t_start = perf_counter()
         print("Triggered performance")
-        performance = scaling3(self.data).ffill('budget')
+        performance = scaling3(output_cummin(
+            self.data['output_min'])).ffill('budget')
+        # performance = scaling3(self.data).ffill('budget')
         print(f"Performance calculation took: {perf_counter()-t_start:0.2f}")
         return performance
 
@@ -598,7 +589,6 @@ class DataLoader:
 #                                                          Selecting optimizers
 # =============================================================================
 
-
     def select_single_optimizers(
             self, squash: bool = False) -> DataLoader:
         """
@@ -705,6 +695,7 @@ class DataLoader:
 
 #                                                           Performance metrics
 # =============================================================================
+
 
     def performance_profile(
             self, max_f_value: int = 2.0, include_best: bool = False,
@@ -832,8 +823,8 @@ class OptimizationDynamics2:
             X_trajectory = jnp.concat(
                 [
                     dynamics['staircase'].values,
-                    dynamics['shape'].values,
-                    dynamics['improvement'].values[:, None,],
+                    dynamics['trajectory'].values,
+                    # dynamics['improvement'].values[:, None,],
                 ], axis=1
             )
             previous_step = np.array(dynamics['opt'])
@@ -1291,3 +1282,21 @@ def _squash(da: xr.DataArray, reduce_dim: str,
         vectorize=True,
         dask="allowed"  # Optional: if using dask
     )
+
+
+def compute_fitting(trajectory: xr.DataArray, fit_params: xr.DataArray,
+                    basis_function: Callable):
+
+    x_input = np.linspace(0., 1., trajectory.coords['budget'].size)
+
+    fitted_sigmoid = xr.apply_ufunc(
+        lambda x, x_input: basis_function(x_input, *x),
+        fit_params,
+        kwargs={'x_input': x_input},
+        input_core_dims=[['fit_params']],
+        output_core_dims=[['budget']],
+        vectorize=True,
+    )
+
+    fitted_sigmoid = fitted_sigmoid.assign_coords(
+        budget=trajectory.coords['budget'])

@@ -69,14 +69,10 @@ def output_cummin(da: xr.DataArray):
     )
 
 
-def scaling2(data: xr.Dataset) -> xr.DataArray:
-
-    # 1. Calculate cumulative minimum (quality indictor value)
-    ds_output = output_cummin(data.output_min)  # .chunk('auto')
-
+def scaling2(data: xr.DataArray) -> xr.DataArray:
     # Cap the quality indicator value at 1e-8
-    ds_output = ds_output.where(
-        (ds_output > EPSILON) | (ds_output <= 0.) | ds_output.isnull(),
+    ds_output = data.where(
+        (data > EPSILON) | (data <= 0.) | data.isnull(),
         other=EPSILON)
 
     # 2. Make sure the loss is non-negative and non-zero
@@ -94,21 +90,18 @@ def scaling2(data: xr.Dataset) -> xr.DataArray:
         x_min = x_log10.min()
         x_max = x_log10.max(['budget'])
         return (x_log10 - x_min) / (x_max - x_min + EPSILON)
+
     ds_log10_positive = group_by_realizations.map(
-        min_custom)  # .assign_coords({
-    #    'problem': ds_output.problem})
+        min_custom)
 
     return ds_log10_positive
 
 
-def scaling3(data: xr.Dataset) -> xr.DataArray:
-
-    # 1. Calculate cumulative minimum (quality indictor value)
-    ds_output = output_cummin(data.output_min)  # .chunk('auto')
+def scaling3(data: xr.DataArray) -> xr.DataArray:
 
     # Cap the quality indicator value at 1e-8
-    ds_output = ds_output.where(
-        (ds_output > EPSILON) | (ds_output <= 0.) | ds_output.isnull(),
+    ds_output = data.where(
+        (data > EPSILON) | (data <= 0.) | data.isnull(),
         other=EPSILON)
 
     def f(x):

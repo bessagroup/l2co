@@ -22,11 +22,17 @@ experimentdata:
           'sphere',
           'styblinskitang',
           ]
+      dimensionality:
+        type: category
+        categories:
+          - 2
+          - 5
+          - 10
+          - 25
 task_kwargs:
   seed: ${seed}
   noise: 0.0
   offset: False
-  dimensionality: 2
 
 data_generator:
   _target_: l2co._src.tasks.benchmark_task.create_benchmark_task

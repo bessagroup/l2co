@@ -7,8 +7,10 @@ Plotting module
 
 # Local
 from ._src.plotting import (OPTIMIZER_COLORS, format_plot,
-                            plot_2d_loss_landscape, plot_perf_profile,
-                            plot_rtd_profile, plot_trajectories, set_size)
+                            plot_2d_loss_landscape,
+                            plot_2d_loss_landscape_only, plot_2d_trajectories,
+                            plot_perf_profile, plot_rtd_profile,
+                            plot_trajectories, set_size)
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -27,4 +29,6 @@ __all__ = ["set_size",
            "OPTIMIZER_COLORS",
            "format_plot",
            "plot_2d_loss_landscape",
+           "plot_2d_loss_landscape_only",
+           "plot_2d_trajectories",
            ]

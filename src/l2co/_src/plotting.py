@@ -13,6 +13,7 @@ plot_perf_profile
 #                                                                       Modules
 # =============================================================================
 
+import math
 from typing import Iterable, List, Optional, Tuple
 
 # Third-party
@@ -21,11 +22,10 @@ import numpy as np
 import xarray as xr
 from f3dasm import ExperimentData
 from f3dasm.design import Domain
-from matplotlib.colors import LinearSegmentedColormap, LogNorm, SymLogNorm
-
 from l2co._src.optimizers import EvaluateModel
 from l2co._src.sampler import GridWeightSampler
 from l2co._src.tree_utils import experimentdata_to_xarray
+from matplotlib.colors import LinearSegmentedColormap, LogNorm, SymLogNorm
 
 # Local
 from .data_loader import DataLoader, OptimizationDynamics
@@ -429,4 +429,106 @@ def plot_2d_loss_landscape(task: Task, plot_resolution: int = 100,
     ax2.set_xlabel('X axis')
     ax2.set_ylabel('Y axis')
     ax2.set_title('2D Heatmap')
+    return fig
+
+
+def plot_2d_loss_landscape_only(task: Task, plot_resolution: int = 100,
+                                stepsize: float = 0.033, seed: int = 0,
+                                ax=None):
+    sampler = GridWeightSampler(
+        stepsize=stepsize, lower_bound=0.0, upper_bound=1.0)
+
+    evaluate_block = EvaluateModel(
+        task=task,
+        seed=seed,
+    )
+
+    domain = Domain()
+    domain.add_parameter('x')
+    domain.add_output('y')
+    data = ExperimentData(domain=domain)
+
+    data = sampler.call(data=data, model=task.model)
+    data = evaluate_block.call(data=data)
+    data = experimentdata_to_xarray(data=data, popsizes=None, budgets=None,
+                                    include_input=True, n_iterations=None)
+
+    x = data['input'].isel(input_dim=0).values
+    y = data['input'].isel(input_dim=1).values
+    z = data['output'].isel(output_dim=0).values
+    x.shape, y.shape, z.shape
+
+    import numpy as np
+    from scipy.interpolate import griddata
+
+    X, Y = np.meshgrid(np.linspace(min(x), max(x), plot_resolution),
+                       np.linspace(min(y), max(y), plot_resolution))
+
+    Z = griddata((x, y), z, (X, Y), method='cubic')
+
+    # Ensure Z is positive
+    Z_min = np.min(Z)
+    Z = Z - Z_min
+
+    Z_nonzero = Z[Z > 0]
+    eps = np.min(Z_nonzero) if Z_nonzero.size > 0 else 1e-1
+
+    Z += eps
+
+    # # Create the figure and set up the subplots
+    # if ax is None:
+    #     fig, ax = plt.subplots(figsize=(12, 6))
+    # else:
+    #     fig = ax.get_figure()
+
+    # heatmap = ax.pcolormesh(X, Y, Z, cmap='viridis',
+    #                         shading='auto', norm=LogNorm())
+    # fig.colorbar(heatmap, ax=ax)
+    # ax.set_xlabel('X axis')
+    # ax.set_ylabel('Y axis')
+    # ax.set_title('2D Heatmap')
+    return X, Y, Z
+
+
+def plot_2d_trajectories(raw_results_list: List[xr.DataArray], task: Task,
+                         realization: int):
+    # Get the default color cycle
+    prop_cycle = plt.rcParams['axes.prop_cycle']
+    colors = prop_cycle.by_key()['color']
+    X, Y, Z = plot_2d_loss_landscape_only(task=task)
+
+    def get_grid(n):
+        return (math.ceil(n / 3), min(n, 3))
+    nrows, ncols = get_grid(len(raw_results_list))
+    fig, axes = plt.subplots(
+        *get_grid(len(raw_results_list)), figsize=(ncols*5, nrows*5))
+
+    if len(raw_results_list) == 1:
+        axes = np.array([axes])
+
+    for ax, r_i in zip(axes.flatten(), raw_results_list):
+        heatmap = ax.pcolormesh(X, Y, Z, cmap='viridis',
+                                shading='auto', norm=LogNorm())
+        fig.colorbar(heatmap, ax=ax)
+        ax.set_xlabel('$x_0$')
+        ax.set_ylabel('$x_1$')
+        switching_iters = np.cumsum(
+            [int(round(pop * b * r_i.attrs['n_iterations']))
+             for pop, b in zip(r_i.attrs['popsizes'], r_i.attrs['budgets'])])
+        for j, (color, current) in enumerate(zip(colors, switching_iters)):
+            prev = 0 if j == 0 else switching_iters[j-1]
+            current
+            x0 = r_i['input'].isel(
+                realization=realization, input_dim=0,
+                budget=range(prev, current))
+            x1 = r_i['input'].isel(
+                realization=realization, input_dim=1,
+                budget=range(prev, current))
+            y = r_i['output'].isel(
+                realization=realization, output_dim=0,
+                budget=range(prev, current))
+            ax.scatter(x0.values, x1.values, c=color, s=1, alpha=1.0)
+            ax.scatter(x0.values[y.argmin()], x1.values[y.argmin()],
+                       c='k', s=10, alpha=1.0, marker='x')
+
     return fig
