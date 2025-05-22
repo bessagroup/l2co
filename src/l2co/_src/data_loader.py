@@ -66,7 +66,7 @@ class DataLoader:
         self,
         data: xr.Dataset,
         task_labels: xr.DataArray,
-        opt_steps: Dict[str, OptimizationSchedule],
+        opt_steps: Iterable[OptimizationSchedule],
         l2co_schedules: Optional[xr.Dataset] = None,
     ):
         """
@@ -159,17 +159,17 @@ class DataLoader:
         ).T
 
         # Opt steps
-        opt_steps = {name: OptimizationSchedule.from_json_string(
-            opt) for name, opt in data['opt_steps'].to_series().items()}
+        opt_steps = [OptimizationSchedule.from_json_string(
+            opt) for _, opt in data['opt_steps'].to_series().items()]
 
         # delete opt_step and task_labels from data
         data = data.drop_vars(
             ['opt_steps', 'task_labels']).drop_dims('features')
 
         return cls(
-            data=data,
+            data=data.sortby('optimizer'),
             task_labels=task_labels,
-            opt_steps=dict(sorted(opt_steps.items())),
+            opt_steps=sorted(opt_steps),
             l2co_schedules=l2co_schedules
         )
 
@@ -178,32 +178,40 @@ class DataLoader:
 
     def to_all_params(self,
                       t: float, t_start: float = 0.0, t_end: float = 1.0
-                      ) -> Tuple[OptimizationDynamics2, OptimizationDynamics2]:
+                      ) -> xr.DataTree:
 
         optimizers = self.select_single_optimizers().optimizers.values
 
-        ds_switch = xr.concat(
-            [
-                self.query_optimizer(optimizer).to_params(
-                    optimizer=optimizer,
-                    t=t, t_start=t_start, t_end=t_end)
-                for optimizer in optimizers
-            ],
-            dim='problem')
-
-        ds_first = self.select_single_optimizers(squash=True).to_params(
+        _dict = {optimizer: self.query_optimizer(optimizer).to_params(
+            optimizer=optimizer,
+            t=t, t_start=t_start, t_end=t_end) for optimizer in optimizers}
+        _dict['first'] = self.select_single_optimizers(squash=True).to_params(
             t=t_start, t_start=t_start, t_end=t_end)
-        return (
-            OptimizationDynamics2.from_data(ds_first),
-            OptimizationDynamics2.from_data(ds_switch),
-        )
+
+        return xr.DataTree.from_dict(_dict)
+
+        # ds_switch = xr.concat(
+        #     [
+        #         self.query_optimizer(optimizer).to_params(
+        #             optimizer=optimizer,
+        #             t=t, t_start=t_start, t_end=t_end)
+        #         for optimizer in optimizers
+        #     ],
+        #     dim='problem')
+
+        # ds_first = self.select_single_optimizers(squash=True).to_params(
+        #     t=t_start, t_start=t_start, t_end=t_end)
+        # return (
+        #     OptimizationDynamics2.from_data(ds_first),
+        #     OptimizationDynamics2.from_data(ds_switch),
+        # )
 
     def to_params(self, t: float, t_start: float = 0.0, t_end: float = 1.0,
                   optimizer: Optional[str] = None,) -> xr.Dataset:
 
         vars = {}
 
-        vars['task_labels'] = self.task_labels
+        vars['task_labels'] = self.task_labels.astype(str)
         # Calculate the performance labels
         vars['performance'] = self.select_t(
             t_start=t, t=t_end).performance_per_realization.sel(
@@ -228,15 +236,17 @@ class DataLoader:
             # lri = log_relative_improvement(self.data)
             # vars['improvement'] = _squash(lri, reduce_dim='optimizer')
 
-            # Create a tag of the optimizer used for the trajectory
-            vars['opt'] = xr.DataArray(
-                np.full(len(self.data.itemID), optimizer, dtype=object),
-                dims='problem',
-                coords={"itemID": self.data.itemID}
-            )
+            # # Create a tag of the optimizer used for the trajectory
+            # vars['opt'] = xr.DataArray(
+            #     np.full(len(self.data.itemID), optimizer, dtype=object),
+            #     dims='problem',
+            #     coords={"itemID": self.data.itemID}
+            # )
 
         # Put everything together in a dataset
         ds = xr.Dataset(vars)
+
+        ds['optimizer'] = ds['optimizer'].astype(str)
 
         # Transpose dims
         desired_order = ('problem', 'output_dim', 'optimizer')
@@ -589,6 +599,7 @@ class DataLoader:
 #                                                          Selecting optimizers
 # =============================================================================
 
+
     def select_single_optimizers(
             self, squash: bool = False) -> DataLoader:
         """
@@ -635,13 +646,13 @@ class DataLoader:
         else:
             data = self.data.sel(optimizer=optimizers)
 
-        opt_steps = dict(filter(lambda item: item[0] in
-                                optimizers, self.opt_steps.items()))
+        opt_steps = list(filter(lambda item: item.name in
+                                optimizers, self.opt_steps))
 
         return DataLoader(
             task_labels=self.task_labels,
-            data=data,
-            opt_steps=dict(sorted(opt_steps.items())),
+            data=data.sortby('optimizer'),
+            opt_steps=sorted(opt_steps),
             l2co_schedules=self.l2co_schedules
         )
 
@@ -670,32 +681,30 @@ class DataLoader:
                  for o in filtered_optimizer], dtype=object))
 
         # Opt steps
-        filtered_schedules = dict(
-            filter(lambda item: item[0].startswith(optimizer),
-                   self.opt_steps.items()))
+        filtered_schedules = list(
+            filter(lambda item: item.steps[0].name in optimizer,
+                   self.opt_steps))
 
-        new_schedules: Dict[str, OptimizationSchedule] = {}
-        for k, v in filtered_schedules.items():
-
-            name = k.split('+')[-1] if '+' in k else k
+        new_schedules: Iterable[OptimizationSchedule] = []
+        for v in filtered_schedules:
+            name = v.name.split('+')[-1] if '+' in v.name else v.name
             v_copy = v.copy()
             v_copy.name = name
             v_copy.steps = [v_copy.steps[-1]]
-            new_schedules[name] = v_copy
-
-        new_schedules[optimizer].steps[0].x0_strategy = 'last'
+            if name == optimizer:
+                v_copy.steps[0].x0_strategy = 'last'
+            new_schedules.append(v_copy)
 
         return DataLoader(
             task_labels=self.task_labels,
-            data=data_selected,
-            opt_steps=dict(sorted(new_schedules.items())),
+            data=data_selected.sortby('optimizer'),
+            opt_steps=sorted(new_schedules),
             l2co_schedules=self.l2co_schedules,
         )
 
 
 #                                                           Performance metrics
 # =============================================================================
-
 
     def performance_profile(
             self, max_f_value: int = 2.0, include_best: bool = False,
@@ -771,6 +780,80 @@ def rtd(performance: xr.DataArray) -> xr.DataArray:
     return (1.0-performance).mean('problem')
 
 # =============================================================================
+
+
+class OptimizationDynamics:
+    def __init__(self,
+                 data: xr.Dataset,
+                 previous_step: Optional[str]):
+        self.data = data
+        self.previous_step = previous_step
+
+    @classmethod
+    def from_data(cls: Type[OptimizationDynamics],
+                  data: xr.Dataset,
+                  previous_step: Optional[str] = None) -> OptimizationDynamics:
+        # Fill in missing performance values
+        data['performance'] = xr.apply_ufunc(
+            impute_missing_values_svd,
+            data['performance'],
+            input_core_dims=[['problem', 'optimizer']],
+            output_core_dims=[['problem', 'optimizer']],
+            vectorize=True,
+        )
+
+        # Check for NaNs in each variable and reduce over all dims
+        # except 'problem'
+        nan_flags = [
+            var.isnull().any(dim=set(var.dims) - {'problem'})
+            for var in data.data_vars.values()
+        ]
+
+        # Combine all flags: True where any variable has NaNs in that problem
+        has_nan_anywhere = xr.concat(nan_flags, dim='_vars').any(dim='_vars')
+
+        # Filter out nans
+        data = data.sel(problem=~has_nan_anywhere)
+
+        # Select first output_dim
+        data = data.isel(output_dim=0, drop=True)
+
+        if previous_step == 'first':
+            previous_step = None
+
+        return cls(data=data, previous_step=previous_step)
+
+    @property
+    def X_features(self) -> pd.DataFrame:
+        return self.data['task_labels'].to_pandas(
+        ).infer_objects().convert_dtypes()
+
+    @property
+    def X_trajectory(self) -> jax.Array:
+        return jnp.stack(
+            (self.data['trajectory'].values, self.data['staircase'].values),
+            axis=-1)
+
+    @property
+    def Y(self) -> jax.Array:
+        return jnp.array(self.data['performance'])
+
+    @classmethod
+    def from_task_and_run(
+            cls: Type[OptimizationDynamics],
+            task: Task,
+            data: Optional[ExperimentData] = None,
+            previous_step: Optional[str] = None,
+    ) -> OptimizationDynamics:
+        ...
+
+
+def load_dynamics(path: str | Path) -> Dict[str, OptimizationDynamics]:
+    _path = Path(path)
+    datatree = xr.open_datatree(_path.with_suffix('.nc'))
+    return {name: OptimizationDynamics.from_data(
+        data=dynamics.to_dataset(),
+        previous_step=name) for name, dynamics in datatree.items()}
 
 
 class OptimizationDynamics2:
@@ -915,186 +998,6 @@ class OptimizationDynamics2:
                    Y=jnp.array(data['Y']),
                    previous_step=previous_step)
 
-
-class OptimizationDynamics:
-    def __init__(self,
-                 X_features: pd.DataFrame,
-                 X_trajectory: Optional[np.ndarray],
-                 Y: np.ndarray,
-                 opt_steps: Dict[str, OptimizationStep],
-                 previous_step: Optional[OptimizationStep]):
-
-        self.X_features = X_features
-        self.X_trajectory = X_trajectory
-        self.Y = Y
-        self.opt_steps = opt_steps
-        self.previous_step = previous_step
-
-    @property
-    def has_trajectory(self) -> bool:
-        """
-        Property that returns whether the model has a trajectory
-
-        Returns
-        -------
-        bool
-            Whether the model has a trajectory
-        """
-        return self.X_trajectory is not None
-
-    @classmethod
-    def from_data(
-        cls,
-        X_features: xr.DataArray,
-        X_trajectory: Optional[xr.DataArray],
-        Y: xr.DataArray,
-        opt_steps: Dict[str, OptimizationStep],
-        previous_step: Optional[OptimizationStep]
-    ):
-        """
-        Learning dataset inherited from pytorch Dataset. Used for learning the
-        machine learning models
-
-        Parameters
-        ----------
-        X_features : np.ndarray
-            The features of the optimization problems.
-        X_trajectory : np.ndarray
-            The trajectories of the optimization problems.
-        Y : np.ndarray
-            The performance value (labels) of the optimization problems.
-        """
-
-        mask = ~Y.isnull().all('optimizer')
-
-        if X_trajectory is not None:
-            mask_X_trajectory = ~X_trajectory.isnull().any('budget').isel(
-                optimizer=0, drop=True)
-
-            mask = mask & mask_X_trajectory
-            X_trajectory = X_trajectory.sel(problem=mask)
-            X_trajectory = X_trajectory.values.transpose(
-                2, 1, 0).squeeze()
-
-        Y = Y.sel(problem=mask).values
-
-        Y = impute_missing_values_svd(Y).T
-
-        X_features = X_features.sel(
-            problem=mask).to_pandas().infer_objects().convert_dtypes()
-
-        return cls(X_features=X_features,
-                   X_trajectory=X_trajectory,
-                   Y=Y,
-                   opt_steps=opt_steps,
-                   previous_step=previous_step
-                   )
-
-    @classmethod
-    def from_task_and_run(
-            cls,
-            task: Task,
-            previous_step: Optional[OptimizationStep] = None,
-            data: Optional[ExperimentData] = None,
-    ) -> OptimizationDynamics:
-        X_features = pd.DataFrame([task.tag])
-        previous_step = previous_step
-
-        if data is None:
-            X_trajectory = None
-
-        else:
-            X_trajectory = np.vstack([es.output_data['y']
-                                      for _, es in data]).T
-
-        return cls(X_features=X_features,
-                   X_trajectory=X_trajectory,
-                   Y=None,
-                   opt_steps=None,
-                   previous_step=previous_step)
-
-    @classmethod
-    def load(cls, path: Path | str) -> OptimizationDynamics:
-        """
-        Load the model from a file
-
-        Parameters
-        ----------
-        path : Path
-            The path to the data
-
-        Returns
-        -------
-        OptimizationDynamics
-            The loaded optimization dynamics data.
-        """
-        _path = Path(path)
-        data = np.load(str(_path) + '.npz', allow_pickle=True)
-        if (data['X_trajectory'].ndim == 0
-                and data['X_trajectory'].item() is None):
-            X_trajectory = None
-        else:
-            X_trajectory = data['X_trajectory']
-
-        features = pd.read_csv(str(_path) + '.csv', index_col=0,
-                               header=0).convert_dtypes()
-
-        # Open opt steps
-        with open(str(_path) + '.json', 'r') as f:
-            opt_steps_dict = json.load(f)
-
-        previous_step = opt_steps_dict.pop('previous_step', None)
-
-        if previous_step is not None:
-            previous_step = OptimizationStep.from_dict(previous_step)
-
-        opt_steps = {k: OptimizationStep.from_dict(
-            v) for k, v in opt_steps_dict.items()}
-
-        return cls(X_features=features,
-                   X_trajectory=X_trajectory,
-                   Y=data['Y'],
-                   opt_steps=opt_steps,
-                   previous_step=previous_step)
-
-    def save(self, path: str) -> None:
-        """
-        Save the model to a file
-
-        Parameters
-        ----------
-        path : Path
-            The path to the model
-        """
-        _path = Path(path)
-        # Save trajectory and y
-        np.savez(str(_path) + '.npz', **self.to_dict())
-
-        # Save features
-        self.X_features.to_csv(str(_path) + '.csv')
-
-        opt_steps_dict = {k: v.to_dict()
-                          for k, v in self.opt_steps.items()}
-
-        if self.previous_step is not None:
-            opt_steps_dict['previous_step'] = self.previous_step.to_dict()
-        else:
-            opt_steps_dict['previous_step'] = None
-
-        with open(str(_path) + '.json', 'w') as f:
-            json.dump(opt_steps_dict, f, indent=4)
-
-    def Y_binary(self, rel_tolerance: float = 0.0):
-        if rel_tolerance == 0.0:
-            return self.Y == self.Y.min(axis=1, keepdims=True)
-        else:
-            min_values = self.Y.min(axis=1, keepdims=True)
-            threshold = min_values + abs(min_values * rel_tolerance)
-            return self.Y <= threshold
-
-    def to_dict(self) -> Dict[str, np.ndarray]:
-        return {'X_trajectory': self.X_trajectory,
-                'Y': self.Y}
 
 # =============================================================================
 

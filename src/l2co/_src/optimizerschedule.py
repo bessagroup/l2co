@@ -124,6 +124,9 @@ class OptimizationSchedule:
                     step.x0_strategy = get_handshake(
                         self.steps[i-1].optimizer, step.optimizer)
 
+    def __lt__(self, __o: OptimizationSchedule) -> bool:
+        return self.name < __o.name
+
     @property
     def name(self) -> str:
         return self.tag['opt_name']
