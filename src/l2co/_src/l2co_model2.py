@@ -1,36 +1,30 @@
 from __future__ import annotations
 
-import json
 # Standard
 from collections import defaultdict
-from functools import partial
-from pathlib import Path
-from time import time
-from typing import Callable, Dict, Iterable, Optional
+from typing import Callable, Dict, Iterable
 
 # Third-party
-import cloudpickle
 import equinox as eqx
 import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
-import joblib
 import numpy as np
 import optax
 import pandas as pd
 import xarray as xr
-from jaxtyping import PyTree
 from sklearn.base import BaseEstimator
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline, make_pipeline
 
 # Local
 from ._logging import logger
-from .batching import batch_iter
-from .data_loader import OptimizationDynamics
-from .optimizerschedule import OptimizationStep
+from .data_loader import DataLoader, OptimizationDynamics
+from .optimizerschedule import OptimizationSchedule, OptimizationStep
 from .preprocessing import DataFrameColumnTransformer, EnsureColumnsTransformer
+
+# =============================================================================
 
 
 class LSTM_Encoder(eqx.Module):
@@ -168,14 +162,14 @@ class L2CO_model:
         return cls(stage0_model=stage0_model,
                    stage1_models=stage1_models)
 
-    def train(self, dynamics_list: Iterable[OptimizationDynamics],
-              opt_steps: Dict[str, OptimizationStep],
+    def train(self, dynamics_dict: Dict[str, OptimizationDynamics],
+              opt_steps: Iterable[OptimizationStep],
               optimizer: optax.GradientTransformation,
               epochs: int):
 
         self.opt_steps = opt_steps
 
-        for dynamics in dynamics_list:
+        for dynamics in dynamics_dict.values():
             if dynamics.previous_step is None:
                 train_stage0_model(model=self.stage0_model,
                                    x=dynamics.X_features, y=dynamics.Y)
@@ -189,7 +183,8 @@ class L2CO_model:
                     epochs=epochs,
                     optimizer=optimizer)
 
-    def predict(self, dynamics: OptimizationDynamics):
+    def predict(self, dynamics: OptimizationDynamics
+                ) -> Iterable[OptimizationStep]:
         if dynamics.previous_step is None:
             y_hat = predict_stage0_model(model=self.stage0_model,
                                          x=dynamics.X_features)
@@ -199,4 +194,54 @@ class L2CO_model:
                 data={'x': dynamics.X_trajectory}
             )
 
-        return y_hat
+        # Couple the integer prediction to the optimization step
+        return [self.opt_steps[i] for i in y_hat]
+
+    def predict_from_dataloader(self,
+                                d: DataLoader, t: int,
+                                t_start: int = 0.0, t_end: int = 1.0):
+        dyn_first = OptimizationDynamics.from_data(
+            d.to_params(t_start=t_start, t=t, t_end=t_end))
+
+        predict_stage0: Iterable[OptimizationStep] = self.predict(
+            dyn_first)
+
+        pr_0 = xr.DataArray(
+            [p.name for p in predict_stage0], dims='problem', coords={
+                'itemID': dyn_first.data['itemID']})
+
+        pr_1_list = []
+
+        for pr_0_opt in np.unique(pr_0):
+            filtered_steps = filter(
+                lambda step: step.name == pr_0_opt, predict_stage0)
+            problems = pr_0.where(pr_0 == pr_0_opt, drop=True).problem
+
+            dyn_second = OptimizationDynamics.from_data(
+                d
+                .query_optimizer(pr_0_opt)
+                .select_problems(problems)
+                .to_params(
+                    t_start=t_start, t=t, t_end=t_end, optimizer=pr_0_opt),
+                previous_step=pr_0_opt)
+
+            predict_stage1: Iterable[OptimizationStep] = self.predict(
+                dyn_second)
+
+            schedules = [OptimizationSchedule(steps=[opt1, opt2],
+                                              budgets=[t, t_end-t])
+                         for opt1, opt2 in zip(filtered_steps, predict_stage1)]
+
+            pr_1_list.append(
+                xr.DataArray(
+                    [p.name for p in schedules], dims='problem',
+                    coords={
+                        'itemID': dyn_second.data['itemID']}
+
+                )
+            )
+
+        predictions = xr.concat(pr_1_list, dim='problem')
+
+        return d.data.sel(optimizer=predictions).drop_vars(
+            'optimizer').expand_dims(optimizer=['l2co'])

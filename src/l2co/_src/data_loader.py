@@ -106,6 +106,7 @@ class DataLoader:
 #                                                      Alternative Constructors
 # =============================================================================
 
+
     @classmethod
     def from_file(
         cls, path: str, data_filename: str = 'entire_dataset'
@@ -178,7 +179,7 @@ class DataLoader:
 
     def to_all_params(self,
                       t: float, t_start: float = 0.0, t_end: float = 1.0
-                      ) -> xr.DataTree:
+                      ) -> Tuple[xr.DataTree, Iterable[OptimizationStep]]:
 
         optimizers = self.select_single_optimizers().optimizers.values
 
@@ -188,7 +189,10 @@ class DataLoader:
         _dict['first'] = self.select_single_optimizers(squash=True).to_params(
             t=t_start, t_start=t_start, t_end=t_end)
 
-        return xr.DataTree.from_dict(_dict)
+        opt_steps = [schedule.steps[0]
+                     for schedule in self.select_single_optimizers().opt_steps]
+
+        return xr.DataTree.from_dict(_dict), opt_steps
 
         # ds_switch = xr.concat(
         #     [
@@ -599,7 +603,6 @@ class DataLoader:
 #                                                          Selecting optimizers
 # =============================================================================
 
-
     def select_single_optimizers(
             self, squash: bool = False) -> DataLoader:
         """
@@ -705,6 +708,7 @@ class DataLoader:
 
 #                                                           Performance metrics
 # =============================================================================
+
 
     def performance_profile(
             self, max_f_value: int = 2.0, include_best: bool = False,
@@ -848,9 +852,14 @@ class OptimizationDynamics:
         ...
 
 
-def load_dynamics(path: str | Path) -> Dict[str, OptimizationDynamics]:
-    _path = Path(path)
-    datatree = xr.open_datatree(_path.with_suffix('.nc'))
+def load_dynamics(path: str | Path | xr.DataTree
+                  ) -> Dict[str, OptimizationDynamics]:
+    if not isinstance(path, xr.DataTree):
+        _path = Path(path)
+        datatree = xr.open_datatree(_path.with_suffix('.nc'))
+    else:  # Assume path is already a DataTree
+        datatree = path
+
     return {name: OptimizationDynamics.from_data(
         data=dynamics.to_dataset(),
         previous_step=name) for name, dynamics in datatree.items()}
