@@ -112,7 +112,12 @@ class OptimizationSchedule:
             budgets = [budgets]
 
         self.steps = [step.copy() for step in steps]
-        self.tag = {'opt_name': '+'.join([step.name for step in steps]),
+
+        names = [step.name for step in steps]
+        opt_name = names[0] if all(name == names[0]
+                                   for name in names) else '+'.join(names)
+
+        self.tag = {'opt_name': opt_name,
                     'steps': [step.tag for step in steps]}
         self.budgets = budgets
 
