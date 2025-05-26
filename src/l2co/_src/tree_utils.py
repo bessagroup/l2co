@@ -20,6 +20,27 @@ def experimentdata_to_xarray(data: ExperimentData,
                              budgets: List[float] | float,
                              n_iterations: int,
                              include_input: bool = False) -> xr.Dataset:
+    """
+    Convert ExperimentData to an xarray.Dataset.
+
+    Parameters
+    ----------
+    data : ExperimentData
+        The experiment data to convert.
+    popsizes : list of int
+        List of population sizes used in the experiment.
+    budgets : list of float or float
+        List of budgets or a single budget value.
+    n_iterations : int
+        Number of iterations in the experiment.
+    include_input : bool, optional
+        Whether to include input data in the dataset, by default False.
+
+    Returns
+    -------
+    xarray.Dataset
+        The converted dataset.
+    """
     y_arr = jnp.vstack([es.output_data['y']
                         for _, es in data]).T
 
@@ -53,6 +74,19 @@ def experimentdata_to_xarray(data: ExperimentData,
 
 
 def schedule_to_xarray(data: OptimizationSchedule) -> xr.DataArray:
+    """
+    Convert an OptimizationSchedule to an xarray.DataArray.
+
+    Parameters
+    ----------
+    data : OptimizationSchedule
+        The optimization schedule to convert.
+
+    Returns
+    -------
+    xarray.DataArray
+        The converted data array.
+    """
     x = xr.DataArray(
         [json.dumps(data.to_dict())],
         dims=['schedule']
@@ -99,7 +133,7 @@ def tree_to_dict_list(tree: PyTree, name: str) -> list[dict[str, PyTree]]:
 
     Returns
     -------
-    List[Dict[str, PyTree]]
+    list of dict
         A list of dictionaries representing the PyTree.
     """
     num_models = jax.tree_util.tree_leaves(
@@ -116,7 +150,7 @@ def dict_list_to_tree(dict_list: list[dict[str, PyTree]], name: str) -> PyTree:
 
     Parameters
     ----------
-    dict_list : List[Dict[str, PyTree]]
+    dict_list : list of dict
         The list of dictionaries to convert.
     name : str
         The key name to extract from the dictionaries.

@@ -38,24 +38,23 @@ __status__ = 'Planning'
 EPSILON = 1e-8
 
 
-def output_cummin(da: xr.DataArray):
+def output_cummin(da: xr.DataArray) -> xr.DataArray:
     """
     Calculate the cumulative minimum of the given data array.
 
     Parameters
     ----------
     da : xarray.DataArray
-        The dataarray to calculate the cumulative minimum for.
+        The data array to calculate the cumulative minimum for.
 
     Returns
     -------
-    xr.DataArray
-        The dataarray with the cumulative minimum calculated.
+    xarray.DataArray
+        The data array with the cumulative minimum calculated.
 
     Notes
     -----
-    The dataarray calculate the cumulative minimum for the coordinate named
-    'budget'.
+    The cumulative minimum is calculated along the coordinate named 'budget'.
     """
     return xr.apply_ufunc(
         np.minimum.accumulate,
@@ -70,6 +69,24 @@ def output_cummin(da: xr.DataArray):
 
 
 def scaling2(data: xr.DataArray) -> xr.DataArray:
+    """
+    Scale the given data array using a custom scaling method.
+
+    Parameters
+    ----------
+    data : xarray.DataArray
+        The data array to scale.
+
+    Returns
+    -------
+    xarray.DataArray
+        The scaled data array.
+
+    Notes
+    -----
+    This function applies log scaling, ensures non-negativity, and performs
+    min-max scaling for each realization in the data.
+    """
     # Cap the quality indicator value at 1e-8
     ds_output = data.where(
         (data > EPSILON) | (data <= 0.) | data.isnull(),
@@ -98,6 +115,24 @@ def scaling2(data: xr.DataArray) -> xr.DataArray:
 
 
 def scaling3(data: xr.DataArray) -> xr.DataArray:
+    """
+    Scale the given data array using an alternative scaling method.
+
+    Parameters
+    ----------
+    data : xarray.DataArray
+        The data array to scale.
+
+    Returns
+    -------
+    xarray.DataArray
+        The scaled data array.
+
+    Notes
+    -----
+    This function applies log scaling, ensures non-negativity, and performs
+    min-max scaling across multiple dimensions.
+    """
 
     # Cap the quality indicator value at 1e-8
     ds_output = data.where(

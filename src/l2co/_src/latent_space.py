@@ -1,9 +1,10 @@
 # Third-party
+from functools import partial
+
 import gpjax as gpx
 import jax
 import jax.numpy as jnp
 import optax
-from functools import partial
 from gpjax.parameters import Real
 
 # =============================================================================
@@ -14,6 +15,28 @@ key = jax.random.key(0)
 
 
 class SigmoidMean(gpx.mean_functions.AbstractMeanFunction):
+    """
+    Sigmoid mean function for Gaussian processes.
+
+    Parameters
+    ----------
+    a : float
+        Scale parameter of the sigmoid function.
+    b : float
+        Slope parameter of the sigmoid function.
+    c : float
+        Offset parameter of the sigmoid function.
+
+    Attributes
+    ----------
+    a : Real
+        Scale parameter as a Real object.
+    b : Real
+        Slope parameter as a Real object.
+    c : Real
+        Offset parameter as a Real object.
+    """
+
     def __init__(self, a: float, b: float, c: float):
         super().__init__()
         self.a = Real(jnp.array(a))
@@ -26,9 +49,36 @@ class SigmoidMean(gpx.mean_functions.AbstractMeanFunction):
 
 
 def fit_gpr(
-        x: jax.Array, optimizer: optax.GradientTransformation,
-        inducing_points: int = 50, num_iters: int = 100,
-        return_posterior: bool = False) -> jax.Array:
+        x: jax.Array,
+        optimizer: optax.GradientTransformation,
+        inducing_points: int = 50,
+        num_iters: int = 100,
+        return_posterior: bool = False
+) -> jax.Array | tuple[jax.Array, gpx.Posterior]:
+    """
+    Fits a Gaussian Process Regression (GPR) model.
+
+    Parameters
+    ----------
+    x : jax.Array
+        Input data for the GPR model.
+    optimizer : optax.GradientTransformation
+        Optimizer for training the GPR model.
+    inducing_points : int, optional
+        Number of inducing points for the variational approximation.
+        Default is 50.
+    num_iters : int, optional
+        Number of iterations for optimization. Default is 100.
+    return_posterior : bool, optional
+        If True, returns the posterior along with the parameters.
+        Default is False.
+
+    Returns
+    -------
+    jax.Array or tuple[jax.Array, gpx.Posterior]
+        The fitted parameters of the GPR model. If `return_posterior`
+        is True, also returns the posterior object.
+    """
 
     yy = x.T[:, None]
     xx = jnp.linspace(0.0, 1.0, x.shape[0])[:, None]
@@ -76,19 +126,74 @@ def fit_gpr(
         return params
 
 
-def sigmoid_mean(x, a, b, c):
-    """Sigmoid function used for fitting."""
+def sigmoid_mean(x: jax.Array, a: float, b: float, c: float) -> jax.Array:
+    """
+    Compute the sigmoid function.
+
+    Parameters
+    ----------
+    x : jax.Array
+        Input data.
+    a : float
+        Scale parameter of the sigmoid function.
+    b : float
+        Slope parameter of the sigmoid function.
+    c : float
+        Offset parameter of the sigmoid function.
+
+    Returns
+    -------
+    jax.Array
+        Output of the sigmoid function.
+    """
+
     return a / (1 + jnp.exp(-b * (x - c)))
 
 
-def loss_fn(params, x, y):
-    """Mean Squared Error (MSE) loss function."""
+def loss_fn(params: jax.Array, x: jax.Array, y: jax.Array) -> jax.Array:
+    """
+    Compute the mean squared error (MSE) loss.
+
+    Parameters
+    ----------
+    params : jax.Array
+        Parameters of the sigmoid function.
+    x : jax.Array
+        Input data.
+    y : jax.Array
+        Target data.
+
+    Returns
+    -------
+    jax.Array
+        Computed MSE loss.
+    """
+
     a, b, c = params
     y_pred = sigmoid_mean(x, a, b, c)
     return jnp.mean((y - y_pred) ** 2)
 
 
-def fit_basis_function(y: jnp.ndarray, max_iter: int = 100, tol: float = 1e-6):
+def fit_basis_function(y: jnp.ndarray, max_iter: int = 100,
+                       tol: float = 1e-6) -> jnp.ndarray:
+    """
+    Fit a basis function to the given data.
+
+    Parameters
+    ----------
+    y : jax.numpy.ndarray
+        Target data to fit the basis function to.
+    max_iter : int, optional
+        Maximum number of iterations, by default 100.
+    tol : float, optional
+        Tolerance for convergence, by default 1e-6.
+
+    Returns
+    -------
+    jax.numpy.ndarray
+        Fitted parameters of the basis function.
+    """
+
     x = jnp.linspace(0., 1., len(y))
     opt = optax.lbfgs()
     init_params = jnp.array([1.0, 1.0, 0.0])

@@ -62,6 +62,32 @@ INVALID_PERFORMANCE_VALUE = 1.0
 
 
 class DataLoader:
+    """
+    Data loader for optimization dynamics in the L2CO framework.
+
+    Parameters
+    ----------
+    data : xarray.Dataset
+        The raw optimization trajectories.
+    task_labels : xarray.DataArray
+        Labels of the optimization problems.
+    opt_steps : Iterable[OptimizationSchedule]
+        Optimization schedules.
+    l2co_schedules : xarray.Dataset, optional
+        L2CO schedules, by default None.
+
+    Attributes
+    ----------
+    data : xarray.Dataset
+        The raw optimization trajectories.
+    task_labels : xarray.DataArray
+        Labels of the optimization problems.
+    opt_steps : Iterable[OptimizationSchedule]
+        Optimization schedules.
+    l2co_schedules : xarray.Dataset
+        L2CO schedules.
+    """
+
     def __init__(
         self,
         data: xr.Dataset,
@@ -105,7 +131,6 @@ class DataLoader:
 
 #                                                      Alternative Constructors
 # =============================================================================
-
 
     @classmethod
     def from_file(
@@ -210,8 +235,32 @@ class DataLoader:
         #     OptimizationDynamics2.from_data(ds_switch),
         # )
 
-    def to_params(self, t: float, t_start: float = 0.0, t_end: float = 1.0,
-                  optimizer: Optional[str] = None,) -> xr.Dataset:
+    def to_params(
+        self,
+        t: float,
+        t_start: float = 0.0,
+        t_end: float = 1.0,
+        optimizer: Optional[str] = None,
+    ) -> xr.Dataset:
+        """
+        Converts the data into a parameterized dataset.
+
+        Parameters
+        ----------
+        t : float
+            Current time step.
+        t_start : float, optional
+            Start time for the parameterization. Default is 0.0.
+        t_end : float, optional
+            End time for the parameterization. Default is 1.0.
+        optimizer : str, optional
+            Name of the optimizer to include in the dataset.
+
+        Returns
+        -------
+        xr.Dataset
+            Parameterized dataset.
+        """
 
         vars = {}
 
@@ -381,10 +430,33 @@ class DataLoader:
 
     @property
     def trajectory(self) -> xr.DataArray:
+        """
+        Returns the trajectory of the optimization process.
+
+        Returns
+        -------
+        xr.DataArray
+            Trajectory data.
+        """
         return scaling3(self.data['output_mean'])
 
     def _performance(self, include_best: bool,
                      exclude_optimizer: Optional[str] = None) -> xr.DataArray:
+        """
+        Computes the performance of the optimizers.
+
+        Parameters
+        ----------
+        include_best : bool
+            Whether to include the best optimizer in the performance.
+        exclude_optimizer : str, optional
+            Name of the optimizer to exclude from the performance.
+
+        Returns
+        -------
+        xr.DataArray
+            Performance data.
+        """
         t_start = perf_counter()
         print("Triggered performance")
 
@@ -603,6 +675,7 @@ class DataLoader:
 #                                                          Selecting optimizers
 # =============================================================================
 
+
     def select_single_optimizers(
             self, squash: bool = False) -> DataLoader:
         """
@@ -661,17 +734,17 @@ class DataLoader:
 
     def query_optimizer(self, optimizer: str) -> DataLoader:
         """
-        Query the data loader for a specific optimizer.
+        Filters the data for a specific optimizer.
 
         Parameters
         ----------
         optimizer : str
-            The optimizer to query.
+            Name of the optimizer to filter.
 
         Returns
         -------
         DataLoader
-            The queried data loader.
+            A new DataLoader instance with filtered data.
         """
         filtered_optimizer = np.array(
             [o for o in self.optimizers.values if o.startswith(optimizer)],
@@ -708,7 +781,6 @@ class DataLoader:
 
 #                                                           Performance metrics
 # =============================================================================
-
 
     def performance_profile(
             self, max_f_value: int = 2.0, include_best: bool = False,
@@ -763,6 +835,21 @@ class DataLoader:
 
 def performance_profile(performance: xr.DataArray, max_f_value: int = 2.0
                         ) -> xr.DataArray:
+    """
+    Create a performance profile for the given performance data.
+
+    Parameters
+    ----------
+    performance : xarray.DataArray
+        Performance data for optimization problems.
+    max_f_value : int, optional
+        Maximum performance ratio, by default 2.0.
+
+    Returns
+    -------
+    xarray.DataArray
+        Performance profile.
+    """
     p = performance.isel(budget=-1)
     rij = (p + 1.0) / 1.0
 
@@ -781,6 +868,19 @@ def performance_profile(performance: xr.DataArray, max_f_value: int = 2.0
 
 
 def rtd(performance: xr.DataArray) -> xr.DataArray:
+    """
+    Compute the runtime distribution (RTD) profile.
+
+    Parameters
+    ----------
+    performance : xarray.DataArray
+        Performance data for optimization problems.
+
+    Returns
+    -------
+    xarray.DataArray
+        RTD profile.
+    """
     return (1.0-performance).mean('problem')
 
 # =============================================================================
@@ -863,149 +963,6 @@ def load_dynamics(path: str | Path | xr.DataTree
     return {name: OptimizationDynamics.from_data(
         data=dynamics.to_dataset(),
         previous_step=name) for name, dynamics in datatree.items()}
-
-
-class OptimizationDynamics2:
-    def __init__(self,
-                 X_features: pd.DataFrame,
-                 X_trajectory: Optional[jax.Array],
-                 Y: jax.Array,
-                 previous_step: Optional[np.ndarray]):
-        self.X_features = X_features  # shape = (n_problems, n_features)
-        self.X_trajectory = X_trajectory  # shape = (n_problems, n_params)
-        self.Y = Y  # shape = (n_problems, n_optimizers)
-        self.previous_step = previous_step  # shape = (n_problem,)
-
-    @classmethod
-    def from_data(cls: Type[OptimizationDynamics2],
-                  dynamics: xr.Dataset,
-                  ) -> OptimizationDynamics2:
-
-        # Fill in missing performance values
-        dynamics['performance'] = xr.apply_ufunc(
-            impute_missing_values_svd,
-            dynamics['performance'],
-            input_core_dims=[['problem', 'optimizer']],
-            output_core_dims=[['problem', 'optimizer']],
-            vectorize=True,
-        )
-
-        # Check for NaNs in each variable and reduce over all dims
-        # except 'problem'
-        nan_flags = [
-            var.isnull().any(dim=set(var.dims) - {'problem'})
-            for var in dynamics.data_vars.values()
-        ]
-
-        # Combine all flags: True where any variable has NaNs in that problem
-        has_nan_anywhere = xr.concat(nan_flags, dim='_vars').any(dim='_vars')
-
-        # Filter out nans
-        dynamics = dynamics.sel(problem=~has_nan_anywhere)
-
-        # Select first output_dim
-        dynamics = dynamics.isel(output_dim=0, drop=True)
-
-        X_features = dynamics['task_labels'].to_pandas(
-        ).infer_objects().convert_dtypes()
-
-        Y = jnp.array(dynamics['performance'])
-
-        if 'opt' in dynamics:
-            X_trajectory = jnp.concat(
-                [
-                    dynamics['staircase'].values,
-                    dynamics['trajectory'].values,
-                    # dynamics['improvement'].values[:, None,],
-                ], axis=1
-            )
-            previous_step = np.array(dynamics['opt'])
-        else:
-            X_trajectory = None
-            previous_step = None
-
-        return cls(X_features=X_features,
-                   X_trajectory=X_trajectory,
-                   Y=Y,
-                   previous_step=previous_step)
-
-    @classmethod
-    def from_task_and_run(
-            cls: Type[OptimizationDynamics2],
-            task: Task,
-            previous_step: Optional[str] = None,
-            data: Optional[ExperimentData] = None,
-    ) -> OptimizationDynamics2:
-        X_features = pd.DataFrame([task.tag])
-        previous_step = np.ndarray(
-            [previous_step]) if previous_step is not None else None
-        if data is None:
-            X_trajectory = None
-
-        else:
-            X_trajectory = jnp.vstack([es.output_data['y']
-                                      for _, es in data]).T
-
-        return cls(X_features=X_features,
-                   X_trajectory=X_trajectory,
-                   Y=None,
-                   opt_steps=None,
-                   )
-
-    def to_dict(self) -> Dict[str, np.ndarray]:
-        return {'X_trajectory': self.X_trajectory,
-                'Y': self.Y,
-                'previous_step': self.previous_step, }
-
-    def save(self, path: str) -> None:
-        """
-        Save the model to a file
-
-        Parameters
-        ----------
-        path : Path
-            The path to the model
-        """
-        _path = Path(path)
-        # Save trajectory and y
-        np.savez(str(_path) + '.npz', **self.to_dict())
-
-        # Save features
-        self.X_features.to_csv(str(_path) + '.csv')
-
-    @classmethod
-    def load(cls: Type[OptimizationDynamics2], path: Path | str
-             ) -> OptimizationDynamics2:
-        """
-        Load the model from a file
-
-        Parameters
-        ----------
-        path : Path
-            The path to the data
-
-        Returns
-        -------
-        OptimizationDynamics
-            The loaded optimization dynamics data.
-        """
-        _path = Path(path)
-        data = np.load(str(_path) + '.npz', allow_pickle=True)
-        if (data['X_trajectory'].ndim == 0
-                and data['X_trajectory'].item() is None):
-            X_trajectory = None
-            previous_step = None
-        else:
-            X_trajectory = data['X_trajectory']
-            previous_step = data['previous_step']
-
-        features = pd.read_csv(str(_path) + '.csv', index_col=0,
-                               header=0).convert_dtypes()
-
-        return cls(X_features=features,
-                   X_trajectory=jnp.array(X_trajectory),
-                   Y=jnp.array(data['Y']),
-                   previous_step=previous_step)
 
 
 # =============================================================================
