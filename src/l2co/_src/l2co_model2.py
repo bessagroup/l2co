@@ -242,6 +242,6 @@ class L2CO_model:
             )
 
         predictions = xr.concat(pr_1_list, dim='problem')
-
-        return d.data.sel(optimizer=predictions).drop_vars(
-            'optimizer').expand_dims(optimizer=['l2co'])
+        return predictions
+        # return d.data.sel(optimizer=predictions).drop_vars(
+        #     'optimizer').expand_dims(optimizer=['l2co'])
