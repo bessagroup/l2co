@@ -121,16 +121,6 @@ The default configuration is defined in `conf/config.yaml`:
 
 You can modify the default configuration or use any of the above configurations by updating the `defaults` section in `conf/config.yaml`.
 
-
-
-
-
-
-
-
-
-
-
 ## Contents of this folder
 
 | File/Folder | Description |
@@ -176,20 +166,20 @@ The number of processes must be at least 2.
 
 ## Results
 
-Results are stored in a newly created `outputs` folder, with a subdirectory
-indicating the current date (e.g. `2023-11-06`).
-
-* When running on a local machine, the output will be saved in a directory indicating the current time (e.g. `13-50-14`).
-* When running on a cluster, the output will be saved in a directory indicating the current job ID (e.g. `538734.hpc06.hpc`).
+Results are stored in a newly created `outputs` folder, within a subdirectory:
+* When running on a local machine, the output will be saved in a directory indicating the current time (e.g. `13-50-24`).
+* When running on a cluster, the output will be saved in a
+ directory indicating the current job ID (e.g. `1234567`).
 
 The following subdirectories are created:
 
-* `experiment_data`: Contains the input, output, domain and jobs to construct the `f3dasm.ExperimentData` object.
-* `random_samples`: Contains a [NetCDF](https://docs.xarray.dev/en/stable/user-guide/io.html#netcdf) (`.nc`) files with random samples for each optimization problem
-* `<opt_1>+<opt2>`: Contains a [NetCDF](https://docs.xarray.dev/en/stable/user-guide/io.html#netcdf) (`.nc`) files with the optimization results for each optimization problem. The folder name is the concatenation of the two optimization algorithms used.
+* `experiment_data`: Contains the input, output, domain, and jobs to construct the `f3dasm.ExperimentData` object.
+    - `domain.json`, `input.csv`, `output.csv`, and `jobs.csv` files are the data for the `f3dasm.ExperimentData` object.
+    - `/task/` contains the `.json` (task configuration) and `.npy` (model parameter structure) files to create each `Task`.
+    - `/optimizer_schedule/` contains the `.json` files for each optimizer schedule.
+    - `/loss_history/` contains the NetCDF (`.nc`) files with results for all realizations of the `OptimizationSchedule` on the `Task`.
 * `.hydra`: Contains the `config.yaml` file used to run the experiment.
-
-Lastly, a log file `main.log` is created.
+* `main.log`: Contains the log file of the experiment.
 
 The folder structure is as follows:
 
@@ -198,24 +188,24 @@ outputs/
 └── 2023-11-06/
     └── 13-50-14/
         ├── .hydra/
-        ├── CMAES/
-        ├── CMAES+Adam/
-        ├── CMAES+PSO/
-        │   ├── 0.nc
-        │   ├── 1.nc
-        │   └── 2.nc
-        ├── random_samples/
-        │   ├── 0.nc
-        │   ├── 1.nc
-        │   └── 2.nc
+        │   └── config.yaml
         ├── experiment_data/
-        │   ├── domain.pkl
+        │   ├── domain.json
         │   ├── input.csv
         │   ├── output.csv
-        │   └── jobs.pkl
+        │   ├── jobs.csv
+        │   ├── task/
+        │   │   ├── 0.json
+        │   │   ├── 0.npy
+        │   │   └── ...
+        │   ├── optimizer_schedule/
+        │   │   ├── 0.json
+        │   │   └── ...
+        │   └── loss_history/
+        │       ├── 0.ncs
+        │       └── ...
         └── main.log
 ```
-
 
 ## Explanation of `config.yaml` parameters
 
@@ -245,4 +235,4 @@ The `defaults` section specifies the default configurations for tasks, schedules
 |---------------|--------|-------------|
 | `model_dir`   | `str`  | Path to the directory containing the trained L2CO model. |
 | `project_dir` | `str`  | Path to the directory where the experiment outputs will be stored. |
-| `project_job` | `str`  | Job ID for the current project (used in cluster environments). |
+| `project_job` | `str`  | Job ID for the current project (used to continue from another experiment). |
