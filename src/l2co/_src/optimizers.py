@@ -40,6 +40,8 @@ __status__ = 'Stable'
 #
 # =============================================================================
 
+SAMPLER_HASH = '0000000000000000'
+
 
 class EvaluateModel(Block):
     def __init__(self, task: Task, seed: int):
@@ -47,8 +49,9 @@ class EvaluateModel(Block):
         self.seed = seed
 
     def call(self, data: ExperimentData) -> ExperimentData:
-        x = [v.input_data for k, v in data]
-        models = dict_list_to_tree(x, name='x')
+        _input_data = [v.input_data for k, v in data]
+        _output_data = [v.output_data for k, v in data]
+        models = dict_list_to_tree(_input_data, name='x')
 
         inner_steps = len(data)
 
@@ -82,8 +85,15 @@ class EvaluateModel(Block):
             else:
                 y = loss_fn(models, **samples, **rng_sample)
 
-        return ExperimentData(domain=data.domain, input_data=x,
-                              output_data=tree_to_dict_list(y, name='y'),
+        if len(_output_data) > 0:
+            output_data = [{**out1, **out2}
+                           for out1, out2 in zip(
+                               _output_data, tree_to_dict_list(y, name='y'))]
+        else:
+            output_data = tree_to_dict_list(y, name='y')
+
+        return ExperimentData(domain=data.domain, input_data=_input_data,
+                              output_data=output_data,
                               project_dir=data.project_dir)
 
 
@@ -122,6 +132,7 @@ class UpdateStep(Block):
                      [],
                      Tuple[ScanFunction, InitFunction, PostFunction]],
                  include_input: bool,
+                 opt_hash: str,
                  name: str,
                  bounded: Optional[Tuple[float, float]] = None,
                  task: Optional[Task] = None,
@@ -137,6 +148,7 @@ class UpdateStep(Block):
         self.verbose = verbose
         self.task = task
         self.name = name
+        self.opt_hash = opt_hash
         self.optimizer = optimizer(**hyperparameters)
 
     def arm(self, data: ExperimentData, previous_step: Optional[UpdateStep],
@@ -188,6 +200,7 @@ class UpdateStep(Block):
             has_aux=self.task.has_aux,
             include_input=self.include_input,
             pass_rng=self.task.pass_rng,
+            opt_hash=self.opt_hash,
         )
 
         if self.opt_state is None:
@@ -251,6 +264,9 @@ class UpdateStep(Block):
 
         input_data, output_data = self.post_fn(history)
 
+        for i in range(self.popsize):
+            output_data[i]['opt_step'] = SAMPLER_HASH
+
         return ExperimentData(
             domain=data.domain,
             input_data=input_data,
@@ -292,6 +308,7 @@ class EvoSaxUpdate(UpdateStep):
                  update_fn: Callable[[], Tuple[ScanFunction, InitFunction]],
                  include_input: bool,
                  name: str,
+                 opt_hash: str,
                  bounded: Optional[Tuple[float, float]] = None,
                  verbose: bool = False,
                  task: Optional[Task] = None,
@@ -307,6 +324,7 @@ class EvoSaxUpdate(UpdateStep):
         self.task = task
         self.hyperparameters = hyperparameters
         self.name = name
+        self.opt_hash = opt_hash
 
     def arm(self, data: ExperimentData, previous_step: Optional[UpdateStep],
             sampler: Block, seed: int) -> None:
@@ -373,6 +391,7 @@ class EvoSaxUpdate(UpdateStep):
             pass_rng=self.task.pass_rng,
             popsize=self.popsize,
             es_params=es_params,
+            opt_hash=self.opt_hash,
             key=jr.key(self.seed),
         )
 
@@ -394,6 +413,7 @@ def lbfgs_scan(static: PyTree,
                has_aux: bool,
                include_input: bool,
                pass_rng: bool,
+               opt_hash: str,
                **kwargs
                ) -> Tuple[ScanFunction, InitFunction, PostFunction]:
     """
@@ -475,7 +495,8 @@ def lbfgs_scan(static: PyTree,
             input_data = None
 
         output_data = tree_to_dict_list(history['loss'], name='y')
-        return input_data, output_data
+        _output_data = [{'opt_step': opt_hash, **out} for out in output_data]
+        return input_data, _output_data
 
     return scan_fn, init_fn, post_fn
 
@@ -488,6 +509,7 @@ def optax_scan(static: PyTree,
                has_aux: bool,
                include_input: bool,
                pass_rng: bool,
+               opt_hash: str,
                **kwargs
                ) -> Tuple[ScanFunction, InitFunction, PostFunction]:
     """
@@ -575,7 +597,8 @@ def optax_scan(static: PyTree,
             input_data = None
 
         output_data = tree_to_dict_list(history['loss'], name='y')
-        return input_data, output_data
+        _output_data = [{'opt_step': opt_hash, **out} for out in output_data]
+        return input_data, _output_data
 
     return scan_fn, init_fn, post_fn
 
@@ -590,6 +613,7 @@ def evosax_scan(static: PyTree,
                 popsize: int,
                 es_params: EvoParams,
                 key: jax.Array,
+                opt_hash: str,
                 **kwargs
                 ) -> Tuple[ScanFunction, InitFunction, PostFunction]:
     """
@@ -686,7 +710,8 @@ def evosax_scan(static: PyTree,
             input_data = None
 
         output_data = tree_to_dict_list(history['loss'], name='y')
-        return input_data, output_data
+        _output_data = [{'opt_step': opt_hash, **out} for out in output_data]
+        return input_data, _output_data
 
     return scan_fn, init_fn, post_fn
 

@@ -68,7 +68,7 @@ def output_cummin(da: xr.DataArray) -> xr.DataArray:
     )
 
 
-def scaling2(data: xr.DataArray) -> xr.DataArray:
+def scale_by_task(data: xr.DataArray) -> xr.DataArray:
     """
     Scale the given data array using a custom scaling method.
 
@@ -114,7 +114,7 @@ def scaling2(data: xr.DataArray) -> xr.DataArray:
     return ds_log10_positive
 
 
-def scaling3(data: xr.DataArray) -> xr.DataArray:
+def scale_by_problem(data: xr.DataArray) -> xr.DataArray:
     """
     Scale the given data array using an alternative scaling method.
 

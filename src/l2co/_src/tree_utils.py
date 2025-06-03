@@ -5,6 +5,7 @@ from typing import List
 # Third-party
 import jax
 import jax.numpy as jnp
+import numpy as onp
 import xarray as xr
 from f3dasm import ExperimentData
 from jaxtyping import PyTree
@@ -19,6 +20,7 @@ def experimentdata_to_xarray(data: ExperimentData,
                              popsizes: List[int],
                              budgets: List[float] | float,
                              n_iterations: int,
+                             schedule: OptimizationSchedule,
                              include_input: bool = False) -> xr.Dataset:
     """
     Convert ExperimentData to an xarray.Dataset.
@@ -44,8 +46,16 @@ def experimentdata_to_xarray(data: ExperimentData,
     y_arr = jnp.vstack([es.output_data['y']
                         for _, es in data]).T
 
+    opt_step_arr = onp.vstack([es.output_data['opt_step']
+                               for _, es in data]).T
+
     y = xr.DataArray(
         y_arr,
+        dims=['output_dim', 'budget'],
+        coords={'output_dim': ['y']})
+
+    opt_step = xr.DataArray(
+        opt_step_arr,
         dims=['output_dim', 'budget'],
         coords={'output_dim': ['y']})
 
@@ -60,11 +70,13 @@ def experimentdata_to_xarray(data: ExperimentData,
 
         ds = xr.Dataset({'input': x,
                          'output': y,
+                         'opt_step': opt_step,
                          })
 
     else:
         ds = xr.Dataset({
             'output': y,
+            'opt_step': opt_step,
         })
 
     ds.attrs['popsizes'] = popsizes

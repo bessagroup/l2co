@@ -40,19 +40,30 @@ def validation_fn(x: xr.Dataset,
 
     y_bins = x['output'].groupby_bins(
         "budget", bins=bins, include_lowest=True, right=False)
+    opt_step_bins = x['opt_step'].groupby_bins(
+        "budget", bins=bins, include_lowest=True, right=False)
 
     y_coarsen = [y_group.coarsen(budget=pop)
                  for (_, y_group), pop in zip(y_bins, popsizes)]
+    opt_step_coarsen = [opt_step_group.coarsen(budget=pop)
+                        for (_, opt_step_group),
+                        pop in zip(opt_step_bins, popsizes)]
 
     y_mean: xr.DataArray = xr.concat(
         [_y.mean() for _y in y_coarsen], dim='budget')
     y_std = xr.concat([_y.std() for _y in y_coarsen], dim='budget')
     y_min = xr.concat([_y.min() for _y in y_coarsen], dim='budget')
+    opt_step = xr.concat(
+        [_opt_step.min() for _opt_step in opt_step_coarsen],
+        dim='budget')
 
     x = xr.Dataset(
-        {'output_mean': y_mean,
+        {
+            'output_mean': y_mean,
             'output_std': y_std,
-            'output_min': y_min},
+            'output_min': y_min,
+            'opt_step': opt_step
+        },
         coords={'budget': np.linspace(0., 1., n_iterations)})
 
     x = x.interp(budget=np.linspace(

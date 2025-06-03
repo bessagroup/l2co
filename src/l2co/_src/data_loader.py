@@ -41,7 +41,7 @@ from sklearn.model_selection import train_test_split
 # Local
 from .latent_space import fit_basis_function, fit_gpr
 from .optimizerschedule import OptimizationSchedule, OptimizationStep
-from .performance import output_cummin, scaling2, scaling3
+from .performance import output_cummin, scale_by_problem, scale_by_task
 from .task import Task
 
 #                                                          Authorship & Credits
@@ -265,36 +265,57 @@ class DataLoader:
         vars = {}
 
         vars['task_labels'] = self.task_labels.astype(str)
+
         # Calculate the performance labels
         vars['performance'] = self.select_t(
             t_start=t, t=t_end).performance_per_realization.sel(
             budget=t_end, method='nearest', drop=True)
 
         if optimizer is not None:
-            # Fit the shape of the trajectory
-            # params = compute_parameters(
-            #     self.select_t(t_start=t_start, t=t).trajectory)
-            # vars['shape'] = _squash(params, reduce_dim='optimizer')
 
-            # staircase_params = compute_staircase_parameters(
-            #     self.select_t(t_start=t_start, t=t).staircase)
+            # Create the trajectory
             trajectory = self.select_t(t_start=t_start, t=t).trajectory
             vars['trajectory'] = _squash(trajectory, reduce_dim='optimizer')
 
+            # Create the staircase
             staircase = self.select_t(t_start=t_start, t=t).staircase
             vars['staircase'] = _squash(
                 staircase, reduce_dim='optimizer')
 
-            # Calculate the relative improvement of the window
-            # lri = log_relative_improvement(self.data)
-            # vars['improvement'] = _squash(lri, reduce_dim='optimizer')
+            # Create opt_step
+            vars['opt_step'] = self.select_t(
+                t_start=t_start, t=t).data['opt_step']
+            # vars['opt_step'] = _squash(opt_step, reduce_dim='optimizer')
 
-            # # Create a tag of the optimizer used for the trajectory
-            # vars['opt'] = xr.DataArray(
-            #     np.full(len(self.data.itemID), optimizer, dtype=object),
-            #     dims='problem',
-            #     coords={"itemID": self.data.itemID}
-            # )
+        # Put everything together in a dataset
+        ds = xr.Dataset(vars)
+
+        ds['optimizer'] = ds['optimizer'].astype(str)
+
+        # Transpose dims
+        desired_order = ('problem', 'output_dim', 'optimizer')
+
+        return ds.map(lambda var: var.transpose(
+            *[d for d in desired_order if d in var.dims],
+            *[d for d in var.dims if d not in desired_order])
+        )
+
+    def to_params_2(self) -> xr.Dataset:
+        vars = {}
+
+        vars['task_labels'] = self.task_labels.astype(str)
+
+        # Calculate the performance labels
+        vars['performance'] = self.performance_per_realization
+
+        # Create the trajectory
+        vars['trajectory'] = self.trajectory
+
+        # Create the staircase
+        vars['staircase'] = self.staircase
+
+        # Create opt_step
+        vars['opt_step'] = self.data['opt_step']
 
         # Put everything together in a dataset
         ds = xr.Dataset(vars)
@@ -425,7 +446,7 @@ class DataLoader:
 
     @property
     def staircase(self) -> xr.DataArray:
-        return scaling3(output_cummin(
+        return scale_by_problem(output_cummin(
             self.data['output_min'])).ffill('budget')
 
     @property
@@ -438,7 +459,7 @@ class DataLoader:
         xr.DataArray
             Trajectory data.
         """
-        return scaling3(self.data['output_mean'])
+        return scale_by_problem(self.data['output_mean'])
 
     def _performance(self, include_best: bool,
                      exclude_optimizer: Optional[str] = None) -> xr.DataArray:
@@ -460,7 +481,7 @@ class DataLoader:
         t_start = perf_counter()
         print("Triggered performance")
 
-        performance = scaling2(output_cummin(
+        performance = scale_by_task(output_cummin(
             self.data['output_min'])).ffill('budget')
 
         if include_best:
@@ -503,7 +524,7 @@ class DataLoader:
 
         t_start = perf_counter()
         print("Triggered performance")
-        performance = scaling3(output_cummin(
+        performance = scale_by_problem(output_cummin(
             self.data['output_min'])).ffill('budget')
         # performance = scaling3(self.data).ffill('budget')
         print(f"Performance calculation took: {perf_counter()-t_start:0.2f}")
@@ -767,8 +788,8 @@ class DataLoader:
             v_copy = v.copy()
             v_copy.name = name
             v_copy.steps = [v_copy.steps[-1]]
-            if name == optimizer:
-                v_copy.steps[0].x0_strategy = 'last'
+            # if name == optimizer:
+            #     v_copy.steps[0].x0_strategy = 'last'
             new_schedules.append(v_copy)
 
         return DataLoader(

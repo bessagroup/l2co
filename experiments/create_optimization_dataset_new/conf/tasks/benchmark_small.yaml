@@ -25,10 +25,10 @@ experimentdata:
       dimensionality:
         type: category
         categories:
-          - 2
+          # - 2
           - 5
-          - 10
-          - 25
+          # - 10
+          # - 25
 task_kwargs:
   seed: ${seed}
   noise: 0.0

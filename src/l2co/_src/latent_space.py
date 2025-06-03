@@ -1,5 +1,6 @@
 # Third-party
 from functools import partial
+from typing import Any
 
 import gpjax as gpx
 import jax
@@ -54,7 +55,7 @@ def fit_gpr(
         inducing_points: int = 50,
         num_iters: int = 100,
         return_posterior: bool = False
-) -> jax.Array | tuple[jax.Array, gpx.Posterior]:
+) -> jax.Array | tuple[jax.Array, Any]:
     """
     Fits a Gaussian Process Regression (GPR) model.
 

@@ -5,7 +5,6 @@ from time import sleep
 
 # Third-party
 import hydra
-import numpy as np
 from f3dasm import Block, ExperimentData, datagenerator
 from f3dasm import logger as f3dasm_logger
 from f3dasm.design import Domain, grid

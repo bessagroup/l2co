@@ -11,6 +11,10 @@ from jaxtyping import PyTree
 
 # =============================================================================
 
+SAMPLER_HASH = '0000000000000000'
+
+# =============================================================================
+
 
 class RandomWeightSampler(Block):
     def __init__(self,
@@ -24,7 +28,7 @@ class RandomWeightSampler(Block):
              **kwargs) -> ExperimentData:
 
         params, static = eqx.partition(model, eqx.is_inexact_array)
-        sample_list = []
+        sample_list_input, sample_list_output = [], []
         key = jrd.key(seed)
 
         for _ in range(num_samples):
@@ -33,10 +37,15 @@ class RandomWeightSampler(Block):
                 key=key, shape=x.shape, minval=self.lower_bound,
                 maxval=self.upper_bound), params)
 
-            sample_list.append({'x': eqx.combine(sample, static)})
+            sample_list_input.append({'x': eqx.combine(sample, static)})
+            sample_list_output.append({'opt_step': SAMPLER_HASH})
 
-        return ExperimentData(domain=data.domain, input_data=sample_list,
-                              project_dir=data.project_dir)
+        experiment_data = ExperimentData(
+            domain=data.domain, input_data=sample_list_input,
+            output_data=sample_list_output,
+            project_dir=data.project_dir)
+
+        return experiment_data.mark_all('open')
 
 
 class NormalWeightSampler(Block):
