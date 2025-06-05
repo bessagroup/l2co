@@ -20,6 +20,7 @@ create_entire_dataset
 # Standard
 from __future__ import annotations
 
+import hashlib
 import json
 from copy import deepcopy
 from functools import partial
@@ -27,9 +28,9 @@ from pathlib import Path
 from time import perf_counter
 from typing import Callable, Dict, Iterable, Literal, Optional, Tuple, Type
 
+# Third-party
 import jax
 import jax.numpy as jnp
-# Third-party
 import numpy as np
 import optax
 import pandas as pd
@@ -40,8 +41,12 @@ from sklearn.model_selection import train_test_split
 
 # Local
 from .latent_space import fit_basis_function, fit_gpr
+from .naming import (BUDGET, FEATURE, OPTIMIZER, OUTPUT_DIM, OUTPUT_MEAN,
+                     OUTPUT_MIN, PROBLEM, REALIZATION, SCHEDULE, TASK_ID,
+                     TASK_LABELS)
 from .optimizerschedule import OptimizationSchedule, OptimizationStep
-from .performance import output_cummin, scale_by_problem, scale_by_task
+from .performance import (output_cummin, scale_by_problem,
+                          scale_by_problem_and_schedule, scale_by_task)
 from .task import Task
 
 #                                                          Authorship & Credits
@@ -114,14 +119,14 @@ class DataLoader:
         if __o is None:
             return self
 
-        data = xr.concat([self.data, __o.data], dim='problem')
+        data = xr.concat([self.data, __o.data], dim=PROBLEM)
         task_labels = xr.concat([self.task_labels, __o.task_labels],
-                                dim='problem')
+                                dim=PROBLEM)
         opt_steps = {**self.opt_steps, **__o.opt_steps}
 
         if self.l2co_schedules is not None:
             l2co_schedules = xr.concat(
-                [self.l2co_schedules, __o.l2co_schedules], dim='problem')
+                [self.l2co_schedules, __o.l2co_schedules], dim=PROBLEM)
         else:
             l2co_schedules = __o.l2co_schedules
 
@@ -131,6 +136,7 @@ class DataLoader:
 
 #                                                      Alternative Constructors
 # =============================================================================
+
 
     @classmethod
     def from_file(
@@ -176,9 +182,9 @@ class DataLoader:
 
         task_labels = xr.apply_ufunc(
             np.vectorize(parse_mixed_value),
-            data['task_labels'],
-            input_core_dims=[["problem"]],
-            output_core_dims=[["problem"]],
+            data[TASK_LABELS],
+            input_core_dims=[[PROBLEM]],
+            output_core_dims=[[PROBLEM]],
             vectorize=True,
             dask="allowed",
             output_dtypes=[object],
@@ -190,10 +196,10 @@ class DataLoader:
 
         # delete opt_step and task_labels from data
         data = data.drop_vars(
-            ['opt_steps', 'task_labels']).drop_dims('features')
+            ['opt_steps', TASK_LABELS]).drop_dims(FEATURE)
 
         return cls(
-            data=data.sortby('optimizer'),
+            data=data.sortby(SCHEDULE),
             task_labels=task_labels,
             opt_steps=sorted(opt_steps),
             l2co_schedules=l2co_schedules
@@ -275,17 +281,17 @@ class DataLoader:
 
             # Create the trajectory
             trajectory = self.select_t(t_start=t_start, t=t).trajectory
-            vars['trajectory'] = _squash(trajectory, reduce_dim='optimizer')
+            vars['trajectory'] = _squash(trajectory, reduce_dim=SCHEDULE)
 
             # Create the staircase
             staircase = self.select_t(t_start=t_start, t=t).staircase
             vars['staircase'] = _squash(
-                staircase, reduce_dim='optimizer')
+                staircase, reduce_dim=SCHEDULE)
 
             # Create opt_step
             vars['opt_step'] = self.select_t(
-                t_start=t_start, t=t).data['opt_step']
-            # vars['opt_step'] = _squash(opt_step, reduce_dim='optimizer')
+                t_start=t_start, t=t).data[OPTIMIZER]
+            # vars['opt_step'] = _squash(opt_step, reduce_dim=OPTIMIZER)
 
         # Put everything together in a dataset
         ds = xr.Dataset(vars)
@@ -293,56 +299,91 @@ class DataLoader:
         ds['optimizer'] = ds['optimizer'].astype(str)
 
         # Transpose dims
-        desired_order = ('problem', 'output_dim', 'optimizer')
+        desired_order = (PROBLEM, OUTPUT_DIM, SCHEDULE)
 
         return ds.map(lambda var: var.transpose(
             *[d for d in desired_order if d in var.dims],
             *[d for d in var.dims if d not in desired_order])
         )
 
-    def to_params_2(self) -> xr.Dataset:
-        vars = {}
+    def to_params_2(self, t: float,
+                    t_start: float = 0.0,
+                    t_end: float = 1.0) -> xr.Dataset:
 
-        vars['task_labels'] = self.task_labels.astype(str)
+        d_input = self.select_t(t_start=t_start, t=t, select_one_before=True)
+        d_output = self.select_t(t_start=t, t=t_end, select_one_before=False)
+
+        perf = output_cummin(d_output.data.assign_coords(
+            {'first_part': d_input.hash_opt_step,
+             'second_part': d_output.hash_opt_step})[OUTPUT_MIN]).ffill(BUDGET)
+
+        total = []
+
+        for fp in np.unique(perf['first_part']):
+            _perf = perf.where(perf['first_part'] == fp)
+            total.append(scale_by_problem_and_schedule(_perf))
+
+        performance = xr.merge(total)[OUTPUT_MIN].isel(budget=-1, drop=True)
+
+        ds = xr.Dataset({
+            'trajectory': d_input.trajectory,
+            'staircase': d_input.staircase,
+            'optimizer': d_input.data[OPTIMIZER],
+            'performance': performance,
+        })
+
+        # Transpose dims
+        desired_order = (PROBLEM, OUTPUT_DIM, SCHEDULE)
+
+        return ds.map(lambda var: var.transpose(
+            *[d for d in desired_order if d in var.dims],
+            *[d for d in var.dims if d not in desired_order])
+        )
+
+    @property
+    def to_output_params(self) -> xr.Dataset:
+        vars = {}
 
         # Calculate the performance labels
         vars['performance'] = self.performance_per_realization
 
-        # Create the trajectory
-        vars['trajectory'] = self.trajectory
-
-        # Create the staircase
-        vars['staircase'] = self.staircase
-
         # Create opt_step
-        vars['opt_step'] = self.data['opt_step']
+        vars['opt_step'] = self.data[OPTIMIZER]
 
         # Put everything together in a dataset
         ds = xr.Dataset(vars)
 
-        ds['optimizer'] = ds['optimizer'].astype(str)
-
         # Transpose dims
-        desired_order = ('problem', 'output_dim', 'optimizer')
+        desired_order = (PROBLEM, OUTPUT_DIM, SCHEDULE)
 
         return ds.map(lambda var: var.transpose(
             *[d for d in desired_order if d in var.dims],
             *[d for d in var.dims if d not in desired_order])
         )
 
+    @property
+    def hash_opt_step(self) -> xr.DataArray:
+        return xr.apply_ufunc(
+            lambda x: hashlib.sha256(x.tobytes()).hexdigest(),
+            self.data[OPTIMIZER],
+            input_core_dims=[[BUDGET]],
+            output_core_dims=[[]],
+            vectorize=True,
+        )
+
     def to_spreadsheet(self, criteria: Literal['min', 'mean'] = 'min'):
-        ds = xr.Dataset({'task_labels': self.task_labels,
-                         'output_min': self.data.output_min})
+        ds = xr.Dataset({TASK_LABELS: self.task_labels,
+                         OUTPUT_MIN: self.data[OUTPUT_MIN]})
 
         if criteria == 'min':
-            df = ds.groupby('itemID').min().min('budget').isel(
-                output_dim=0)['output_min'].to_pandas()
+            df = ds.groupby(TASK_ID).min().min(BUDGET).isel(
+                {OUTPUT_DIM: 0})[OUTPUT_MIN].to_pandas()
         elif criteria == 'mean':
-            df = ds.groupby('itemID').mean().min('budget').isel(
-                output_dim=0)['output_min'].to_pandas()
+            df = ds.groupby(TASK_ID).mean().min(BUDGET).isel(
+                {OUTPUT_DIM: 0})[OUTPUT_MIN].to_pandas()
 
-        df.index = ds.groupby('itemID').min().min(
-            'budget').isel(output_dim=0)['task_labels']
+        df.index = ds.groupby(TASK_ID).min().min(
+            BUDGET).isel({OUTPUT_DIM: 0})[TASK_LABELS]
 
         # Function to highlight the smallest value per row
         def highlight_min_row(row):
@@ -365,35 +406,36 @@ class DataLoader:
         sbs = self._calculate_sbs(performance=self.performance,
                                   exclude_optimizer=exclude_optimizer)
         ds = xr.Dataset({'sbs': sbs,
-                         'task_labels': self.task_labels, })
+                         TASK_LABELS: self.task_labels, })
 
-        df_task_labels = ds.groupby('itemID').min()['task_labels'].to_pandas()
-        df_sbs = ds.groupby('itemID').min()['sbs'].to_pandas().rename('sbs')
+        df_task_labels = ds.groupby(TASK_ID).min()[TASK_LABELS].to_pandas()
+        df_sbs = ds.groupby(TASK_ID).min()['sbs'].to_pandas().rename('sbs')
 
         return pd.concat([df_task_labels, df_sbs], axis=1)
 
     def display_l2co_schedules_table(self) -> pd.DataFrame:
 
-        task_labels_l2co = self.task_labels.groupby('itemID').min().sel(
-            itemID=self.l2co_schedules.itemID)
+        task_labels_l2co = self.task_labels.groupby(TASK_ID).min().sel(
+            {TASK_ID: self.l2co_schedules[TASK_ID]})
 
-        ds = xr.Dataset({'task_labels': task_labels_l2co,
+        ds = xr.Dataset({TASK_LABELS: task_labels_l2co,
                         'schedules': self.l2co_schedules, }
-                        ).sortby('itemID')
+                        ).sortby(TASK_ID)
 
-        df_schedules = ds.schedules.isel(schedule=0, optimizer=0).to_pandas()
+        df_schedules = ds['schedules'].isel(
+            {'schedule': 0, SCHEDULE: 0}).to_pandas()
 
         df_schedules = df_schedules.apply(
             lambda row: [s.name for s in row.steps])
         df_schedules = pd.DataFrame(
             df_schedules.tolist(), index=df_schedules.index)
 
-        df_itemID = ds.task_labels.itemID.to_pandas()
-        df_itemID.name = 'itemID'
+        df_itemID = ds[TASK_LABELS][TASK_ID].to_pandas()
+        df_itemID.name = TASK_ID
 
         return pd.concat([
             df_itemID,
-            ds.task_labels.to_pandas(),
+            ds[TASK_LABELS].to_pandas(),
             df_schedules
         ], axis=1)
 
@@ -402,11 +444,11 @@ class DataLoader:
 
     @property
     def n_iterations(self) -> int:
-        return self.data['budget'].size
+        return self.data[BUDGET].size
 
     @property
     def n_realization(self) -> int:
-        return np.unique(self.data['realization']).size
+        return np.unique(self.data[REALIZATION]).size
 
     @property
     def features(self) -> xr.DataArray:
@@ -418,7 +460,7 @@ class DataLoader:
         xarray.DataArray
             The features coordinate.
         """
-        return self.task_labels['features']
+        return self.task_labels[FEATURE]
 
     @property
     def problems(self) -> xr.DataArray:
@@ -430,7 +472,7 @@ class DataLoader:
         xarray.DataArray
             The problem coordinate.
         """
-        return self.task_labels['problem']
+        return self.task_labels[PROBLEM]
 
     @property
     def optimizers(self) -> xr.DataArray:
@@ -442,12 +484,12 @@ class DataLoader:
         xarray.DataArray
             The optimizers coordinate.
         """
-        return self.data['optimizer']
+        return self.data[SCHEDULE]
 
     @property
     def staircase(self) -> xr.DataArray:
         return scale_by_problem(output_cummin(
-            self.data['output_min'])).ffill('budget')
+            self.data[OUTPUT_MIN])).ffill(BUDGET)
 
     @property
     def trajectory(self) -> xr.DataArray:
@@ -459,7 +501,7 @@ class DataLoader:
         xr.DataArray
             Trajectory data.
         """
-        return scale_by_problem(self.data['output_mean'])
+        return scale_by_problem(self.data[OUTPUT_MEAN])
 
     def _performance(self, include_best: bool,
                      exclude_optimizer: Optional[str] = None) -> xr.DataArray:
@@ -482,14 +524,15 @@ class DataLoader:
         print("Triggered performance")
 
         performance = scale_by_task(output_cummin(
-            self.data['output_min'])).ffill('budget')
+            self.data[OUTPUT_MIN])).ffill(BUDGET)
 
         if include_best:
             sbs = self._calculate_sbs(performance=performance,
                                       exclude_optimizer=exclude_optimizer)
-            perf_sbs = performance.sel(optimizer=sbs, drop=True).reset_coords(
-                'optimizer', drop=True).expand_dims(optimizer=['sbs'])
-            performance = xr.merge([performance, perf_sbs])['output_min']
+            perf_sbs = performance.sel({SCHEDULE: sbs}, drop=True
+                                       ).reset_coords(
+                SCHEDULE, drop=True).expand_dims({SCHEDULE: ['sbs']})
+            performance = xr.merge([performance, perf_sbs])[OUTPUT_MIN]
 
         print(f"Performance calculation took: {perf_counter()-t_start:0.2f}")
         return performance
@@ -505,13 +548,13 @@ class DataLoader:
         else:
             check_sbs = performance
 
-        sbs = check_sbs.groupby('itemID').map(
-            lambda x: x.mean('problem').isel(
-                budget=-1, drop=True).idxmin(
-                'optimizer').expand_dims(problem=x.problem)).isel(
-            output_dim=0, drop=True).assign_coords(
-                    {'problem': performance.problem})
-        sbs = sbs.fillna(performance.optimizer.values[0])
+        sbs = check_sbs.groupby(TASK_ID).map(
+            lambda x: x.mean(PROBLEM).isel(
+                {BUDGET: -1}, drop=True).idxmin(
+                SCHEDULE).expand_dims({PROBLEM: x[PROBLEM]})).isel(
+            {OUTPUT_DIM: 0}, drop=True).assign_coords(
+                    {PROBLEM: performance[PROBLEM]})
+        sbs = sbs.fillna(performance[SCHEDULE].values[0])
         return sbs
 
     @property
@@ -524,9 +567,9 @@ class DataLoader:
 
         t_start = perf_counter()
         print("Triggered performance")
-        performance = scale_by_problem(output_cummin(
-            self.data['output_min'])).ffill('budget')
-        # performance = scaling3(self.data).ffill('budget')
+        performance = scale_by_problem_and_schedule(output_cummin(
+            self.data[OUTPUT_MIN])).ffill(BUDGET)
+        # performance = scaling3(self.data).ffill(BUDGET)
         print(f"Performance calculation took: {perf_counter()-t_start:0.2f}")
         return performance
 
@@ -543,15 +586,15 @@ class DataLoader:
 
         task_labels = xr.concat(
             [group for i, group in self.task_labels.groupby(
-                'itemID') if i in itemIDs], dim="problem")
+                TASK_ID) if i in itemIDs], dim=PROBLEM)
         data = xr.concat(
             [group for i, group in self.data.groupby(
-                'itemID') if i in itemIDs], dim="problem")
+                TASK_ID) if i in itemIDs], dim=PROBLEM)
 
         if self.l2co_schedules is not None:
             l2co_schedules = xr.concat(
                 [group for i, group in self.l2co_schedules.groupby(
-                    'itemID') if i in itemIDs], dim="problem")
+                    TASK_ID) if i in itemIDs], dim=PROBLEM)
         else:
             l2co_schedules = None
 
@@ -581,16 +624,17 @@ class DataLoader:
         Selects on the problem dimension. Also sorts the problem indices on
         itemID.
         """
-        _problem_indices = problem_indices.sortby('itemID')
+        _problem_indices = problem_indices.sortby(TASK_ID)
 
         if self.l2co_schedules is not None:
-            l2co_schedules = self.l2co_schedules.sel(problem=_problem_indices)
+            l2co_schedules = self.l2co_schedules.sel(
+                {PROBLEM: _problem_indices})
         else:
             l2co_schedules = None
 
         return DataLoader(
-            task_labels=self.task_labels.sel(problem=_problem_indices),
-            data=self.data.sel(problem=_problem_indices),
+            task_labels=self.task_labels.sel({PROBLEM: _problem_indices}),
+            data=self.data.sel({PROBLEM: _problem_indices}),
             opt_steps=self.opt_steps,
             l2co_schedules=l2co_schedules
         )
@@ -616,13 +660,13 @@ class DataLoader:
         """
 
         if self.l2co_schedules is not None:
-            l2co_schedules = self.l2co_schedules.isel(problem=problems)
+            l2co_schedules = self.l2co_schedules.isel({PROBLEM: problems})
         else:
             l2co_schedules = None
 
         return DataLoader(
-            task_labels=self.task_labels.isel(problem=problems),
-            data=self.data.isel(problem=problems),
+            task_labels=self.task_labels.isel({PROBLEM: problems}),
+            data=self.data.isel({PROBLEM: problems}),
             opt_steps=self.opt_steps,
             l2co_schedules=l2co_schedules
         )
@@ -656,7 +700,8 @@ class DataLoader:
 #                                                              Selecting budget
 # =============================================================================
 
-    def select_t(self, t: int, t_start: Optional[float] = 0.0) -> DataLoader:
+    def select_t(self, t: int, t_start: Optional[float] = 0.0,
+                 select_one_before: bool = True) -> DataLoader:
         """
         Select a subset of the data loader at a specific budget.
 
@@ -672,22 +717,25 @@ class DataLoader:
         DataLoader
             The selected data loader.
         """
+        if select_one_before:
 
-        # Check if there are budget coordinate values below t_start
-        prior = self.data['budget'].where(
-            self.data['budget'] < t_start, drop=True)
+            # Check if there are budget coordinate values below t_start
+            prior = self.data[BUDGET].where(
+                self.data[BUDGET] < t_start, drop=True)
 
-        # If so, take the value before t_start
-        if prior.sizes['budget'] > 0:
-            t_prior = prior[-1].item()
+            # If so, take the value before t_start
+            if prior.sizes[BUDGET] > 0:
+                t_prior = prior[-1].item()
 
-        # If not, do nothing
+            # If not, do nothing
+            else:
+                t_prior = t_start
         else:
             t_prior = t_start
 
         return DataLoader(
             task_labels=self.task_labels,
-            data=self.data.sel(budget=slice(t_prior, t)),
+            data=self.data.sel({BUDGET: slice(t_prior, t)}),
             opt_steps=self.opt_steps,
             l2co_schedules=self.l2co_schedules
         )
@@ -695,7 +743,6 @@ class DataLoader:
 
 #                                                          Selecting optimizers
 # =============================================================================
-
 
     def select_single_optimizers(
             self, squash: bool = False) -> DataLoader:
@@ -739,16 +786,16 @@ class DataLoader:
             data = xr.concat(
                 [squash_optimizer(data=self.data, target_optimizer=opt)
                  for opt in optimizers],
-                dim='optimizer')
+                dim=SCHEDULE)
         else:
-            data = self.data.sel(optimizer=optimizers)
+            data = self.data.sel({SCHEDULE: optimizers})
 
         opt_steps = list(filter(lambda item: item.name in
                                 optimizers, self.opt_steps))
 
         return DataLoader(
             task_labels=self.task_labels,
-            data=data.sortby('optimizer'),
+            data=data.sortby(SCHEDULE),
             opt_steps=sorted(opt_steps),
             l2co_schedules=self.l2co_schedules
         )
@@ -772,10 +819,10 @@ class DataLoader:
             dtype=object
         )
         data_selected = self.data.sel(
-            optimizer=filtered_optimizer).assign_coords(
-            optimizer=np.array(
+            {SCHEDULE: filtered_optimizer}).assign_coords(
+            {SCHEDULE: np.array(
                 [o.split('+')[-1] if '+' in o else o
-                 for o in filtered_optimizer], dtype=object))
+                 for o in filtered_optimizer], dtype=object)})
 
         # Opt steps
         filtered_schedules = list(
@@ -794,7 +841,7 @@ class DataLoader:
 
         return DataLoader(
             task_labels=self.task_labels,
-            data=data_selected.sortby('optimizer'),
+            data=data_selected.sortby(SCHEDULE),
             opt_steps=sorted(new_schedules),
             l2co_schedules=self.l2co_schedules,
         )
@@ -802,6 +849,7 @@ class DataLoader:
 
 #                                                           Performance metrics
 # =============================================================================
+
 
     def performance_profile(
             self, max_f_value: int = 2.0, include_best: bool = False,
@@ -837,8 +885,8 @@ class DataLoader:
         # Convert task_labels to a DataFrame and save as CSV
         df_task_labels = pd.DataFrame(
             self.task_labels.values,
-            index=self.task_labels.coords['itemID'].values,
-            columns=self.task_labels.coords['features'].values
+            index=self.task_labels.coords[TASK_ID].values,
+            columns=self.task_labels.coords[FEATURE].values
         )
         df_task_labels = df_task_labels[~df_task_labels.index.duplicated(
             keep='first')]
@@ -871,7 +919,7 @@ def performance_profile(performance: xr.DataArray, max_f_value: int = 2.0
     xarray.DataArray
         Performance profile.
     """
-    p = performance.isel(budget=-1)
+    p = performance.isel({BUDGET: -1})
     rij = (p + 1.0) / 1.0
 
     ds_f = xr.Dataset(
@@ -881,11 +929,11 @@ def performance_profile(performance: xr.DataArray, max_f_value: int = 2.0
 
     performance_profile = np.less_equal(
         ds_f, ds_f.relative_error+1e-2).where(
-        ~ds_f.isnull(), np.nan).mean(dim='problem').performance_profile
+        ~ds_f.isnull(), np.nan).mean(dim=PROBLEM)['performance_profile']
 
-    rel_error = (performance_profile.relative_error * 100) - 100
+    rel_error = (performance_profile['relative_error'] * 100) - 100
 
-    return performance_profile.assign_coords(relative_error=rel_error)
+    return performance_profile.assign_coords({'relative_error': rel_error})
 
 
 def rtd(performance: xr.DataArray) -> xr.DataArray:
@@ -902,7 +950,7 @@ def rtd(performance: xr.DataArray) -> xr.DataArray:
     xarray.DataArray
         RTD profile.
     """
-    return (1.0-performance).mean('problem')
+    return (1.0-performance).mean(PROBLEM)
 
 # =============================================================================
 
@@ -922,15 +970,15 @@ class OptimizationDynamics:
         data['performance'] = xr.apply_ufunc(
             impute_missing_values_svd,
             data['performance'],
-            input_core_dims=[['problem', 'optimizer']],
-            output_core_dims=[['problem', 'optimizer']],
+            input_core_dims=[[PROBLEM, SCHEDULE]],
+            output_core_dims=[[PROBLEM, SCHEDULE]],
             vectorize=True,
         )
 
         # Check for NaNs in each variable and reduce over all dims
-        # except 'problem'
+        # except PROBLEM
         nan_flags = [
-            var.isnull().any(dim=set(var.dims) - {'problem'})
+            var.isnull().any(dim=set(var.dims) - {PROBLEM})
             for var in data.data_vars.values()
         ]
 
@@ -938,10 +986,10 @@ class OptimizationDynamics:
         has_nan_anywhere = xr.concat(nan_flags, dim='_vars').any(dim='_vars')
 
         # Filter out nans
-        data = data.sel(problem=~has_nan_anywhere)
+        data = data.sel({PROBLEM: ~has_nan_anywhere})
 
         # Select first output_dim
-        data = data.isel(output_dim=0, drop=True)
+        data = data.isel({OUTPUT_DIM: 0}, drop=True)
 
         if previous_step == 'first':
             previous_step = None
@@ -950,7 +998,7 @@ class OptimizationDynamics:
 
     @property
     def X_features(self) -> pd.DataFrame:
-        return self.data['task_labels'].to_pandas(
+        return self.data[TASK_LABELS].to_pandas(
         ).infer_objects().convert_dtypes()
 
     @property
@@ -991,14 +1039,14 @@ def load_dynamics(path: str | Path | xr.DataTree
 
 def squash_optimizer(data: xr.Dataset, target_optimizer: str) -> xr.Dataset:
     _data = data.sel(
-        optimizer=[o for o in data.optimizer.values
-                   if o.startswith(target_optimizer)])
-    mask = _data.notnull().any(dim='budget').idxmax(
-        dim='optimizer').isel(output_dim=0, drop=True).output_mean
+        {SCHEDULE: [o for o in data.optimizer.values
+                    if o.startswith(target_optimizer)]})
+    mask = _data.notnull().any(dim=BUDGET).idxmax(
+        dim=SCHEDULE).isel({OUTPUT_DIM: 0}, drop=True).output_mean
 
-    return _data.sel(optimizer=mask).reset_coords(
-        'optimizer', drop=True).expand_dims(
-            optimizer=np.array([target_optimizer], dtype=object))
+    return _data.sel({SCHEDULE: mask}).reset_coords(
+        SCHEDULE, drop=True).expand_dims(
+            {SCHEDULE: np.array([target_optimizer], dtype=object)})
 
 
 def impute_missing_values_svd(y: np.ndarray, k=2):
@@ -1055,10 +1103,10 @@ def compute_X_trajectory(data: xr.DataArray) -> xr.DataArray:
     trajectory: xr.Dataset = xr.apply_ufunc(
         scale,
         data,
-        # input_core_dims=[['budget', 'output_dim']],
-        input_core_dims=[['budget']],
-        # output_core_dims=[['budget', 'output_dim']],
-        output_core_dims=[['budget']],
+        # input_core_dims=[[BUDGET, 'output_dim']],
+        input_core_dims=[[BUDGET]],
+        # output_core_dims=[[BUDGET, 'output_dim']],
+        output_core_dims=[[BUDGET]],
         vectorize=True,
         dask='parallelized',
         dask_gufunc_kwargs={'allow_rechunk': True}  # False
@@ -1067,7 +1115,7 @@ def compute_X_trajectory(data: xr.DataArray) -> xr.DataArray:
     # return trajectory.output_mean.isel(
     #     output_dim=0, drop=True).rename(
     #         'trajectory').transpose(
-    #             'optimizer', 'budget', 'problem')
+    #             'optimizer', BUDGET, 'problem')
 
     return trajectory
 
@@ -1102,11 +1150,11 @@ def compute_parameters(
 
     return xr.DataArray(
         params,
-        dims=['optimizer', 'problem', 'output_dim', 'fit_params'],
+        dims=[SCHEDULE, PROBLEM, OUTPUT_DIM, 'fit_params'],
         coords={
-            'optimizer': trajectory.optimizer,
-            'itemID': trajectory.itemID,
-            'output_dim': trajectory.output_dim,
+            SCHEDULE: trajectory.optimizer,
+            TASK_ID: trajectory.itemID,
+            OUTPUT_DIM: trajectory.output_dim,
         }
     )
 
@@ -1127,11 +1175,11 @@ def compute_staircase_parameters(
 
     return xr.DataArray(
         params,
-        dims=['optimizer', 'problem', 'output_dim', 'staircase_fit_params'],
+        dims=[SCHEDULE, PROBLEM, OUTPUT_DIM, 'staircase_fit_params'],
         coords={
-            'optimizer': staircase.optimizer,
-            'itemID': staircase.itemID,
-            'output_dim': staircase.output_dim,
+            SCHEDULE: staircase.optimizer,
+            TASK_ID: staircase.itemID,
+            OUTPUT_DIM: staircase.output_dim,
         }
     )
 
@@ -1153,7 +1201,7 @@ def log_relative_improvement(data: xr.Dataset) -> xr.DataArray:
 
 
 def _squash(da: xr.DataArray, reduce_dim: str,
-            vector_dim: str = 'problem'):
+            vector_dim: str = PROBLEM):
     def f(x):
         for val in x:
             if not np.isnan(val).any():
@@ -1177,16 +1225,16 @@ def _squash(da: xr.DataArray, reduce_dim: str,
 def compute_fitting(trajectory: xr.DataArray, fit_params: xr.DataArray,
                     basis_function: Callable):
 
-    x_input = np.linspace(0., 1., trajectory.coords['budget'].size)
+    x_input = np.linspace(0., 1., trajectory.coords[BUDGET].size)
 
     fitted_sigmoid = xr.apply_ufunc(
         lambda x, x_input: basis_function(x_input, *x),
         fit_params,
         kwargs={'x_input': x_input},
         input_core_dims=[['fit_params']],
-        output_core_dims=[['budget']],
+        output_core_dims=[[BUDGET]],
         vectorize=True,
     )
 
     fitted_sigmoid = fitted_sigmoid.assign_coords(
-        budget=trajectory.coords['budget'])
+        {BUDGET: trajectory.coords[BUDGET]})

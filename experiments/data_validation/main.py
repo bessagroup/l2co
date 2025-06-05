@@ -12,6 +12,7 @@ import xarray as xr
 from f3dasm import ExperimentData
 
 from l2co import logger as l2co_logger
+from l2co._src.naming import FEATURE, INPUT_DIM, REALIZATION, SCHEDULE, TASK_ID
 from l2co._src.optimizerschedule import OptimizationSchedule
 from l2co._src.task import Task
 from l2co._src.validation import validation_fn
@@ -120,13 +121,13 @@ def create_entire_dataset(
 
     # Task labels
     xarr_task_labels = xr.DataArray(df_labels.values,
-                                    coords={'itemID': df_labels.index,
-                                            'features': df_labels.columns},
-                                    dims=['itemID', 'features'],
+                                    coords={TASK_ID: df_labels.index,
+                                            FEATURE: df_labels.columns},
+                                    dims=[TASK_ID, FEATURE],
                                     )
 
     opt_data['task_labels'] = xarr_task_labels.sel(
-        itemID=opt_data.itemID).astype(str)
+        {TASK_ID: opt_data[TASK_ID]}).astype(str)
 
     # Schedules
     o = {name: json.dumps(schedule_dict)
@@ -134,15 +135,15 @@ def create_entire_dataset(
 
     xarr_opt_steps = xr.DataArray(
         data=list(o.values()),
-        coords={'optimizer': list(o.keys())},
-        dims='optimizer',
+        coords={SCHEDULE: list(o.keys())},
+        dims=SCHEDULE,
         name='schedules'
     )
 
     opt_data['opt_steps'] = xarr_opt_steps
 
-    if 'input_dim' in opt_data.coords:
-        opt_data = opt_data.drop('input_dim')
+    if INPUT_DIM in opt_data.coords:
+        opt_data = opt_data.drop(INPUT_DIM)
 
     if 'l2co schedules' in experiment_data.domain.output_names:
         df_schedules = pd.concat([
@@ -266,9 +267,9 @@ def create_optimization_data(
     xarr_full = xr.open_mfdataset(
         df.to_numpy().tolist(),
         combine='nested',
-        concat_dim=[xr.DataArray(df.index, coords=[df.index], dims=['itemID']),
+        concat_dim=[xr.DataArray(df.index, coords=[df.index], dims=[TASK_ID]),
                     xr.DataArray(df.columns, coords=[
-                        df.columns], dims=['optimizer']),
+                        df.columns], dims=[SCHEDULE]),
                     ],
         parallel=True,
         preprocess=validation_fn,
@@ -277,7 +278,7 @@ def create_optimization_data(
     )
 
     xarr_full = xarr_full.stack(
-        problem=('realization', 'itemID'), create_index=False)
+        problem=(REALIZATION, TASK_ID), create_index=False)
 
     # Open the whole thing:
     l2co_logger.info("Opening the whole thing")

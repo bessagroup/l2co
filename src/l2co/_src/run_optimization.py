@@ -18,6 +18,7 @@ from ._logging import logger
 from .batching import NoneIterator, batch_iter
 from .data_loader import OptimizationDynamics
 from .l2co_model import L2CO_model
+from .naming import REALIZATION
 from .optimizers import OPT_MAPPING, UpdateStep
 from .optimizerschedule import (OptimizationSchedule, OptimizationStep,
                                 step_n_iterations, step_n_iterations_equal)
@@ -78,11 +79,12 @@ def run_optimization_schedule_multiple_realizations(
             popsizes=popsizes,
             budgets=optimization_schedule.budgets,
             n_iterations=n_iterations,
-            schedule=optimization_schedule,
             include_input=include_input,
         ))
 
-    results = xr.concat(results_list, dim='realization')
+    # results = xr.concat(results_list, dim='realization')
+    results = xr.concat(results_list, dim=xr.DataArray(
+        range(n_realizations), dims=REALIZATION))
 
     return results
 
@@ -388,8 +390,8 @@ def run_optimization_no_schedule_multiple_realizations(
         schedules_list.append(schedule_to_xarray(
             data=schedule))
 
-    results = xr.concat(results_list, dim='realization')
-    schedules = xr.concat(schedules_list, dim='realization')
+    results = xr.concat(results_list, dim=REALIZATION)
+    schedules = xr.concat(schedules_list, dim=REALIZATION)
 
     return results, schedules
 

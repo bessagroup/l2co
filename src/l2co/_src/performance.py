@@ -28,6 +28,8 @@ from __future__ import annotations
 import numpy as np
 import xarray as xr
 
+from .naming import BUDGET, OUTPUT_DIM, PROBLEM, SCHEDULE, TASK_ID
+
 #                                                          Authorship & Credits
 # =============================================================================
 __author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
@@ -59,8 +61,8 @@ def output_cummin(da: xr.DataArray) -> xr.DataArray:
     return xr.apply_ufunc(
         np.minimum.accumulate,
         da,
-        input_core_dims=[['budget']],
-        output_core_dims=[['budget']],
+        input_core_dims=[[BUDGET]],
+        output_core_dims=[[BUDGET]],
         vectorize=True,
         dask='parallelized',
         output_dtypes=[da.dtype],
@@ -93,7 +95,7 @@ def scale_by_task(data: xr.DataArray) -> xr.DataArray:
         other=EPSILON)
 
     # 2. Make sure the loss is non-negative and non-zero
-    group_by_realizations = ds_output.groupby('itemID')
+    group_by_realizations = ds_output.groupby(TASK_ID)
 
     def min_custom(x):
         # 3. Make sure the quality indicator value is non-negative
@@ -105,13 +107,63 @@ def scale_by_task(data: xr.DataArray) -> xr.DataArray:
 
         # 5. Min-max scaling of the data
         x_min = x_log10.min()
-        x_max = x_log10.max(['budget'])
+        x_max = x_log10.max([BUDGET])
         return (x_log10 - x_min) / (x_max - x_min + EPSILON)
 
     ds_log10_positive = group_by_realizations.map(
         min_custom)
 
     return ds_log10_positive
+
+
+def scale_by_problem_and_schedule(data: xr.DataArray) -> xr.DataArray:
+    """
+    Scale the given data array using an alternative scaling method.
+
+    Parameters
+    ----------
+    data : xarray.DataArray
+        The data array to scale.
+
+    Returns
+    -------
+    xarray.DataArray
+        The scaled data array.
+
+    Notes
+    -----
+    This function applies log scaling, ensures non-negativity, and performs
+    min-max scaling across multiple dimensions.
+    """
+
+    # Cap the quality indicator value at 1e-8
+    ds_output = data.where(
+        (data > EPSILON) | (data <= 0.) | data.isnull(),
+        other=EPSILON)
+
+    def f(x):
+        p = (x - np.nanmin(x))
+        eps = (np.where(p > 0.0, p, np.nanmax(p)+EPSILON)).min() + EPSILON
+        x_log10 = np.log10(p + eps)
+        # 5. Min-max scaling of the data
+        x_min = np.nanmin(x_log10)
+        x_max = np.nanmax(x_log10, axis=0)
+        return (x_log10 - x_min) / (x_max - x_min + EPSILON)
+
+    data_scaled = xr.apply_ufunc(
+        f,
+        ds_output,
+        input_core_dims=[[BUDGET, SCHEDULE, OUTPUT_DIM]],
+        output_core_dims=[[BUDGET, SCHEDULE, OUTPUT_DIM]],
+        vectorize=True,
+        dask='parallelized',
+        output_dtypes=[ds_output.dtype],
+        dask_gufunc_kwargs={'allow_rechunk': True}
+
+    )
+
+    return data_scaled.transpose(
+        SCHEDULE, OUTPUT_DIM, PROBLEM, BUDGET)
 
 
 def scale_by_problem(data: xr.DataArray) -> xr.DataArray:
@@ -152,8 +204,8 @@ def scale_by_problem(data: xr.DataArray) -> xr.DataArray:
     data_scaled = xr.apply_ufunc(
         f,
         ds_output,
-        input_core_dims=[['budget', 'optimizer', 'output_dim']],
-        output_core_dims=[['budget', 'optimizer', 'output_dim']],
+        input_core_dims=[[BUDGET, OUTPUT_DIM]],
+        output_core_dims=[[BUDGET, OUTPUT_DIM]],
         vectorize=True,
         dask='parallelized',
         output_dtypes=[ds_output.dtype],
@@ -162,4 +214,4 @@ def scale_by_problem(data: xr.DataArray) -> xr.DataArray:
     )
 
     return data_scaled.transpose(
-        'optimizer', 'output_dim', 'problem', 'budget')
+        SCHEDULE, OUTPUT_DIM, PROBLEM, BUDGET)

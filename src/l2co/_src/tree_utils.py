@@ -11,6 +11,7 @@ from f3dasm import ExperimentData
 from jaxtyping import PyTree
 
 # Local
+from .naming import BUDGET, INPUT_DIM, OPTIMIZER, OUTPUT_DIM
 from .optimizerschedule import OptimizationSchedule
 
 # =============================================================================
@@ -20,7 +21,6 @@ def experimentdata_to_xarray(data: ExperimentData,
                              popsizes: List[int],
                              budgets: List[float] | float,
                              n_iterations: int,
-                             schedule: OptimizationSchedule,
                              include_input: bool = False) -> xr.Dataset:
     """
     Convert ExperimentData to an xarray.Dataset.
@@ -51,13 +51,13 @@ def experimentdata_to_xarray(data: ExperimentData,
 
     y = xr.DataArray(
         y_arr,
-        dims=['output_dim', 'budget'],
-        coords={'output_dim': ['y']})
+        dims=[OUTPUT_DIM, BUDGET],
+        coords={OUTPUT_DIM: ['y']})
 
-    opt_step = xr.DataArray(
+    optimizer = xr.DataArray(
         opt_step_arr,
-        dims=['output_dim', 'budget'],
-        coords={'output_dim': ['y']})
+        dims=[OUTPUT_DIM, BUDGET],
+        coords={OUTPUT_DIM: ['y']})
 
     if include_input:
         x_arr = jnp.vstack([es.input_data['x']
@@ -65,18 +65,18 @@ def experimentdata_to_xarray(data: ExperimentData,
 
         x = xr.DataArray(
             x_arr,
-            dims=['input_dim', 'budget'],
-            coords={'input_dim': [f"x{i}" for i in range(x_arr.shape[0])]})
+            dims=[INPUT_DIM, BUDGET],
+            coords={INPUT_DIM: [f"x{i}" for i in range(x_arr.shape[0])]})
 
         ds = xr.Dataset({'input': x,
                          'output': y,
-                         'opt_step': opt_step,
+                         OPTIMIZER: optimizer,
                          })
 
     else:
         ds = xr.Dataset({
             'output': y,
-            'opt_step': opt_step,
+            OPTIMIZER: optimizer,
         })
 
     ds.attrs['popsizes'] = popsizes

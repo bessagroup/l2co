@@ -7,10 +7,10 @@ schedules:
 
 data_generation:
   data_generator:
-    _target_: get_combination_5
+    _target_: l2co._src.optimizerschedule.get_combination_5
     _partial_: True
   kwargs:
-    budgets: [0.1, 0.1, 0.1, 0.1, 0.1]
+    budgets: [0.2, 0.2, 0.2, 0.2, 0.2]
 
 partition_factor: 1.0
 

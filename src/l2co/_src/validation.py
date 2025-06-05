@@ -5,6 +5,8 @@ import xarray as xr
 
 from l2co._src.optimizerschedule import step_n_iterations
 
+from .naming import BUDGET, OPTIMIZER, OUTPUT_MEAN, OUTPUT_MIN, OUTPUT_STD
+
 # =============================================================================
 
 BUDGET_STEPS = 1000
@@ -14,7 +16,7 @@ def validation_fn(x: xr.Dataset,
                   budget_steps: int = BUDGET_STEPS) -> xr.Dataset:
 
     # Negate this validation if the dataset is already processed
-    if 'output_mean' in x:
+    if OUTPUT_MEAN in x:
         return x
 
     popsizes = x.attrs['popsizes']
@@ -39,32 +41,32 @@ def validation_fn(x: xr.Dataset,
     bins[-1] += 1
 
     y_bins = x['output'].groupby_bins(
-        "budget", bins=bins, include_lowest=True, right=False)
-    opt_step_bins = x['opt_step'].groupby_bins(
-        "budget", bins=bins, include_lowest=True, right=False)
+        BUDGET, bins=bins, include_lowest=True, right=False)
+    opt_step_bins = x[OPTIMIZER].groupby_bins(
+        BUDGET, bins=bins, include_lowest=True, right=False)
 
-    y_coarsen = [y_group.coarsen(budget=pop)
+    y_coarsen = [y_group.coarsen({BUDGET: pop})
                  for (_, y_group), pop in zip(y_bins, popsizes)]
-    opt_step_coarsen = [opt_step_group.coarsen(budget=pop)
+    opt_step_coarsen = [opt_step_group.coarsen({BUDGET: pop})
                         for (_, opt_step_group),
                         pop in zip(opt_step_bins, popsizes)]
 
     y_mean: xr.DataArray = xr.concat(
-        [_y.mean() for _y in y_coarsen], dim='budget')
-    y_std = xr.concat([_y.std() for _y in y_coarsen], dim='budget')
-    y_min = xr.concat([_y.min() for _y in y_coarsen], dim='budget')
+        [_y.mean() for _y in y_coarsen], dim=BUDGET)
+    y_std = xr.concat([_y.std() for _y in y_coarsen], dim=BUDGET)
+    y_min = xr.concat([_y.min() for _y in y_coarsen], dim=BUDGET)
     opt_step = xr.concat(
         [_opt_step.min() for _opt_step in opt_step_coarsen],
-        dim='budget')
+        dim=BUDGET)
 
     x = xr.Dataset(
         {
-            'output_mean': y_mean,
-            'output_std': y_std,
-            'output_min': y_min,
-            'opt_step': opt_step
+            OUTPUT_MEAN: y_mean,
+            OUTPUT_STD: y_std,
+            OUTPUT_MIN: y_min,
+            OPTIMIZER: opt_step
         },
-        coords={'budget': np.linspace(0., 1., n_iterations)})
+        coords={BUDGET: np.linspace(0., 1., n_iterations)})
 
     x = x.interp(budget=np.linspace(
         0., 1., budget_steps), method='nearest')

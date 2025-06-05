@@ -25,8 +25,8 @@ experimentdata:
       dimensionality:
         type: category
         categories:
-          # - 2
-          - 5
+          - 2
+          # - 5
           # - 10
           # - 25
 task_kwargs:

@@ -105,8 +105,14 @@ class GridWeightSampler(Block):
         sample_list = [{'x': eqx.combine(sample, static)}
                        for sample in grid_samples]
 
-        return ExperimentData(domain=data.domain, input_data=sample_list,
+        output_list = [{'opt_step': SAMPLER_HASH}
+                       for _ in range(len(sample_list))]
+
+        data = ExperimentData(domain=data.domain, input_data=sample_list,
+                              output_data=output_list,
                               project_dir=data.project_dir)
+
+        return data.mark_all('open')
 
 
 class XavierNormalWeightSampler:

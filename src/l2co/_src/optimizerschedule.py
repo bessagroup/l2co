@@ -115,7 +115,8 @@ class OptimizationSchedule:
         self.name = names[0] if all(name == names[0]
                                     for name in names) else '+'.join(names)
 
-        self.tag = {'steps': [step.tag for step in steps],
+        self.tag = {'opt_name': self.name,
+                    'steps': [step.tag for step in steps],
                     'budgets': budgets}
         self.budgets = budgets
 

@@ -22,13 +22,16 @@ import numpy as np
 import xarray as xr
 from f3dasm import ExperimentData
 from f3dasm.design import Domain
+from matplotlib.colors import LinearSegmentedColormap, LogNorm, SymLogNorm
+
 from l2co._src.optimizers import EvaluateModel
 from l2co._src.sampler import GridWeightSampler
 from l2co._src.tree_utils import experimentdata_to_xarray
-from matplotlib.colors import LinearSegmentedColormap, LogNorm, SymLogNorm
 
 # Local
 from .data_loader import DataLoader, OptimizationDynamics
+from .naming import (BUDGET, INPUT_DIM, OUTPUT_DIM, PROBLEM, REALIZATION,
+                     SCHEDULE)
 from .task import Task
 
 #                                                          Authorship & Credits
@@ -127,7 +130,7 @@ def plot_rtd_profile(d: DataLoader, ax: Optional[plt.Axes] = None,
     """
     _rtd = d.rtd_profile(strategies=strategies,
                          include_best=include_best).to_array(
-        'optimizer').mean('problem').isel(output_dim=0)
+        SCHEDULE).mean(PROBLEM).isel({OUTPUT_DIM: 0})
 
     if ax is None:
         fig, ax = plt.subplots(
@@ -136,12 +139,12 @@ def plot_rtd_profile(d: DataLoader, ax: Optional[plt.Axes] = None,
         fig = ax.get_figure()
 
     if optimizers_to_plot is None:
-        for optimizer in _rtd.optimizer:
-            ax.plot(_rtd.sel(optimizer=optimizer), label=optimizer.values)
+        for optimizer in _rtd[SCHEDULE]:
+            ax.plot(_rtd.sel({SCHEDULE: optimizer}), label=optimizer.values)
 
     else:
         for optimizer in optimizers_to_plot:
-            ax.plot(_rtd.sel(optimizer=optimizer), label=optimizer)
+            ax.plot(_rtd.sel({SCHEDULE: optimizer}), label=optimizer)
 
     ax.legend()
     ax.set_xlabel('Function evaluations')
@@ -186,8 +189,8 @@ def plot_perf_profile(
     else:
         fig = ax.get_figure()
 
-    for optimizer in _perf.optimizer:
-        ax.plot(rel_error, _perf.sel(optimizer=optimizer),
+    for optimizer in _perf[SCHEDULE]:
+        ax.plot(rel_error, _perf.sel({SCHEDULE: optimizer}),
                 label=optimizer.values)
 
     ax.legend()
@@ -204,8 +207,8 @@ def plot_trajectories(
         idx: Iterable[int] = None) -> Tuple[plt.Figure, np.ndarray]:
 
     X_traj = optimization_dynamics._X_trajectory.isel(
-        optimizer=0).T
-    Y = optimization_dynamics._Y.isel(output_dim=0).T
+        {SCHEDULE: 0}).T
+    Y = optimization_dynamics._Y.isel({OUTPUT_DIM: 0}).T
 
     fig, axes = plt.subplots(
         n_rows, n_columns, figsize=(2*n_rows, 2*n_columns),
@@ -229,7 +232,7 @@ def plot_trajectories(
             for opt in Y_substract_mean.optimizer.values
         ]
 
-        ax.plot(X_traj.isel(problem=i), color=OPTIMIZER_COLORS[optimizer])
+        ax.plot(X_traj.isel({PROBLEM: i}), color=OPTIMIZER_COLORS[optimizer])
         ax.set_title(f'#{i}')
         ax.set_xticks([])
 
@@ -237,7 +240,7 @@ def plot_trajectories(
         bar_ax = ax.inset_axes([0, -0.3, 1, 0.3])
         bar_ax.bar(
             range(Y_substract_mean.optimizer.size), Y_substract_mean.isel(
-                problem=i),
+                {PROBLEM: i}),
             color=bar_colors,
             edgecolor=[OPTIMIZER_COLORS[opt]
                        for opt in Y_substract_mean.optimizer.values],
@@ -380,6 +383,7 @@ def plot_2d_loss_landscape(task: Task, plot_resolution: int = 100,
     domain = Domain()
     domain.add_parameter('x')
     domain.add_output('y')
+    domain.add_output('opt_step')
     data = ExperimentData(domain=domain)
 
     data = sampler.call(data=data, model=task.model)
@@ -387,9 +391,9 @@ def plot_2d_loss_landscape(task: Task, plot_resolution: int = 100,
     data = experimentdata_to_xarray(data=data, popsizes=None, budgets=None,
                                     include_input=True, n_iterations=None)
 
-    x = data['input'].isel(input_dim=0).values
-    y = data['input'].isel(input_dim=1).values
-    z = data['output'].isel(output_dim=0).values
+    x = data['input'].isel({INPUT_DIM: 0}).values
+    y = data['input'].isel({INPUT_DIM: 1}).values
+    z = data['output'].isel({OUTPUT_DIM: 0}).values
     x.shape, y.shape, z.shape
 
     import numpy as np
@@ -453,9 +457,9 @@ def plot_2d_loss_landscape_only(task: Task, plot_resolution: int = 100,
     data = experimentdata_to_xarray(data=data, popsizes=None, budgets=None,
                                     include_input=True, n_iterations=None)
 
-    x = data['input'].isel(input_dim=0).values
-    y = data['input'].isel(input_dim=1).values
-    z = data['output'].isel(output_dim=0).values
+    x = data['input'].isel({INPUT_DIM: 0}).values
+    y = data['input'].isel({INPUT_DIM: 1}).values
+    z = data['output'].isel({OUTPUT_DIM: 0}).values
     x.shape, y.shape, z.shape
 
     import numpy as np
@@ -490,6 +494,64 @@ def plot_2d_loss_landscape_only(task: Task, plot_resolution: int = 100,
     return X, Y, Z
 
 
+def plot_3d_loss_landscape_only(task: Task, plot_resolution: int = 100,
+                                stepsize: float = 0.033, seed: int = 0,
+                                ax=None):
+    sampler = GridWeightSampler(
+        stepsize=stepsize, lower_bound=0.0, upper_bound=1.0)
+
+    evaluate_block = EvaluateModel(
+        task=task,
+        seed=seed,
+    )
+
+    domain = Domain()
+    domain.add_parameter('x')
+    domain.add_output('y')
+    domain.add_output('opt_step')
+    data = ExperimentData(domain=domain)
+
+    data = sampler.call(data=data, model=task.model)
+    data = evaluate_block.call(data=data)
+    data = experimentdata_to_xarray(data=data, popsizes=None, budgets=None,
+                                    include_input=True, n_iterations=None)
+
+    x = data['input'].isel({INPUT_DIM: 0}).values
+    y = data['input'].isel({INPUT_DIM: 1}).values
+    z = data['output'].isel({OUTPUT_DIM: 0}).values
+    x.shape, y.shape, z.shape
+
+    import numpy as np
+    from scipy.interpolate import griddata
+
+    X, Y = np.meshgrid(np.linspace(min(x), max(x), plot_resolution),
+                       np.linspace(min(y), max(y), plot_resolution))
+
+    Z = griddata((x, y), z, (X, Y), method='cubic')
+
+    # Ensure Z is positive
+    Z_min = np.min(Z)
+    Z = Z - Z_min
+
+    Z_nonzero = Z[Z > 0]
+    eps = np.min(Z_nonzero) if Z_nonzero.size > 0 else 1e-1
+
+    Z += eps
+
+    # Create the figure and set up the subplots
+    fig = plt.figure(figsize=(6, 6))
+
+    # 3D Surface Plot
+    ax1 = fig.add_subplot(111, projection='3d')
+    surf = ax1.plot_surface(X, Y, Z, cmap='viridis', norm=LogNorm())
+    # fig.colorbar(surf, ax=ax1)
+    # ax1.set_xlabel('X axis')
+    # ax1.set_ylabel('Y axis')
+    # ax1.set_zlabel('Z axis')
+    # ax1.set_title('3D Surface Plot')
+    return fig
+
+
 def plot_2d_trajectories(raw_results_list: List[xr.DataArray], task: Task,
                          realization: int):
     # Get the default color cycle
@@ -519,14 +581,14 @@ def plot_2d_trajectories(raw_results_list: List[xr.DataArray], task: Task,
             prev = 0 if j == 0 else switching_iters[j-1]
             current
             x0 = r_i['input'].isel(
-                realization=realization, input_dim=0,
-                budget=range(prev, current))
+                {REALIZATION: realization, INPUT_DIM: 0,
+                 BUDGET: range(prev, current)})
             x1 = r_i['input'].isel(
-                realization=realization, input_dim=1,
-                budget=range(prev, current))
+                {REALIZATION: realization, INPUT_DIM: 1,
+                 BUDGET: range(prev, current)})
             y = r_i['output'].isel(
-                realization=realization, output_dim=0,
-                budget=range(prev, current))
+                {REALIZATION: realization, OUTPUT_DIM: 0,
+                 BUDGET: range(prev, current)})
             ax.scatter(x0.values, x1.values, c=color, s=1, alpha=1.0)
             ax.scatter(x0.values[y.argmin()], x1.values[y.argmin()],
                        c='k', s=10, alpha=1.0, marker='x')
