@@ -62,6 +62,7 @@ __status__ = 'Stable'
 # =============================================================================
 
 INVALID_PERFORMANCE_VALUE = 1.0
+PADDING_VALUE = 1.0
 
 #                                                                   Data Loader
 # =============================================================================
@@ -359,6 +360,20 @@ class DataLoader:
             *[d for d in desired_order if d in var.dims],
             *[d for d in var.dims if d not in desired_order])
         )
+
+    def to_all_params_2(self, window_size: float):
+        _dict = {}
+        for t in np.arange(window_size, 1.0, window_size):
+            t_end = np.minimum(t + window_size, 1.0)
+            params = self.to_params_2(t_start=0.0, t=t, t_end=t_end)
+            params[BUDGET] = range(
+                self.data[BUDGET].size - params[BUDGET].size,
+                self.data[BUDGET].size)
+            _dict[str(t)] = params.reindex(
+                budget=range(self.data[BUDGET].size),
+                fill_value=PADDING_VALUE)
+
+        return xr.DataTree.from_dict(_dict)
 
     @property
     def to_output_params(self) -> xr.Dataset:
