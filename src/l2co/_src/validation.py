@@ -5,7 +5,7 @@ import xarray as xr
 
 from l2co._src.optimizerschedule import step_n_iterations
 
-from .naming import BUDGET, OPTIMIZER, OUTPUT_MEAN, OUTPUT_MIN, OUTPUT_STD
+from .naming import BUDGET, OUTPUT_MEAN, OUTPUT_MIN, OUTPUT_STD, UPDATE_STEP
 
 # =============================================================================
 
@@ -42,7 +42,7 @@ def validation_fn(x: xr.Dataset,
 
     y_bins = x['output'].groupby_bins(
         BUDGET, bins=bins, include_lowest=True, right=False)
-    opt_step_bins = x[OPTIMIZER].groupby_bins(
+    opt_step_bins = x[UPDATE_STEP].groupby_bins(
         BUDGET, bins=bins, include_lowest=True, right=False)
 
     y_coarsen = [y_group.coarsen({BUDGET: pop})
@@ -64,7 +64,7 @@ def validation_fn(x: xr.Dataset,
             OUTPUT_MEAN: y_mean,
             OUTPUT_STD: y_std,
             OUTPUT_MIN: y_min,
-            OPTIMIZER: opt_step
+            UPDATE_STEP: opt_step
         },
         coords={BUDGET: np.linspace(0., 1., n_iterations)})
 

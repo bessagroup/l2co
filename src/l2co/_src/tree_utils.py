@@ -11,7 +11,7 @@ from f3dasm import ExperimentData
 from jaxtyping import PyTree
 
 # Local
-from .naming import BUDGET, INPUT_DIM, OPTIMIZER, OUTPUT_DIM
+from .naming import BUDGET, INPUT_DIM, OUTPUT_DIM, UPDATE_STEP
 from .optimizerschedule import OptimizationSchedule
 
 # =============================================================================
@@ -70,13 +70,13 @@ def experimentdata_to_xarray(data: ExperimentData,
 
         ds = xr.Dataset({'input': x,
                          'output': y,
-                         OPTIMIZER: optimizer,
+                         UPDATE_STEP: optimizer,
                          })
 
     else:
         ds = xr.Dataset({
             'output': y,
-            OPTIMIZER: optimizer,
+            UPDATE_STEP: optimizer,
         })
 
     ds.attrs['popsizes'] = popsizes

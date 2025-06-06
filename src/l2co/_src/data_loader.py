@@ -41,9 +41,10 @@ from sklearn.model_selection import train_test_split
 
 # Local
 from .latent_space import fit_basis_function, fit_gpr
-from .naming import (BUDGET, FEATURE, OPTIMIZER, OUTPUT_DIM, OUTPUT_MEAN,
-                     OUTPUT_MIN, PROBLEM, REALIZATION, SCHEDULE, TASK_ID,
-                     TASK_LABELS)
+from .naming import (BUDGET, FEATURE, OPT_CHOICE, OPT_HISTORY, OUTPUT_DIM,
+                     OUTPUT_MEAN, OUTPUT_MIN, PERFORMANCE, PROBLEM,
+                     REALIZATION, SCHEDULE, STAIRCASE, TASK_ID, TASK_LABELS,
+                     TRAJECTORY, UPDATE_STEP)
 from .optimizerschedule import OptimizationSchedule, OptimizationStep
 from .performance import (output_cummin, scale_by_problem,
                           scale_by_problem_and_schedule, scale_by_task)
@@ -225,22 +226,6 @@ class DataLoader:
 
         return xr.DataTree.from_dict(_dict), opt_steps
 
-        # ds_switch = xr.concat(
-        #     [
-        #         self.query_optimizer(optimizer).to_params(
-        #             optimizer=optimizer,
-        #             t=t, t_start=t_start, t_end=t_end)
-        #         for optimizer in optimizers
-        #     ],
-        #     dim='problem')
-
-        # ds_first = self.select_single_optimizers(squash=True).to_params(
-        #     t=t_start, t_start=t_start, t_end=t_end)
-        # return (
-        #     OptimizationDynamics2.from_data(ds_first),
-        #     OptimizationDynamics2.from_data(ds_switch),
-        # )
-
     def to_params(
         self,
         t: float,
@@ -290,7 +275,7 @@ class DataLoader:
 
             # Create opt_step
             vars['opt_step'] = self.select_t(
-                t_start=t_start, t=t).data[OPTIMIZER]
+                t_start=t_start, t=t).data[UPDATE_STEP]
             # vars['opt_step'] = _squash(opt_step, reduce_dim=OPTIMIZER)
 
         # Put everything together in a dataset
@@ -314,28 +299,62 @@ class DataLoader:
         d_output = self.select_t(t_start=t, t=t_end, select_one_before=False)
 
         perf = output_cummin(d_output.data.assign_coords(
-            {'first_part': d_input.hash_opt_step,
-             'second_part': d_output.hash_opt_step})[OUTPUT_MIN]).ffill(BUDGET)
+            {OPT_HISTORY: d_input.hash_opt_step,
+             OPT_CHOICE: d_output.hash_opt_step})[OUTPUT_MIN]).ffill(BUDGET)
 
         total = []
 
-        for fp in np.unique(perf['first_part']):
-            _perf = perf.where(perf['first_part'] == fp)
+        for fp in np.unique(perf[OPT_HISTORY]):
+            _perf = perf.where(perf[OPT_HISTORY] == fp)
             total.append(scale_by_problem_and_schedule(_perf))
 
         performance = xr.merge(total)[OUTPUT_MIN].isel(budget=-1, drop=True)
 
         ds = xr.Dataset({
-            'trajectory': d_input.trajectory,
-            'staircase': d_input.staircase,
-            'optimizer': d_input.data[OPTIMIZER],
-            'performance': performance,
+            TASK_LABELS: self.task_labels,
+            TRAJECTORY: d_input.trajectory,
+            STAIRCASE: d_input.staircase,
+            UPDATE_STEP: d_input.data[UPDATE_STEP],
+            PERFORMANCE: performance,
         })
 
-        # Transpose dims
-        desired_order = (PROBLEM, OUTPUT_DIM, SCHEDULE)
+        new_params = ds.groupby(
+            (OPT_HISTORY, PROBLEM, OUTPUT_DIM),
+            restore_coord_dims=True).first()
 
-        return ds.map(lambda var: var.transpose(
+        def f(x, first_part, second_part):
+            # Create DataFrame
+            df = pd.DataFrame(
+                {OPT_HISTORY: first_part,
+                 OPT_CHOICE: second_part,
+                 PERFORMANCE: x})
+
+            # Pivot table: rows = y, columns = z, values = x
+            matrix = df.pivot_table(
+                index=OPT_HISTORY,
+                columns=OPT_CHOICE,
+                values=PERFORMANCE)
+
+            # Convert to NumPy array (optional)
+            return matrix.to_numpy()
+
+        new_params = new_params.assign_coords(
+            {OPT_CHOICE: np.unique(ds[OPT_CHOICE])})
+
+        new_params[PERFORMANCE] = xr.apply_ufunc(
+            f,
+            ds[PERFORMANCE],
+            ds[OPT_HISTORY],
+            ds[OPT_CHOICE],
+            input_core_dims=[[SCHEDULE], [SCHEDULE], [SCHEDULE]],
+            output_core_dims=[[OPT_HISTORY, OPT_CHOICE]],
+            vectorize=True,
+        )
+
+        # Transpose dims
+        desired_order = (PROBLEM, OUTPUT_DIM, OPT_HISTORY)
+
+        return new_params.map(lambda var: var.transpose(
             *[d for d in desired_order if d in var.dims],
             *[d for d in var.dims if d not in desired_order])
         )
@@ -348,7 +367,7 @@ class DataLoader:
         vars['performance'] = self.performance_per_realization
 
         # Create opt_step
-        vars['opt_step'] = self.data[OPTIMIZER]
+        vars['opt_step'] = self.data[UPDATE_STEP]
 
         # Put everything together in a dataset
         ds = xr.Dataset(vars)
@@ -365,7 +384,7 @@ class DataLoader:
     def hash_opt_step(self) -> xr.DataArray:
         return xr.apply_ufunc(
             lambda x: hashlib.sha256(x.tobytes()).hexdigest(),
-            self.data[OPTIMIZER],
+            self.data[UPDATE_STEP],
             input_core_dims=[[BUDGET]],
             output_core_dims=[[]],
             vectorize=True,

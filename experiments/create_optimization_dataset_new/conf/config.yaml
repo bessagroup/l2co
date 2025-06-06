@@ -5,7 +5,7 @@ defaults:
 - samplers: normal
 - optimizers: standard
 
-n_realizations: 5
+n_realizations: 1
 
 seed: 467
 mode: mpi
