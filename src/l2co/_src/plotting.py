@@ -13,6 +13,8 @@ plot_perf_profile
 #                                                                       Modules
 # =============================================================================
 
+from scipy.interpolate import griddata
+from matplotlib.colors import LogNorm
 import math
 from typing import Iterable, List, Optional, Tuple
 
@@ -22,11 +24,10 @@ import numpy as np
 import xarray as xr
 from f3dasm import ExperimentData
 from f3dasm.design import Domain
-from matplotlib.colors import LinearSegmentedColormap, LogNorm, SymLogNorm
-
 from l2co._src.optimizers import EvaluateModel
 from l2co._src.sampler import GridWeightSampler
 from l2co._src.tree_utils import experimentdata_to_xarray
+from matplotlib.colors import LinearSegmentedColormap, LogNorm, SymLogNorm
 
 # Local
 from .data_loader import DataLoader, OptimizationDynamics
@@ -519,37 +520,32 @@ def plot_3d_loss_landscape_only(task: Task, plot_resolution: int = 100,
     x = data['input'].isel({INPUT_DIM: 0}).values
     y = data['input'].isel({INPUT_DIM: 1}).values
     z = data['output'].isel({OUTPUT_DIM: 0}).values
-    x.shape, y.shape, z.shape
-
-    import numpy as np
-    from scipy.interpolate import griddata
 
     X, Y = np.meshgrid(np.linspace(min(x), max(x), plot_resolution),
                        np.linspace(min(y), max(y), plot_resolution))
-
     Z = griddata((x, y), z, (X, Y), method='cubic')
 
-    # Ensure Z is positive
-    Z_min = np.min(Z)
+    # Normalize Z
+    Z_min = np.nanmin(Z)
     Z = Z - Z_min
-
     Z_nonzero = Z[Z > 0]
     eps = np.min(Z_nonzero) if Z_nonzero.size > 0 else 1e-1
-
     Z += eps
 
-    # Create the figure and set up the subplots
-    fig = plt.figure(figsize=(6, 6))
+    # If no axis is provided, create one
+    created_fig = False
+    if ax is None:
+        fig = plt.figure(figsize=(6, 6))
+        ax = fig.add_subplot(111, projection='3d')
+        created_fig = True
 
-    # 3D Surface Plot
-    ax1 = fig.add_subplot(111, projection='3d')
-    surf = ax1.plot_surface(X, Y, Z, cmap='viridis', norm=LogNorm())
-    # fig.colorbar(surf, ax=ax1)
-    # ax1.set_xlabel('X axis')
-    # ax1.set_ylabel('Y axis')
-    # ax1.set_zlabel('Z axis')
-    # ax1.set_title('3D Surface Plot')
-    return fig
+    # Plot on the provided or created axis
+    surf = ax.plot_surface(X, Y, Z, cmap='viridis', norm=LogNorm())
+
+    if created_fig:
+        return fig
+    else:
+        return ax
 
 
 def plot_2d_trajectories(raw_results_list: List[xr.DataArray], task: Task,
