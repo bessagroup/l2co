@@ -333,7 +333,8 @@ class DataLoader:
             matrix = df.pivot_table(
                 index=OPT_HISTORY,
                 columns=OPT_CHOICE,
-                values=PERFORMANCE)
+                values=PERFORMANCE,
+                dropna=False)
 
             # Convert to NumPy array (optional)
             return matrix.to_numpy()
