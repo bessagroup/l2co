@@ -191,7 +191,7 @@ def train_stage1_model(model: eqx.Module, data: Dict[str, jax.Array],
     opt_state = optimizer.init(params)
     (trained_params, _), losses = jax.lax.scan(
         body, (params, opt_state), None, length=epochs)
-    return eqx.combine(trained_params, static)
+    return eqx.combine(trained_params, static), losses
 
 
 def predict_stage1_model(model: eqx.Module, data: Dict[str, jax.Array]
@@ -332,13 +332,14 @@ class L2CO_model:
                                    x=dynamics.X_features, y=dynamics.Y)
 
             else:
-                self.stage1_models[
-                    dynamics.previous_step] = train_stage1_model(
+                trained_model, _ = train_stage1_model(
                     model=self.stage1_models[dynamics.previous_step],
                     data={'x': dynamics.X_trajectory, 'y': dynamics.Y},
                     loss_fn=mse_loss,
                     epochs=epochs,
                     optimizer=optimizer)
+
+                self.stage1_models[dynamics.previous_step] = trained_model
 
     def predict(self, dynamics: OptimizationDynamics
                 ) -> Iterable[OptimizationStep]:
