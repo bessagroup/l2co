@@ -41,11 +41,11 @@ from sklearn.model_selection import train_test_split
 
 # Local
 from .latent_space import fit_basis_function, fit_gpr
-from .naming import (BUDGET, FEATURE, OPT_CHOICE, OPT_HISTORY, OUTPUT_DIM,
-                     OUTPUT_MEAN, OUTPUT_MIN, PERFORMANCE, PROBLEM,
+from .naming import (BATCH, BUDGET, FEATURE, OPT_CHOICE, OPT_HISTORY,
+                     OUTPUT_DIM, OUTPUT_MEAN, OUTPUT_MIN, PERFORMANCE, PROBLEM,
                      REALIZATION, SCHEDULE, STAIRCASE, TASK_ID, TASK_LABELS,
                      TRAJECTORY, UPDATE_STEP)
-from .optimizerschedule import OptimizationSchedule, OptimizationStep
+from .optimizerschedule import OptimizationSchedule
 from .performance import (output_cummin, scale_by_problem,
                           scale_by_problem_and_schedule, scale_by_task)
 from .task import Task
@@ -210,91 +210,9 @@ class DataLoader:
 #                                                         Storing and exporting
 # =============================================================================
 
-    def to_all_params(self,
-                      t: float, t_start: float = 0.0, t_end: float = 1.0
-                      ) -> Tuple[xr.DataTree, Iterable[OptimizationStep]]:
-
-        optimizers = self.select_single_optimizers().optimizers.values
-
-        _dict = {optimizer: self.query_optimizer(optimizer).to_params(
-            optimizer=optimizer,
-            t=t, t_start=t_start, t_end=t_end) for optimizer in optimizers}
-        _dict['first'] = self.select_single_optimizers(squash=True).to_params(
-            t=t_start, t_start=t_start, t_end=t_end)
-
-        opt_steps = [schedule.steps[0]
-                     for schedule in self.select_single_optimizers().opt_steps]
-
-        return xr.DataTree.from_dict(_dict), opt_steps
-
-    def to_params(
-        self,
-        t: float,
-        t_start: float = 0.0,
-        t_end: float = 1.0,
-        optimizer: Optional[str] = None,
-    ) -> xr.Dataset:
-        """
-        Converts the data into a parameterized dataset.
-
-        Parameters
-        ----------
-        t : float
-            Current time step.
-        t_start : float, optional
-            Start time for the parameterization. Default is 0.0.
-        t_end : float, optional
-            End time for the parameterization. Default is 1.0.
-        optimizer : str, optional
-            Name of the optimizer to include in the dataset.
-
-        Returns
-        -------
-        xr.Dataset
-            Parameterized dataset.
-        """
-
-        vars = {}
-
-        vars['task_labels'] = self.task_labels.astype(str)
-
-        # Calculate the performance labels
-        vars['performance'] = self.select_t(
-            t_start=t, t=t_end).performance_per_realization.sel(
-            budget=t_end, method='nearest', drop=True)
-
-        if optimizer is not None:
-
-            # Create the trajectory
-            trajectory = self.select_t(t_start=t_start, t=t).trajectory
-            vars['trajectory'] = _squash(trajectory, reduce_dim=SCHEDULE)
-
-            # Create the staircase
-            staircase = self.select_t(t_start=t_start, t=t).staircase
-            vars['staircase'] = _squash(
-                staircase, reduce_dim=SCHEDULE)
-
-            # Create opt_step
-            vars['opt_step'] = self.select_t(
-                t_start=t_start, t=t).data[UPDATE_STEP]
-            # vars['opt_step'] = _squash(opt_step, reduce_dim=OPTIMIZER)
-
-        # Put everything together in a dataset
-        ds = xr.Dataset(vars)
-
-        ds['optimizer'] = ds['optimizer'].astype(str)
-
-        # Transpose dims
-        desired_order = (PROBLEM, OUTPUT_DIM, SCHEDULE)
-
-        return ds.map(lambda var: var.transpose(
-            *[d for d in desired_order if d in var.dims],
-            *[d for d in var.dims if d not in desired_order])
-        )
-
-    def to_params_2(self, t: float,
-                    t_start: float = 0.0,
-                    t_end: float = 1.0) -> xr.Dataset:
+    def to_params(self, t: float,
+                  t_start: float = 0.0,
+                  t_end: float = 1.0) -> xr.Dataset:
 
         d_input = self.select_t(t_start=t_start, t=t, select_one_before=True)
         d_output = self.select_t(t_start=t, t=t_end, select_one_before=False)
@@ -361,40 +279,29 @@ class DataLoader:
             *[d for d in var.dims if d not in desired_order])
         )
 
-    def to_all_params_2(self, window_size: float):
+    def to_all_params_2(self, window_size: float,
+                        budget_size: Optional[int] = None):
+
+        if budget_size is None:
+            budget_size = self.data[BUDGET].size
+
         _dict = {}
         for t in np.arange(window_size, 1.0, window_size):
             t_end = np.minimum(t + window_size, 1.0)
             params = self.to_params_2(t_start=0.0, t=t, t_end=t_end)
             params[BUDGET] = range(
-                self.data[BUDGET].size - params[BUDGET].size,
-                self.data[BUDGET].size)
-            _dict[str(t)] = params.reindex(
-                budget=range(self.data[BUDGET].size),
+                budget_size - params[BUDGET].size,
+                budget_size)
+
+            params = params.reindex(
+                budget=range(budget_size),
                 fill_value=PADDING_VALUE)
 
+            params[UPDATE_STEP] = params[UPDATE_STEP].astype(str)
+
+            _dict[f"{t:.2f}"] = params
+
         return xr.DataTree.from_dict(_dict)
-
-    @property
-    def to_output_params(self) -> xr.Dataset:
-        vars = {}
-
-        # Calculate the performance labels
-        vars['performance'] = self.performance_per_realization
-
-        # Create opt_step
-        vars['opt_step'] = self.data[UPDATE_STEP]
-
-        # Put everything together in a dataset
-        ds = xr.Dataset(vars)
-
-        # Transpose dims
-        desired_order = (PROBLEM, OUTPUT_DIM, SCHEDULE)
-
-        return ds.map(lambda var: var.transpose(
-            *[d for d in desired_order if d in var.dims],
-            *[d for d in var.dims if d not in desired_order])
-        )
 
     @property
     def hash_opt_step(self) -> xr.DataArray:
@@ -779,6 +686,7 @@ class DataLoader:
 #                                                          Selecting optimizers
 # =============================================================================
 
+
     def select_single_optimizers(
             self, squash: bool = False) -> DataLoader:
         """
@@ -884,7 +792,6 @@ class DataLoader:
 
 #                                                           Performance metrics
 # =============================================================================
-
 
     def performance_profile(
             self, max_f_value: int = 2.0, include_best: bool = False,
@@ -992,44 +899,46 @@ def rtd(performance: xr.DataArray) -> xr.DataArray:
 
 class OptimizationDynamics:
     def __init__(self,
-                 data: xr.Dataset,
-                 previous_step: Optional[str]):
+                 data: xr.Dataset):
         self.data = data
-        self.previous_step = previous_step
 
     @classmethod
-    def from_data(cls: Type[OptimizationDynamics],
-                  data: xr.Dataset,
-                  previous_step: Optional[str] = None) -> OptimizationDynamics:
-        # Fill in missing performance values
-        data['performance'] = xr.apply_ufunc(
-            impute_missing_values_svd,
-            data['performance'],
-            input_core_dims=[[PROBLEM, SCHEDULE]],
-            output_core_dims=[[PROBLEM, SCHEDULE]],
-            vectorize=True,
-        )
+    def from_data(
+            cls: Type[OptimizationDynamics],
+            data: xr.DataTree,
+            previous_step: Optional[str] = None) -> OptimizationDynamics:
+        ds_list = []
+        for k in data.keys():
+            ds = data[k].to_dataset()
 
-        # Check for NaNs in each variable and reduce over all dims
-        # except PROBLEM
+            # Impute missing values
+            ds[PERFORMANCE] = xr.apply_ufunc(
+                impute_missing_values_svd,
+                ds[PERFORMANCE],
+                input_core_dims=[[PROBLEM, OPT_CHOICE]],
+                output_core_dims=[[PROBLEM, OPT_CHOICE]],
+                vectorize=True,
+            )
+
+            # Stack the dataset along a new 'batch' dimension
+            ds_list.append(ds.stack(
+                {BATCH: (PROBLEM, OPT_HISTORY, OUTPUT_DIM)},
+                create_index=False))
+
+        # Concatenate all datasets along the 'batch' dimension
+        new_ds: xr.Dataset = xr.concat(ds_list, dim=BATCH)
+
         nan_flags = [
-            var.isnull().any(dim=set(var.dims) - {PROBLEM})
-            for var in data.data_vars.values()
+            var.isnull().any(dim=set(var.dims) - {BATCH})
+            for var in new_ds.data_vars.values()
         ]
 
-        # Combine all flags: True where any variable has NaNs in that problem
         has_nan_anywhere = xr.concat(nan_flags, dim='_vars').any(dim='_vars')
+        new_ds = new_ds.sel({BATCH: ~has_nan_anywhere}).transpose()
 
-        # Filter out nans
-        data = data.sel({PROBLEM: ~has_nan_anywhere})
+        new_ds[UPDATE_STEP] = encode(new_ds[UPDATE_STEP])
 
-        # Select first output_dim
-        data = data.isel({OUTPUT_DIM: 0}, drop=True)
-
-        if previous_step == 'first':
-            previous_step = None
-
-        return cls(data=data, previous_step=previous_step)
+        return cls(data=new_ds)
 
     @property
     def X_features(self) -> pd.DataFrame:
@@ -1039,19 +948,20 @@ class OptimizationDynamics:
     @property
     def X_trajectory(self) -> jax.Array:
         return jnp.stack(
-            (self.data['trajectory'].values, self.data['staircase'].values),
+            (self.data[TRAJECTORY].values,
+             self.data[STAIRCASE].values,
+             self.data[UPDATE_STEP].values),
             axis=-1)
 
     @property
     def Y(self) -> jax.Array:
-        return jnp.array(self.data['performance'])
+        return jnp.array(self.data[PERFORMANCE])
 
     @classmethod
     def from_task_and_run(
             cls: Type[OptimizationDynamics],
             task: Task,
             data: Optional[ExperimentData] = None,
-            previous_step: Optional[str] = None,
     ) -> OptimizationDynamics:
         ...
 
@@ -1273,3 +1183,8 @@ def compute_fitting(trajectory: xr.DataArray, fit_params: xr.DataArray,
 
     fitted_sigmoid = fitted_sigmoid.assign_coords(
         {BUDGET: trajectory.coords[BUDGET]})
+
+
+def encode(xarr: xr.DataArray) -> xr.DataArray:
+    _, enc = np.unique(xarr, return_inverse=True)
+    return xarr.copy(data=enc.reshape(xarr.shape))
