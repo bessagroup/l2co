@@ -139,7 +139,6 @@ class DataLoader:
 #                                                      Alternative Constructors
 # =============================================================================
 
-
     @classmethod
     def from_file(
         cls, path: str, data_filename: str = 'entire_dataset'
@@ -279,8 +278,8 @@ class DataLoader:
             *[d for d in var.dims if d not in desired_order])
         )
 
-    def to_all_params_2(self, window_size: float,
-                        budget_size: Optional[int] = None):
+    def to_all_params(self, window_size: float,
+                      budget_size: Optional[int] = None):
 
         if budget_size is None:
             budget_size = self.data[BUDGET].size
@@ -288,7 +287,7 @@ class DataLoader:
         _dict = {}
         for t in np.arange(window_size, 1.0, window_size):
             t_end = np.minimum(t + window_size, 1.0)
-            params = self.to_params_2(t_start=0.0, t=t, t_end=t_end)
+            params = self.to_params(t_start=0.0, t=t, t_end=t_end)
             params[BUDGET] = range(
                 budget_size - params[BUDGET].size,
                 budget_size)
@@ -686,7 +685,6 @@ class DataLoader:
 #                                                          Selecting optimizers
 # =============================================================================
 
-
     def select_single_optimizers(
             self, squash: bool = False) -> DataLoader:
         """
@@ -792,6 +790,7 @@ class DataLoader:
 
 #                                                           Performance metrics
 # =============================================================================
+
 
     def performance_profile(
             self, max_f_value: int = 2.0, include_best: bool = False,
