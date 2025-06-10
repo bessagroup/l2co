@@ -11,7 +11,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
-from evosax import CMA_ES, PSO, EvoParams, EvoState, Sep_CMA_ES, Strategy
+# from evosax import CMA_ES, PSO, EvoParams, EvoState, Sep_CMA_ES, Strategy
+from evosax.algorithms import CMA_ES, PSO, Sep_CMA_ES
+from evosax.algorithms.base import EvolutionaryAlgorithm, Params, State
 from f3dasm import Block, ExperimentData
 from jax.tree_util import tree_map
 from jaxtyping import PyTree
@@ -302,7 +304,7 @@ class EvoSaxUpdate(UpdateStep):
         Additional hyperparameters for the optimizer.
     """
 
-    def __init__(self, optimizer: Type[Strategy],
+    def __init__(self, optimizer: Type[EvolutionaryAlgorithm],
                  seed: int,
                  popsize: int,
                  update_fn: Callable[[], Tuple[ScanFunction, InitFunction]],
@@ -371,18 +373,19 @@ class EvoSaxUpdate(UpdateStep):
         self.params, self.static = eqx.partition(pop_x, eqx.is_inexact_array)
 
         self.optimizer = self.optimizer_class(
-            popsize=self.popsize,
-            pholder_params=tree_map(lambda x: x[0], self.params),
+            population_size=self.popsize,
+            solution=tree_map(lambda x: x[0], self.params),
             **self.hyperparameters)
 
         es_params = self.optimizer.default_params
 
-        if self.bounded is not None:
-            es_params = es_params.replace(
-                clip_min=self.bounded[0], clip_max=self.bounded[1])
+        # if self.bounded is not None:
+        #     es_params = es_params.replace(
+        #         clip_min=self.bounded[0], clip_max=self.bounded[1])
 
         self.make_step, self.init_fn, self.post_fn = self.update_fn(
             static=self.static,
+            params=self.params,
             optimizer=self.optimizer,
             loss_fn=self.task.loss_fn,
             bounded=self.bounded,
@@ -604,14 +607,15 @@ def optax_scan(static: PyTree,
 
 
 def evosax_scan(static: PyTree,
-                optimizer: Strategy,
+                params: PyTree,
+                optimizer: EvolutionaryAlgorithm,
                 loss_fn: LossFunction,
                 bounded: Optional[Tuple[float, float]],
                 has_aux: bool,
                 include_input: bool,
                 pass_rng: bool,
                 popsize: int,
-                es_params: EvoParams,
+                es_params: Params,
                 key: jax.Array,
                 opt_hash: str,
                 **kwargs
@@ -623,6 +627,8 @@ def evosax_scan(static: PyTree,
     ----------
     static : PyTree
         Static parameters for the model.
+    params : PyTree
+        Initial parameters for optimization.
     optimizer : Strategy
         Evolutionary strategy to use.
     loss_fn : LossFunction
@@ -653,9 +659,9 @@ def evosax_scan(static: PyTree,
         return loss_fn(eqx.combine(params, static), **rng_sample)
 
     @eqx.filter_jit
-    def scan_fn(carry: Tuple[PyTree, EvoState, jax.Array],
+    def scan_fn(carry: Tuple[PyTree, State, jax.Array],
                 sample: dict, *args, **kwargs) -> Tuple[
-                    Tuple[PyTree, EvoState, jax.Array], dict]:
+                    Tuple[PyTree, State, jax.Array], dict]:
         inner_params, opt_state, rng = carry
 
         rng, rng_gen = jr.split(rng)
@@ -668,17 +674,24 @@ def evosax_scan(static: PyTree,
         loss = jax.vmap(partial(combined_loss, **sample)
                         )(inner_params, **rng_sample)
 
-        opt_state = optimizer.tell(
-            x=inner_params,
+        opt_state, _ = optimizer.tell(
+            key=rng_gen,
+            population=inner_params,
             fitness=loss,
             state=opt_state,
             params=es_params
         )
 
         new_params, opt_state = optimizer.ask(
-            rng=rng_gen,
+            key=rng_gen,
             state=opt_state,
             params=es_params)
+
+        # Apply box constraints if `bounded` is True
+        if bounded is not None:
+            new_params = tree_map(
+                lambda p: jnp.clip(
+                    p, bounded[0], bounded[1]), new_params)
 
         history = {'loss': loss}
 
@@ -687,8 +700,8 @@ def evosax_scan(static: PyTree,
 
         return (new_params, opt_state, rng), history
 
-    def init_fn() -> EvoState:
-        return optimizer.initialize(rng=key, params=es_params)
+    def init_fn() -> State:
+        return optimizer.init(key, tree_map(lambda x: x[0], params), es_params)
 
     def post_fn(history: PyTree
                 ) -> Tuple[List[Dict[str, PyTree]] | None, List[
@@ -835,7 +848,9 @@ def create_x0(data: Optional[ExperimentData], model: PyTree,
     return _data, has_created_flag
 
 
-def choose_es(task: Task, popsize: Optional[int] = None, **kwargs) -> Strategy:
+def choose_es(task: Task,
+              popsize: Optional[int] = None,
+              **kwargs) -> EvolutionaryAlgorithm:
     """
     Choose an evolutionary strategy based on task dimensionality.
 
@@ -871,7 +886,8 @@ def choose_es(task: Task, popsize: Optional[int] = None, **kwargs) -> Strategy:
 
 
 def sepcmaes_variable_popsize(
-        task: Task, popsize: Optional[int] = None, **kwargs) -> Strategy:
+    task: Task, popsize: Optional[int] = None,
+        **kwargs) -> EvolutionaryAlgorithm:
     d = task.dimensionality
 
     optimizer = partial(
