@@ -4,7 +4,7 @@ f3dasm >= 2.0.1
 f3dasm_optimize
 scikit-learn
 xarray
-NetCDF4==1.6.4
+NetCDF4
 dask
 opfunu @ git+https://github.com/mpvanderschelling/opfunu@jaxnumpy
 tqdm

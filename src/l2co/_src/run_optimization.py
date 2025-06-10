@@ -19,7 +19,7 @@ from .batching import NoneIterator, batch_iter
 from .data_loader import OptimizationDynamics
 from .l2co_model import L2CO_model
 from .naming import REALIZATION
-from .optimizers import OPT_MAPPING, UpdateStep
+from .optimizers import OPT_MAPPING, EvaluateModel, UpdateStep
 from .optimizerschedule import (OptimizationSchedule, OptimizationStep,
                                 step_n_iterations, step_n_iterations_equal)
 from .sampler import NormalWeightSampler, RandomWeightSampler
@@ -101,11 +101,25 @@ def run_optimization_schedule(
         use_scan: Optional[bool],
 ) -> Tuple[ExperimentData, List[int]]:
 
-    # Start with empty ExperimentData
-    data = None
+    # Create the ExperimentData object
+    domain = Domain()
+    domain.add_parameter(name='x')
+    domain.add_output(name='y')
+    domain.add_output(name='opt_step')
+    data = ExperimentData(domain=domain)
+
+    # Sample one initial solution
+    sampler.arm(data=data)
+    data = sampler.call(data=data, model=task.model, num_samples=1, seed=seed)
+
+    # Evaluate the model to get the initial loss
+    data_generator = EvaluateModel(task=task, seed=seed)
+    data_generator.arm(data)
+    data = data_generator.call(data=data)
+
     loaded_dataset = task.loaded_dataset
     popsizes = []
-    previous_step = None
+    previous_step = 'sampler'
     optimizer_dict: Dict[OptimizationStep, UpdateStep] = {}
 
     for i, (step, step_iterations) in enumerate(zip(
@@ -147,7 +161,7 @@ def run_optimization_schedule(
             n_iterations=step_iterations,
             learning_data=learning_data,
             use_scan=_use_scan,
-            seed=seed + i,
+            seed=seed + i + 1,
             data=data,
 
         )

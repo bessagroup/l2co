@@ -34,6 +34,11 @@ def validation_fn(x: xr.Dataset,
     iterations_per_step = step_n_iterations(n_iterations=n_iterations,
                                             budgets=budgets)
 
+    # Make sure the first initial sample is included when binning
+    iterations_per_step = [1] + iterations_per_step
+    popsizes = [1] + popsizes
+    n_iterations = n_iterations + 1
+
     bins = np.concatenate(([0], np.cumsum(
         [i*pop for
             pop, i in zip(popsizes, iterations_per_step)])))
@@ -59,16 +64,29 @@ def validation_fn(x: xr.Dataset,
         [_opt_step.min() for _opt_step in opt_step_coarsen],
         dim=BUDGET)
 
+    # t_iterations = np.linspace(0., 1., )
+
+    x0 = xr.Dataset(
+        {
+            OUTPUT_MEAN: y_mean.isel({BUDGET: 0}),
+            OUTPUT_STD: y_std.isel({BUDGET: 0}),
+            OUTPUT_MIN: y_min.isel({BUDGET: 0}),
+            UPDATE_STEP: opt_step.isel({BUDGET: 0}),
+        },
+        coords={BUDGET: [-1]}
+    )
+
     x = xr.Dataset(
         {
-            OUTPUT_MEAN: y_mean,
-            OUTPUT_STD: y_std,
-            OUTPUT_MIN: y_min,
-            UPDATE_STEP: opt_step
+            OUTPUT_MEAN: y_mean.isel({BUDGET: slice(1, None)}),
+            OUTPUT_STD: y_std.isel({BUDGET: slice(1, None)}),
+            OUTPUT_MIN: y_min.isel({BUDGET: slice(1, None)}),
+            UPDATE_STEP: opt_step.isel({BUDGET: slice(1, None)}),
         },
-        coords={BUDGET: np.linspace(0., 1., n_iterations)})
+        coords={BUDGET: np.linspace(0., 1., n_iterations-1)}
+    )
 
     x = x.interp(budget=np.linspace(
         0., 1., budget_steps), method='nearest')
 
-    return x
+    return xr.concat([x0, x], dim=BUDGET)

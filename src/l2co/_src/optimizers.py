@@ -731,7 +731,7 @@ def evosax_scan(static: PyTree,
 # =============================================================================
 
 
-def get_handshake(previous_step: Optional[UpdateStep],
+def get_handshake(previous_step: Optional[UpdateStep] | str,
                   current_step: UpdateStep) -> str:
     """
     Return the handshake method to use between two optimizers
@@ -755,6 +755,9 @@ def get_handshake(previous_step: Optional[UpdateStep],
 
     if previous_step is None:
         return 'new'
+
+    if previous_step == 'sampler':
+        return 'best_one'
 
     previous_step_name = previous_step.name
     current_step_name = current_step.name
