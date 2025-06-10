@@ -213,5 +213,4 @@ def scale_by_problem(data: xr.DataArray) -> xr.DataArray:
 
     )
 
-    return data_scaled.transpose(
-        SCHEDULE, OUTPUT_DIM, PROBLEM, BUDGET)
+    return data_scaled

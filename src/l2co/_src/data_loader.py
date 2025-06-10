@@ -139,6 +139,7 @@ class DataLoader:
 #                                                      Alternative Constructors
 # =============================================================================
 
+
     @classmethod
     def from_file(
         cls, path: str, data_filename: str = 'entire_dataset'
@@ -442,7 +443,9 @@ class DataLoader:
         xr.DataArray
             Trajectory data.
         """
-        return scale_by_problem(self.data[OUTPUT_MEAN])
+        trajectory = scale_by_problem(self.data[OUTPUT_MEAN])
+        return trajectory.transpose(
+            SCHEDULE, OUTPUT_DIM, PROBLEM, BUDGET)
 
     def _performance(self, include_best: bool,
                      exclude_optimizer: Optional[str] = None) -> xr.DataArray:
@@ -685,6 +688,7 @@ class DataLoader:
 #                                                          Selecting optimizers
 # =============================================================================
 
+
     def select_single_optimizers(
             self, squash: bool = False) -> DataLoader:
         """
@@ -790,7 +794,6 @@ class DataLoader:
 
 #                                                           Performance metrics
 # =============================================================================
-
 
     def performance_profile(
             self, max_f_value: int = 2.0, include_best: bool = False,
