@@ -35,8 +35,8 @@ def validation_fn(x: xr.Dataset,
                                             budgets=budgets)
 
     # Make sure the first initial sample is included when binning
-    iterations_per_step = [1] + iterations_per_step
-    popsizes = [1] + popsizes
+    iterations_per_step = [np.int64(1), *iterations_per_step]
+    popsizes = [np.int64(1), *popsizes]
     n_iterations = n_iterations + 1
 
     bins = np.concatenate(([0], np.cumsum(
