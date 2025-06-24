@@ -17,16 +17,14 @@ Author: Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)
 
 # Local
 
-from . import plotting
+from . import plotting, sampling
 from ._src._logging import logger
-from ._src.data_loader import DataLoader, create_entire_dataset
+from ._src.data_loader import DataLoader, OptimizationDynamics
+from ._src.l2co_model import L2CO_model
+from ._src.optimizerschedule import OptimizationSchedule, OptimizationStep
 from ._src.preprocessing import preprocessing_factory
-from ._src.stage0_model import Stage0Model
-from ._src.stage1_model import Stage1Model
-from ._src.tasks.benchmarkfunctions.run_optimization import \
-    run_multiple_realizations
-from ._src.tasks.benchmarkfunctions.run_sampling import run_sampling
-from ._src.trainer import Trainer
+from ._src.run_optimization import RunOptimization
+from ._src.task import Task
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -39,13 +37,14 @@ __status__ = 'Planning'
 
 __all__ = [
     "plotting",
+    "sampling",
     "logger",
     "DataLoader",
     "preprocessing_factory",
-    "Stage0Model",
-    "Stage1Model",
-    "run_multiple_realizations",
-    "run_sampling",
-    "Trainer",
-    "create_entire_dataset"
+    "OptimizationSchedule",
+    "OptimizationStep",
+    "OptimizationDynamics",
+    "RunOptimization",
+    "Task",
+    "L2CO_model",
 ]

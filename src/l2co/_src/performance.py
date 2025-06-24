@@ -9,13 +9,13 @@ output_cummin
 scale
     Scale the given array using the minimum over realizations.
 scaling
-    Create a performance value for each problem and iterations per optimizer.
+    Create a performance value for each problem and budget per optimizer.
 add_random_samples_combinations
     Add random samples as optimizers to the optimization dataset.
 calculate_performance_ratio
     Calculate the performance ratio for the given dataset.
 create_performance_profile
-    Create a performance profile for the given experiment data and iterations.
+    Create a performance profile for the given experiment data and budget.
 """
 
 #                                                                       Modules
@@ -24,11 +24,11 @@ create_performance_profile
 # Standard
 from __future__ import annotations
 
-from typing import List, Optional
-
 # Third-party
 import numpy as np
 import xarray as xr
+
+from .naming import BUDGET, OUTPUT_DIM, PROBLEM, SCHEDULE, TASK_ID
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -37,31 +37,32 @@ __credits__ = ['Martin van der Schelling']
 __status__ = 'Planning'
 # =============================================================================
 
+EPSILON = 1e-8
 
-def output_cummin(da: xr.DataArray):
+
+def output_cummin(da: xr.DataArray) -> xr.DataArray:
     """
     Calculate the cumulative minimum of the given data array.
 
     Parameters
     ----------
     da : xarray.DataArray
-        The dataarray to calculate the cumulative minimum for.
+        The data array to calculate the cumulative minimum for.
 
     Returns
     -------
-    xr.DataArray
-        The dataarray with the cumulative minimum calculated.
+    xarray.DataArray
+        The data array with the cumulative minimum calculated.
 
     Notes
     -----
-    The dataarray calculate the cumulative minimum for the coordinate named
-    'iterations'.
+    The cumulative minimum is calculated along the coordinate named 'budget'.
     """
     return xr.apply_ufunc(
         np.minimum.accumulate,
         da,
-        input_core_dims=[['iterations']],
-        output_core_dims=[['iterations']],
+        input_core_dims=[[BUDGET]],
+        output_core_dims=[[BUDGET]],
         vectorize=True,
         dask='parallelized',
         output_dtypes=[da.dtype],
@@ -69,173 +70,147 @@ def output_cummin(da: xr.DataArray):
     )
 
 
-def scaling2(data: xr.Dataset) -> xr.DataArray:
+def scale_by_task(data: xr.DataArray) -> xr.DataArray:
+    """
+    Scale the given data array using a custom scaling method.
 
-    # 1. Calculate cumulative minimum (quality indictor value)
-    ds_output = output_cummin(data.output)  # .chunk('auto')
+    Parameters
+    ----------
+    data : xarray.DataArray
+        The data array to scale.
 
+    Returns
+    -------
+    xarray.DataArray
+        The scaled data array.
+
+    Notes
+    -----
+    This function applies log scaling, ensures non-negativity, and performs
+    min-max scaling for each realization in the data.
+    """
     # Cap the quality indicator value at 1e-8
-    ds_output = ds_output.where(
-        (ds_output > 1e-8) | ds_output.isnull(), other=1e-8)
+    ds_output = data.where(
+        (data > EPSILON) | (data <= 0.) | data.isnull(),
+        other=EPSILON)
 
     # 2. Make sure the loss is non-negative and non-zero
-    group_by_realizations = ds_output.groupby('itemID')
+    group_by_realizations = ds_output.groupby(TASK_ID)
 
     def min_custom(x):
         # 3. Make sure the quality indicator value is non-negative
         p = (x - x.min())
         # 4. Add epsilon to make quality indicator value non-zero
-        eps = p.where(p > 0.0, p.max()+1e-16).min()
+        # the 1e-2 is to prevent really big differences in quality values
+        eps = p.where(p > 0.0, p.max()+EPSILON).min() + EPSILON
         x_log10 = np.log10(p + eps)
 
         # 5. Min-max scaling of the data
         x_min = x_log10.min()
-        x_max = x_log10.max(['iterations'])
-        return (x_log10 - x_min) / (x_max - x_min + 1e-16)
+        x_max = x_log10.max([BUDGET])
+        return (x_log10 - x_min) / (x_max - x_min + EPSILON)
 
-    ds_log10_positive = group_by_realizations.map(min_custom).assign_coords({
-        'problem': ds_output.problem})
+    ds_log10_positive = group_by_realizations.map(
+        min_custom)
 
     return ds_log10_positive
 
 
-def add_random_samples_combinations(
-        data: xr.Dataset, data_samples: xr.Dataset,
-        iterations: int, t_switch: int) -> xr.Dataset:
+def scale_by_problem_and_schedule(data: xr.DataArray) -> xr.DataArray:
     """
-    Add random samples as optimizers to the optimization dataset.
+    Scale the given data array using an alternative scaling method.
 
     Parameters
     ----------
-    data : xr.Dataset
-        The performance dataset.
-    data_samples : xr.Dataset
-        The dataset with the random samples.
-    iterations : int
-        The total number of iterations.
-    t_switch : int
-        The number of iterations to switch from random samples to the
-        optimization data.
+    data : xarray.DataArray
+        The data array to scale.
 
     Returns
     -------
-    xr.Dataset
-        The performance dataset with the random samples optimizers added.
-    """
-    a = []
-
-    opts = [entry for entry in data.optimizer.values if '+' not in entry]
-
-    for opt in opts:
-        a.append(xr.concat([data_samples.sel(
-            iterations=np.arange(t_switch)).output, data.sel(
-            optimizer=opt, iterations=np.arange(iterations-t_switch)
-        ).assign_coords(iterations=np.arange(t_switch, iterations)).output],
-            dim='iterations').assign_coords(optimizer=f"random_samples+{opt}"))
-
-    random_combinations = xr.concat(a, dim='optimizer')
-
-    return xr.concat(
-        [data.output, random_combinations], dim='optimizer').to_dataset()
-
-
-#                                                           Performance profile
-# =============================================================================
-
-def calculate_performance_ratio(
-        ds_budget: xr.DataArray,
-        best_optimizer_each_problem: xr.DataArray,
-        max_f_value: float = 10.0) -> xr.DataArray:
-    """
-    Calculate the performance ratio for the given dataset.
-
-    Parameters
-    ----------
-
-    ds_budget : xarray.DataArray
-        The dataset to calculate the performance ratio for.
-
-    best_optimizer_each_problem : xarray.DataArray
-        The best optimizer for each problem.
-
-    max_f_value : float, optional
-        The maximum value of f, by default 10.0
-
-    Returns
-    -------
-    performance_profile : xarray.DataArray
-        The performance profile for the given dataset.
-    """
-    # Calculate the performance ratio rij
-    rij = ds_budget / best_optimizer_each_problem
-
-    # Create a logarithmic scale for f
-    # combine rij and f in a dataset
-    ds_f = xr.Dataset({'rij': rij, 'f': xr.DataArray(
-        np.logspace(np.log10(1.0), np.log10(max_f_value), 1000), dims='f')})
-
-    performance_profile = np.less_equal(ds_f, ds_f.f+1e-4).where(
-        ~ds_f.isnull(), np.nan).mean(dim='problem').rij
-    return performance_profile
-
-
-def create_performance_profile(
-        ds_raw: xr.Dataset,
-        iterations: int,
-        strategies: Optional[List[xr.DataArray]] = None) -> xr.Dataset:
-    """
-    Create a performance profile for the given experiment data and iterations.
-
-    Parameters
-    ----------
-    ds_raw : xr.Dataset
-        The optimization dynamics data for the given experiment data.
-    iterations : int
-        The total budget for each of the optimization problems
-    strategies : List[xr.DataArray], optional
-        The strategies to include in the performance profile, by default None
-
-    Returns
-    -------
-    performance_profile : xr.Dataset
-        The performance profile for the given experiment data and iterations.
-        The variables are the different static optimizers, and the optional
-        added strategies.
+    xarray.DataArray
+        The scaled data array.
 
     Notes
     -----
-    Strategies are optional, and can be added to the performance profile
-    by passing a list of xr.DataArray objects. The xr.DataArray objects
-    should have a 'problem' coordinate which is identical to the data provided
-    in the ds_raw parameter.
+    This function applies log scaling, ensures non-negativity, and performs
+    min-max scaling across multiple dimensions.
     """
-    # Select only the output variable
-    ds_output = ds_raw.isel(output_dim=0, drop=True).output
 
-    # Calculat the best found value (cummin)
-    ds_output = output_cummin(ds_output)
+    # Cap the quality indicator value at 1e-8
+    ds_output = data.where(
+        (data > EPSILON) | (data <= 0.) | data.isnull(),
+        other=EPSILON)
 
-    ds_positive = ds_output - \
-        ds_output.min(dim=['optimizer', 'iterations']).where(
-            ds_output.min(dim=['optimizer', 'iterations']
-                          ) < 0, 0.0) + 1e-17
+    def f(x):
+        p = (x - np.nanmin(x))
+        eps = (np.where(p > 0.0, p, np.nanmax(p)+EPSILON)).min() + EPSILON
+        x_log10 = np.log10(p + eps)
+        # 5. Min-max scaling of the data
+        x_min = np.nanmin(x_log10)
+        x_max = np.nanmax(x_log10, axis=0)
+        return (x_log10 - x_min) / (x_max - x_min + EPSILON)
 
-    # Slice at the given total number of iterations
-    ds_budget = ds_positive.isel(iterations=iterations-1)
-    ds_budget = ds_budget.sortby('problem')
+    data_scaled = xr.apply_ufunc(
+        f,
+        ds_output,
+        input_core_dims=[[BUDGET, SCHEDULE, OUTPUT_DIM]],
+        output_core_dims=[[BUDGET, SCHEDULE, OUTPUT_DIM]],
+        vectorize=True,
+        dask='parallelized',
+        output_dtypes=[ds_output.dtype],
+        dask_gufunc_kwargs={'allow_rechunk': True}
 
-    # Calculate the performance profile
-    performance_profile = calculate_performance_ratio(
-        ds_budget, ds_budget.min(dim='optimizer'))
+    )
 
-    pp_to_dataset = performance_profile.to_dataset('optimizer')
+    return data_scaled.transpose(
+        SCHEDULE, OUTPUT_DIM, PROBLEM, BUDGET)
 
-    if strategies is not None:
-        for strategy in strategies:
-            _strategy = strategy.sortby('problem')
-            pp_to_dataset[strategy.name] = calculate_performance_ratio(
-                ds_budget.sel(optimizer=_strategy), ds_budget.min(
-                    dim='optimizer')
-            )
 
-    return pp_to_dataset
+def scale_by_problem(data: xr.DataArray) -> xr.DataArray:
+    """
+    Scale the given data array using an alternative scaling method.
+
+    Parameters
+    ----------
+    data : xarray.DataArray
+        The data array to scale.
+
+    Returns
+    -------
+    xarray.DataArray
+        The scaled data array.
+
+    Notes
+    -----
+    This function applies log scaling, ensures non-negativity, and performs
+    min-max scaling across multiple dimensions.
+    """
+
+    # Cap the quality indicator value at 1e-8
+    ds_output = data.where(
+        (data > EPSILON) | (data <= 0.) | data.isnull(),
+        other=EPSILON)
+
+    def f(x):
+        p = (x - x.min())
+        eps = (np.where(p > 0.0, p, p.max()+EPSILON)).min() + EPSILON
+        x_log10 = np.log10(p + eps)
+
+        # 5. Min-max scaling of the data
+        x_min = x_log10.min()
+        x_max = x_log10.max(axis=0)
+        return (x_log10 - x_min) / (x_max - x_min + EPSILON)
+
+    data_scaled = xr.apply_ufunc(
+        f,
+        ds_output,
+        input_core_dims=[[BUDGET, OUTPUT_DIM]],
+        output_core_dims=[[BUDGET, OUTPUT_DIM]],
+        vectorize=True,
+        dask='parallelized',
+        output_dtypes=[ds_output.dtype],
+        dask_gufunc_kwargs={'allow_rechunk': True}
+
+    )
+
+    return data_scaled

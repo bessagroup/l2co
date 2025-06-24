@@ -1,17 +1,17 @@
-numpy >= 1.22
-scipy >= 1.9
-f3dasm >= 1.5.3
-# f3dasm_optimize[all] >= 1.5.3
-# recommenders
-xarray==2023.1.0
+numpy
+scipy
+f3dasm >= 2.0.1
+f3dasm_optimize
+scikit-learn
+xarray
+NetCDF4
 dask
-opfunu @ git+https://github.com/mpvanderschelling/opfunu@master
-pflacco
-NetCDF4==1.6.4
+opfunu @ git+https://github.com/mpvanderschelling/opfunu@jaxnumpy
 tqdm
-imbalanced-learn
-torch
-jaxlib>=0.4.23
-jax>=0.4.23
-flax==0.8.2
-optax==0.1.7
+optax
+evosax
+equinox
+cloudpickle
+bottleneck
+joblib
+grain

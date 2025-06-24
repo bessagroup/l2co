@@ -1,0 +1,21 @@
+defaults:
+- tasks: gaussian_classification
+- schedules: single
+- budgets: based_on_dim
+- samplers: normal
+- optimizers: standard
+
+n_realizations: 1
+
+seed: 467
+mode: mpi
+
+log_level: 20
+
+verbose: True
+include_input: False
+
+path:
+model_dir: /home/martin/Documents/GitHub/L2CO/experiments/train_model/outputs
+project_dir: /home/martin/Documents/GitHub/L2CO/experiments/create_optimization_dataset_new/outputs
+project_job:

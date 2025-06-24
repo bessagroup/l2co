@@ -1,6 +1,9 @@
 # Package
 -r ./requirements.txt
 
+# Extra requires
+panel
+
 # Documentation
 -r ./docs/requirements.txt
 

@@ -1,0 +1,10 @@
+schedules:
+  optimizer_1: ${optimizers}
+
+data_generation:
+  data_generator:
+    _target_: l2co._src.optimizerschedule.get_single
+    _partial_: True
+  kwargs:
+
+partition_factor: 1.0

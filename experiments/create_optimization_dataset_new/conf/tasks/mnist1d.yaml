@@ -1,0 +1,20 @@
+sampler:
+  _target_: f3dasm.create_sampler
+  sampler: 'random'
+  seed: ${seed}
+sampler_kwargs:
+  n_samples: 100
+experimentdata:
+  domain:
+    input:
+      seed:
+        type: int
+        low: 0
+        high: 100000
+task_kwargs:
+  dataset_size: 1000
+  batch_size: 16
+  dataset_path: './data/mnist1d.npz'
+data_generator:
+  _target_: l2co._src.tasks.benchmarkfunctions.mnist1d_task.create_mnist1d_task
+  _partial_: True

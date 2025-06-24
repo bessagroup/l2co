@@ -20,26 +20,33 @@ create_entire_dataset
 # Standard
 from __future__ import annotations
 
-from functools import lru_cache
+import hashlib
+import json
+from copy import deepcopy
 from pathlib import Path
-from typing import Iterable, Optional, Tuple
+from time import perf_counter
+from typing import Callable, Dict, Iterable, Literal, Optional, Tuple, Type
 
 # Third-party
+import jax
+import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import xarray as xr
 from f3dasm import ExperimentData
-from imblearn.under_sampling import RandomUnderSampler
-from omegaconf import DictConfig
-from sklearn.cluster import KMeans
+from scipy.linalg import svd
 from sklearn.model_selection import train_test_split
-from torch.utils.data import Dataset as torchDataset
-from tqdm import tqdm
 
 # Local
-from ._logging import logger as l2co_logger
-from .content_based import get_labels
-from .performance import (add_random_samples_combinations,
-                          create_performance_profile, scaling2)
+# from .latent_space import fit_basis_function, fit_gpr
+from .naming import (BATCH, BUDGET, FEATURE, OPT_CHOICE, OPT_HISTORY,
+                     OUTPUT_DIM, OUTPUT_MEAN, OUTPUT_MIN, PERFORMANCE, PROBLEM,
+                     REALIZATION, SCHEDULE, STAIRCASE, TASK_ID, TASK_LABELS,
+                     TRAJECTORY, UPDATE_STEP)
+from .optimizerschedule import OptimizationSchedule
+from .performance import (output_cummin, scale_by_problem,
+                          scale_by_problem_and_schedule, scale_by_task)
+from .task import Task
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -53,298 +60,345 @@ __status__ = 'Stable'
 # =============================================================================
 
 INVALID_PERFORMANCE_VALUE = 1.0
+PADDING_VALUE = 1.0
 
 #                                                                   Data Loader
 # =============================================================================
 
 
 class DataLoader:
+    """
+    Data loader for optimization dynamics in the L2CO framework.
+
+    Parameters
+    ----------
+    data : xarray.Dataset
+        The raw optimization trajectories.
+    task_labels : xarray.DataArray
+        Labels of the optimization problems.
+    opt_steps : Iterable[OptimizationSchedule]
+        Optimization schedules.
+    l2co_schedules : xarray.Dataset, optional
+        L2CO schedules, by default None.
+
+    Attributes
+    ----------
+    data : xarray.Dataset
+        The raw optimization trajectories.
+    task_labels : xarray.DataArray
+        Labels of the optimization problems.
+    opt_steps : Iterable[OptimizationSchedule]
+        Optimization schedules.
+    l2co_schedules : xarray.Dataset
+        L2CO schedules.
+    """
+
     def __init__(
         self,
-        X: xr.DataArray,
-        n_iterations: int,
-        n_realizations: int,
-        # performance: xr.DataArray,
         data: xr.Dataset,
-        config: DictConfig,
-        experimentdata: ExperimentData,
-        data_samples: xr.Dataset
+        task_labels: xr.DataArray,
+        opt_steps: Iterable[OptimizationSchedule],
+        l2co_schedules: Optional[xr.Dataset] = None,
     ):
         """
         A data loader class for stage0 of the L2CO framework.
 
         Parameters
         ----------
-        X : xarray.DataArray
-            The features of the optimization problems.
-        n_iterations : int
-            The number of training steps of each roll-out.
-        n_realizations : int
-            The number of realizations for each problem.
         data : xarray.Dataset
             The raw optimization trajectories.
-        config : DictConfig
-            The configuration file in hydra format.
-        experimentdata : ExperimentData
-            The experiment data.
+        task_labels: pd.DataFrame
+            The labels of the optimization problems.
         """
-        self.X = X
-        self.n_iterations = n_iterations
-        self.n_realizations = n_realizations
-        # self.performance = performance
         self.data = data
-        self.config = config
-        self.experimentdata = experimentdata
-        self.data_samples = data_samples
+        self.task_labels = task_labels
+        self.opt_steps = opt_steps
+        self.l2co_schedules = l2co_schedules
+
+    def __add__(self, __o: DataLoader) -> DataLoader:
+        if __o is None:
+            return self
+
+        data = xr.concat([self.data, __o.data], dim=PROBLEM)
+        task_labels = xr.concat([self.task_labels, __o.task_labels],
+                                dim=PROBLEM)
+        opt_steps = {**self.opt_steps, **__o.opt_steps}
+
+        if self.l2co_schedules is not None:
+            l2co_schedules = xr.concat(
+                [self.l2co_schedules, __o.l2co_schedules], dim=PROBLEM)
+        else:
+            l2co_schedules = __o.l2co_schedules
+
+        return DataLoader(data=data, task_labels=task_labels,
+                          opt_steps=opt_steps, l2co_schedules=l2co_schedules)
+
 
 #                                                      Alternative Constructors
 # =============================================================================
 
+
     @classmethod
-    def from_saved_files(
-            cls, path: str, config: Optional[str] = None, **kwargs):
-        """
-        Create a data loader from saved files.
-
-        Parameters
-        ----------
-        path : str
-            The path to the saved files.
-
-        Returns
-        -------
-        DataLoader
-            The resulting data loader.
-
-        Notes
-        -----
-        The saved files should be in the path provided, in the NetCDF format
-        and named 'entire_dataset.nc' for the optimization trajectories and
-        'entire_dataset_samples.nc' for the roll-outs of random search.
-        """
-        path = Path(path)
-
-        # Retrieve the ExperimentData
-        experimentdata = ExperimentData.from_file(
-            path).select_with_status('finished')
+    def from_file(
+        cls, path: str, data_filename: str = 'entire_dataset'
+    ) -> DataLoader:
+        # Create path object
+        _path = Path(path)
 
         # Retrieve the optimization dynamics data
-        _data = xr.open_dataset(
-            path / 'entire_dataset.nc',
-            chunks='auto')
+        data = xr.open_dataset(
+            (_path / data_filename).with_suffix('.odata'))
 
-        # try:
-        #     data = data.set_xindex(
-        #         ['realization', 'itemID'])  # .stack('problem')
-        # except ValueError:
-        #     data = data.stack(problem=('realization', 'itemID'))
+        if (_path / data_filename).with_suffix(
+                '.osched').exists():
+            l2co_schedules = xr.open_dataset(
+                (_path / data_filename).with_suffix('.osched'))
 
-        # _data = data.unstack('problem')
+            # Assuming 'schedules' is the variable with JSON strings
+            def parse_schedule(json_str):
+                return OptimizationSchedule.from_json_string(json_str)
 
-        if (path / 'entire_dataset_samples.nc').exists():
-            data_samples = xr.open_dataset(
-                path / 'entire_dataset_samples.nc', chunks='auto'
+            l2co_schedules = xr.apply_ufunc(
+                parse_schedule,
+                l2co_schedules["schedules"],
+                vectorize=True,
+                output_dtypes=[object]
             )
+        else:
+            l2co_schedules = None
+
+        def parse_mixed_value(val: str):
+            """Try to convert a string into int, float, or leave as string."""
+            if val.lower() == "true":
+                return True
+            elif val.lower() == "false":
+                return False
             try:
-                data_samples = data_samples.set_xindex(
-                    ['realization', 'itemID']
-                ).unstack('problem')
+                if "." in val or "e" in val.lower():
+                    return float(val)
+                return int(val)
             except ValueError:
-                pass
-        else:
-            data_samples = _data
-        _dataloader = cls.from_preprocessed_files(
-            config=config,
-            experimentdata=experimentdata,
-            data=_data,
-            data_samples=data_samples,
-            **kwargs
+                return val
+
+        task_labels = xr.apply_ufunc(
+            np.vectorize(parse_mixed_value),
+            data[TASK_LABELS],
+            input_core_dims=[[PROBLEM]],
+            output_core_dims=[[PROBLEM]],
+            vectorize=True,
+            dask="allowed",
+            output_dtypes=[object],
+        ).T
+
+        # Opt steps
+        opt_steps = [OptimizationSchedule.from_json_string(
+            opt) for _, opt in data['opt_steps'].to_series().items()]
+
+        # delete opt_step and task_labels from data
+        data = data.drop_vars(
+            ['opt_steps', TASK_LABELS]).drop_dims(FEATURE)
+
+        return cls(
+            data=data.sortby(SCHEDULE),
+            task_labels=task_labels,
+            opt_steps=sorted(opt_steps),
+            l2co_schedules=l2co_schedules
         )
-
-        return _dataloader.select_problems(_data.problem)
-
-    @classmethod
-    def from_preprocessed_files(cls, config: DictConfig,
-                                experimentdata: ExperimentData,
-                                data: xr.Dataset, data_samples: xr.Dataset,
-                                add_random_search: bool = False,
-                                arbitrary_labels: bool = False):
-        """
-        Create a data loader from preprocessed files of the optimization
-        trajectories (data) and the roll-outs of random search (data_samples).
-
-        Parameters
-        ----------
-        config : DictConfig
-            The configuration file in hydra format.
-        experimentdata : ExperimentData
-            The experiment data object.
-        data : xarray.Dataset
-            The raw optimization trajectories.
-        data_samples : xarray.Dataset
-            The raw optimization trajectories.
-        add_random_search : bool, optional
-            Whether to add the random search roll-outs to the data loader,
-            by default False
-
-        Returns
-        -------
-        DataLoader
-            The resulting data loader.
-        """
-
-        n_realizations = data.realization.size
-        n_iterations = data.iterations.size
-
-        _, _df_output = experimentdata.to_pandas()
-        # remove all values that say 'ERROR' and 'invalid'
-        _df_output = _df_output.replace(
-            ['ERROR', 'invalid', 'not working'], np.nan)
-
-        # remove all experiments where none of the optimizers have finished
-        if 'random_samples' in _df_output.columns:
-            _valid_indices = _df_output.drop(
-                columns=['random_samples']).dropna(how='all').index
-
-        else:
-            _valid_indices = _df_output.dropna(how='all').index
-
-        experimentdata = experimentdata.select(_valid_indices)
-
-        # get column names where all rows are nan
-        _columns_to_drop = _df_output.columns[_df_output.isna().all()]
-        experimentdata = experimentdata.drop_output(_columns_to_drop)
-
-        if add_random_search:
-            data = add_random_samples_combinations(
-                data=data,
-                data_samples=data_samples,
-                iterations=config.iterations,
-                t_switch=config.t_switch)
-
-        # Features
-        if arbitrary_labels:
-            pass
-
-        else:
-            X = get_labels(experimentdata=experimentdata,
-                           data=data)
-
-        return cls(X=X,
-                   n_iterations=n_iterations,
-                   n_realizations=n_realizations,
-                   data=data,
-                   config=config,
-                   experimentdata=experimentdata,
-                   data_samples=data_samples
-                   )
 
 #                                                         Storing and exporting
 # =============================================================================
 
-    def store(self, path: str, store_samples: bool = False):
-        """
-        Store the data loader to disk.
+    def to_params(self, t: float,
+                  t_start: float = 0.0,
+                  t_end: float = 1.0) -> xr.Dataset:
 
-        Parameters
-        ----------
-        path : str
-            The path to store the data loader.
-        """
-        _path = Path(path)
-        _path.mkdir(parents=True, exist_ok=True)
+        d_input = self.select_t(t_start=t_start, t=t, select_one_before=True)
+        d_output = self.select_t(t_start=t, t=t_end, select_one_before=False)
 
-        self.experimentdata.store(_path)
+        perf = output_cummin(d_output.data.assign_coords(
+            {OPT_HISTORY: d_input.hash_opt_step,
+             OPT_CHOICE: d_output.hash_opt_step})[OUTPUT_MIN]).ffill(BUDGET)
 
-        if store_samples:
-            self.data_samples.reset_index('problem').to_netcdf(
-                _path / 'entire_dataset_samples.nc')
+        total = []
 
-        # Writing dask arrays to disk is poorly optimized, so we compute
-        # the data before writing it to disk
-        # Source: https://github.com/pydata/xarray/issues/2912
-        self.data.reset_index('problem').compute(
-        ).to_netcdf(_path / 'entire_dataset.nc')
+        for fp in np.unique(perf[OPT_HISTORY]):
+            _perf = perf.where(perf[OPT_HISTORY] == fp)
+            total.append(scale_by_problem_and_schedule(_perf))
 
-    def to_learning_data(
-            self, optimizer: str,
-            t: int, t_start: int,
-            rel_tolerance: float = 0.0) -> OptimizationDynamics:
-        """
-        Convert the data loader to learning data.
+        performance = xr.merge(total)[OUTPUT_MIN].isel(budget=-1, drop=True)
 
-        Parameters
-        ----------
-        optimizer : str
-            The optimizer to select.
-        t : int
-            The iteration to select.
-        t_start : int, optional
-            The starting iteration number of the requested trajectory,
-            by default 0
-        rel_tolerance : float, optional
-            The relative tolerance to use, by default 0.0
+        ds = xr.Dataset({
+            TASK_LABELS: self.task_labels,
+            TRAJECTORY: d_input.trajectory,
+            STAIRCASE: d_input.staircase,
+            UPDATE_STEP: d_input.data[UPDATE_STEP],
+            PERFORMANCE: performance,
+        })
 
-        Returns
-        -------
-        OptimizationDynamics
-            The resulting optimization dynamics.
+        new_params = ds.groupby(
+            (OPT_HISTORY, PROBLEM, OUTPUT_DIM),
+            restore_coord_dims=True).first()
 
-        Notes
-        -----
-        OptimizationDynamics is a pytorch Dataset object.
-        """
-        X_trajectory = self.select_optimizer(optimizer).select_t(
-            t=t, t_start=t_start).X_trajectory()
-        X_features = self.X
-        Y = self.query_optimizer(optimizer).performance.isel(
-            iterations=-1)
+        def f(x, first_part, second_part):
+            # Create DataFrame
+            df = pd.DataFrame(
+                {OPT_HISTORY: first_part,
+                 OPT_CHOICE: second_part,
+                 PERFORMANCE: x})
 
-        return OptimizationDynamics(
-            X_features=X_features,
-            X_trajectory=X_trajectory,
-            Y=Y,
-            rel_tolerance=rel_tolerance)
+            # Pivot table: rows = y, columns = z, values = x
+            matrix = df.pivot_table(
+                index=OPT_HISTORY,
+                columns=OPT_CHOICE,
+                values=PERFORMANCE,
+                dropna=False)
 
-    def to_feature_data(self, rel_tolerance: float = 0.0,
-                        optimizer: Optional[str] = None) -> FeaturesDataSet:
-        """
-        Convert the data loader to feature data.
+            # Convert to NumPy array (optional)
+            return matrix.to_numpy()
 
-        Parameters
-        ----------
-        rel_tolerance : float, optional
-            The relative tolerance to use, by default 0.0
-        optimizer : str, optional
-            The optimizer to condition on, by default None
+        new_params = new_params.assign_coords(
+            {OPT_CHOICE: np.unique(ds[OPT_CHOICE])})
 
-        Returns
-        -------
-        FeaturesDataSet
-            The resulting feature data.
+        new_params[PERFORMANCE] = xr.apply_ufunc(
+            f,
+            ds[PERFORMANCE],
+            ds[OPT_HISTORY],
+            ds[OPT_CHOICE],
+            input_core_dims=[[SCHEDULE], [SCHEDULE], [SCHEDULE]],
+            output_core_dims=[[OPT_HISTORY, OPT_CHOICE]],
+            vectorize=True,
+        )
 
-        Notes
-        -----
-        FeaturesDataSet is a simple class containing the features and labels of
-        the optimization problems.
-        """
+        # Transpose dims
+        desired_order = (PROBLEM, OUTPUT_DIM, OPT_HISTORY)
 
-        X_features = self.X
+        return new_params.map(lambda var: var.transpose(
+            *[d for d in desired_order if d in var.dims],
+            *[d for d in var.dims if d not in desired_order])
+        )
 
-        if optimizer is None:
-            Y_features = self.select_single_optimizers().performance.isel(
-                iterations=-1, output_dim=0, drop=True).T
+    def to_all_params(self, window_size: float,
+                      budget_size: Optional[int] = None,
+                      include_last: bool = False) -> xr.DataTree:
+
+        if budget_size is None:
+            budget_size = self.data[BUDGET].size
+
+        if include_last:
+            window_end = 1.0 + window_size
         else:
-            Y_features = self.query_optimizer(optimizer).performance.isel(
-                iterations=-1, output_dim=0, drop=True).T
+            window_end = 1.0
 
-        return FeaturesDataSet(X_features=X_features,
-                               Y_features=Y_features,
-                               rel_tolerance=rel_tolerance)
+        _dict = {}
+
+        for t in np.arange(window_size, window_end, window_size):
+            t_end = np.minimum(t + window_size, 1.0)
+            params = self.to_params(t_start=0.0, t=t, t_end=t_end)
+            params[BUDGET] = range(
+                budget_size - params[BUDGET].size,
+                budget_size)
+
+            params = params.reindex(
+                budget=range(budget_size),
+                fill_value=PADDING_VALUE)
+
+            params[UPDATE_STEP] = params[UPDATE_STEP].astype(str)
+
+            _dict[f"{t:.2f}"] = params
+
+        return xr.DataTree.from_dict(_dict)
+
+    @property
+    def hash_opt_step(self) -> xr.DataArray:
+        return xr.apply_ufunc(
+            lambda x: int(hashlib.sha256(x.tobytes()).hexdigest()
+                          [:8], 16) % (2**31 - 1),
+            self.data[UPDATE_STEP],
+            input_core_dims=[[BUDGET]],
+            output_core_dims=[[]],
+            vectorize=True,
+        )
+
+    def to_spreadsheet(self, criteria: Literal['min', 'mean'] = 'min'):
+        ds = xr.Dataset({TASK_LABELS: self.task_labels,
+                         OUTPUT_MIN: self.data[OUTPUT_MIN]})
+
+        if criteria == 'min':
+            df = ds.groupby(TASK_ID).min().min(BUDGET).isel(
+                {OUTPUT_DIM: 0})[OUTPUT_MIN].to_pandas()
+        elif criteria == 'mean':
+            df = ds.groupby(TASK_ID).mean().min(BUDGET).isel(
+                {OUTPUT_DIM: 0})[OUTPUT_MIN].to_pandas()
+
+        df.index = ds.groupby(TASK_ID).min().min(
+            BUDGET).isel({OUTPUT_DIM: 0})[TASK_LABELS]
+
+        # Function to highlight the smallest value per row
+        def highlight_min_row(row):
+            min_val = row.min()
+            return ['font-weight: bold' if
+                    val == min_val else '' for val in row]
+
+        # Apply styling and scientific notation formatting
+        styled_df = (
+            df.style
+            # Highlight smallest value per row
+            .apply(highlight_min_row, axis=1)
+            .format("{:.2e}")  # Display in scientific notation
+        )
+
+        return styled_df
+
+    def display_sbs_table(
+            self, exclude_optimizer: str | Iterable[str]) -> pd.DataFrame:
+        sbs = self._calculate_sbs(performance=self.performance,
+                                  exclude_optimizer=exclude_optimizer)
+        ds = xr.Dataset({'sbs': sbs,
+                         TASK_LABELS: self.task_labels, })
+
+        df_task_labels = ds.groupby(TASK_ID).min()[TASK_LABELS].to_pandas()
+        df_sbs = ds.groupby(TASK_ID).min()['sbs'].to_pandas().rename('sbs')
+
+        return pd.concat([df_task_labels, df_sbs], axis=1)
+
+    def display_l2co_schedules_table(self) -> pd.DataFrame:
+
+        task_labels_l2co = self.task_labels.groupby(TASK_ID).min().sel(
+            {TASK_ID: self.l2co_schedules[TASK_ID]})
+
+        ds = xr.Dataset({TASK_LABELS: task_labels_l2co,
+                        'schedules': self.l2co_schedules, }
+                        ).sortby(TASK_ID)
+
+        df_schedules = ds['schedules'].isel(
+            {'schedule': 0, SCHEDULE: 0}).to_pandas()
+
+        df_schedules = df_schedules.apply(
+            lambda row: [s.name for s in row.steps])
+        df_schedules = pd.DataFrame(
+            df_schedules.tolist(), index=df_schedules.index)
+
+        df_itemID = ds[TASK_LABELS][TASK_ID].to_pandas()
+        df_itemID.name = TASK_ID
+
+        return pd.concat([
+            df_itemID,
+            ds[TASK_LABELS].to_pandas(),
+            df_schedules
+        ], axis=1)
+
 #                                                                    Properties
 # =============================================================================
 
-    @ property
+    @property
+    def n_iterations(self) -> int:
+        return self.data[BUDGET].size
+
+    @property
+    def n_realization(self) -> int:
+        return np.unique(self.data[REALIZATION]).size
+
+    @property
     def features(self) -> xr.DataArray:
         """
         Property method to return the features coordinate
@@ -354,10 +408,10 @@ class DataLoader:
         xarray.DataArray
             The features coordinate.
         """
-        return self.X.features
+        return self.task_labels[FEATURE]
 
-    @ property
-    def problem(self) -> xr.DataArray:
+    @property
+    def problems(self) -> xr.DataArray:
         """
         Property method to return the problem coordinate
 
@@ -366,9 +420,9 @@ class DataLoader:
         xarray.DataArray
             The problem coordinate.
         """
-        return self.X.problem
+        return self.task_labels[PROBLEM]
 
-    @ property
+    @property
     def optimizers(self) -> xr.DataArray:
         """
         Property method to return the optimizers coordinate
@@ -378,125 +432,128 @@ class DataLoader:
         xarray.DataArray
             The optimizers coordinate.
         """
-        return self.data.optimizer
+        return self.data[SCHEDULE]
 
     @property
-    def performance(self) -> xr.DataArray:
-        print("Triggered performance")
-        performance = scaling2(self.data)
+    def staircase(self) -> xr.DataArray:
+        return scale_by_problem(output_cummin(
+            self.data[OUTPUT_MIN])).ffill(BUDGET)
 
-        return performance.where(
-            ~performance.isnull(), other=INVALID_PERFORMANCE_VALUE)
-
-    @ lru_cache(maxsize=1)
-    def y_binary(self, rel_tolerance: float = 0.1) -> xr.DataArray:
-        _performance_at_last_t = self.performance.isel(
-            iterations=-1, output_dim=0, drop=True)
-
-        if rel_tolerance == 0.0:
-            return (_performance_at_last_t.idxmin(
-                'optimizer') == self.data.optimizer).T
-
-        threshold = _performance_at_last_t.min(
-            dim='optimizer') + abs(
-                _performance_at_last_t.min(dim='optimizer') * rel_tolerance)
-
-        return (_performance_at_last_t <= threshold).T
-
-    @ lru_cache(maxsize=1)
-    def X_trajectory(self) -> xr.DataArray:
+    @property
+    def trajectory(self) -> xr.DataArray:
         """
-        Select the history of an optimization trajectory.
-
-        Parameters
-        ----------
-        iterations : int
-            The number of iterations to select.
-        t_start : int, optional
-            The starting iteration number of the requested trajectory,
-            by default 0
+        Returns the trajectory of the optimization process.
 
         Returns
         -------
-        xarray.DataArray
-            The selected trajectory.
+        xr.DataArray
+            Trajectory data.
         """
+        trajectory = scale_by_problem(self.data[OUTPUT_MEAN])
+        return trajectory.transpose(
+            SCHEDULE, OUTPUT_DIM, PROBLEM, BUDGET)
 
-        def scale(x: np.ndarray) -> np.ndarray:
-            # 3. Make sure the quality indicator value is non-negative
-            p = (x - x.min())
-            # 4. Add epsilon to make quality indicator value non-zero
-            eps = np.where(p > 0.0, p, p.max()+1e-16).min()
-            x_log10 = np.log10(p + eps)
+    def _performance(self, include_best: bool,
+                     exclude_optimizer: Optional[str] = None) -> xr.DataArray:
+        """
+        Computes the performance of the optimizers.
 
-            # 5. Min-max scaling of the data
-            x_min = x_log10.min()
-            x_max = x_log10.max()
-            return (x_log10 - x_min) / (x_max - x_min + 1e-16)
+        Parameters
+        ----------
+        include_best : bool
+            Whether to include the best optimizer in the performance.
+        exclude_optimizer : str, optional
+            Name of the optimizer to exclude from the performance.
 
-        trajectory: xr.Dataset = xr.apply_ufunc(
-            scale,
-            self.data,
-            input_core_dims=[['iterations', 'output_dim']],
-            output_core_dims=[['iterations', 'output_dim']],
-            vectorize=True,
-            dask='parallelized',
-            dask_gufunc_kwargs={'allow_rechunk': True}  # False
-        )
+        Returns
+        -------
+        xr.DataArray
+            Performance data.
+        """
+        t_start = perf_counter()
+        print("Triggered performance")
 
-        return trajectory.output.isel(
-            output_dim=0, drop=True).rename(
-                'trajectory').transpose(
-                    'optimizer', 'iterations', 'problem').fillna(
-                        INVALID_PERFORMANCE_VALUE)
+        performance = scale_by_task(output_cummin(
+            self.data[OUTPUT_MIN])).ffill(BUDGET)
 
-        # X_d = self.data.isel(iterations=range(
-        #     t_start, iterations), drop=True)  # needed?
+        if include_best:
+            sbs = self._calculate_sbs(performance=performance,
+                                      exclude_optimizer=exclude_optimizer)
+            perf_sbs = performance.sel({SCHEDULE: sbs}, drop=True
+                                       ).reset_coords(
+                SCHEDULE, drop=True).expand_dims({SCHEDULE: ['sbs']})
+            performance = xr.merge([performance, perf_sbs])[OUTPUT_MIN]
 
-        # # 2. Make sure the loss is non-negative
-        # y_min = X_d.output.min(dim=['iterations']).where(
-        #     X_d.output.min(dim=['iterations']) < 0.0, 0.0)
-        # ds_positive = X_d.output - y_min
+        print(f"Performance calculation took: {perf_counter()-t_start:0.2f}")
+        return performance
 
-        # # 3. Make sure the loss is non-zero
-        # ds_add_to_become_non_zero = (
-        #     ds_positive.min(dim='iterations') == 0.0).where(
-        #     (~(ds_positive.min(dim='iterations') == 0.0)
-        #      ), other=ds_positive.where(
-        #         ds_positive > 0.0).min(
-        #         dim='iterations')
-        # )
+    def _calculate_sbs(self, performance: xr.DataArray,
+                       exclude_optimizer: str | Iterable[str]) -> xr.DataArray:
+        if exclude_optimizer is not None:
+            if isinstance(exclude_optimizer, str):
+                exclude_optimizer = [exclude_optimizer]
 
-        # ds_positive += ds_add_to_become_non_zero
+            check_sbs = performance.where(
+                ~performance.optimizer.isin(exclude_optimizer), drop=True)
+        else:
+            check_sbs = performance
 
-        # # 4. Take the base 10 logarithm of the data
-        # ds_log10_positive = np.log10(ds_positive)
+        sbs = check_sbs.groupby(TASK_ID).map(
+            lambda x: x.mean(PROBLEM).isel(
+                {BUDGET: -1}, drop=True).idxmin(
+                SCHEDULE).expand_dims({PROBLEM: x[PROBLEM]})).isel(
+            {OUTPUT_DIM: 0}, drop=True).assign_coords(
+                    {PROBLEM: performance[PROBLEM]})
+        sbs = sbs.fillna(performance[SCHEDULE].values[0])
+        return sbs
 
-        # # 5. Scale the data
-        # def scale(arr: np.ndarray) -> np.ndarray:
-        #     return np.reshape(MinMaxScaler().fit_transform(
-        #         arr.flatten().reshape(-1, 1)), arr.shape)
+    @property
+    def performance(self) -> xr.DataArray:
+        return self._performance(include_best=False,
+                                 exclude_optimizer=None)
 
-        # performance: xr.DataArray = xr.apply_ufunc(
-        #     scale, ds_log10_positive,
-        #     input_core_dims=[
-        #         ['iterations', 'output_dim']],
-        #     output_core_dims=[['iterations', 'output_dim']],
-        #     vectorize=True,
-        #     dask='parallelized',
-        #     dask_gufunc_kwargs={'allow_rechunk': True}
-        # )
+    @property
+    def performance_per_realization(self) -> xr.DataArray:
 
-        # return performance.isel(
-        #     output_dim=0, drop=True).rename(
-        #         'trajectory').transpose(
-        #             'optimizer', 'iterations', 'problem').fillna(
-        #                 INVALID_PERFORMANCE_VALUE)
-
+        t_start = perf_counter()
+        print("Triggered performance")
+        performance = scale_by_problem_and_schedule(output_cummin(
+            self.data[OUTPUT_MIN])).ffill(BUDGET)
+        # performance = scaling3(self.data).ffill(BUDGET)
+        print(f"Performance calculation took: {perf_counter()-t_start:0.2f}")
+        return performance
 
 #                                                            Selecting problems
 # =============================================================================
 
+    def select_itemIDs(self, itemIDs: str | Iterable[str]) -> DataLoader:
+
+        if len(itemIDs) == 0:
+            return deepcopy(self)
+
+        if isinstance(itemIDs, str):
+            itemIDs = [itemIDs]
+
+        task_labels = xr.concat(
+            [group for i, group in self.task_labels.groupby(
+                TASK_ID) if i in itemIDs], dim=PROBLEM)
+        data = xr.concat(
+            [group for i, group in self.data.groupby(
+                TASK_ID) if i in itemIDs], dim=PROBLEM)
+
+        if self.l2co_schedules is not None:
+            l2co_schedules = xr.concat(
+                [group for i, group in self.l2co_schedules.groupby(
+                    TASK_ID) if i in itemIDs], dim=PROBLEM)
+        else:
+            l2co_schedules = None
+
+        return DataLoader(
+            task_labels=task_labels,
+            data=data,
+            opt_steps=self.opt_steps,
+            l2co_schedules=l2co_schedules
+        )
 
     def select_problems(self, problem_indices: xr.DataArray) -> DataLoader:
         """
@@ -517,45 +574,52 @@ class DataLoader:
         Selects on the problem dimension. Also sorts the problem indices on
         itemID.
         """
-        _problem_indices = problem_indices.sortby('itemID')
+        _problem_indices = problem_indices.sortby(TASK_ID)
 
-        # Select unique itemIDs to select the experiment data
-        _unique_itemID = np.unique(problem_indices.itemID.values)
+        if self.l2co_schedules is not None:
+            l2co_schedules = self.l2co_schedules.sel(
+                {PROBLEM: _problem_indices})
+        else:
+            l2co_schedules = None
 
         return DataLoader(
-            X=self.X.sel(problem=_problem_indices),
-            n_iterations=self.n_iterations,
-            n_realizations=self.n_realizations,
-            data=self.data.sel(problem=_problem_indices),
-            config=self.config,
-            experimentdata=self.experimentdata.select(_unique_itemID),
-            data_samples=self.data_samples.sel(problem=_problem_indices)
+            task_labels=self.task_labels.sel({PROBLEM: _problem_indices}),
+            data=self.data.sel({PROBLEM: _problem_indices}),
+            opt_steps=self.opt_steps,
+            l2co_schedules=l2co_schedules
         )
 
-    def balance(self, remove_highest_std: Optional[int] = None) -> DataLoader:
-        rtd = self.rtd_profile().to_array(
-            dim='optimizer').T.isel(iterations=-1).compute()
+    def isel(self, problems: Iterable[int]) -> DataLoader:
+        """
+        Select a subset of problems of the data loader.
 
-        if remove_highest_std is not None:
-            X = rtd[rtd.std('optimizer').argsort().values][
-                remove_highest_std:]
+        Parameters
+        ----------
+        problems : Iterable[int]
+            The problem indices to select.
+
+        Returns
+        -------
+        DataLoader
+            The selected data loader.
+
+        Notes
+        -----
+        Selects on the problem dimension. Also sorts the problem indices on
+        itemID.
+        """
+
+        if self.l2co_schedules is not None:
+            l2co_schedules = self.l2co_schedules.isel({PROBLEM: problems})
         else:
-            X = rtd[rtd.std('optimizer').argsort().values]
+            l2co_schedules = None
 
-        initial_centers = np.array([
-            [0., 0., 0., 1.],
-            [0., 0., 1., 0.],
-            [0., 1., 0., 0.],
-            [1., 0., 0., 0.],
-        ])
-
-        kmeans = KMeans(n_clusters=len(initial_centers), random_state=0,
-                        init=initial_centers, n_init=1, max_iter=1).fit(X)
-        kmeans.cluster_centers_ = initial_centers
-        new_x, new_y = RandomUnderSampler(replacement=True).fit_resample(
-            X.problem.values.reshape(-1, 1), kmeans.predict(X))
-
-        return self.select_problems(X.sel(problem=new_x.flatten()).problem)
+        return DataLoader(
+            task_labels=self.task_labels.isel({PROBLEM: problems}),
+            data=self.data.isel({PROBLEM: problems}),
+            opt_steps=self.opt_steps,
+            l2co_schedules=l2co_schedules
+        )
 
     def train_test_split(
             self,
@@ -577,48 +641,53 @@ class DataLoader:
             The train and test data loaders.
         """
         _X_train_indices, _X_test_indices, = train_test_split(
-            self.X.problem, test_size=test_size,
+            range(len(self.problems)), test_size=test_size,
             random_state=random_state)
 
-        return (self.select_problems(_X_train_indices),
-                self.select_problems(_X_test_indices))
+        return (self.isel(_X_train_indices),
+                self.isel(_X_test_indices))
 
-#                                                          Selecting iterations
+#                                                              Selecting budget
 # =============================================================================
 
-    def select_t(self, t: int, t_start: Optional[int] = 0) -> DataLoader:
+    def select_t(self, t: int, t_start: Optional[float] = 0.0,
+                 select_one_before: bool = True) -> DataLoader:
         """
-        Select a subset of the data loader at a specific iteration.
+        Select a subset of the data loader at a specific budget.
 
         Parameters
         ----------
         t : int
-            The iteration to select.
+            The budget to select.
+        t_start : float, optional
+            The starting budget number of the requested trajectory,
 
         Returns
         -------
         DataLoader
             The selected data loader.
         """
-        data = self.data.isel(iterations=range(t_start, t))
-        data_samples = self.data_samples.isel(iterations=range(t_start, t))
+        if select_one_before:
 
-        # Recalculate the performance since the budget has changed
-        # performance_t = scaling2(data)
+            # Check if there are budget coordinate values below t_start
+            prior = self.data[BUDGET].where(
+                self.data[BUDGET] < t_start, drop=True)
 
-        # # Making sure that we mask NaN values
-        # performance_stacked_t = performance_t.where(
-        #     ~performance_t.isnull(), other=INVALID_PERFORMANCE_VALUE)
+            # If so, take the value before t_start
+            if prior.sizes[BUDGET] > 0:
+                t_prior = prior[-1].item()
+
+            # If not, do nothing
+            else:
+                t_prior = t_start
+        else:
+            t_prior = t_start
 
         return DataLoader(
-            X=self.X,
-            n_iterations=t-t_start,
-            n_realizations=self.n_realizations,
-            # performance=performance_stacked_t,
-            data=data,
-            config=self.config,
-            experimentdata=self.experimentdata,
-            data_samples=data_samples
+            task_labels=self.task_labels,
+            data=self.data.sel({BUDGET: slice(t_prior, t)}),
+            opt_steps=self.opt_steps,
+            l2co_schedules=self.l2co_schedules
         )
 
 
@@ -627,7 +696,7 @@ class DataLoader:
 
 
     def select_single_optimizers(
-            self, include_random_search: bool = False) -> DataLoader:
+            self, squash: bool = False) -> DataLoader:
         """
         Select only the single optimizers.
 
@@ -641,16 +710,13 @@ class DataLoader:
         DataLoader
             The data loader with only the single optimizers.
         """
-        single_optimizers = [o.values for o in self.data.optimizer
-                             if '+' not in str(o.values)]
+        return self.select_optimizer(
+            optimizers=[o for o in self.optimizers.values if '+' not in o],
+            squash=squash
+        )
 
-        if include_random_search:
-            single_optimizers += [f'random_samples+{opt}' for opt in
-                                  single_optimizers]
-
-        return self.select_optimizer(single_optimizers)
-
-    def select_optimizer(self, optimizers: Iterable[str] | str) -> DataLoader:
+    def select_optimizer(self, optimizers: Iterable[str] | str,
+                         squash: bool = False) -> DataLoader:
         """
         Select a specific optimizer.
 
@@ -667,67 +733,68 @@ class DataLoader:
         if isinstance(optimizers, str):
             optimizers = [optimizers]
 
-        data_selected = self.data.sel(optimizer=optimizers)
-        # performance = self.performance.sel(optimizer=optimizers)
+        if squash:
+            data = xr.concat(
+                [squash_optimizer(data=self.data, target_optimizer=opt)
+                 for opt in optimizers],
+                dim=SCHEDULE)
+        else:
+            data = self.data.sel({SCHEDULE: optimizers})
+
+        opt_steps = list(filter(lambda item: item.name in
+                                optimizers, self.opt_steps))
 
         return DataLoader(
-            X=self.X,
-            n_iterations=self.n_iterations,
-            n_realizations=self.n_realizations,
-            # performance=performance,
-            data=data_selected,
-            config=self.config,
-            experimentdata=self.experimentdata,
-            data_samples=self.data_samples
+            task_labels=self.task_labels,
+            data=data.sortby(SCHEDULE),
+            opt_steps=sorted(opt_steps),
+            l2co_schedules=self.l2co_schedules
         )
 
     def query_optimizer(self, optimizer: str) -> DataLoader:
         """
-        Query the data loader for a specific optimizer.
+        Filters the data for a specific optimizer.
 
         Parameters
         ----------
         optimizer : str
-            The optimizer to query.
+            Name of the optimizer to filter.
 
         Returns
         -------
         DataLoader
-            The queried data loader.
+            A new DataLoader instance with filtered data.
         """
         filtered_optimizer = np.array(
-            [o for o in self.data.optimizer.values if o.startswith(optimizer)],
+            [o for o in self.optimizers.values if o.startswith(optimizer)],
             dtype=object
         )
-        # data_selected = self.data.sel(optimizer=[optimizer])
         data_selected = self.data.sel(
-            optimizer=filtered_optimizer).assign_coords(
-            optimizer=np.array(
+            {SCHEDULE: filtered_optimizer}).assign_coords(
+            {SCHEDULE: np.array(
                 [o.split('+')[-1] if '+' in o else o
-                 for o in filtered_optimizer], dtype=object))
+                 for o in filtered_optimizer], dtype=object)})
 
-        n_iterations = self.n_iterations
-        n_realizations = self.n_realizations
+        # Opt steps
+        filtered_schedules = list(
+            filter(lambda item: item.steps[0].name in optimizer,
+                   self.opt_steps))
 
-        # Config
-        config = self.config
-
-        # # Performance
-        # performance = self.performance.sel(
-        #     optimizer=filtered_optimizer).assign_coords(
-        #     optimizer=np.array(
-        #         [o.split('+')[-1] if '+' in o else o
-        #          for o in filtered_optimizer], dtype=object))
+        new_schedules: Iterable[OptimizationSchedule] = []
+        for v in filtered_schedules:
+            name = v.name.split('+')[-1] if '+' in v.name else v.name
+            v_copy = v.copy()
+            v_copy.name = name
+            v_copy.steps = [v_copy.steps[-1]]
+            # if name == optimizer:
+            #     v_copy.steps[0].x0_strategy = 'last'
+            new_schedules.append(v_copy)
 
         return DataLoader(
-            X=self.X,
-            n_iterations=n_iterations,
-            n_realizations=n_realizations,
-            # performance=performance,
-            data=data_selected,
-            config=config,
-            experimentdata=self.experimentdata,
-            data_samples=self.data_samples
+            task_labels=self.task_labels,
+            data=data_selected.sortby(SCHEDULE),
+            opt_steps=sorted(new_schedules),
+            l2co_schedules=self.l2co_schedules,
         )
 
 
@@ -735,335 +802,397 @@ class DataLoader:
 # =============================================================================
 
     def performance_profile(
-            self, strategies: Optional[Iterable[xr.DataArray]] = None
-    ) -> xr.Dataset:
+            self, max_f_value: int = 2.0, include_best: bool = False,
+            exclude_optimizer: Optional[str] = None,
+    ) -> xr.DataArray:
 
-        if strategies is None:
-            strategies = []
+        # Trigger performance
+        p = self._performance(
+            include_best=include_best,
+            exclude_optimizer=exclude_optimizer)
 
-        _strategies = [*strategies]
+        return performance_profile(performance=p, max_f_value=max_f_value)
 
-        performance_profile = create_performance_profile(
-            ds_raw=self.data,
-            iterations=self.n_iterations,
-            strategies=_strategies)
+    def rtd_profile(self, include_best: bool = False,
+                    exclude_optimizer: Optional[str] = None,) -> xr.DataArray:
+        p = self._performance(
+            include_best=include_best,
+            exclude_optimizer=exclude_optimizer)
 
-        return performance_profile
-
-    def rtd_profile(
-            self, strategies: Optional[Iterable[xr.DataArray]] = None,
-            targets: Optional[np.array] = None) -> xr.Dataset:
-
-        if strategies is None:
-            strategies = []
-
-        if targets is None:
-            rtd = self.performance
-        else:
-            # TODO: This cannot be computed due to memory errors
-            _targets = xr.DataArray(targets, dims=['targets'])
-            rtd = (self.performance.expand_dims(
-                {'targets': len(_targets)}) > _targets).mean('targets')
-
-        rtd = rtd.sortby('problem').to_dataset('optimizer')
-
-        for strategy in strategies:
-            rtd[strategy.name] = self.performance.sortby(
-                'problem').sel(optimizer=strategy.sortby('problem')).T
-
-        return rtd
+        return rtd(performance=p)
 
     def load(self):
         self.data.load()
+
+    def save(self, path: str):
+        _path = Path(path)
+
+        _path.mkdir(parents=True, exist_ok=True)
+
+        # Save optimization dynamics data
+        self.data.to_netcdf((_path / 'entire_dataset').with_suffix('.nc'))
+
+        # Convert task_labels to a DataFrame and save as CSV
+        df_task_labels = pd.DataFrame(
+            self.task_labels.values,
+            index=self.task_labels.coords[TASK_ID].values,
+            columns=self.task_labels.coords[FEATURE].values
+        )
+        df_task_labels = df_task_labels[~df_task_labels.index.duplicated(
+            keep='first')]
+        df_task_labels.to_csv((_path / 'labels').with_suffix('.csv'))
+
+        # Save optimization steps as JSON
+        opt_steps_serialized = {k: v.to_dict()
+                                for k, v in self.opt_steps.items()}
+        with open((_path / 'steps').with_suffix('.json'), 'w') as f:
+            json.dump(opt_steps_serialized, f, indent=4)
 
 #                                                          OptimizationDynamics
 # =============================================================================
 
 
-class OptimizationDynamics(torchDataset):
-    def __init__(
-            self,
-            X_features: xr.DataArray,
-            X_trajectory: xr.DataArray,
-            Y: xr.DataArray,
-            rel_tolerance: float = 0.0):
-        """
-        Learning dataset inherited from pytorch Dataset. Used for learning the
-        machine learning models
-
-        Parameters
-        ----------
-        X_features : np.ndarray
-            The features of the optimization problems.
-        X_trajectory : np.ndarray
-            The trajectories of the optimization problems.
-        Y : np.ndarray
-            The performance value (labels) of the optimization problems.
-        """
-        self._X_features = X_features
-        self._X_trajectory = X_trajectory
-        self._Y = Y
-        self.rel_tolerance = rel_tolerance
-
-    def __len__(self):
-        """
-        Return the length of the dataset. Needed for inheriting from pytorch
-        Dataset.
-
-        Returns
-        -------
-        int
-            The length of the dataset.
-        """
-        return len(self._X_features)
-
-    def select_problems(self, problems: xr.DataArray) -> OptimizationDynamics:
-        return OptimizationDynamics(
-            X_features=self._X_features.sel(problem=problems),
-            X_trajectory=self._X_trajectory.sel(problem=problems),
-            Y=self._Y.sel(problem=problems),
-            rel_tolerance=self.rel_tolerance)
-
-    def to_feature_data(self):
-        return FeaturesDataSet(
-            X_features=self._X_features,
-            Y_features=self._Y.isel(output_dim=0, drop=True).T,
-            rel_tolerance=self.rel_tolerance)
-
-    @property
-    def X_features(self) -> np.ndarray:
-        return np.expand_dims(self._X_features.values, axis=-1)
-
-    @property
-    def X_trajectory(self) -> np.ndarray:
-        return np.expand_dims(
-            self._X_trajectory.values.transpose(2, 1, 0), axis=-1)
-
-    @property
-    def Y(self):
-        return self._Y.values.T
-
-    @property
-    def problem(self):
-        return self._X_features.problem
-
-    def __getitem__(self, idx):
-        """
-        Get an item from the dataset. Needed for inheriting from pytorch
-        Dataset.
-
-        Parameters
-        ----------
-        idx : int
-            The index of the item to get.
-        """
-        return (self.X_features[idx], self.X_trajectory[idx]), self.Y[idx]
-
-    def save(self, path: str):
-        """
-        Save the dataset to disk.
-
-        Parameters
-        ----------
-        path : str
-            The path to save the dataset.
-        """
-        _path = Path(path)
-        self._X_features.to_netcdf(_path / 'X_features.nc')
-        self._X_trajectory.to_netcdf(_path / 'X_trajectory.nc')
-        self._Y.to_netcdf(_path / 'Y_features.nc')
-
-    @classmethod
-    def load(self, path: str, rel_tolerance: float) -> OptimizationDynamics:
-        """
-        Load the dataset from disk.
-
-        Parameters
-        ----------
-        path : str
-            The path to load the dataset.
-
-        Returns
-        -------
-        FeaturesDataSet
-            The loaded dataset.
-        """
-        _path = Path(path)
-        X_features = xr.open_dataarray(_path / 'X_features.nc')
-        X_trajectory = xr.open_dataarray(_path / 'X_trajectory.nc')
-        Y = xr.open_dataarray(_path / 'Y_features.nc')
-
-        return OptimizationDynamics(X_features=X_features,
-                                    X_trajectory=X_trajectory,
-                                    Y=Y,
-                                    rel_tolerance=rel_tolerance)
-
-# =============================================================================
-
-
-class FeaturesDataSet:
-    def __init__(self, X_features: xr.DataArray, Y_features: xr.DataArray,
-                 rel_tolerance: float = 0.0):
-        """
-        A dataset containing the features and labels of the optimization
-        problems.
-
-        Parameters
-        ----------
-        X_features : pd.DataFrame
-            The features of the optimization problems.
-        Y_features : pd.DataFrame
-            The labels of the optimization problems.
-        rel_tolerance : float, optional
-            The relative tolerance to use, by default 0.0
-        """
-        self.X_features = X_features
-        self.Y_features = Y_features
-        self.rel_tolerance = rel_tolerance
-
-    def __len__(self):
-        """
-        Return the length of the dataset.
-
-        Returns
-        -------
-        int
-            The length of the dataset.
-        """
-        return len(self.X_features)
-
-    @property
-    def Y(self) -> xr.DataArray:
-        if self.rel_tolerance == 0.0:
-            return (self.Y_features.idxmin(
-                'optimizer') == self.Y_features.optimizer).T
-
-        threshold = self.Y_features.min(
-            dim='optimizer') + abs(
-                self.Y_features.min(dim='optimizer') * self.rel_tolerance)
-
-        return (self.Y_features <= threshold).T
-
-    def save(self, path: str):
-        """
-        Save the dataset to disk.
-
-        Parameters
-        ----------
-        path : str
-            The path to save the dataset.
-        """
-        _path = Path(path)
-        self.X_features.to_netcdf(_path / 'X_features.nc')
-        self.Y_features.to_netcdf(_path / 'Y_features.nc')
-
-    @classmethod
-    def load(self, path: str, rel_tolerance: float) -> FeaturesDataSet:
-        """
-        Load the dataset from disk.
-
-        Parameters
-        ----------
-        path : str
-            The path to load the dataset.
-
-        Returns
-        -------
-        FeaturesDataSet
-            The loaded dataset.
-        """
-        _path = Path(path)
-        X_features = xr.open_dataarray(_path / 'X_features.nc')
-        Y_features = xr.open_dataarray(_path / 'Y_features.nc')
-
-        return FeaturesDataSet(X_features=X_features,
-                               Y_features=Y_features,
-                               rel_tolerance=rel_tolerance)
-
-# =============================================================================
-
-
-def create_entire_dataset(experiment_data: ExperimentData):
+def performance_profile(performance: xr.DataArray, max_f_value: int = 2.0
+                        ) -> xr.DataArray:
     """
-    Create an entire dataset from a given experiment data object.
+    Create a performance profile for the given performance data.
 
     Parameters
     ----------
-    experiment_data : f3dasm.ExperimentData
-        The experiment data object.
+    performance : xarray.DataArray
+        Performance data for optimization problems.
+    max_f_value : int, optional
+        Maximum performance ratio, by default 2.0.
 
     Returns
     -------
-    xarray.Dataset
-        The resulting entire dataset.
+    xarray.DataArray
+        Performance profile.
+    """
+    p = performance.isel({BUDGET: -1})
+    rij = (p + 1.0) / 1.0
 
-    Notes
-    -----
-    The entire dataset is created by concatenating all the optimization
-    trajectories (NetCDF files) of the experiment data object.
+    ds_f = xr.Dataset(
+        {'performance_profile': rij, 'relative_error': xr.DataArray(
+            np.logspace(np.log10(1.0), np.log10(max_f_value), 1000),
+            dims='relative_error')})
 
-    All of the files are checked on:
-    - if they are flagged as 'invalid' or 'ERROR'
-    - if they contain np.nan values
+    performance_profile = np.less_equal(
+        ds_f, ds_f.relative_error+1e-2).where(
+        ~ds_f.isnull(), np.nan).mean(dim=PROBLEM)['performance_profile']
+
+    rel_error = (performance_profile['relative_error'] * 100) - 100
+
+    return performance_profile.assign_coords({'relative_error': rel_error})
+
+
+def rtd(performance: xr.DataArray) -> xr.DataArray:
+    """
+    Compute the runtime distribution (RTD) profile.
+
+    Parameters
+    ----------
+    performance : xarray.DataArray
+        Performance data for optimization problems.
+
+    Returns
+    -------
+    xarray.DataArray
+        RTD profile.
+    """
+    return (1.0-performance).mean(PROBLEM)
+
+# =============================================================================
+
+
+class OptimizationDynamics:
+    def __init__(self,
+                 data: xr.Dataset):
+        self.data = data
+
+    @classmethod
+    def from_data(
+            cls: Type[OptimizationDynamics],
+            data: xr.DataTree,
+            previous_step: Optional[str] = None) -> OptimizationDynamics:
+        ds_list = []
+        for k in data.keys():
+            ds = data[k].to_dataset()
+
+            # Impute missing values
+            ds[PERFORMANCE] = xr.apply_ufunc(
+                impute_missing_values_svd,
+                ds[PERFORMANCE],
+                input_core_dims=[[PROBLEM, OPT_CHOICE]],
+                output_core_dims=[[PROBLEM, OPT_CHOICE]],
+                vectorize=True,
+            )
+
+            # Stack the dataset along a new 'batch' dimension
+            ds_list.append(ds.stack(
+                {BATCH: (PROBLEM, OPT_HISTORY, OUTPUT_DIM)},
+                create_index=False))
+
+        # Concatenate all datasets along the 'batch' dimension
+        new_ds: xr.Dataset = xr.concat(ds_list, dim=BATCH)
+
+        nan_flags = [
+            var.isnull().any(dim=set(var.dims) - {BATCH})
+            for var in new_ds.data_vars.values()
+        ]
+
+        has_nan_anywhere = xr.concat(nan_flags, dim='_vars').any(dim='_vars')
+        new_ds = new_ds.sel({BATCH: ~has_nan_anywhere}).transpose()
+
+        new_ds[UPDATE_STEP] = encode(new_ds[UPDATE_STEP])
+
+        return cls(data=new_ds)
+
+    @property
+    def X_features(self) -> pd.DataFrame:
+        return self.data[TASK_LABELS].to_pandas(
+        ).infer_objects().convert_dtypes()
+
+    @property
+    def X_trajectory(self) -> jax.Array:
+        return jnp.stack(
+            (self.data[TRAJECTORY].values,
+             self.data[STAIRCASE].values,
+             self.data[UPDATE_STEP].values),
+            axis=-1)
+
+    @property
+    def Y(self) -> jax.Array:
+        return jnp.array(self.data[PERFORMANCE])
+
+    @classmethod
+    def from_task_and_run(
+            cls: Type[OptimizationDynamics],
+            task: Task,
+            data: Optional[ExperimentData] = None,
+    ) -> OptimizationDynamics:
+        ...
+
+
+def load_dynamics(path: str | Path | xr.DataTree
+                  ) -> Dict[str, OptimizationDynamics]:
+    if not isinstance(path, xr.DataTree):
+        _path = Path(path)
+        datatree = xr.open_datatree(_path.with_suffix('.nc'))
+    else:  # Assume path is already a DataTree
+        datatree = path
+
+    return {name: OptimizationDynamics.from_data(
+        data=dynamics.to_dataset(),
+        previous_step=name) for name, dynamics in datatree.items()}
+
+
+# =============================================================================
+
+
+def squash_optimizer(data: xr.Dataset, target_optimizer: str) -> xr.Dataset:
+    _data = data.sel(
+        {SCHEDULE: [o for o in data.optimizer.values
+                    if o.startswith(target_optimizer)]})
+    mask = _data.notnull().any(dim=BUDGET).idxmax(
+        dim=SCHEDULE).isel({OUTPUT_DIM: 0}, drop=True).output_mean
+
+    return _data.sel({SCHEDULE: mask}).reset_coords(
+        SCHEDULE, drop=True).expand_dims(
+            {SCHEDULE: np.array([target_optimizer], dtype=object)})
+
+
+def impute_missing_values_svd(y: np.ndarray, k=2):
+    mask = ~np.isnan(y)
+    mean_values = np.nanmean(y, axis=0)
+
+    # Center the data (subtract mean from non-nan values)
+    centered_matrix = np.where(mask, y - mean_values, 0)
+
+    # Perform SVD
+    U, s, Vt = svd(centered_matrix, full_matrices=False)
+
+    # Keep only k components
+    S_k = np.diag(s[:k])
+    U_k = U[:, :k]
+    Vt_k = Vt[:k, :]
+
+    # Reconstruct the matrix
+    reconstructed = U_k @ S_k @ Vt_k + mean_values
+
+    # Fill in missing values
+    filled_matrix = np.where(mask, y, reconstructed)
+
+    return filled_matrix
+
+
+# @ lru_cache(maxsize=1)
+def compute_X_trajectory(data: xr.DataArray) -> xr.DataArray:
+    """
+    Select the history of an optimization trajectory.
+
+    Parameters
+    ----------
+    data : xarray.Dataset
+        The optimization trajectory data.
+    Returns
+    -------
+    xarray.DataArray
+        The selected trajectory.
     """
 
-    experiment_data = experiment_data.select_with_status('finished')
+    def scale(x: np.ndarray) -> np.ndarray:
+        # 3. Make sure the quality indicator value is non-negative
+        p = (x - x.min())
+        # 4. Add epsilon to make quality indicator value non-zero
+        eps = np.where(p > 0.0, p, p.max()+1e-16).min()
+        x_log10 = np.log10(p + eps)
 
-    _, df_output = experiment_data.to_pandas()
+        # 5. Min-max scaling of the data
+        x_min = x_log10.min()
+        x_max = x_log10.max()
+        return (x_log10 - x_min) / (x_max - x_min + 1e-16)
 
-    # remove all values that say 'ERROR' and 'invalid'
-    df_output = df_output.replace('ERROR', np.nan)
-    df_output = df_output.replace('invalid', np.nan)
-    df_output = df_output.replace('not working', np.nan)
-
-    # preceed every entry of df_output with experimentdata.project_dir
-    df_output = df_output.applymap(
-        lambda x: experiment_data.project_dir / x, na_action='ignore')
-    # df_output = df_output.apply(lambda x: experiment_data.project_dir / x)
-
-    # don't include the column 'random_samples'
-    if 'random_samples' in df_output.columns:
-        df_output = df_output.drop(columns=['random_samples'])
-
-    # remove all experiments where none of the optimizers have finished
-    df_output = df_output.dropna(how='all')
-
-    # Open the whole thing:
-    l2co_logger.info("Opening the whole thing")
-
-    combined_rows = []
-    faulty_experiments = []
-
-    for row, values in tqdm(df_output.iterrows(), total=len(df_output)):
-        try:
-            a = xr.open_mfdataset(values.dropna(), combine='by_coords')
-        except OSError as e:
-            l2co_logger.error(f"Error: {e}")
-            faulty_experiments.append(row)
-            continue
-
-        if 'input' in a.data_vars:
-            combined_rows.append(a.assign_coords(
-                {'itemID': [row]}).drop('input'))
-        else:
-            combined_rows.append(a.assign_coords(
-                {'itemID': [row]}))
-
-        l2co_logger.info(f"Entire dataset: {row}/{len(df_output)}")
-
-    experiment_data.mark(indices=faulty_experiments, status='error')
-
-    xarr_full: xr.Dataset = xr.concat(combined_rows, dim='itemID')
-
-    xarr_full = xarr_full.stack(
-        problem=('realization', 'itemID'), create_index=False
+    trajectory: xr.Dataset = xr.apply_ufunc(
+        scale,
+        data,
+        # input_core_dims=[[BUDGET, 'output_dim']],
+        input_core_dims=[[BUDGET]],
+        # output_core_dims=[[BUDGET, 'output_dim']],
+        output_core_dims=[[BUDGET]],
+        vectorize=True,
+        dask='parallelized',
+        dask_gufunc_kwargs={'allow_rechunk': True}  # False
     )
 
-    xarr_full = xarr_full.assign_coords(
-        {'problem': np.arange(xarr_full.problem.size)})
+    # return trajectory.output_mean.isel(
+    #     output_dim=0, drop=True).rename(
+    #         'trajectory').transpose(
+    #             'optimizer', BUDGET, 'problem')
 
-    if 'input_dim' in xarr_full.coords:
-        return xarr_full.drop('input_dim'), experiment_data
+    return trajectory
 
-    else:
-        return xarr_full, experiment_data
+
+# def compute_parameters(
+#         trajectory: xr.DataArray,
+#         optimizer: optax.GradientTransformation = optax.adam(1e-01),
+#         inducing_points: int = 10, num_iters: int = 300) -> xr.DataArray:
+#     """
+#     Compute the parameters of the optimization trajectory.
+
+#     Parameters
+#     ----------
+#     data : xarray.Dataset
+#         The optimization trajectory data.
+#     Returns
+#     -------
+#     xarray.DataArray
+#         The selected trajectory.
+#     """
+#     x = jnp.array(trajectory.values.reshape(-1, trajectory.budget.size))
+
+#     params = jax.vmap(
+#         partial(fit_gpr, optimizer=optimizer,
+#                 inducing_points=inducing_points, num_iters=num_iters)
+#     )(x)
+
+#     params = params.reshape(
+#         trajectory.optimizer.size, trajectory.problem.size,
+#         trajectory.output_dim.size, -1
+#     )
+
+#     return xr.DataArray(
+#         params,
+#         dims=[SCHEDULE, PROBLEM, OUTPUT_DIM, 'fit_params'],
+#         coords={
+#             SCHEDULE: trajectory.optimizer,
+#             TASK_ID: trajectory.itemID,
+#             OUTPUT_DIM: trajectory.output_dim,
+#         }
+#     )
+
+
+# def compute_staircase_parameters(
+#         staircase: xr.DataArray,
+#         num_iters: int = 50) -> xr.DataArray:
+#     x = jnp.array(staircase.values.reshape(-1, staircase.budget.size))
+
+#     params = jax.vmap(
+#         partial(fit_basis_function, max_iter=num_iters)
+#     )(x)
+
+#     params = params.reshape(
+#         staircase.optimizer.size, staircase.problem.size,
+#         staircase.output_dim.size, -1
+#     )
+
+#     return xr.DataArray(
+#         params,
+#         dims=[SCHEDULE, PROBLEM, OUTPUT_DIM, 'staircase_fit_params'],
+#         coords={
+#             SCHEDULE: staircase.optimizer,
+#             TASK_ID: staircase.itemID,
+#             OUTPUT_DIM: staircase.output_dim,
+#         }
+#     )
+
+
+def log_relative_improvement(data: xr.Dataset) -> xr.DataArray:
+    def compute_log_relative_improvement(x, b):
+        impv = -(x[0] - x[-1]) / (b[0] - b[-1]) / (abs(x[0]) + 1e-8)
+        t = np.log(impv + 1e-8)
+        return np.atleast_1d(t)
+
+    return xr.apply_ufunc(
+        compute_log_relative_improvement,
+        output_cummin(data.output_min),
+        data.budget,
+        input_core_dims=[["budget"], ["budget"]],
+        # output_core_dims=[["log_relative_improvement"]],
+        vectorize=True,
+    )
+
+
+def _squash(da: xr.DataArray, reduce_dim: str,
+            vector_dim: str = PROBLEM):
+    def f(x):
+        for val in x:
+            if not np.isnan(val).any():
+                return val
+        return val
+
+    # Define dimension names
+    all_dims = list(da.dims)
+    keep_dims = [d for d in all_dims if d not in [reduce_dim, vector_dim]]
+
+    return xr.apply_ufunc(
+        f,
+        da,
+        input_core_dims=[[reduce_dim] + keep_dims],
+        output_core_dims=[keep_dims],
+        vectorize=True,
+        dask="allowed"  # Optional: if using dask
+    )
+
+
+def compute_fitting(trajectory: xr.DataArray, fit_params: xr.DataArray,
+                    basis_function: Callable):
+
+    x_input = np.linspace(0., 1., trajectory.coords[BUDGET].size)
+
+    fitted_sigmoid = xr.apply_ufunc(
+        lambda x, x_input: basis_function(x_input, *x),
+        fit_params,
+        kwargs={'x_input': x_input},
+        input_core_dims=[['fit_params']],
+        output_core_dims=[[BUDGET]],
+        vectorize=True,
+    )
+
+    fitted_sigmoid = fitted_sigmoid.assign_coords(
+        {BUDGET: trajectory.coords[BUDGET]})
+
+
+def encode(xarr: xr.DataArray) -> xr.DataArray:
+    _, enc = np.unique(xarr, return_inverse=True)
+    return xarr.copy(data=enc.reshape(xarr.shape))
