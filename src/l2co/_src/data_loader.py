@@ -40,7 +40,7 @@ from scipy.linalg import svd
 from sklearn.model_selection import train_test_split
 
 # Local
-from .latent_space import fit_basis_function, fit_gpr
+# from .latent_space import fit_basis_function, fit_gpr
 from .naming import (BATCH, BUDGET, FEATURE, OPT_CHOICE, OPT_HISTORY,
                      OUTPUT_DIM, OUTPUT_MEAN, OUTPUT_MIN, PERFORMANCE, PROBLEM,
                      REALIZATION, SCHEDULE, STAIRCASE, TASK_ID, TASK_LABELS,
@@ -280,13 +280,20 @@ class DataLoader:
         )
 
     def to_all_params(self, window_size: float,
-                      budget_size: Optional[int] = None):
+                      budget_size: Optional[int] = None,
+                      include_last: bool = False) -> xr.DataTree:
 
         if budget_size is None:
             budget_size = self.data[BUDGET].size
 
+        if include_last:
+            window_end = 1.0 + window_size
+        else:
+            window_end = 1.0
+
         _dict = {}
-        for t in np.arange(window_size, 1.0, window_size):
+
+        for t in np.arange(window_size, window_end, window_size):
             t_end = np.minimum(t + window_size, 1.0)
             params = self.to_params(t_start=0.0, t=t, t_end=t_end)
             params[BUDGET] = range(
@@ -306,7 +313,8 @@ class DataLoader:
     @property
     def hash_opt_step(self) -> xr.DataArray:
         return xr.apply_ufunc(
-            lambda x: hashlib.sha256(x.tobytes()).hexdigest(),
+            lambda x: int(hashlib.sha256(x.tobytes()).hexdigest()
+                          [:8], 16) % (2**31 - 1),
             self.data[UPDATE_STEP],
             input_core_dims=[[BUDGET]],
             output_core_dims=[[]],
@@ -1067,68 +1075,68 @@ def compute_X_trajectory(data: xr.DataArray) -> xr.DataArray:
     return trajectory
 
 
-def compute_parameters(
-        trajectory: xr.DataArray,
-        optimizer: optax.GradientTransformation = optax.adam(1e-01),
-        inducing_points: int = 10, num_iters: int = 300) -> xr.DataArray:
-    """
-    Compute the parameters of the optimization trajectory.
+# def compute_parameters(
+#         trajectory: xr.DataArray,
+#         optimizer: optax.GradientTransformation = optax.adam(1e-01),
+#         inducing_points: int = 10, num_iters: int = 300) -> xr.DataArray:
+#     """
+#     Compute the parameters of the optimization trajectory.
 
-    Parameters
-    ----------
-    data : xarray.Dataset
-        The optimization trajectory data.
-    Returns
-    -------
-    xarray.DataArray
-        The selected trajectory.
-    """
-    x = jnp.array(trajectory.values.reshape(-1, trajectory.budget.size))
+#     Parameters
+#     ----------
+#     data : xarray.Dataset
+#         The optimization trajectory data.
+#     Returns
+#     -------
+#     xarray.DataArray
+#         The selected trajectory.
+#     """
+#     x = jnp.array(trajectory.values.reshape(-1, trajectory.budget.size))
 
-    params = jax.vmap(
-        partial(fit_gpr, optimizer=optimizer,
-                inducing_points=inducing_points, num_iters=num_iters)
-    )(x)
+#     params = jax.vmap(
+#         partial(fit_gpr, optimizer=optimizer,
+#                 inducing_points=inducing_points, num_iters=num_iters)
+#     )(x)
 
-    params = params.reshape(
-        trajectory.optimizer.size, trajectory.problem.size,
-        trajectory.output_dim.size, -1
-    )
+#     params = params.reshape(
+#         trajectory.optimizer.size, trajectory.problem.size,
+#         trajectory.output_dim.size, -1
+#     )
 
-    return xr.DataArray(
-        params,
-        dims=[SCHEDULE, PROBLEM, OUTPUT_DIM, 'fit_params'],
-        coords={
-            SCHEDULE: trajectory.optimizer,
-            TASK_ID: trajectory.itemID,
-            OUTPUT_DIM: trajectory.output_dim,
-        }
-    )
+#     return xr.DataArray(
+#         params,
+#         dims=[SCHEDULE, PROBLEM, OUTPUT_DIM, 'fit_params'],
+#         coords={
+#             SCHEDULE: trajectory.optimizer,
+#             TASK_ID: trajectory.itemID,
+#             OUTPUT_DIM: trajectory.output_dim,
+#         }
+#     )
 
 
-def compute_staircase_parameters(
-        staircase: xr.DataArray,
-        num_iters: int = 50) -> xr.DataArray:
-    x = jnp.array(staircase.values.reshape(-1, staircase.budget.size))
+# def compute_staircase_parameters(
+#         staircase: xr.DataArray,
+#         num_iters: int = 50) -> xr.DataArray:
+#     x = jnp.array(staircase.values.reshape(-1, staircase.budget.size))
 
-    params = jax.vmap(
-        partial(fit_basis_function, max_iter=num_iters)
-    )(x)
+#     params = jax.vmap(
+#         partial(fit_basis_function, max_iter=num_iters)
+#     )(x)
 
-    params = params.reshape(
-        staircase.optimizer.size, staircase.problem.size,
-        staircase.output_dim.size, -1
-    )
+#     params = params.reshape(
+#         staircase.optimizer.size, staircase.problem.size,
+#         staircase.output_dim.size, -1
+#     )
 
-    return xr.DataArray(
-        params,
-        dims=[SCHEDULE, PROBLEM, OUTPUT_DIM, 'staircase_fit_params'],
-        coords={
-            SCHEDULE: staircase.optimizer,
-            TASK_ID: staircase.itemID,
-            OUTPUT_DIM: staircase.output_dim,
-        }
-    )
+#     return xr.DataArray(
+#         params,
+#         dims=[SCHEDULE, PROBLEM, OUTPUT_DIM, 'staircase_fit_params'],
+#         coords={
+#             SCHEDULE: staircase.optimizer,
+#             TASK_ID: staircase.itemID,
+#             OUTPUT_DIM: staircase.output_dim,
+#         }
+#     )
 
 
 def log_relative_improvement(data: xr.Dataset) -> xr.DataArray:

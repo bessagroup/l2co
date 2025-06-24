@@ -51,9 +51,9 @@ class OptimizationStep:
         return hash(tag_hashable)
 
     @property
-    def hash(self) -> str:
+    def hash(self) -> int:
         t = sorted(self.tag.items())
-        return hashlib.sha256(str(t).encode()).hexdigest()[:16]
+        return int(hashlib.sha256(str(t).encode()).hexdigest()[:8], 16)
 
     @property
     def name(self) -> str:

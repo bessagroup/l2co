@@ -264,6 +264,8 @@ def create_optimization_data(
     # Fill al nans with the placeholder path
     df: pd.DataFrame = df.fillna(placeholder_path)
 
+    l2co_logger.info("Starting opening the entire dataset")
+
     xarr_full = xr.open_mfdataset(
         df.to_numpy().tolist(),
         combine='nested',
@@ -271,7 +273,7 @@ def create_optimization_data(
                     xr.DataArray(df.columns, coords=[
                         df.columns], dims=[SCHEDULE]),
                     ],
-        parallel=True,
+        parallel=False,
         preprocess=validation_fn,
         coords='minimal',
         join='outer',

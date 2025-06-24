@@ -62,7 +62,7 @@ def validation_fn(x: xr.Dataset,
     y_min = xr.concat([_y.min() for _y in y_coarsen], dim=BUDGET)
     opt_step = xr.concat(
         [_opt_step.min() for _opt_step in opt_step_coarsen],
-        dim=BUDGET)
+        dim=BUDGET).astype(str)
 
     # t_iterations = np.linspace(0., 1., )
 
@@ -87,6 +87,6 @@ def validation_fn(x: xr.Dataset,
     )
 
     x = x.interp(budget=np.linspace(
-        0., 1., budget_steps), method='nearest')
+        0., 1., budget_steps-1), method='nearest')
 
     return xr.concat([x0, x], dim=BUDGET)

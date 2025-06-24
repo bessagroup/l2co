@@ -266,9 +266,6 @@ class UpdateStep(Block):
 
         input_data, output_data = self.post_fn(history)
 
-        # for i in range(self.popsize):
-        #     output_data[i]['opt_step'] = SAMPLER_HASH
-
         return ExperimentData(
             domain=data.domain,
             input_data=input_data,

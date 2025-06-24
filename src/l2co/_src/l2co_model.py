@@ -101,7 +101,9 @@ class MyModel(eqx.Module):
     mlp_layer: eqx.Module
 
     def __init__(self, in_size: int, out_size: int, hidden_size: int,
-                 width_size: int, depth: int, *, key: jax.Array):
+                 width_size: int, depth: int, *,
+                 activation: Callable,
+                 final_activation: Callable, key: jax.Array):
         lstm_key, mlp_key = jr.split(key)
         self.lstm_layer = LSTM_Encoder(
             in_size=in_size, hidden_size=hidden_size, key=lstm_key)
@@ -111,8 +113,10 @@ class MyModel(eqx.Module):
             width_size=width_size,
             depth=depth,
             key=mlp_key,
-            activation=jnn.relu,
-            final_activation=jnn.sigmoid
+            # activation=jnn.relu,
+            activation=activation,
+            # final_activation=jnn.sigmoid,
+            final_activation=final_activation,
         )
 
     def __call__(self, x: jax.Array) -> jax.Array:

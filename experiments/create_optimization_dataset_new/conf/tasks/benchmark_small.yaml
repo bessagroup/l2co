@@ -9,18 +9,18 @@ experimentdata:
       fn_name:
         type: category
         categories: [
-          'ackley',
-          'beale',
-          'bohachevsky1',
-          'branin01',
-          'camelthreehump',
-          'eggholder',
+          # 'ackley',
+          # 'beale',
+          # 'bohachevsky1',
+          # 'branin01',
+          # 'camelthreehump',
+          # 'eggholder',
           'levy',
-          'rastrigin',
-          'rosenbrock',
-          'schwefel',
-          'sphere',
-          'styblinskitang',
+          # 'rastrigin',
+          # 'rosenbrock',
+          # 'schwefel',
+          # 'sphere',
+          # 'styblinskitang',
           ]
       dimensionality:
         type: category
