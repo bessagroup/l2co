@@ -10,7 +10,6 @@ from typing import Callable, Dict, Iterable
 import cloudpickle
 import equinox as eqx
 import jax
-import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
 import joblib

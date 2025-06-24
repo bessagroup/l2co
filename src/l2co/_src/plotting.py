@@ -13,8 +13,6 @@ plot_perf_profile
 #                                                                       Modules
 # =============================================================================
 
-from scipy.interpolate import griddata
-from matplotlib.colors import LogNorm
 import math
 from typing import Iterable, List, Optional, Tuple
 
@@ -24,10 +22,12 @@ import numpy as np
 import xarray as xr
 from f3dasm import ExperimentData
 from f3dasm.design import Domain
+from matplotlib.colors import LinearSegmentedColormap, LogNorm, SymLogNorm
+from scipy.interpolate import griddata
+
 from l2co._src.optimizers import EvaluateModel
 from l2co._src.sampler import GridWeightSampler
 from l2co._src.tree_utils import experimentdata_to_xarray
-from matplotlib.colors import LinearSegmentedColormap, LogNorm, SymLogNorm
 
 # Local
 from .data_loader import DataLoader, OptimizationDynamics
@@ -540,7 +540,7 @@ def plot_3d_loss_landscape_only(task: Task, plot_resolution: int = 100,
         created_fig = True
 
     # Plot on the provided or created axis
-    surf = ax.plot_surface(X, Y, Z, cmap='viridis', norm=LogNorm())
+    _ = ax.plot_surface(X, Y, Z, cmap='viridis', norm=LogNorm())
 
     if created_fig:
         return fig

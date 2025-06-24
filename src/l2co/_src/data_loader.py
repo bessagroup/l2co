@@ -23,7 +23,6 @@ from __future__ import annotations
 import hashlib
 import json
 from copy import deepcopy
-from functools import partial
 from pathlib import Path
 from time import perf_counter
 from typing import Callable, Dict, Iterable, Literal, Optional, Tuple, Type
@@ -32,7 +31,6 @@ from typing import Callable, Dict, Iterable, Literal, Optional, Tuple, Type
 import jax
 import jax.numpy as jnp
 import numpy as np
-import optax
 import pandas as pd
 import xarray as xr
 from f3dasm import ExperimentData
