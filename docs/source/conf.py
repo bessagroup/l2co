@@ -25,8 +25,8 @@ for path in src_dir:
 project = 'l2co'
 author = 'Martin van der Schelling'
 copyright = '2024, Martin van der Schelling'
-version = '1.2.0'
-release = '1.2.0'
+version = '1.2.1'
+release = '1.2.1'
 
 
 # -- General configuration ----------------------------------------------------
