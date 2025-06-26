@@ -4,6 +4,19 @@ from f3dasm.design import Domain
 
 
 def retrieve_tasks(experiment_data: ExperimentData) -> pd.DataFrame:
+    """
+    Retrieve unique tasks from the given experiment data.
+
+    Parameters
+    ----------
+    experiment_data : ExperimentData
+        The experiment data containing tasks.
+
+    Returns
+    -------
+    ExperimentData
+        Experiment data containing unique tasks.
+    """
     domain = Domain()
     domain.add_output('task')
 

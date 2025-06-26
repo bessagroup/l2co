@@ -23,6 +23,21 @@ from .models import mlp
 
 
 def mse(x: Array, y: Array) -> Array:
+    """
+    Compute the mean squared error between two arrays.
+
+    Parameters
+    ----------
+    x : Array
+        Predicted values.
+    y : Array
+        Ground truth values.
+
+    Returns
+    -------
+    Array
+        Mean squared error.
+    """
     return jnp.mean((x - y) ** 2)
 
 
@@ -173,11 +188,37 @@ def wave_pde_loss(
 
 
 def create_points_dataset(
-        x_range: Tuple[float], t_range: Tuple[float],
-        xgrid_resolution: int, tgrid_resolution: int,
-        num_ic_points: int, num_bc_points: int,
-        num_res_points: int, *, key: jnp.ndarray) -> Dict[str, jnp.ndarray]:
+    x_range: Tuple[float], t_range: Tuple[float], xgrid_resolution: int,
+    tgrid_resolution: int, num_ic_points: int, num_bc_points: int,
+    num_res_points: int, *, key: jnp.ndarray
+) -> Dict[str, jnp.ndarray]:
+    """
+    Create a dataset of points for PDE tasks.
 
+    Parameters
+    ----------
+    x_range : Tuple[float]
+        Range of x values.
+    t_range : Tuple[float]
+        Range of t values.
+    xgrid_resolution : int
+        Resolution of the x grid.
+    tgrid_resolution : int
+        Resolution of the t grid.
+    num_ic_points : int
+        Number of initial condition points.
+    num_bc_points : int
+        Number of boundary condition points.
+    num_res_points : int
+        Number of residual points.
+    key : jnp.ndarray
+        Random key for reproducibility.
+
+    Returns
+    -------
+    Dict[str, jnp.ndarray]
+        Dictionary containing the generated points.
+    """
     x_res_grid = jnp.linspace(x_range[0], x_range[1], xgrid_resolution)
     t_res_grid = jnp.linspace(t_range[0], t_range[1], tgrid_resolution)
 
@@ -220,19 +261,57 @@ def save_dataset(dataset: Dict[str, jnp.ndarray], path: str | Path):
 
 
 def create_pde_task(
-        pde_task_name: str,
-        seed: int,
-        dataset_path: str,
-        x_range: Tuple[float, float],
-        t_range: Tuple[float, float],
-        xgrid_resolution: int,
-        tgrid_resolution: int,
-        num_ic_points: int,
-        num_bc_points: int,
-        num_res_points: int,
-        hidden_size: int,
-        beta: float = jnp.nan,
-        rho: float = jnp.nan) -> Task:
+    pde_task_name: str,
+    seed: int,
+    dataset_path: str,
+    x_range: Tuple[float, float],
+    t_range: Tuple[float, float],
+    xgrid_resolution: int,
+    tgrid_resolution: int,
+    num_ic_points: int,
+    num_bc_points: int,
+    num_res_points: int,
+    hidden_size: int,
+    beta: float = jnp.nan,
+    rho: float = jnp.nan
+) -> Task:
+    """
+    Create a PDE task for optimization.
+
+    Parameters
+    ----------
+    pde_task_name : str
+        Name of the PDE task (e.g., 'convection', 'reaction', 'wave').
+    seed : int
+        Random seed for reproducibility.
+    dataset_path : str
+        Path to save the generated dataset.
+    x_range : Tuple[float, float]
+        Range of x values for the PDE.
+    t_range : Tuple[float, float]
+        Range of t values for the PDE.
+    xgrid_resolution : int
+        Resolution of the x grid.
+    tgrid_resolution : int
+        Resolution of the t grid.
+    num_ic_points : int
+        Number of initial condition points.
+    num_bc_points : int
+        Number of boundary condition points.
+    num_res_points : int
+        Number of residual points.
+    hidden_size : int
+        Hidden size of the neural network model.
+    beta : float, optional
+        Parameter for the convection or wave PDE, by default jnp.nan.
+    rho : float, optional
+        Parameter for the reaction PDE, by default jnp.nan.
+
+    Returns
+    -------
+    Task
+        The created PDE task.
+    """
     tag = {}
 
     _path = Path(dataset_path + f'_{seed}').with_suffix('.npz')

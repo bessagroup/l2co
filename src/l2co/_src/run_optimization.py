@@ -36,6 +36,24 @@ __status__ = 'Stable'
 
 
 class RolloutWrapper:
+    """
+    Wrapper for performing rollouts in the optimization environment.
+
+    Parameters
+    ----------
+    env : Env
+        The optimization environment.
+    env_params : EnvParams
+        Parameters for the environment.
+    policy_model : eqx.Module
+        Policy model for decision-making.
+
+    Methods
+    -------
+    single_rollout(key_input)
+        Perform a single rollout in the environment.
+    """
+
     def __init__(self, env: Env, env_params: EnvParams,
                  policy_model: eqx.Module):
         self.env = env
@@ -93,6 +111,38 @@ class RolloutWrapper:
 
 
 class RunOptimization(DataGenerator):
+    """
+    Class for running optimization tasks.
+
+    Parameters
+    ----------
+    budget_fn : Callable[[], int]
+        Function to determine the budget for the task.
+    n_realizations : int
+        Number of realizations to run.
+    seed : int
+        Random seed for reproducibility.
+    sampler : Callable
+        Sampler for generating initial parameters.
+    memory_size : int
+        Size of the memory buffer.
+    iteration_stepsize : int, optional
+        Step size for iterations, by default 1.
+    bounded : Optional[Tuple[float, float]], optional
+        Bounds for the optimization, by default (None, None).
+    clear_jax_cache : bool, optional
+        Whether to clear the JAX cache after execution, by default True.
+    verbose : bool, optional
+        Whether to enable verbose logging, by default False.
+
+    Methods
+    -------
+    execute(experiment_sample)
+        Execute the optimization task.
+    run_optimization(experiment_sample, task, schedule)
+        Run the optimization process.
+    """
+
     def __init__(self,
                  budget_fn: Callable[[], int],
                  n_realizations: int,

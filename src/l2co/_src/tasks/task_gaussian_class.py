@@ -19,8 +19,27 @@ from .models import mlp
 
 
 def generate_one_gaussian_dataset(
-    num_gaussians=4,
-        num_samples_per_gaussian=25, dim=2, *, key: jrd.PRNGKey):
+    num_gaussians=4, num_samples_per_gaussian=25, dim=2, *, key: jrd.PRNGKey
+) -> Dict[str, jnp.ndarray]:
+    """
+    Generate a synthetic dataset of Gaussian distributions.
+
+    Parameters
+    ----------
+    num_gaussians : int, optional
+        Number of Gaussian distributions, by default 4.
+    num_samples_per_gaussian : int, optional
+        Number of samples per Gaussian, by default 25.
+    dim : int, optional
+        Dimensionality of the data, by default 2.
+    key : jrd.PRNGKey
+        Random key for reproducibility.
+
+    Returns
+    -------
+    Dict[str, jnp.ndarray]
+        Dictionary containing the generated samples and labels.
+    """
 
     # total_samples = num_gaussians * num_samples_per_gaussian
 
@@ -70,13 +89,34 @@ def save_dataset(dataset: Dict[str, jnp.ndarray], path: str | Path):
 
 
 def create_gaussian_task(
-        seed: int,
-        dataset_path: str,
-        num_gaussians: int,
-        num_samples_per_gaussian: int,
-        dim_points: int,
-        l2_regularization: float,
+    seed: int, dataset_path: str, num_gaussians: int,
+    num_samples_per_gaussian: int,
+    dim_points: int, l2_regularization: float
 ) -> Task:
+    """
+    Create a Gaussian classification task.
+
+    Parameters
+    ----------
+    seed : int
+        Random seed for reproducibility.
+    dataset_path : str
+        Path to save the generated dataset.
+    num_gaussians : int
+        Number of Gaussian distributions.
+    num_samples_per_gaussian : int
+        Number of samples per Gaussian.
+    dim_points : int
+        Dimensionality of the data points.
+    l2_regularization : float
+        L2 regularization parameter for the loss function.
+
+    Returns
+    -------
+    Task
+        The created Gaussian classification task.
+    """
+
     tag = {}
 
     # add the seed to the tags (this is the identifier for the task)

@@ -210,6 +210,24 @@ class DataLoader:
     def to_params(self, t: float,
                   t_start: float = 0.0,
                   t_end: float = 1.0) -> xr.Dataset:
+        """
+        Generate parameters for optimization tasks within a specific 
+        budget range.
+
+        Parameters
+        ----------
+        t : float
+            The budget to select.
+        t_start : float, optional
+            The starting budget, by default 0.0.
+        t_end : float, optional
+            The ending budget, by default 1.0.
+
+        Returns
+        -------
+        xr.Dataset
+            Dataset containing task parameters.
+        """
 
         d_input = self.select_t(t_start=t_start, t=t, select_one_before=True)
         d_output = self.select_t(t_start=t, t=t_end, select_one_before=False)
@@ -279,6 +297,23 @@ class DataLoader:
     def to_all_params(self, window_size: float,
                       budget_size: Optional[int] = None,
                       include_last: bool = False) -> xr.DataTree:
+        """
+        Generate parameters for all tasks over multiple budget windows.
+
+        Parameters
+        ----------
+        window_size : float
+            Size of each budget window.
+        budget_size : Optional[int], optional
+            Total budget size, by default None.
+        include_last : bool, optional
+            Whether to include the last window, by default False.
+
+        Returns
+        -------
+        xr.DataTree
+            DataTree containing parameters for all tasks.
+        """
 
         if budget_size is None:
             budget_size = self.data[BUDGET].size
@@ -319,6 +354,20 @@ class DataLoader:
         )
 
     def to_spreadsheet(self, criteria: Literal['min', 'mean'] = 'min'):
+        """
+        Generate a spreadsheet summarizing optimization results.
+
+        Parameters
+        ----------
+        criteria : {'min', 'mean'}, optional
+            Criteria for summarizing results, by default 'min'.
+
+        Returns
+        -------
+        pd.DataFrame
+            Styled DataFrame for visualization.
+        """
+
         ds = xr.Dataset({TASK_LABELS: self.task_labels,
                          OUTPUT_MIN: self.data[OUTPUT_MIN]})
 
@@ -350,6 +399,20 @@ class DataLoader:
 
     def display_sbs_table(
             self, exclude_optimizer: str | Iterable[str]) -> pd.DataFrame:
+        """
+        Display a table of SBS (Single Best Solver) choices.
+
+        Parameters
+        ----------
+        exclude_optimizer : str or Iterable[str]
+            Optimizers to exclude from the SBS calculation.
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame containing SBS choices.
+        """
+
         sbs = self._calculate_sbs(performance=self.performance,
                                   exclude_optimizer=exclude_optimizer)
         ds = xr.Dataset({'sbs': sbs,
@@ -361,6 +424,14 @@ class DataLoader:
         return pd.concat([df_task_labels, df_sbs], axis=1)
 
     def display_l2co_schedules_table(self) -> pd.DataFrame:
+        """
+        Display a table of L2CO schedules.
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame containing L2CO schedules.
+        """
 
         task_labels_l2co = self.task_labels.groupby(TASK_ID).min().sel(
             {TASK_ID: self.l2co_schedules[TASK_ID]})
@@ -526,6 +597,19 @@ class DataLoader:
 # =============================================================================
 
     def select_itemIDs(self, itemIDs: str | Iterable[str]) -> DataLoader:
+        """
+        Select tasks by their item IDs.
+
+        Parameters
+        ----------
+        itemIDs : str or Iterable[str]
+            Item IDs to select.
+
+        Returns
+        -------
+        DataLoader
+            DataLoader containing selected tasks.
+        """
 
         if len(itemIDs) == 0:
             return deepcopy(self)
@@ -717,17 +801,19 @@ class DataLoader:
     def select_optimizer(self, optimizers: Iterable[str] | str,
                          squash: bool = False) -> DataLoader:
         """
-        Select a specific optimizer.
+        Select specific optimizers.
 
         Parameters
         ----------
-        optimizer : str
-            The optimizer to select.
+        optimizers : Iterable[str] or str
+            Optimizers to select.
+        squash : bool, optional
+            Whether to squash multiple optimizers into one, by default False.
 
         Returns
         -------
         DataLoader
-            The data loader with only the selected optimizer.
+            DataLoader containing selected optimizers.
         """
         if isinstance(optimizers, str):
             optimizers = [optimizers]
@@ -804,6 +890,23 @@ class DataLoader:
             self, max_f_value: int = 2.0, include_best: bool = False,
             exclude_optimizer: Optional[str] = None,
     ) -> xr.DataArray:
+        """
+        Create a performance profile for the given performance data.
+
+        Parameters
+        ----------
+        max_f_value : int, optional
+            Maximum performance ratio, by default 2.0.
+        include_best : bool, optional
+            Whether to include the best optimizer, by default False.
+        exclude_optimizer : str, optional
+            Optimizer to exclude, by default None.
+
+        Returns
+        -------
+        xr.DataArray
+            Performance profile.
+        """
 
         # Trigger performance
         p = self._performance(
@@ -814,6 +917,22 @@ class DataLoader:
 
     def rtd_profile(self, include_best: bool = False,
                     exclude_optimizer: Optional[str] = None,) -> xr.DataArray:
+        """
+        Compute the runtime distribution (RTD) profile.
+
+        Parameters
+        ----------
+        include_best : bool, optional
+            Whether to include the best optimizer, by default False.
+        exclude_optimizer : str, optional
+            Optimizer to exclude, by default None.
+
+        Returns
+        -------
+        xr.DataArray
+            RTD profile.
+        """
+
         p = self._performance(
             include_best=include_best,
             exclude_optimizer=exclude_optimizer)
@@ -851,23 +970,23 @@ class DataLoader:
 # =============================================================================
 
 
-def performance_profile(performance: xr.DataArray, max_f_value: int = 2.0
-                        ) -> xr.DataArray:
+def performance_profile(performance: xr.DataArray, max_f_value: int = 2.0) -> xr.DataArray:
     """
     Create a performance profile for the given performance data.
 
     Parameters
     ----------
-    performance : xarray.DataArray
+    performance : xr.DataArray
         Performance data for optimization problems.
     max_f_value : int, optional
         Maximum performance ratio, by default 2.0.
 
     Returns
     -------
-    xarray.DataArray
+    xr.DataArray
         Performance profile.
     """
+
     p = performance.isel({BUDGET: -1})
     rij = (p + 1.0) / 1.0
 
@@ -891,14 +1010,15 @@ def rtd(performance: xr.DataArray) -> xr.DataArray:
 
     Parameters
     ----------
-    performance : xarray.DataArray
+    performance : xr.DataArray
         Performance data for optimization problems.
 
     Returns
     -------
-    xarray.DataArray
+    xr.DataArray
         RTD profile.
     """
+
     return (1.0-performance).mean(PROBLEM)
 
 # =============================================================================

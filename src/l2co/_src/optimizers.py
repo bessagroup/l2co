@@ -232,6 +232,10 @@ class UpdateClass(eqx.Module):
             length=n_iterations+1
         )
 
+        # Remove first element for dim=0 history
+        history = jax.tree.map(
+            lambda x: x[1:, :], history)
+
         # flatten the first and second dimension of each key in history
         history_flattened = jax.tree.map(
             lambda x: x.reshape((x.shape[0] * x.shape[1],) + x.shape[2:]),

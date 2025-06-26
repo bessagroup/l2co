@@ -268,6 +268,20 @@ MY_FUNCTION_MAPPING = {**CEC_FUNCTIONS, **NAMED_FUNCTIONS}
 
 
 class BenchmarkFuncSampler(Block):
+    """
+    Sampler for benchmark functions.
+
+    Parameters
+    ----------
+    noise_distribution : List[float]
+        Distribution of noise levels for sampling.
+
+    Methods
+    -------
+    call(data, n_samples, seed)
+        Sample benchmark functions based on the given data.
+    """
+
     def __init__(self, noise_distribution: List[float]):
         self.noise_distribution = noise_distribution
 
@@ -304,6 +318,15 @@ class BenchmarkFuncSampler(Block):
 
 
 class CEC2019Sampler(Block):
+    """
+    Sampler for CEC 2019 benchmark functions.
+
+    Methods
+    -------
+    call(data)
+        Generate experiment data for CEC 2019 benchmark functions.
+    """
+
     def __init__(self):
         self.dim_mapping = {
             'F12019': 9,
@@ -319,6 +342,19 @@ class CEC2019Sampler(Block):
         }
 
     def call(self, data: ExperimentData) -> ExperimentData:
+        """
+        Generate experiment data for CEC 2019 benchmark functions.
+
+        Parameters
+        ----------
+        data : ExperimentData
+            Input experiment data.
+
+        Returns
+        -------
+        ExperimentData
+            Experiment data with CEC 2019 benchmark functions.
+        """
         fns = data.domain.input_space['fn_name'].categories
 
         df = pd.DataFrame({
@@ -330,10 +366,34 @@ class CEC2019Sampler(Block):
 
 
 def create_benchmark_task(
-    fn_name: str, seed: int, noise: float,
-        dimensionality: int, offset: bool = True,
-        scale_output: bool = True, grad_noise: float = 0.0) -> Task:
+    fn_name: str, seed: int, noise: float, dimensionality: int,
+    offset: bool = True, scale_output: bool = True, grad_noise: float = 0.0
+) -> Task:
+    """
+    Create a benchmark task for optimization.
 
+    Parameters
+    ----------
+    fn_name : str
+        Name of the benchmark function.
+    seed : int
+        Random seed for reproducibility.
+    noise : float
+        Noise level for the benchmark function.
+    dimensionality : int
+        Dimensionality of the input space.
+    offset : bool, optional
+        Whether to apply an offset to the function, by default True.
+    scale_output : bool, optional
+        Whether to scale the output, by default True.
+    grad_noise : float, optional
+        Gradient noise level, by default 0.0.
+
+    Returns
+    -------
+    Task
+        The created benchmark task.
+    """
     pass_rng = True if noise > 0.0 else False
 
     model, loss_fn, tag = create_benchmark_loss_function(

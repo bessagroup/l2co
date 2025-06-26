@@ -131,6 +131,18 @@ experiment_single_optimizer_widget.param.watch(update_l2co_files, 'value')
 
 
 def load_dataloader(event=None):
+    """
+    Load the DataLoader for the selected experiment.
+
+    Parameters
+    ----------
+    event : optional
+        Event triggered by the UI interaction, by default None.
+
+    Returns
+    -------
+    None
+    """
     global dataloader
     global optimizer_color_map
     status_message.object = "🔄 Loading..."
@@ -209,6 +221,13 @@ def retrieve_task_df_individual():
 
 
 def generate_spreadsheet(event=None):
+    """
+    Generate a spreadsheet summarizing the optimization results.
+
+    Returns
+    -------
+    None
+    """
     global dataloader
 
     if dataloader is None:

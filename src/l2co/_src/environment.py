@@ -90,7 +90,6 @@ class Env():
         return obs, state
 
     @partial(jax.jit, static_argnames=("self", "params",))
-    @eqx.debug.assert_max_traces(max_traces=100)
     def step(self, key: jax.Array, state: EnvState, action: int,
              params: EnvParams):
         # Step
@@ -108,6 +107,21 @@ class Env():
 
     def reset_env(self, key: jax.Array,
                   params: EnvParams) -> Tuple[jax.Array, EnvState]:
+        """
+        Reset the environment to its initial state.
+
+        Parameters
+        ----------
+        key : jax.Array
+            Random key for reproducibility.
+        params : EnvParams
+            Parameters for the environment.
+
+        Returns
+        -------
+        Tuple[jax.Array, EnvState]
+            Initial observation and environment state.
+        """
         model_params, _ = eqx.partition(
             params.task.model, eqx.is_inexact_array)
 
@@ -120,7 +134,16 @@ class Env():
         update_state = new(update_state=update_state,
                            task=params.task, sampler=params.sampler)
 
-        history_state = HistoryState.init(n_iterations=params.total_iterations)
+        history_state = HistoryState.init(
+            n_iterations=params.total_iterations+1)
+
+        # Add initial state to history
+        history_state = history_state.add({
+            'loss': jax.tree.map(
+                lambda x: jnp.expand_dims(x, (0, 1)), update_state.best_loss),
+            'update_step': jax.tree.map(
+                lambda x: jnp.expand_dims(x, (0, 1)), update_state.last_step),
+        })
 
         opt_states = tuple(opt.init(update_state) for opt in params.optimizers)
 
@@ -145,9 +168,27 @@ class Env():
         )
 
     def step_env(
-            self, key: jax.Array, state: EnvState,
-            action: int, params: EnvParams
+        self, key: jax.Array, state: EnvState, action: int, params: EnvParams
     ) -> Tuple[jax.Array, EnvState, jax.Array, jax.Array, dict[Any, Any]]:
+        """
+        Perform a single step in the environment.
+
+        Parameters
+        ----------
+        key : jax.Array
+            Random key for reproducibility.
+        state : EnvState
+            Current state of the environment.
+        action : int
+            Action to perform.
+        params : EnvParams
+            Parameters for the environment.
+
+        Returns
+        -------
+        Tuple[jax.Array, EnvState, jax.Array, jax.Array, dict[Any, Any]]
+            Observation, updated state, reward, done flag, and additional info.
+        """
 
         # === Static dispatch via lax.switch === #
         def make_branch(optim: UpdateClass):

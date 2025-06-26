@@ -1,4 +1,3 @@
-
 from typing import Any, Callable, Dict, List, Tuple
 
 import equinox as eqx
@@ -54,6 +53,29 @@ def rnn(in_size: int, out_size: int, hidden_size: int, *, key
 
 
 class MLP(eqx.Module):
+    """
+    Multi-Layer Perceptron (MLP) model.
+
+    Parameters
+    ----------
+    in_size : int
+        Input size of the MLP.
+    out_size : int
+        Output size of the MLP.
+    hidden_size : int
+        Size of the hidden layers.
+    num_layers : int
+        Number of layers in the MLP.
+    hidden_activation : Callable, optional
+        Activation function for hidden layers, by default jax.nn.tanh.
+    output_activation : Callable, optional
+        Activation function for the output layer, by default identity.
+
+    Methods
+    -------
+    __call__(x)
+        Forward pass of the MLP.
+    """
     layers: List[eqx.nn.Linear]
     hidden_activation: Callable[[jnp.ndarray],
                                 jnp.ndarray] = eqx.field(static=True)
@@ -85,10 +107,37 @@ class MLP(eqx.Module):
         return self.output_activation(self.layers[-1](x))
 
 
-def mlp(in_size: int, out_size: int, hidden_size: int, num_layers: int,
-        hidden_activation: Callable = jax.nn.tanh,
-        output_activation: Callable = lambda x: x,  # Identity function
-        *, key) -> Tuple[eqx.Module, Dict[str, Any]]:
+def mlp(
+    in_size: int, out_size: int, hidden_size: int, num_layers: int,
+    hidden_activation: Callable = jax.nn.tanh,
+    output_activation: Callable = lambda x: x,
+    *, key
+) -> Tuple[eqx.Module, Dict[str, Any]]:
+    """
+    Create an MLP model.
+
+    Parameters
+    ----------
+    in_size : int
+        Input size of the MLP.
+    out_size : int
+        Output size of the MLP.
+    hidden_size : int
+        Size of the hidden layers.
+    num_layers : int
+        Number of layers in the MLP.
+    hidden_activation : Callable, optional
+        Activation function for hidden layers, by default jax.nn.tanh.
+    output_activation : Callable, optional
+        Activation function for the output layer, by default identity.
+    key : jax.random.PRNGKey
+        Random key for initializing the model.
+
+    Returns
+    -------
+    Tuple[eqx.Module, Dict[str, Any]]
+        The MLP model and its metadata.
+    """
     return (MLP(in_size, out_size, hidden_size, num_layers,
                 hidden_activation=hidden_activation,
                 output_activation=output_activation,

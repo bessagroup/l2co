@@ -14,6 +14,9 @@ import jax
 import jax.numpy as jnp
 import xarray as xr
 
+from .naming import (BUDGET, OUTPUT_DIM, OUTPUT_MEAN, OUTPUT_MIN, OUTPUT_STD,
+                     REALIZATION, UPDATE_STEP)
+
 #                                                          Authorship & Credits
 # =============================================================================
 __author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
@@ -58,33 +61,32 @@ class HistoryState(eqx.Module):
         )
 
     def to_xarray(self) -> xr.Dataset:
-        budget_coord = xr.DataArray(
-            jnp.arange(self.output_min.shape[0]), dims=['budget'])
 
-        output_min = xr.DataArray(self.output_min, dims=['budget'], coords={
-                                  'budget': budget_coord})
-        output_mean = xr.DataArray(self.output_mean, dims=[
-                                   'budget'], coords={'budget': budget_coord})
-        output_std = xr.DataArray(self.output_std, dims=['budget'], coords={
-                                  'budget': budget_coord})
-        update_step = xr.DataArray(self.update_step, dims=[
-                                   'budget'], coords={'budget': budget_coord})
+        output_min = xr.DataArray(self.output_min, dims=[BUDGET])
+        output_mean = xr.DataArray(self.output_mean, dims=[BUDGET])
+        output_std = xr.DataArray(self.output_std, dims=[BUDGET])
+        update_step = xr.DataArray(self.update_step, dims=[BUDGET])
 
-        return xr.Dataset({
-            'output_min': output_min,
-            'output_mean': output_mean,
-            'output_std': output_std,
-            'update_step': update_step
+        ds = xr.Dataset({
+            OUTPUT_MIN: output_min,
+            OUTPUT_MEAN: output_mean,
+            OUTPUT_STD: output_std,
+            UPDATE_STEP: update_step
         })
+
+        return ds.expand_dims({OUTPUT_DIM: ['y']})
 
     def to_xarray_realizations(self) -> xr.Dataset:
         arrs = []
+        n_realizations = self.output_min.shape[0]
 
-        for realization in range(self.output_min.shape[0]):
+        for realization in range(n_realizations):
             new_history = jax.tree.map(
                 lambda x: x[realization, :],
                 self,
             )
             arrs.append(new_history.to_xarray())
 
-        return xr.concat(arrs, dim='realization')
+        return xr.concat(arrs,
+                         dim=xr.DataArray(range(n_realizations),
+                                          dims=[REALIZATION],))

@@ -1,6 +1,7 @@
 """
 Plotting module
 
+
 Functions
 ---------
 set_size

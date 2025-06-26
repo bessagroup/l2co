@@ -34,10 +34,42 @@ __status__ = 'Stable'
 def combined_loss(params, loss_fn,
                   static: PyTree,
                   **rng_sample: dict) -> jax.Array:
+    """
+    Compute the combined loss for a given set of parameters.
+
+    Parameters
+    ----------
+    params : PyTree
+        The parameters to evaluate the loss for.
+    loss_fn : Callable
+        The loss function to compute the loss.
+    static : PyTree
+        Static parameters to combine with the input parameters.
+    rng_sample : dict
+        Random samples used in the loss computation.
+
+    Returns
+    -------
+    jax.Array
+        The computed loss.
+    """
     return loss_fn(eqx.combine(params, static), **rng_sample)
 
 
 def replace_nans_with_max_or_one(x: jax.Array) -> jax.Array:
+    """
+    Replace NaN values in the array with the maximum value or 1.0.
+
+    Parameters
+    ----------
+    x : jax.Array
+        Input array with potential NaN values.
+
+    Returns
+    -------
+    jax.Array
+        Array with NaN values replaced.
+    """
     is_nan = jnp.isnan(x)
     non_nan_vals = jnp.where(is_nan, -jnp.inf, x)
     max_val = jnp.max(non_nan_vals)
@@ -46,6 +78,19 @@ def replace_nans_with_max_or_one(x: jax.Array) -> jax.Array:
 
 
 def log_stabilized_minmax_scale(x: jax.Array) -> jax.Array:
+    """
+    Apply log-stabilized min-max scaling to the input array.
+
+    Parameters
+    ----------
+    x : jax.Array
+        Input array to scale.
+
+    Returns
+    -------
+    jax.Array
+        Scaled array.
+    """
     p = x - jnp.min(x)
     eps = jnp.min(jnp.where(p > 0.0, p, jnp.max(p) + EPSILON)) + EPSILON
     x_log10 = jnp.log10(p + eps)
@@ -55,10 +100,36 @@ def log_stabilized_minmax_scale(x: jax.Array) -> jax.Array:
 
 
 def output_cummin(x: jax.Array) -> jax.Array:
+    """
+    Compute the cumulative minimum along the first axis.
+
+    Parameters
+    ----------
+    x : jax.Array
+        Input array.
+
+    Returns
+    -------
+    jax.Array
+        Array with cumulative minimum values.
+    """
     return jax.lax.cummin(x, axis=0)
 
 
 def staircase(x: jax.Array) -> jnp.ndarray:
+    """
+    Generate a staircase representation of the input array.
+
+    Parameters
+    ----------
+    x : jax.Array
+        Input array.
+
+    Returns
+    -------
+    jnp.ndarray
+        Staircase-transformed array.
+    """
     x = replace_nans_with_max_or_one(x)
     x = output_cummin(x)
     x = log_stabilized_minmax_scale(x)
@@ -66,12 +137,40 @@ def staircase(x: jax.Array) -> jnp.ndarray:
 
 
 def trajectory(x: jax.Array) -> jnp.ndarray:
+    """
+    Generate a trajectory representation of the input array.
+
+    Parameters
+    ----------
+    x : jax.Array
+        Input array.
+
+    Returns
+    -------
+    jnp.ndarray
+        Trajectory-transformed array.
+    """
     x = replace_nans_with_max_or_one(x)
     x = log_stabilized_minmax_scale(x)
     return x
 
 
 def get_best(params: PyTree, losses: jax.Array):
+    """
+    Retrieve the best parameters and corresponding loss.
+
+    Parameters
+    ----------
+    params : PyTree
+        Parameter tree with shape (n_iters * popsize, dim).
+    losses : jax.Array
+        Loss array with shape (n_iters * popsize, 1).
+
+    Returns
+    -------
+    Tuple[PyTree, jax.Array]
+        Best parameters and corresponding loss.
+    """
     # params: shape = (n_iters*popsize, dim)
     # losses: shape = (n_iters*popsize, 1)
     idx = jnp.argmin(losses)
@@ -81,6 +180,23 @@ def get_best(params: PyTree, losses: jax.Array):
 
 
 def tree_where(pred, true, false):
+    """
+    Apply a conditional operation to a PyTree.
+
+    Parameters
+    ----------
+    pred : jax.Array
+        Boolean array for the condition.
+    true : PyTree
+        PyTree to use when the condition is True.
+    false : PyTree
+        PyTree to use when the condition is False.
+
+    Returns
+    -------
+    PyTree
+        Resulting PyTree after applying the condition.
+    """
     def keep(a, b):
         return jnp.where(pred, a, b)
     return jax.tree.map(keep, true, false)

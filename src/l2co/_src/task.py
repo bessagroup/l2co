@@ -89,6 +89,32 @@ TagDict = Dict[str, Any]
 
 
 class Task:
+    """
+    Represents an optimization task.
+
+    Parameters
+    ----------
+    model : PyTree
+        The model used for the task.
+    loss_fn : Callable
+        The loss function for the task.
+    pass_rng : bool, optional
+        Whether to pass a random key to the loss function, by default False.
+    dataset : Optional[DatasetDict], optional
+        Dataset information, by default None.
+    has_aux : bool, optional
+        Whether the loss function returns auxiliary outputs, by default False.
+    tag : Optional[Dict[str, Any]], optional
+        Metadata tags for the task, by default None.
+
+    Methods
+    -------
+    save_to_json(filepath)
+        Save the task to a JSON file.
+    to_dict(path)
+        Convert the task to a dictionary representation.
+    """
+
     def __init__(
         self,
         model: PyTree,
@@ -233,6 +259,19 @@ class Task:
 
     @classmethod
     def load(cls, filepath: str) -> Task:
+        """
+        Load a task from a JSON file.
+
+        Parameters
+        ----------
+        filepath : str
+            Path to the JSON file.
+
+        Returns
+        -------
+        Task
+            The loaded task.
+        """
         with open(filepath, 'r') as f:
             data = json.load(f)
         return cls.from_dict(data, filepath)
