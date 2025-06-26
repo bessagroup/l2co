@@ -6,9 +6,7 @@ Submodule with sampling strategies
 # =============================================================================
 
 # Local
-
-from ._src.sampler import (GridWeightSampler, NormalWeightSampler,
-                           RandomWeightSampler, XavierNormalWeightSampler)
+from ._src.sampler import random_sampling
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -20,8 +18,5 @@ __status__ = 'Planning'
 # =============================================================================
 
 __all__ = [
-    "RandomWeightSampler",
-    "NormalWeightSampler",
-    "GridWeightSampler",
-    "XavierNormalWeightSampler",
+    "random_sampling",
 ]

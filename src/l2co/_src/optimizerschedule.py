@@ -1,6 +1,14 @@
-from __future__ import annotations
+"""
+Module for optimizer schedules.
+"""
+
+#                                                                       Modules
+# =============================================================================
+
 
 # Standard
+from __future__ import annotations
+
 import hashlib
 import json
 from copy import deepcopy
@@ -8,8 +16,15 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional
 
 # Third-party
+import jax
+import jax.numpy as jnp
 import numpy as np
 
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Stable'
 # =============================================================================
 
 
@@ -178,6 +193,19 @@ class OptimizationSchedule:
             'steps': [step.to_dict() for step in self.steps],
             'budgets': self.budgets,
         }
+
+    def to_policy(schedule: OptimizationSchedule):
+
+        budgets = jnp.array(schedule.budgets)
+        n = budgets.size
+        logits = jnp.where(jnp.eye(n, dtype=bool), jnp.inf, -jnp.inf)
+        cum_budgets = jnp.cumsum(budgets)
+
+        def policy_fn(obs: jax.Array, time: float) -> jax.Array:
+            which = jnp.sum(time >= cum_budgets)
+            return jax.lax.dynamic_index_in_dim(logits, which)
+
+        return policy_fn
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> OptimizationSchedule:

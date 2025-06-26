@@ -13,6 +13,7 @@ plot_perf_profile
 #                                                                       Modules
 # =============================================================================
 
+# Standard
 import math
 from typing import Iterable, List, Optional, Tuple
 
@@ -25,15 +26,12 @@ from f3dasm.design import Domain
 from matplotlib.colors import LinearSegmentedColormap, LogNorm, SymLogNorm
 from scipy.interpolate import griddata
 
-from l2co._src.optimizers import EvaluateModel
-from l2co._src.sampler import GridWeightSampler
-from l2co._src.tree_utils import experimentdata_to_xarray
-
 # Local
 from .data_loader import DataLoader, OptimizationDynamics
 from .naming import (BUDGET, INPUT_DIM, OUTPUT_DIM, PROBLEM, REALIZATION,
                      SCHEDULE)
 from .task import Task
+from .tree_utils import experimentdata_to_xarray
 
 #                                                          Authorship & Credits
 # =============================================================================

@@ -1,6 +1,13 @@
-from __future__ import annotations
+"""
+Module for creating the L2CO model.
+"""
+
+#                                                                       Modules
+# =============================================================================
 
 # Standard
+from __future__ import annotations
+
 import json
 from collections import defaultdict
 from pathlib import Path
@@ -27,6 +34,11 @@ from .data_loader import DataLoader, OptimizationDynamics
 from .optimizerschedule import OptimizationSchedule, OptimizationStep
 from .preprocessing import DataFrameColumnTransformer, EnsureColumnsTransformer
 
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Stable'
 # =============================================================================
 
 

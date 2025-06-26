@@ -1,12 +1,26 @@
+"""
+Module for validating optimization datasets.
+"""
+
+#                                                                       Modules
+# =============================================================================
+
+# Local
 from numbers import Integral, Real
 
+# Third-party
 import numpy as np
 import xarray as xr
 
-from l2co._src.optimizerschedule import step_n_iterations
-
+# Local
 from .naming import BUDGET, OUTPUT_MEAN, OUTPUT_MIN, OUTPUT_STD, UPDATE_STEP
+from .optimizerschedule import step_n_iterations
 
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Stable'
 # =============================================================================
 
 BUDGET_STEPS = 1000

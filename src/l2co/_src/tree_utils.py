@@ -1,8 +1,16 @@
+"""
+Module for pytree utilities.
+"""
+
+#                                                                       Modules
+# =============================================================================
+
 # Standard
 import json
 from typing import List
 
 # Third-party
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as onp
@@ -13,8 +21,69 @@ from jaxtyping import PyTree
 # Local
 from .naming import BUDGET, INPUT_DIM, OUTPUT_DIM, UPDATE_STEP
 from .optimizerschedule import OptimizationSchedule
+from .performance import EPSILON
 
+#                                                          Authorship & Credits
 # =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Stable'
+# =============================================================================
+
+
+def combined_loss(params, loss_fn,
+                  static: PyTree,
+                  **rng_sample: dict) -> jax.Array:
+    return loss_fn(eqx.combine(params, static), **rng_sample)
+
+
+def replace_nans_with_max_or_one(x: jax.Array) -> jax.Array:
+    is_nan = jnp.isnan(x)
+    non_nan_vals = jnp.where(is_nan, -jnp.inf, x)
+    max_val = jnp.max(non_nan_vals)
+    max_val = jnp.where(jnp.isneginf(max_val), 1.0, max_val)
+    return jnp.where(is_nan, max_val, x)
+
+
+def log_stabilized_minmax_scale(x: jax.Array) -> jax.Array:
+    p = x - jnp.min(x)
+    eps = jnp.min(jnp.where(p > 0.0, p, jnp.max(p) + EPSILON)) + EPSILON
+    x_log10 = jnp.log10(p + eps)
+    x_min = jnp.min(x_log10)
+    x_max = jnp.max(x_log10)
+    return (x_log10 - x_min) / (x_max - x_min + EPSILON)
+
+
+def output_cummin(x: jax.Array) -> jax.Array:
+    return jax.lax.cummin(x, axis=0)
+
+
+def staircase(x: jax.Array) -> jnp.ndarray:
+    x = replace_nans_with_max_or_one(x)
+    x = output_cummin(x)
+    x = log_stabilized_minmax_scale(x)
+    return x
+
+
+def trajectory(x: jax.Array) -> jnp.ndarray:
+    x = replace_nans_with_max_or_one(x)
+    x = log_stabilized_minmax_scale(x)
+    return x
+
+
+def get_best(params: PyTree, losses: jax.Array):
+    # params: shape = (n_iters*popsize, dim)
+    # losses: shape = (n_iters*popsize, 1)
+    idx = jnp.argmin(losses)
+    best_params = jax.tree.map(lambda x: x[idx][None], params)
+    best_loss = losses[idx]
+    return best_params, best_loss
+
+
+def tree_where(pred, true, false):
+    def keep(a, b):
+        return jnp.where(pred, a, b)
+    return jax.tree.map(keep, true, false)
 
 
 def experimentdata_to_xarray(data: ExperimentData,

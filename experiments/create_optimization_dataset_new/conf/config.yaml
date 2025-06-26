@@ -6,6 +6,8 @@ defaults:
 - optimizers: standard
 
 n_realizations: 1
+memory_size: 20
+iteration_stepsize: 100
 
 seed: 467
 mode: mpi

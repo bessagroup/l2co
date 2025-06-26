@@ -1,3 +1,18 @@
+"""
+Module for naming conventions and constants used in the L2CO package.
+"""
+
+#                                                                       Modules
+# =============================================================================
+
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Stable'
+# =============================================================================
+
+
 # Dimensions and coordinates
 PROBLEM = 'problem'
 OUTPUT_DIM = 'output_dim'

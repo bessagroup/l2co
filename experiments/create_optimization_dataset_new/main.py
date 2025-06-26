@@ -194,23 +194,18 @@ def process(config: DictConfig):
         bounded = (config.tasks.bounded.lower_bound,
                    config.tasks.bounded.upper_bound)
     else:
-        bounded = None
-
-    if 'track_params' in config.schedules:
-        track_params = config.schedules.track_params
-    else:
-        track_params = False
+        bounded = (None, None)
 
     run_opt = RunOptimization(
         budget_fn=instantiate(config.budgets),
         n_realizations=config.n_realizations,
-        partition_factor=config.schedules.partition_factor,
         seed=int(config.seed),
+        sampler=instantiate(config.samplers),
+        memory_size=config.memory_size,
+        iteration_stepsize=config.iteration_stepsize,
         bounded=bounded,
-        include_input=config.include_input,
         clear_jax_cache=True,
         verbose=config.verbose,
-        track_params=track_params,
     )
 
     if config.project_job is None:

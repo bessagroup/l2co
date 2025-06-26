@@ -1,3 +1,10 @@
+"""
+Module for batching data for optimization processes
+"""
+
+#                                                                       Modules
+# =============================================================================
+
 # Standard
 import math
 from typing import Dict, Iterator, Optional
@@ -7,6 +14,11 @@ import grain.python as grain
 import jax.numpy as jnp
 import jax.tree_util as jtu
 
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Stable'
 # =============================================================================
 
 

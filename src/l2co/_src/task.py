@@ -1,6 +1,13 @@
-from __future__ import annotations
+"""
+Module for the task abstraction.
+"""
+
+#                                                                       Modules
+# =============================================================================
 
 # Standard
+from __future__ import annotations
+
 import hashlib
 import json
 from pathlib import Path
@@ -13,6 +20,11 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 from jaxtyping import PyTree
 
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Stable'
 # =============================================================================
 
 
@@ -55,6 +67,7 @@ def load_model(model_path: str, shape_path: str) -> eqx.Module:
 
 
 def load_jnparray(path: str | Path) -> jnp.ndarray:
+    # TODO: investigate this flatten behaviour
     return jnp.load(Path(path)).flatten()
 
 

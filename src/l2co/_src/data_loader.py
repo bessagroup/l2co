@@ -38,7 +38,6 @@ from scipy.linalg import svd
 from sklearn.model_selection import train_test_split
 
 # Local
-# from .latent_space import fit_basis_function, fit_gpr
 from .naming import (BATCH, BUDGET, FEATURE, OPT_CHOICE, OPT_HISTORY,
                      OUTPUT_DIM, OUTPUT_MEAN, OUTPUT_MIN, PERFORMANCE, PROBLEM,
                      REALIZATION, SCHEDULE, STAIRCASE, TASK_ID, TASK_LABELS,

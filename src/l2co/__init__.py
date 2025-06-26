@@ -44,7 +44,7 @@ __all__ = [
     "OptimizationSchedule",
     "OptimizationStep",
     "OptimizationDynamics",
-    "RunOptimization",
     "Task",
     "L2CO_model",
+    "RunOptimization",
 ]
