@@ -9,6 +9,7 @@ Module for creating the L2CO model.
 from __future__ import annotations
 
 import json
+from abc import abstractmethod
 from collections import defaultdict
 from pathlib import Path
 from typing import Callable, Dict, Iterable
@@ -81,7 +82,42 @@ class LSTM_Encoder(eqx.Module):
         return h
 
 
-class MyModel(eqx.Module):
+class L2CO_model(eqx.Module):
+    optimizers: eqx.AbstractVar[Iterable[OptimizationStep]] = eqx.field(
+        static=True)
+
+    @abstractmethod
+    def __call__(self, x: jax.Array, t: int) -> jax.Array:
+        raise NotImplementedError
+
+    def save(self, path: str) -> None:
+        _path = Path(path)
+
+        _path.mkdir(parents=True, exist_ok=True)
+
+        model_shape = eqx.filter_eval_shape(lambda x: self, None)
+
+        # Model static parameters
+        with open(_path.with_suffix('.pkl'), 'wb') as f:
+            cloudpickle.dump(model_shape, f)
+
+        # Model dynamic params
+        eqx.tree_serialise_leaves(
+            _path.with_suffix('.eqx'), self)
+
+    @classmethod
+    def load(cls, path: str) -> L2CO_model:
+        _path = Path(path)
+
+        with open(str(_path) + '.pkl', 'rb') as f:
+            model_shape = cloudpickle.load(f)
+
+        return eqx.tree_deserialise_leaves(
+            str(_path) + '.eqx',
+            like=model_shape)
+
+
+class MyModel(L2CO_model):
     """
     Custom model combining an LSTM encoder and an MLP.
 
@@ -110,12 +146,16 @@ class MyModel(eqx.Module):
 
     lstm_layer: eqx.Module
     mlp_layer: eqx.Module
+    optimizers: Iterable[OptimizationStep] = eqx.field(static=True)
 
-    def __init__(self, in_size: int, out_size: int, hidden_size: int,
+    def __init__(self, optimizers: Iterable[OptimizationStep], in_size: int,
+                 out_size: int, hidden_size: int,
                  width_size: int, depth: int, *,
                  activation: Callable,
                  final_activation: Callable, key: jax.Array):
+        self.optimizers = optimizers
         lstm_key, mlp_key = jr.split(key)
+
         self.lstm_layer = LSTM_Encoder(
             in_size=in_size, hidden_size=hidden_size, key=lstm_key)
         self.mlp_layer = eqx.nn.MLP(
@@ -124,18 +164,33 @@ class MyModel(eqx.Module):
             width_size=width_size,
             depth=depth,
             key=mlp_key,
-            # activation=jnn.relu,
             activation=activation,
-            # final_activation=jnn.sigmoid,
             final_activation=final_activation,
         )
 
-    def __call__(self, x: jax.Array) -> jax.Array:
+    def __call__(self, x: jax.Array, t: int) -> jax.Array:
         x = self.lstm_layer(x)
         x = self.mlp_layer(x)
         return x
 
-# =============================================================================
+
+class RandomModel(L2CO_model):
+    def __init__(self, optimizers: Iterable[OptimizationStep]):
+        """
+        Random model that returns zeros logits that result in
+        random selections.
+
+        Parameters
+        ----------
+        optimizers : Iterable[OptimizationStep]
+            List of optimization steps.
+        """
+        self.optimizers = optimizers
+
+    def __call__(self, x: jax.Array, t: int) -> jax.Array:
+        return jnp.zeros((len(self.optimizers),))
+
+        # =============================================================================
 
 
 @eqx.filter_jit
@@ -283,204 +338,204 @@ def predict_stage0_model(model: Pipeline, x: pd.DataFrame) -> jnp.ndarray:
 # =============================================================================
 
 
-class L2CO_model:
-    """
-    L2CO model combining stage 0 and stage 1 models.
+# class L2CO_model:
+#     """
+#     L2CO model combining stage 0 and stage 1 models.
 
-    Parameters
-    ----------
-    stage0_model : sklearn.pipeline.Pipeline
-        Stage 0 model pipeline.
-    stage1_models : dict
-        Dictionary of stage 1 models.
-    opt_steps : Iterable[OptimizationStep], optional
-        Optimization steps, by default None.
+#     Parameters
+#     ----------
+#     stage0_model : sklearn.pipeline.Pipeline
+#         Stage 0 model pipeline.
+#     stage1_models : dict
+#         Dictionary of stage 1 models.
+#     opt_steps : Iterable[OptimizationStep], optional
+#         Optimization steps, by default None.
 
-    Attributes
-    ----------
-    stage0_model : sklearn.pipeline.Pipeline
-        Stage 0 model pipeline.
-    stage1_models : dict
-        Dictionary of stage 1 models.
-    opt_steps : Iterable[OptimizationStep]
-        Optimization steps.
-    """
+#     Attributes
+#     ----------
+#     stage0_model : sklearn.pipeline.Pipeline
+#         Stage 0 model pipeline.
+#     stage1_models : dict
+#         Dictionary of stage 1 models.
+#     opt_steps : Iterable[OptimizationStep]
+#         Optimization steps.
+#     """
 
-    def __init__(self,
-                 stage0_model: Pipeline,
-                 stage1_models: Dict[str, eqx.Module],
-                 opt_steps: Iterable[OptimizationStep] = None):
-        self.stage0_model = stage0_model
-        self.stage1_models = stage1_models
-        self.opt_steps = opt_steps
+#     def __init__(self,
+#                  stage0_model: Pipeline,
+#                  stage1_models: Dict[str, eqx.Module],
+#                  opt_steps: Iterable[OptimizationStep] = None):
+#         self.stage0_model = stage0_model
+#         self.stage1_models = stage1_models
+#         self.opt_steps = opt_steps
 
-    @classmethod
-    def init(
-        cls, stage0_model: BaseEstimator, stage1_model_class: eqx.Module,
-        feature_types: Dict[str, str]
-    ):
+#     @classmethod
+#     def init(
+#         cls, stage0_model: BaseEstimator, stage1_model_class: eqx.Module,
+#         feature_types: Dict[str, str]
+#     ):
 
-        # Stage0 model initialization
-        stage0_model = make_pipeline(
-            EnsureColumnsTransformer(),
-            DataFrameColumnTransformer(feature_types),
-            MultiOutputRegressor(stage0_model)
-        )
+#         # Stage0 model initialization
+#         stage0_model = make_pipeline(
+#             EnsureColumnsTransformer(),
+#             DataFrameColumnTransformer(feature_types),
+#             MultiOutputRegressor(stage0_model)
+#         )
 
-        # Stage1 model initialization
-        stage1_models: Dict[str, eqx.Module] = defaultdict(
-            stage1_model_class)
+#         # Stage1 model initialization
+#         stage1_models: Dict[str, eqx.Module] = defaultdict(
+#             stage1_model_class)
 
-        return cls(stage0_model=stage0_model,
-                   stage1_models=stage1_models)
+#         return cls(stage0_model=stage0_model,
+#                    stage1_models=stage1_models)
 
-    def train(self, dynamics_dict: Dict[str, OptimizationDynamics],
-              opt_steps: Iterable[OptimizationStep],
-              optimizer: optax.GradientTransformation,
-              epochs: int):
+#     def train(self, dynamics_dict: Dict[str, OptimizationDynamics],
+#               opt_steps: Iterable[OptimizationStep],
+#               optimizer: optax.GradientTransformation,
+#               epochs: int):
 
-        self.opt_steps = opt_steps
+#         self.opt_steps = opt_steps
 
-        for dynamics in dynamics_dict.values():
-            if dynamics.previous_step is None:
-                train_stage0_model(model=self.stage0_model,
-                                   x=dynamics.X_features, y=dynamics.Y)
+#         for dynamics in dynamics_dict.values():
+#             if dynamics.previous_step is None:
+#                 train_stage0_model(model=self.stage0_model,
+#                                    x=dynamics.X_features, y=dynamics.Y)
 
-            else:
-                trained_model, _ = train_stage1_model(
-                    model=self.stage1_models[dynamics.previous_step],
-                    data={'x': dynamics.X_trajectory, 'y': dynamics.Y},
-                    loss_fn=mse_loss,
-                    epochs=epochs,
-                    optimizer=optimizer)
+#             else:
+#                 trained_model, _ = train_stage1_model(
+#                     model=self.stage1_models[dynamics.previous_step],
+#                     data={'x': dynamics.X_trajectory, 'y': dynamics.Y},
+#                     loss_fn=mse_loss,
+#                     epochs=epochs,
+#                     optimizer=optimizer)
 
-                self.stage1_models[dynamics.previous_step] = trained_model
+#                 self.stage1_models[dynamics.previous_step] = trained_model
 
-    def predict(self, dynamics: OptimizationDynamics
-                ) -> Iterable[OptimizationStep]:
-        if dynamics.previous_step is None:
-            y_hat = predict_stage0_model(model=self.stage0_model,
-                                         x=dynamics.X_features)
-        else:
-            y_hat = predict_stage1_model(
-                model=self.stage1_models[dynamics.previous_step],
-                data={'x': dynamics.X_trajectory}
-            )
+#     def predict(self, dynamics: OptimizationDynamics
+#                 ) -> Iterable[OptimizationStep]:
+#         if dynamics.previous_step is None:
+#             y_hat = predict_stage0_model(model=self.stage0_model,
+#                                          x=dynamics.X_features)
+#         else:
+#             y_hat = predict_stage1_model(
+#                 model=self.stage1_models[dynamics.previous_step],
+#                 data={'x': dynamics.X_trajectory}
+#             )
 
-        # Couple the integer prediction to the optimization step
-        return [self.opt_steps[i] for i in y_hat]
+#         # Couple the integer prediction to the optimization step
+#         return [self.opt_steps[i] for i in y_hat]
 
-    def predict_from_dataloader(self,
-                                d: DataLoader, t: int,
-                                t_start: int = 0.0, t_end: int = 1.0):
-        dyn_first = OptimizationDynamics.from_data(
-            d.to_params(t_start=t_start, t=t, t_end=t_end))
+#     def predict_from_dataloader(self,
+#                                 d: DataLoader, t: int,
+#                                 t_start: int = 0.0, t_end: int = 1.0):
+#         dyn_first = OptimizationDynamics.from_data(
+#             d.to_params(t_start=t_start, t=t, t_end=t_end))
 
-        predict_stage0: Iterable[OptimizationStep] = self.predict(
-            dyn_first)
+#         predict_stage0: Iterable[OptimizationStep] = self.predict(
+#             dyn_first)
 
-        pr_0 = xr.DataArray(
-            [p.name for p in predict_stage0], dims='problem', coords={
-                'itemID': dyn_first.data['itemID']})
+#         pr_0 = xr.DataArray(
+#             [p.name for p in predict_stage0], dims='problem', coords={
+#                 'itemID': dyn_first.data['itemID']})
 
-        pr_1_list = []
+#         pr_1_list = []
 
-        for pr_0_opt in np.unique(pr_0):
-            filtered_steps = filter(
-                lambda step: step.name == pr_0_opt, predict_stage0)
-            problems = pr_0.where(pr_0 == pr_0_opt, drop=True).problem
+#         for pr_0_opt in np.unique(pr_0):
+#             filtered_steps = filter(
+#                 lambda step: step.name == pr_0_opt, predict_stage0)
+#             problems = pr_0.where(pr_0 == pr_0_opt, drop=True).problem
 
-            dyn_second = OptimizationDynamics.from_data(
-                d
-                .query_optimizer(pr_0_opt)
-                .select_problems(problems)
-                .to_params(
-                    t_start=t_start, t=t, t_end=t_end, optimizer=pr_0_opt),
-                previous_step=pr_0_opt)
+#             dyn_second = OptimizationDynamics.from_data(
+#                 d
+#                 .query_optimizer(pr_0_opt)
+#                 .select_problems(problems)
+#                 .to_params(
+#                     t_start=t_start, t=t, t_end=t_end, optimizer=pr_0_opt),
+#                 previous_step=pr_0_opt)
 
-            predict_stage1: Iterable[OptimizationStep] = self.predict(
-                dyn_second)
+#             predict_stage1: Iterable[OptimizationStep] = self.predict(
+#                 dyn_second)
 
-            schedules = [OptimizationSchedule(steps=[opt1, opt2],
-                                              budgets=[t, t_end-t])
-                         for opt1, opt2 in zip(filtered_steps, predict_stage1)]
+#             schedules = [OptimizationSchedule(steps=[opt1, opt2],
+#                                               budgets=[t, t_end-t])
+#                          for opt1, opt2 in zip(filtered_steps, predict_stage1)]
 
-            pr_1_list.append(
-                xr.DataArray(
-                    [p.name for p in schedules], dims='problem',
-                    coords={
-                        'itemID': dyn_second.data['itemID']}
+#             pr_1_list.append(
+#                 xr.DataArray(
+#                     [p.name for p in schedules], dims='problem',
+#                     coords={
+#                         'itemID': dyn_second.data['itemID']}
 
-                )
-            )
+#                 )
+#             )
 
-        predictions = xr.concat(pr_1_list, dim='problem')
+#         predictions = xr.concat(pr_1_list, dim='problem')
 
-        return d.data.sel(optimizer=predictions).drop_vars(
-            'optimizer').expand_dims(optimizer=['l2co'])
+#         return d.data.sel(optimizer=predictions).drop_vars(
+#             'optimizer').expand_dims(optimizer=['l2co'])
 
-    def save(self, path: str) -> None:
-        """
-        Saves the L2CO model to the specified path.
+#     def save(self, path: str) -> None:
+#         """
+#         Saves the L2CO model to the specified path.
 
-        Parameters
-        ----------
-        path : str
-            Directory path where the model will be saved.
+#         Parameters
+#         ----------
+#         path : str
+#             Directory path where the model will be saved.
 
-        Returns
-        -------
-        None
-        """
-        _path = Path(path)
+#         Returns
+#         -------
+#         None
+#         """
+#         _path = Path(path)
 
-        _path.mkdir(parents=True, exist_ok=True)
+#         _path.mkdir(parents=True, exist_ok=True)
 
-        # Stage0 model
-        joblib.dump(
-            self.stage0_model, str(_path / 'stage0_model') + '.pkl')
+#         # Stage0 model
+#         joblib.dump(
+#             self.stage0_model, str(_path / 'stage0_model') + '.pkl')
 
-        # Stage1 models
-        for name, model in self.stage1_models.items():
-            model_shape = eqx.filter_eval_shape(lambda x: model, None)
+#         # Stage1 models
+#         for name, model in self.stage1_models.items():
+#             model_shape = eqx.filter_eval_shape(lambda x: model, None)
 
-            # Stage1 model statics
-            with open(str(_path / f"stage1_model_{name}") + '.pkl', 'wb') as f:
-                cloudpickle.dump(model_shape, f)
+#             # Stage1 model statics
+#             with open(str(_path / f"stage1_model_{name}") + '.pkl', 'wb') as f:
+#                 cloudpickle.dump(model_shape, f)
 
-            # Stage1 model params
-            eqx.tree_serialise_leaves(
-                str(_path / f"stage1_model_{name}") + '.eqx', model)
+#             # Stage1 model params
+#             eqx.tree_serialise_leaves(
+#                 str(_path / f"stage1_model_{name}") + '.eqx', model)
 
-        # Opt steps
-        with open(str(_path / 'opt_steps') + '.json', 'w') as f:
-            json.dump([step.to_dict() for step in self.opt_steps], f, indent=4)
+#         # Opt steps
+#         with open(str(_path / 'opt_steps') + '.json', 'w') as f:
+#             json.dump([step.to_dict() for step in self.opt_steps], f, indent=4)
 
-    @classmethod
-    def load(cls, path: str) -> L2CO_model:
-        _path = Path(path)
+#     @classmethod
+#     def load(cls, path: str) -> L2CO_model:
+#         _path = Path(path)
 
-        # Stage0 model
-        stage0_model = joblib.load(str(_path / 'stage0_model') + '.pkl')
+#         # Stage0 model
+#         stage0_model = joblib.load(str(_path / 'stage0_model') + '.pkl')
 
-        # Stage1 models
-        stage1_models: Dict[str, eqx.Module] = {}
-        for model_path in {p.with_suffix('') for p
-                           in _path.glob('stage1_model_*')}:
-            with open(str(model_path) + '.pkl', 'rb') as f:
-                model_shape = cloudpickle.load(f)
+#         # Stage1 models
+#         stage1_models: Dict[str, eqx.Module] = {}
+#         for model_path in {p.with_suffix('') for p
+#                            in _path.glob('stage1_model_*')}:
+#             with open(str(model_path) + '.pkl', 'rb') as f:
+#                 model_shape = cloudpickle.load(f)
 
-            model = eqx.tree_deserialise_leaves(
-                str(model_path) + '.eqx',
-                like=model_shape)
+#             model = eqx.tree_deserialise_leaves(
+#                 str(model_path) + '.eqx',
+#                 like=model_shape)
 
-            stage1_models[model_path.name.split('stage1_model_')[-1]] = model
+#             stage1_models[model_path.name.split('stage1_model_')[-1]] = model
 
-        # Opt steps
-        with open(str(_path / 'opt_steps') + '.json', 'r') as f:
-            opt_steps = [OptimizationStep.from_dict(step)
-                         for step in json.load(f)]
+#         # Opt steps
+#         with open(str(_path / 'opt_steps') + '.json', 'r') as f:
+#             opt_steps = [OptimizationStep.from_dict(step)
+#                          for step in json.load(f)]
 
-        return cls(stage0_model=stage0_model,
-                   stage1_models=stage1_models,
-                   opt_steps=opt_steps)
+#         return cls(stage0_model=stage0_model,
+#                    stage1_models=stage1_models,
+#                    opt_steps=opt_steps)

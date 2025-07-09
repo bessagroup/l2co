@@ -136,7 +136,6 @@ class DataLoader:
 #                                                      Alternative Constructors
 # =============================================================================
 
-
     @classmethod
     def from_file(
         cls, path: str, data_filename: str = 'entire_dataset'
@@ -564,7 +563,7 @@ class DataLoader:
                 exclude_optimizer = [exclude_optimizer]
 
             check_sbs = performance.where(
-                ~performance.optimizer.isin(exclude_optimizer), drop=True)
+                ~performance[SCHEDULE].isin(exclude_optimizer), drop=True)
         else:
             check_sbs = performance
 
@@ -777,7 +776,6 @@ class DataLoader:
 #                                                          Selecting optimizers
 # =============================================================================
 
-
     def select_single_optimizers(
             self, squash: bool = False) -> DataLoader:
         """
@@ -886,6 +884,7 @@ class DataLoader:
 #                                                           Performance metrics
 # =============================================================================
 
+
     def performance_profile(
             self, max_f_value: int = 2.0, include_best: bool = False,
             exclude_optimizer: Optional[str] = None,
@@ -970,7 +969,8 @@ class DataLoader:
 # =============================================================================
 
 
-def performance_profile(performance: xr.DataArray, max_f_value: int = 2.0) -> xr.DataArray:
+def performance_profile(performance: xr.DataArray,
+                        max_f_value: int = 2.0) -> xr.DataArray:
     """
     Create a performance profile for the given performance data.
 

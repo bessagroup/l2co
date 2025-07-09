@@ -68,7 +68,9 @@ class OptimizationStep:
     @property
     def hash(self) -> int:
         t = sorted(self.tag.items())
-        return int(hashlib.sha256(str(t).encode()).hexdigest()[:8], 16)
+        return jnp.array(
+            int(hashlib.sha256(str(t).encode()).hexdigest()[:8], 16),
+            dtype=jnp.uint32)
 
     @property
     def name(self) -> str:
@@ -189,7 +191,6 @@ class OptimizationSchedule:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            # 'tag': self.tag,
             'steps': [step.to_dict() for step in self.steps],
             'budgets': self.budgets,
         }

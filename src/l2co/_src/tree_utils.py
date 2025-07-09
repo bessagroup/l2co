@@ -56,6 +56,19 @@ def combined_loss(params, loss_fn,
     return loss_fn(eqx.combine(params, static), **rng_sample)
 
 
+def ffill(x: jnp.ndarray) -> jnp.ndarray:
+    def scan_fn(carry, xi):
+        carry = jnp.where(jnp.isnan(xi), carry, xi)
+        return carry, carry
+
+    _, filled = jax.lax.scan(scan_fn, jnp.nan, x)
+    return filled
+
+
+def bfill(x: jnp.ndarray) -> jnp.ndarray:
+    return jnp.flip(ffill(jnp.flip(x)))
+
+
 def replace_nans_with_max_or_one(x: jax.Array) -> jax.Array:
     """
     Replace NaN values in the array with the maximum value or 1.0.
@@ -75,6 +88,22 @@ def replace_nans_with_max_or_one(x: jax.Array) -> jax.Array:
     max_val = jnp.max(non_nan_vals)
     max_val = jnp.where(jnp.isneginf(max_val), 1.0, max_val)
     return jnp.where(is_nan, max_val, x)
+
+
+def replace_nans_with_first_valid(x: jnp.ndarray) -> jnp.ndarray:
+    is_not_nan = ~jnp.isnan(x)
+
+    # Create a mask that identifies the first non-NaN
+    cumsum = jnp.cumsum(is_not_nan)
+    first_mask = cumsum == 1  # True only at first non-NaN
+    first_valid_value = jnp.sum(
+        jnp.where(first_mask, x, 0.0))  # only one non-zero
+
+    # Handle all-NaN case
+    any_valid = jnp.any(is_not_nan)
+    first_valid_value = jnp.where(any_valid, first_valid_value, 1.0)
+
+    return jnp.where(jnp.isnan(x), first_valid_value, x)
 
 
 def log_stabilized_minmax_scale(x: jax.Array) -> jax.Array:
@@ -130,7 +159,7 @@ def staircase(x: jax.Array) -> jnp.ndarray:
     jnp.ndarray
         Staircase-transformed array.
     """
-    x = replace_nans_with_max_or_one(x)
+    x = ffill(bfill(x))
     x = output_cummin(x)
     x = log_stabilized_minmax_scale(x)
     return x
@@ -150,9 +179,21 @@ def trajectory(x: jax.Array) -> jnp.ndarray:
     jnp.ndarray
         Trajectory-transformed array.
     """
-    x = replace_nans_with_max_or_one(x)
+    x = ffill(bfill(x))
     x = log_stabilized_minmax_scale(x)
     return x
+
+
+def encode(x: jax.Array, keys: jax.Array,
+           default_value: int = 0) -> jax.Array:
+    values = jnp.arange(len(keys), dtype=jnp.uint32)
+
+    def map_fn(xi):
+        matches = (keys == xi)
+        match_idx = jnp.argmax(matches)
+        return jnp.where(jnp.any(matches), values[match_idx], default_value)
+
+    return jax.vmap(map_fn)(x)
 
 
 def get_best(params: PyTree, losses: jax.Array):

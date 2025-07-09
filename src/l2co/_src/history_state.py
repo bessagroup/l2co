@@ -34,12 +34,12 @@ class HistoryState(eqx.Module):
     @classmethod
     def init(cls, n_iterations: int) -> HistoryState:
         nans = jnp.full((n_iterations,), jnp.nan)
-        zeros = jnp.zeros((n_iterations,), dtype=jnp.float32)
+        default_step_value = jnp.zeros((n_iterations,), dtype=jnp.uint32)
         return HistoryState(
             output_min=nans,
             output_mean=nans,
             output_std=nans,
-            update_step=zeros,
+            update_step=default_step_value,
         )
 
     def add(self, history: dict[str, jax.Array]) -> HistoryState:
@@ -47,7 +47,8 @@ class HistoryState(eqx.Module):
         o_min = jnp.min(history['loss'], axis=1)    # shape (T,)
         o_mean = jnp.mean(history['loss'], axis=1)  # shape (T,)
         o_std = jnp.std(history['loss'], axis=1)    # shape (T,)
-        u_step = jnp.mean(history['update_step'], axis=1)         # shape (T,)
+        u_step = jnp.mean(history['update_step'],
+                          axis=1, dtype=jnp.uint32)         # shape (T,)
 
         def roll_concat(old: jax.Array, new: jax.Array) -> jax.Array:
             combined = jnp.concatenate([old, new], axis=0)

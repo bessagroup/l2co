@@ -9,7 +9,7 @@ experimentdata:
       fn_name:
         type: category
         categories: [
-          # 'ackley',
+          'ackley',
           # 'beale',
           # 'bohachevsky1',
           # 'branin01',
@@ -17,21 +17,28 @@ experimentdata:
           # 'eggholder',
           # 'levy',
           'rastrigin',
-          # 'rosenbrock',
-          # 'schwefel',
-          # 'sphere',
-          # 'styblinskitang',
+          'rosenbrock',
+          'schwefel',
+          'sphere',
+          'styblinskitang',
           ]
       dimensionality:
         type: category
         categories:
           - 2
-          # - 5
+          - 5
           # - 10
-          # - 25
+          - 25
+          - 100
+      noise:
+        type: category
+        categories:
+          - 0.0
+          - 0.01
+          - 0.3
 task_kwargs:
   seed: ${seed}
-  noise: 0.0
+  # noise: 0.0
   offset: False
 
 data_generator:

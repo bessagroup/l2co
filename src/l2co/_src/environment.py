@@ -20,7 +20,7 @@ from .history_state import HistoryState
 from .optimizers import OPTIMIZER_MAPPING, UpdateClass
 from .optimizerschedule import OptimizationStep
 from .task import Task
-from .tree_utils import staircase, trajectory, tree_where
+from .tree_utils import encode, staircase, trajectory
 from .update_state import UpdateState, new
 
 #                                                          Authorship & Credits
@@ -51,18 +51,25 @@ class EnvParams(eqx.Module):
     def max_steps_in_episode(self) -> int:
         return self.total_iterations // self.n_iterations
 
+    @property
+    def encode_mapping(self) -> jax.Array:
+        return jnp.array(
+            [0, 1] + [v.hash for v in self.optimizers], dtype=jnp.uint32
+        )
+
     @classmethod
     def init(cls, task: Task, schedules: Iterable[OptimizationStep],
              sampler: Callable,
              n_iterations: int, total_iterations: int, memory_size: int,
              bounded: Tuple[float, float]):
+
         optimizers = tuple(
             OPTIMIZER_MAPPING[step.optimizer](
                 **step.hyperparameters,
                 task=task,
-                opt_hash=idx+1,
+                opt_hash=step.hash,
                 bounded=bounded,
-                opt_index=jnp.array(idx, dtype=jnp.int32),
+                opt_index=idx,
                 n_optimizers=len(schedules),
             ) for idx, step in enumerate(schedules)
         )
@@ -92,16 +99,9 @@ class Env():
     @partial(jax.jit, static_argnames=("self", "params",))
     def step(self, key: jax.Array, state: EnvState, action: int,
              params: EnvParams):
-        # Step
-        key_step, key_reset = jax.random.split(key)
-        obs_st, state_st, reward, done, info = self.step_env(
-            key_step, state, action, params
+        obs, state, reward, done, info = self.step_env(
+            key, state, action, params
         )
-        obs_re, state_re = self.reset_env(key_reset, params)
-
-        # Auto-reset environment based on termination
-        state = tree_where(done, state_re, state_st)
-        obs = jnp.where(done, obs_re, obs_st)
 
         return obs, state, reward, done, info
 
@@ -154,18 +154,19 @@ class Env():
             time=0.0,
         )
 
-        return self.get_obs(state), state
+        return self.get_obs(state, params), state
 
-    def get_obs(self, state: EnvState, params=None, key=None) -> jax.Array:
+    def get_obs(self, state: EnvState, params: EnvParams,
+                key=None) -> jax.Array:
         return jnp.stack(
             (
                 trajectory(state.history_state.output_mean),
                 staircase(state.history_state.output_min),
-                state.history_state.update_step,
+                encode(state.history_state.update_step, params.encode_mapping),
             ),
             axis=0,
             dtype=jnp.float32,
-        )
+        ).T
 
     def step_env(
         self, key: jax.Array, state: EnvState, action: int, params: EnvParams
@@ -210,7 +211,10 @@ class Env():
         done = state.time > 1.0
         time = state.time + (params.n_iterations / params.total_iterations)
 
-        reward = 0.0
+        reward = self.compute_reward(
+            history_state=history_state,
+            n_iterations=params.n_iterations,
+        )
 
         info = {}
 
@@ -222,9 +226,35 @@ class Env():
         )
 
         return (
-            jax.lax.stop_gradient(self.get_obs(state)),
+            jax.lax.stop_gradient(self.get_obs(state, params)),
             jax.lax.stop_gradient(state),
             jnp.array(reward),
             done,
             info,
         )
+
+    def compute_reward(
+        self,
+        history_state: HistoryState,
+        n_iterations: int
+    ) -> jax.Array:
+        """
+        Compute the reward as the difference in output_min over n_iterations.
+
+        Parameters
+        ----------
+        history_state : HistoryState
+            The updated history state after applying the step.
+        n_iterations : int
+            The number of steps ago to compare against.
+
+        Returns
+        -------
+        jax.Array
+            The reward value (scalar).
+        """
+        output = staircase(history_state.output_min)  # shape: (T,)
+        last = output[-1]
+        prev = output[-(n_iterations + 1)]
+        reward = prev - last  # improvement in loss (positive if improved)
+        return reward

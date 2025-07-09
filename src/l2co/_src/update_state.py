@@ -33,6 +33,9 @@ __status__ = 'Stable'
 # =============================================================================
 
 
+SAMPLING_STEP = jnp.array(1, dtype=jnp.uint32)
+
+
 class UpdateState(eqx.Module):
     last_params: PyTree  # shape: (memory_size, dim)
     key: jax.Array
@@ -60,7 +63,7 @@ class UpdateState(eqx.Module):
             key=key,
             best_params=params,
             best_loss=jnp.array([jnp.inf]),
-            last_step=jnp.array(-1., dtype=jnp.float32),
+            last_step=jnp.array(0, dtype=jnp.uint32),
         )
 
     @classmethod
@@ -132,7 +135,7 @@ def new(
         key=new_key,
         best_params=best_params,
         best_loss=best_loss,
-        last_step=jnp.array(-1, dtype=jnp.int32)
+        last_step=SAMPLING_STEP
     )
 
 

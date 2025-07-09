@@ -5,9 +5,9 @@ defaults:
 - samplers: normal
 - optimizers: standard
 
-n_realizations: 1
-memory_size: 20
-iteration_stepsize: 100
+n_realizations: 25
+memory_size: 0.1
+iteration_stepsize: 0.1
 
 seed: 467
 mode: mpi

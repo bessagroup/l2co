@@ -12,6 +12,8 @@ import scienceplots  # noqa
 # Local
 from l2co import DataLoader
 from l2co._src.data_loader import performance_profile, rtd
+from l2co._src.naming import (BUDGET, OUTPUT_DIM, OUTPUT_MEAN, OUTPUT_MIN,
+                              OUTPUT_STD, PROBLEM, SCHEDULE, TASK_ID)
 from l2co.plotting import format_plot
 
 # =============================================================================
@@ -185,7 +187,7 @@ def load_dataloader(event=None):
         default_colors = plt.cm.tab10.colors
         optimizer_color_map.update({optimizer: default_colors[i % len(
             default_colors)] for i, optimizer in enumerate(
-                list(dataloader.optimizers.sortby('optimizer').values))})
+                list(dataloader.optimizers.sortby(SCHEDULE).values))})
         opts = list(dataloader.optimizers.values)
         optimizer_checkbox_group.options = opts
         exclude_optimizer_checkbox_group.options = opts
@@ -205,7 +207,7 @@ def retrieve_task_df():
     return (dataloader.task_labels.to_pandas()
             .infer_objects()
             .convert_dtypes()
-            .set_index(dataloader.task_labels.itemID.values)
+            .set_index(dataloader.task_labels[TASK_ID].values)
             .drop_duplicates()
             )
 
@@ -358,19 +360,19 @@ def update_plot(event=None):
     ax_legend = fig.add_subplot(gs[1, :])
     ax_legend.axis("off")  # Hide axis for the legend area
 
-    _rtd = rtd(performance).sortby('optimizer')
-    _pp = performance_profile(performance).sortby('optimizer')
+    _rtd = rtd(performance).sortby(SCHEDULE)
+    _pp = performance_profile(performance).sortby(SCHEDULE)
 
     # Plot lines and collect handles for the legend
     handles = []
     labels = []
 
-    for o in _rtd.optimizer.values:
-        line_rtd, = _rtd.sel(optimizer=o).isel(output_dim=0).plot(
+    for o in _rtd[SCHEDULE].values:
+        line_rtd, = _rtd.sel({SCHEDULE: o}).isel({OUTPUT_DIM: 0}).plot(
             ax=ax_rtd, linewidth=2, label=o, color=optimizer_color_map[o],
             linestyle=optimizer_line_style.get(o, '-')
         )
-        _pp.sel(optimizer=o).isel(output_dim=0).plot(
+        _pp.sel({SCHEDULE: o}).isel({OUTPUT_DIM: 0}).plot(
             ax=ax_pp, linewidth=2, label=o, color=optimizer_color_map[o],
             linestyle=optimizer_line_style.get(o, '-')
         )
@@ -420,16 +422,16 @@ def update_single_plot(event=None):
     labels = []
 
     for o in dataloader.optimizers.values:
-        line, = dataloader.data.sel(optimizer=o).isel(
-            problem=problem, output_dim=0).output_min.plot(ax=ax_1, label=o)
+        line, = dataloader.data.sel({SCHEDULE: 0}).isel({
+            PROBLEM: problem, OUTPUT_DIM: 0})[OUTPUT_MIN].plot(ax=ax_1, label=o)
 
-        m = dataloader.data.sel(optimizer=o).isel(
-            problem=problem, output_dim=0).output_mean
-        std = dataloader.data.sel(optimizer=o).isel(
-            problem=problem, output_dim=0).output_std
+        m = dataloader.data.sel({SCHEDULE: 0}).isel({
+            PROBLEM: problem, OUTPUT_DIM: 0})[OUTPUT_MEAN]
+        std = dataloader.data.sel({SCHEDULE: 0}).isel({
+            PROBLEM: problem, OUTPUT_DIM: 0})[OUTPUT_STD]
 
-        dataloader.data.sel(optimizer=o).isel(
-            problem=problem, output_dim=0).output_mean.plot(ax=ax_2, label=o)
+        dataloader.data.sel({SCHEDULE: 0}).isel({
+            PROBLEM: problem, OUTPUT_DIM: 0})[OUTPUT_MEAN].plot(ax=ax_2, label=o)
 
         # 95% confidence interval
         ax_2.fill_between(m.budget, m - 2 * std, m + 2 * std, alpha=0.2)
