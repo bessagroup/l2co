@@ -33,7 +33,7 @@ from .history_state import HistoryState
 from .sampler import random_sampling
 from .task import Task
 from .tree_utils import combined_loss
-from .update_state import UpdateState, best, best_one, last
+from .update_state import SAMPLING_STEP, UpdateState, best, best_one
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -55,7 +55,7 @@ def optax_fn(static: PyTree,
              ) -> Tuple[InitFunction, StepFunction]:
 
     def init_fn(update_state: UpdateState, **sample) -> OptaxState:
-        params = jax.tree.map(lambda x: x[-1:], update_state.last_params)
+        params = jax.tree.map(lambda x: x[-1], update_state.last_params)
         opt_state = optimizer.init(params)
         return opt_state
 
@@ -66,6 +66,9 @@ def optax_fn(static: PyTree,
                            dict]:
         input_params, opt_states, key = carry
 
+        input_params = jax.tree.map(
+            lambda x: jnp.squeeze(x, axis=0), input_params)
+
         model = eqx.combine(input_params, static)
         new_key, _ = jr.split(key)
 
@@ -74,11 +77,10 @@ def optax_fn(static: PyTree,
         else:
             rng_sample = {}
 
-        loss, grads = eqx.filter_value_and_grad(
-            loss_fn)(
-                model, **sample, **rng_sample)
+        fn = partial(loss_fn, **sample, **rng_sample)
+        loss, grads = eqx.filter_value_and_grad(fn)(model)
 
-        # Extraact and update the active optimizer state
+        # Extract and update the active optimizer state
         opt_state: OptaxState = opt_states[opt_index]
         updates, new_opt_state = optimizer.update(grads, opt_state)
         new_params = eqx.apply_updates(input_params, updates)
@@ -86,21 +88,24 @@ def optax_fn(static: PyTree,
         new_opt_states = eqx.tree_at(
             lambda t: t[opt_index], opt_states, new_opt_state)
 
-        # Apply box constraints if `bounded` is True
-
-        loss = jax.tree.map(
-            lambda x: jnp.expand_dims(x, 0), loss)
-        update_step = jax.tree.map(
-            lambda x: jnp.expand_dims(x, 0), opt_hash)
-
         history = {
-            'loss': loss,  # shape (1, 1)
-            'params': input_params,  # shape (1, dim)
-            'update_step': update_step,  # shape (1, 1)
+            'loss': loss,  # shape (1,)
+            'params': input_params,  # shape (dim,)
+            'update_step': opt_hash,  # shape (1,)
         }
 
+        # Expand dimensions
+        history = jax.tree.map(
+            lambda x: jnp.expand_dims(x, 0), history)
+
+        # Apply box constraints
         new_params = jax.tree.map(
-            lambda p: jnp.clip(p, *bounded), new_params)
+            lambda p: jnp.clip(p, *bounded), new_params
+        )
+
+        new_params = jax.tree.map(
+            lambda x: jnp.expand_dims(x, 0), new_params
+        )
 
         return (new_params, new_opt_states, new_key), history
 
@@ -118,17 +123,19 @@ def optax_extra_args_fn(static: PyTree,
                         **kwargs
                         ) -> Tuple[InitFunction, StepFunction]:
     def init_fn(update_state: UpdateState, **sample) -> OptaxState:
-        params = jax.tree.map(lambda x: x[-1:], update_state.last_params)
+        params = jax.tree.map(lambda x: x[-1], update_state.last_params)
         opt_state = optimizer.init(params)
         return opt_state
 
     @eqx.filter_jit
-    def step_fn(
-        carry: Tuple[InputParameters, OptStates, PRNGKeyArray],
-        sample: dict, *args, **kwargs
-    ) -> Tuple[Tuple[InputParameters, OptStates, PRNGKeyArray],
-               dict]:
+    def step_fn(carry: Tuple[InputParameters, OptStates, PRNGKeyArray],
+                sample: dict, *args, **kwargs
+                ) -> Tuple[Tuple[InputParameters, OptStates, PRNGKeyArray],
+                           dict]:
         input_params, opt_states, key = carry
+
+        input_params = jax.tree.map(
+            lambda x: jnp.squeeze(x, axis=0), input_params)
 
         model = eqx.combine(input_params, static)
         new_key, _ = jr.split(key)
@@ -139,11 +146,10 @@ def optax_extra_args_fn(static: PyTree,
             rng_sample = {}
 
         fn = partial(loss_fn, **sample, **rng_sample)
-        opt_state: OptaxState = opt_states[opt_index]
 
-        loss, grads = optax.value_and_grad_from_state(fn)(
-            model, state=opt_state
-        )
+        opt_state: OptaxState = opt_states[opt_index]
+        loss, grads = optax.value_and_grad_from_state(
+            fn)(model, state=opt_state)
 
         updates, new_opt_state = optimizer.update(
             grads, opt_state, input_params,
@@ -155,21 +161,22 @@ def optax_extra_args_fn(static: PyTree,
         new_opt_states = eqx.tree_at(
             lambda t: t[opt_index], opt_states, new_opt_state)
 
-        # Apply box constraints if `bounded` is True
-
-        loss = jax.tree.map(
-            lambda x: jnp.expand_dims(x, 0), loss)
-        update_step = jax.tree.map(
-            lambda x: jnp.expand_dims(x, 0), opt_hash)
-
         history = {
             'loss': loss,  # shape (1, 1)
             'params': input_params,  # shape (1, dim)
-            'update_step': update_step,  # shape (1, 1)
+            'update_step': opt_hash,  # shape (1, 1)
         }
+
+        # Expand dimensions
+        history = jax.tree.map(
+            lambda x: jnp.expand_dims(x, 0), history)
 
         new_params = jax.tree.map(
             lambda p: jnp.clip(p, *bounded), new_params)
+
+        new_params = jax.tree.map(
+            lambda x: jnp.expand_dims(x, 0), new_params
+        )
 
         return (new_params, new_opt_states, new_key), history
 
@@ -345,24 +352,19 @@ class UpdateClass(eqx.Module):
 
     @jax.jit
     def handshake(self, update_state: UpdateState) -> UpdateState:
-        def case_last(update_state: UpdateState) -> UpdateState:
-            return last(update_state)
-
-        def case_best_one(update_state: UpdateState) -> UpdateState:
-            return best(update_state)
-
-        def case_custom(update_state: UpdateState) -> UpdateState:
-            return self.handshake_fn(update_state=update_state)
-
         case_id = jnp.where(
-            update_state.last_step == -1,
+            (update_state.last_step == SAMPLING_STEP) | (
+                update_state.last_step == self.hash),
             0,
-            jnp.where(update_state.last_step == self.index, 1, 2),
+            1,
         )
 
         return jax.lax.switch(
             case_id,
-            (case_last, case_best_one, case_custom),
+            (
+                lambda s: s,
+                lambda s: self.handshake_fn(update_state=s),
+            ),
             update_state,
         )
 

@@ -33,7 +33,7 @@ __status__ = 'Stable'
 # =============================================================================
 
 
-SAMPLING_STEP = jnp.array(1, dtype=jnp.uint32)
+SAMPLING_STEP = 1
 
 
 class UpdateState(eqx.Module):
@@ -178,7 +178,3 @@ def best_one(update_state: UpdateState, task: Task, sampler: Callable,
     )
 
     return samples.merge(new_update_state)
-
-
-def last(update_state: UpdateState, **kwargs) -> UpdateState:
-    return update_state
