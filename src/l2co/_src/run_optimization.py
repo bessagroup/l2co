@@ -62,18 +62,95 @@ class RolloutWrapper:
         self.env_params = env_params
 
     def batch_rollout(self, model: eqx.Module,
-                      n_realizations: int, key: PRNGKeyArray):
+                      n_realizations: int, key: PRNGKeyArray,
+                      fix_initial_conditions: bool = False):
         params, static = eqx.partition(model, eqx.is_inexact_array)
+
+        k1, k2 = jr.split(key)
+        key_episode = jr.split(k2, n_realizations)
+        if fix_initial_conditions:
+            key_reset = k1
+            in_axes = (None, None, None, 0)
+        else:
+            key_reset = jr.split(k1, n_realizations)
+            in_axes = (None, None, 0, 0)
+
         return jax.vmap(self.single_rollout,
-                        in_axes=(None, None, 0),
-                        out_axes=0)(params, static,
-                                    jr.split(key, n_realizations))
+                        in_axes=in_axes,
+                        out_axes=0)(params, static, key_reset, key_episode)
+
+    def batch_rollout_precomputed(self, schedules: jax.Array,
+                                  key: PRNGKeyArray,
+                                  fix_initial_conditions: bool = False):
+        k1, k2 = jr.split(key)
+        key_episode = jr.split(k2, schedules.shape[0])
+
+        if fix_initial_conditions:
+            key_reset = k1
+            in_axes = (0, None, 0)
+        else:
+            key_reset = jr.split(k1, schedules.shape[0])
+            in_axes = (0, 0, 0)
+
+        return jax.vmap(self.precomputed_rollout,
+                        in_axes=in_axes,
+                        out_axes=0)(schedules, key_reset, key_episode)
+
+    @partial(jax.jit, static_argnames=("self"))
+    def precomputed_rollout(
+            self, schedule: jax.Array,
+            key_reset: PRNGKeyArray, key_episode: PRNGKeyArray):
+        obs, state = self.env.reset(key_reset, self.env_params)
+
+        def policy_step(state_input: Tuple[jax.Array, EnvState, PRNGKeyArray,
+                                           jax.Array, jax.Array], action: int):
+            obs, state, key, cum_reward, valid_mask = state_input
+            key, key_step, key_net = jr.split(key, 3)
+
+            # logits = policy_model(obs, state.time)
+            # action = jr.categorical(key_net, logits)
+            # action = jnp.squeeze(action)
+            next_obs, next_state, reward, done, _ = self.env.step(
+                key_step, state, action, self.env_params)
+
+            new_cum_reward = cum_reward + reward * valid_mask
+            new_valid_mask = valid_mask * (1 - done)
+
+            carry = [
+                next_obs,
+                next_state,
+                key,
+                new_cum_reward,
+                new_valid_mask,
+            ]
+            y = [obs, action, reward, next_obs, done]
+            return carry, y
+
+        # Scan over episode step loop
+        carry_out, scan_out = jax.lax.scan(
+            policy_step,
+            [
+                obs,
+                state,
+                key_episode,
+                jnp.array([0.0]),
+                jnp.array([1.0]),
+            ],
+            schedule,
+            self.env_params.max_steps_in_episode,
+        )
+
+        # Return the sum of rewards accumulated by agent in episode rollout
+        obs, action, reward, next_obs, done = scan_out
+        cum_return = carry_out[-2]
+        last_state = carry_out[1]
+        return (obs, action, reward, next_obs, done,
+                cum_return, last_state)
 
     @partial(jax.jit, static_argnames=("self", "static",))
     def single_rollout(self, params: PyTree, static: PyTree,
-                       key: PRNGKeyArray):
+                       key_reset: PRNGKeyArray, key_episode: PRNGKeyArray):
         policy_model = eqx.combine(params, static)
-        key_reset, key_episode = jr.split(key)
         obs, state = self.env.reset(key_reset, self.env_params)
 
         def policy_step(state_input: Tuple[jax.Array, EnvState, PRNGKeyArray,
@@ -122,15 +199,20 @@ class RolloutWrapper:
                 cum_return, last_state)
 
     def train(self, model: eqx.Module, optimizer: optax.GradientTransformation,
-              n_episodes: int, *, key: PRNGKeyArray):
+              n_episodes: int, *, key: PRNGKeyArray,
+              fix_initial_conditions: bool = False
+              ) -> Tuple[eqx.Module, optax.OptState, jax.Array]:
         params, static = eqx.partition(model, eqx.is_inexact_array)
+        key_reset, key_episode = jr.split(key)
 
         scan_fn = partial(policy_train_step,
                           static=static,
                           rollout=self,
-                          optimizer=optimizer)
+                          optimizer=optimizer,
+                          fix_initial_conditions=fix_initial_conditions,
+                          )
 
-        carry_init = (params, optimizer.init(params), key)
+        carry_init = (params, optimizer.init(params), key_reset, key_episode)
 
         (carry_final, losses) = jax.lax.scan(
             scan_fn,
@@ -138,41 +220,45 @@ class RolloutWrapper:
             xs=None,
             length=n_episodes,
         )
-        params, opt_state, _ = carry_final
+        params, opt_state, key_reset, key_episode = carry_final
 
         return eqx.combine(params, static), opt_state, losses
 
 
 def policy_train_step(
-    carry: Tuple[PyTree, optax.OptState, PRNGKeyArray],
+    carry: Tuple[PyTree, optax.OptState, PRNGKeyArray, PRNGKeyArray],
     _: Any,
     static: PyTree,
     rollout: RolloutWrapper,
     optimizer: optax.GradientTransformation,
-) -> Tuple[Tuple[PyTree, optax.OptState, PRNGKeyArray], jax.Array]:
+    fix_initial_conditions: bool
+) -> Tuple[Tuple[PyTree, optax.OptState, PRNGKeyArray, PRNGKeyArray], jax.Array]:
 
-    params, opt_state, key = carry
-    # model = eqx.combine(params, rollout.static)
-    key, subkey = jr.split(key)
+    params, opt_state, key_reset, key_episode = carry
+
+    if not fix_initial_conditions:
+        key_reset, _ = jr.split(key_reset)
+
+    key_episode, _ = jr.split(key_episode)
 
     # Compute loss and gradients
     loss, grads = eqx.filter_value_and_grad(
-        loss_fn)(params, static, rollout, key=subkey)
+        loss_fn)(params, static, rollout, key_reset, key_episode)
 
     # Update model
     updates, opt_state = optimizer.update(grads, opt_state)
     params = eqx.apply_updates(params, updates)
 
-    new_carry = (params, opt_state, key)
+    new_carry = (params, opt_state, key_reset, key_episode)
     return new_carry, loss
 
 
 def loss_fn(params: PyTree, static: PyTree, rollout: RolloutWrapper,
-            key: PRNGKeyArray) -> jax.Array:
+            key_reset: PRNGKeyArray, key_episode: PRNGKeyArray) -> jax.Array:
     # One rollout using the current model
     (obs, action, reward, next_obs,
      logits, done, cum_return, _) = rollout.single_rollout(
-        params, static, key=key)
+        params, static, key_reset, key_episode)
 
     # Compute returns
     returns = compute_returns(reward, gamma=0.99)  # [T]

@@ -20,7 +20,8 @@ from .history_state import HistoryState
 from .optimizers import OPTIMIZER_MAPPING, UpdateClass
 from .optimizerschedule import OptimizationStep
 from .task import Task
-from .tree_utils import encode, staircase, trajectory
+from .tree_utils import (bfill, encode, ffill, output_cummin, staircase,
+                         trajectory)
 from .update_state import UpdateState, new
 
 #                                                          Authorship & Credits
@@ -86,9 +87,6 @@ class EnvParams(eqx.Module):
 
 
 class Env():
-    def __init__(self,):
-        super().__init__()
-
     @partial(jax.jit, static_argnames=("self", "params",))
     def reset(self, key: jax.Array,
               params: EnvParams) -> Tuple[jax.Array, EnvState]:
@@ -202,28 +200,39 @@ class Env():
 
         branches = [make_branch(optim) for optim in params.optimizers]
 
+        # Run the optimizer step based on the action
         update_state, opt_states, history_state = jax.lax.switch(
             action,
             branches,
             operand=None,
         )
 
-        done = state.time > 1.0
+        # Update the time
         time = state.time + (params.n_iterations / params.total_iterations)
 
-        reward = self.compute_reward(
-            history_state=history_state,
-            n_iterations=params.n_iterations,
-        )
-
-        info = {}
-
+        # Create the new state
         state = EnvState(
             opt_states=opt_states,
             update_state=update_state,
             history_state=history_state,
             time=time,
         )
+
+        done = state.time >= 1.0
+
+        # reward = self.compute_reward(
+        #     history_state=history_state,
+        #     n_iterations=params.n_iterations,
+        # )
+
+        reward = jax.lax.cond(
+            done,
+            lambda x: self.compute_reward2(history_state=x),
+            lambda x: 0.0,
+            history_state,
+        )
+
+        info = {}
 
         return (
             jax.lax.stop_gradient(self.get_obs(state, params)),
@@ -232,6 +241,16 @@ class Env():
             done,
             info,
         )
+
+    def compute_reward2(
+        self,
+        history_state: HistoryState,
+    ) -> jax.Array:
+        x = history_state.output_min
+        x = ffill(bfill(x))
+        x = output_cummin(x)
+
+        return -(x.min() + 0.1 * (x.argmin() / x.shape[0]))
 
     def compute_reward(
         self,

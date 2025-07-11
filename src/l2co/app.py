@@ -422,22 +422,24 @@ def update_single_plot(event=None):
     labels = []
 
     for o in dataloader.optimizers.values:
-        line, = dataloader.data.sel({SCHEDULE: 0}).isel({
-            PROBLEM: problem, OUTPUT_DIM: 0})[OUTPUT_MIN].plot(ax=ax_1, label=o)
+        line, = dataloader.data.sel({SCHEDULE: str(o)}).isel({
+            PROBLEM: problem, OUTPUT_DIM: 0})[OUTPUT_MIN].plot(ax=ax_1,
+                                                               label=o)
 
-        m = dataloader.data.sel({SCHEDULE: 0}).isel({
+        m = dataloader.data.sel({SCHEDULE: str(o)}).isel({
             PROBLEM: problem, OUTPUT_DIM: 0})[OUTPUT_MEAN]
-        std = dataloader.data.sel({SCHEDULE: 0}).isel({
+        std = dataloader.data.sel({SCHEDULE: str(o)}).isel({
             PROBLEM: problem, OUTPUT_DIM: 0})[OUTPUT_STD]
 
-        dataloader.data.sel({SCHEDULE: 0}).isel({
-            PROBLEM: problem, OUTPUT_DIM: 0})[OUTPUT_MEAN].plot(ax=ax_2, label=o)
+        dataloader.data.sel({SCHEDULE: str(o)}).isel({
+            PROBLEM: problem, OUTPUT_DIM: 0})[OUTPUT_MEAN].plot(ax=ax_2,
+                                                                label=o)
 
         # 95% confidence interval
         ax_2.fill_between(m.budget, m - 2 * std, m + 2 * std, alpha=0.2)
 
         handles.append(line)
-        labels.append(trim_label(o))
+        labels.append(trim_label(str(o)))
 
     ax_legend.legend(handles, labels, ncol=3, loc="center", frameon=False)
 
