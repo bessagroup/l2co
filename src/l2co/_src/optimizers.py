@@ -48,7 +48,7 @@ def optax_fn(static: PyTree,
              loss_fn: LossFunction,
              bounded: Tuple[float, float],
              pass_rng: bool,
-             opt_hash: str,
+             opt_hash: int,
              opt_index: int,
              n_optimizers: int,
              **kwargs
@@ -117,7 +117,7 @@ def optax_extra_args_fn(static: PyTree,
                         loss_fn: LossFunction,
                         bounded: Tuple[float, float],
                         pass_rng: bool,
-                        opt_hash: str,
+                        opt_hash: int,
                         opt_index: int,
                         n_optimizers: int,
                         **kwargs
@@ -191,7 +191,7 @@ def evosax_distribution_based_fn(
         pass_rng: bool,
         popsize: int,
         es_params: Params,
-        opt_hash: str,
+        opt_hash: int,
         opt_index: int,
         n_optimizers: int,
         **kwargs
@@ -260,7 +260,7 @@ def evosax_population_based_fn(
     pass_rng: bool,
     popsize: int,
     es_params: Params,
-    opt_hash: str,
+    opt_hash: int,
     opt_index: int,
     n_optimizers: int,
     **kwargs
@@ -368,7 +368,7 @@ class UpdateClass(eqx.Module):
             update_state,
         )
 
-    @partial(jax.jit, static_argnames=('n_iterations',))
+    # @partial(jax.jit, static_argnames=('n_iterations',))
     def step(
         self,
         opt_states: Tuple[PyTree],
@@ -626,6 +626,8 @@ def sepcmaes_variable_popsize(
 OPTIMIZER_MAPPING = {
     'adam': partial(optax_update, optimizer=optax.adam,
                     popsize=1),
+    'sgd': partial(optax_update, optimizer=optax.sgd,
+                   popsize=1),
     'sepcmaes': sepcmaes_variable_popsize,
     'cmaes': cmaes_variable_popsize,
     'pso': pso_variable_popsize,

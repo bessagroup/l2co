@@ -98,6 +98,52 @@ class UpdateState(eqx.Module):
             last_step=other.last_step,
         )
 
+    def evaluate(self, task: Task) -> jax.Array:
+        return evaluate(params=self.last_params, task=task, key=self.key)
+        # n_samples = self.memory_size
+        # params, static = eqx.partition(task.model, eqx.is_inexact_array)
+        # data_iter = batch_iter(dataset=task.loaded_dataset,
+        #                        n_evals=n_samples,
+        #                        batch_size=task.batch_size,
+        #                        key=task.dataset.get('seed', None))
+
+        # _, sample_key = jr.split(self.key)
+
+        # if task.pass_rng:
+        #     rng_sample = {'key': jr.split(
+        #         sample_key, num=n_samples)}
+        # else:
+        #     rng_sample = {}
+
+        # return jax.vmap(partial(combined_loss, static=static,
+        #                         loss_fn=task.loss_fn,
+        #                         **next(data_iter))
+        #                 )(self.last_params, **rng_sample)
+
+
+def evaluate(params: PyTree, task: Task, *, key: PRNGKeyArray) -> jax.Array:
+
+    _, static = eqx.partition(task.model, eqx.is_inexact_array)
+    n_samples = jax.tree_util.tree_leaves(params)[0].shape[0]
+
+    data_iter = batch_iter(dataset=task.loaded_dataset,
+                           n_evals=n_samples,
+                           batch_size=task.batch_size,
+                           key=task.dataset.get('seed', None))
+
+    _, sample_key = jr.split(key)
+
+    if task.pass_rng:
+        rng_sample = {'key': jr.split(
+            sample_key, num=n_samples)}
+    else:
+        rng_sample = {}
+
+    return jax.vmap(partial(combined_loss, static=static,
+                            loss_fn=task.loss_fn,
+                            **next(data_iter))
+                    )(params, **rng_sample)
+
 
 def new(
     update_state: UpdateState,

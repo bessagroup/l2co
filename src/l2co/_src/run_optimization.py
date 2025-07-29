@@ -6,6 +6,7 @@ and policy model.
 #                                                                       Modules
 # =============================================================================
 
+# Standard
 import gc
 from functools import partial
 from pathlib import Path
@@ -17,11 +18,11 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-# Standard
 import optax
 from f3dasm import ExperimentSample
 from f3dasm.datageneration import DataGenerator
 from jaxtyping import PRNGKeyArray, PyTree
+from tensorflow_probability.substrates import jax as tfp
 
 # Local
 from ._logging import logger
@@ -60,19 +61,114 @@ class RolloutWrapper:
     def __init__(self, env: Env, env_params: EnvParams):
         self.env = env
         self.env_params = env_params
+        self.observation_space = self.env.observation_space(self.env_params)
+        self.action_size = self.env.action_space(self.env_params).shape
+
+    @partial(jax.jit, static_argnums=0)
+    def select_action(
+        self,
+        model: eqx.Module,
+        obs: jax.Array,
+        state: EnvState,
+        rng: PRNGKeyArray,
+    ) -> Tuple[jax.Array, jax.Array]:
+
+        logits = jax.vmap(model, in_axes=(0, None))(obs, state.time)
+        pi = tfp.distributions.Categorical(logits=logits)
+        action = pi.sample(seed=rng)
+        log_prob = pi.log_prob(action)
+        return action, log_prob
+
+    @partial(jax.jit, static_argnums=(0, 2, 3))
+    def batch_reset(self, key: PRNGKeyArray, num_envs: int,
+                    fix_initial_conditions: bool = False):
+        if fix_initial_conditions:
+            return self.batch_reset_fixed(key, num_envs)
+        else:
+            return jax.vmap(self.env.reset, in_axes=(0, None))(
+                jr.split(key, num_envs), self.env_params
+            )
+
+    @partial(jax.jit, static_argnums=(0, 2))
+    def batch_reset_fixed(self, key: PRNGKeyArray, num_envs: int):
+        obs, state = self.env.reset(key, self.env_params)
+        obs = jnp.repeat(obs[None, :], repeats=num_envs, axis=0)
+        state = jax.tree.map(lambda x: jnp.repeat(
+            x[None, ...], num_envs, axis=0), state)
+        return obs, state
+
+    @partial(jax.jit, static_argnums=0)
+    def batch_step(self, keys, state, action):
+        return jax.vmap(self.env.step, in_axes=(0, 0, 0, None))(
+            keys, state, action, self.env_params
+        )
+
+    @partial(jax.jit, static_argnums=(0, 3, 4))
+    def batch_evaluate(self, rng_input: PRNGKeyArray,
+                       model: eqx.Module,
+                       num_envs: int,
+                       fix_initial_conditions: bool = False):
+        """Rollout an episode with lax.scan."""
+        # Reset the environment
+        rng_reset, rng_episode = jr.split(rng_input)
+
+        obs, state = self.batch_reset(
+            rng_reset, num_envs, fix_initial_conditions)
+
+        def policy_step(state_input, _):
+            """lax.scan compatible step transition in jax env."""
+            obs, state, rng, cum_reward, valid_mask = state_input
+            rng, rng_step, rng_net = jr.split(rng, 3)
+
+            action, log_prob, = self.select_action(model, obs, state, rng_net)
+
+            next_o, next_s, reward, done, _ = self.batch_step(
+                jr.split(rng_step, num_envs),
+                state,
+                action.squeeze(),
+            )
+            new_cum_reward = cum_reward + reward * valid_mask
+            new_valid_mask = valid_mask * (1 - done)
+            carry = [
+                next_o,
+                next_s,
+                rng,
+                new_cum_reward,
+                new_valid_mask,
+            ]
+            y = [obs, action, reward, next_o, done]
+            return carry, y
+
+        # Scan over episode step loop
+        carry_out, scan_out = jax.lax.scan(
+            policy_step,
+            [
+                obs,
+                state,
+                rng_episode,
+                jnp.array(num_envs * [0.0]),
+                jnp.array(num_envs * [1.0]),
+            ],
+            (),
+            self.env_params.max_steps_in_episode,
+        )
+        obs, action, reward, next_o, done = scan_out
+        cum_return = carry_out[-2].squeeze()
+        last_state = carry_out[1]
+        return (obs, action, reward, next_o, done,
+                cum_return, last_state)
 
     def batch_rollout(self, model: eqx.Module,
                       n_realizations: int, key: PRNGKeyArray,
                       fix_initial_conditions: bool = False):
         params, static = eqx.partition(model, eqx.is_inexact_array)
 
-        k1, k2 = jr.split(key)
-        key_episode = jr.split(k2, n_realizations)
+        key_reset, key_episode = jr.split(key)
+        key_episode = jr.split(key_episode, n_realizations)
         if fix_initial_conditions:
-            key_reset = k1
             in_axes = (None, None, None, 0)
         else:
-            key_reset = jr.split(k1, n_realizations)
+            key_reset = jr.split(key_reset, n_realizations)
             in_axes = (None, None, 0, 0)
 
         return jax.vmap(self.single_rollout,

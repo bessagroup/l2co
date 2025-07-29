@@ -28,6 +28,7 @@ import xarray as xr
 from sklearn.base import BaseEstimator
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline, make_pipeline
+from tensorflow_probability.substrates import jax as tfp
 
 # Local
 from ._logging import logger
@@ -188,7 +189,8 @@ class RandomModel(L2CO_model):
         self.optimizers = optimizers
 
     def __call__(self, x: jax.Array, t: int) -> jax.Array:
-        return jnp.zeros((len(self.optimizers),))
+        x = jnp.zeros((len(self.optimizers),))
+        return x
 
         # =============================================================================
 

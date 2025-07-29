@@ -13,6 +13,7 @@ from typing import Any, Callable, Iterable, Optional, Tuple
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from gymnax.environments import spaces
 from jaxtyping import PyTree
 
 # Local
@@ -20,8 +21,8 @@ from .history_state import HistoryState
 from .optimizers import OPTIMIZER_MAPPING, UpdateClass
 from .optimizerschedule import OptimizationStep
 from .task import Task
-from .tree_utils import (bfill, encode, ffill, output_cummin, staircase,
-                         trajectory)
+from .tree_utils import (bfill, ffill, log_stabilized_minmax_scale,
+                         one_hot_encode, output_cummin, staircase)
 from .update_state import UpdateState, new
 
 #                                                          Authorship & Credits
@@ -43,10 +44,14 @@ class EnvParams(eqx.Module):
     task: Task = None
     optimizers: Tuple[UpdateClass] = None
     sampler: Callable = None
-    n_iterations: int = 1
-    total_iterations: int = 100
-    memory_size: int = 10
+    n_iterations: int = None
+    total_iterations: int = None
+    memory_size: int = None
     bounded: Optional[Tuple[float, float]] = (None, None)
+
+    @property
+    def n_optimizers(self) -> int:
+        return len(self.optimizers)
 
     @property
     def max_steps_in_episode(self) -> int:
@@ -54,9 +59,9 @@ class EnvParams(eqx.Module):
 
     @property
     def encode_mapping(self) -> jax.Array:
-        return jnp.array(
-            [0, 1] + [v.hash for v in self.optimizers], dtype=jnp.uint32
-        )
+        return jnp.array([v.hash for v in self.optimizers],
+                         dtype=jnp.uint32
+                         )
 
     @classmethod
     def init(cls, task: Task, schedules: Iterable[OptimizationStep],
@@ -87,6 +92,10 @@ class EnvParams(eqx.Module):
 
 
 class Env():
+    @property
+    def default_params(self) -> EnvParams:
+        raise EnvParams()
+
     @partial(jax.jit, static_argnames=("self", "params",))
     def reset(self, key: jax.Array,
               params: EnvParams) -> Tuple[jax.Array, EnvState]:
@@ -133,14 +142,22 @@ class Env():
                            task=params.task, sampler=params.sampler)
 
         history_state = HistoryState.init(
-            n_iterations=params.total_iterations+1)
+            n_iterations=params.total_iterations+1,
+            params=model_params,)
+
+        init_params = jax.tree.map(lambda x: x[-1], update_state.last_params)
+        init_loss = jax.tree.map(
+            lambda x: x[-1], update_state.evaluate(params.task))
 
         # Add initial state to history
         history_state = history_state.add({
             'loss': jax.tree.map(
-                lambda x: jnp.expand_dims(x, (0, 1)), update_state.best_loss),
+                lambda x: jnp.expand_dims(x, (0, 1)), init_loss),
             'update_step': jax.tree.map(
                 lambda x: jnp.expand_dims(x, (0, 1)), update_state.last_step),
+            'params': jax.tree.map(
+                lambda x: jnp.expand_dims(x, (0, 1)), init_params
+            )
         })
 
         opt_states = tuple(opt.init(update_state) for opt in params.optimizers)
@@ -156,14 +173,20 @@ class Env():
 
     def get_obs(self, state: EnvState, params: EnvParams,
                 key=None) -> jax.Array:
-        return jnp.stack(
+
+        traj = ffill(bfill(state.history_state.output_mean))
+        stair = output_cummin(ffill(bfill(state.history_state.output_min)))
+        y = log_stabilized_minmax_scale(jnp.stack((traj, stair), axis=1))
+
+        return jnp.concatenate(
             (
-                trajectory(state.history_state.output_mean),
-                staircase(state.history_state.output_min),
-                encode(state.history_state.update_step, params.encode_mapping),
+                y,
+                one_hot_encode(state.history_state.update_step,
+                               params.encode_mapping),
             ),
-            axis=0,
+            axis=1,
             dtype=jnp.float32,
+
         ).T
 
     def step_env(
@@ -277,3 +300,11 @@ class Env():
         prev = output[-(n_iterations + 1)]
         reward = prev - last  # improvement in loss (positive if improved)
         return reward
+
+    def action_space(self, params: EnvParams) -> spaces.Discrete:
+        """Action space of the environment."""
+        return spaces.Discrete(params.n_optimizers)
+
+    def observation_space(self, params: EnvParams) -> spaces.Box:
+        return spaces.Box(0.0, 1.0, (2+params.n_optimizers,),
+                          dtype=jnp.float32)

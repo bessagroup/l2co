@@ -196,6 +196,18 @@ def encode(x: jax.Array, keys: jax.Array,
     return jax.vmap(map_fn)(x)
 
 
+def one_hot_encode(x: jax.Array, keys: jax.Array) -> jax.Array:
+    # Make sure keys is sorted
+    sorted_keys = jnp.sort(keys)
+
+    indices = jnp.searchsorted(sorted_keys, x)
+    indices_clipped = jnp.clip(indices, 0, sorted_keys.shape[0] - 1)
+    matches = (x == sorted_keys[indices_clipped])
+    one_hot_raw = jax.nn.one_hot(
+        indices_clipped, num_classes=sorted_keys.shape[0], dtype=jnp.uint8)
+    return one_hot_raw * matches[:, None]
+
+
 def get_best(params: PyTree, losses: jax.Array):
     """
     Retrieve the best parameters and corresponding loss.

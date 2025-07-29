@@ -27,6 +27,7 @@ OPT_HISTORY = 'optimizer_history'
 
 # Variables
 OUTPUT_MEAN = 'output_mean'
+INPUT_MEAN = 'input_mean'
 OUTPUT_STD = 'output_std'
 OUTPUT_MIN = 'output_min'
 UPDATE_STEP = 'update_step'

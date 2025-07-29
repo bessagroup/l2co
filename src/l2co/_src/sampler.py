@@ -7,6 +7,7 @@ Module for samplers.
 
 # Third party
 import jax
+import jax.numpy as jnp
 import jax.random as jr
 
 # Local
@@ -48,3 +49,24 @@ def random_sampling(key, params, n_samples: int, lower_bound: float = 0.0,
         minval=lower_bound,
         maxval=upper_bound),
         params)
+
+
+def grid_sampling(params, n_points_per_dim: int,
+                  lower_bound: float = 0.0, upper_bound: float = 1.0
+                  ) -> InputParameters:
+    grid_params = []
+    for param in jax.tree_util.tree_leaves(params):
+        if param.ndim == 0:  # Scalar parameter
+            grid = jnp.linspace(
+                lower_bound, upper_bound,
+                num=n_points_per_dim)
+        else:  # Tensor parameter
+            grid = jnp.meshgrid(
+                *[jnp.linspace(
+                    lower_bound, upper_bound,
+                    num=n_points_per_dim)] * param.size)
+            # Reshape into parameter shape
+            grid = jnp.stack(grid, axis=-1).reshape((-1,) + param.shape)
+        grid_params.append(grid)
+    return jax.tree_util.tree_unflatten(
+        jax.tree_util.tree_structure(params), grid_params)

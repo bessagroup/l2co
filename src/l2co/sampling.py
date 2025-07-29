@@ -6,7 +6,7 @@ Submodule with sampling strategies
 # =============================================================================
 
 # Local
-from ._src.sampler import random_sampling
+from ._src.sampler import grid_sampling, random_sampling
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -19,4 +19,5 @@ __status__ = 'Planning'
 
 __all__ = [
     "random_sampling",
+    "grid_sampling",
 ]

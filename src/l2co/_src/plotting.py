@@ -15,9 +15,13 @@ plot_perf_profile
 # =============================================================================
 
 # Standard
+import matplotlib.animation as animation
 import math
 from typing import Iterable, List, Optional, Tuple
 
+import equinox as eqx
+import jax
+import jax.random as jr
 # Third-party
 import matplotlib.pyplot as plt
 import numpy as np
@@ -31,8 +35,10 @@ from scipy.interpolate import griddata
 from .data_loader import DataLoader, OptimizationDynamics
 from .naming import (BUDGET, INPUT_DIM, OUTPUT_DIM, PROBLEM, REALIZATION,
                      SCHEDULE)
+from .sampler import grid_sampling
 from .task import Task
 from .tree_utils import experimentdata_to_xarray
+from .update_state import evaluate
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -438,29 +444,15 @@ def plot_2d_loss_landscape(task: Task, plot_resolution: int = 100,
 
 def plot_2d_loss_landscape_only(task: Task, plot_resolution: int = 100,
                                 stepsize: float = 0.033, seed: int = 0,
-                                ax=None):
-    sampler = GridWeightSampler(
-        stepsize=stepsize, lower_bound=0.0, upper_bound=1.0)
+                                ax=None, colorbar: bool = True):
+    params, static = eqx.partition(task.model, eqx.is_inexact_array)
+    samples = grid_sampling(
+        params=params, n_points_per_dim=int(1 // stepsize),
+        lower_bound=0.0, upper_bound=1.0)
 
-    evaluate_block = EvaluateModel(
-        task=task,
-        seed=seed,
-    )
-
-    domain = Domain()
-    domain.add_parameter('x')
-    domain.add_output('y')
-    data = ExperimentData(domain=domain)
-
-    data = sampler.call(data=data, model=task.model)
-    data = evaluate_block.call(data=data)
-    data = experimentdata_to_xarray(data=data, popsizes=None, budgets=None,
-                                    include_input=True, n_iterations=None)
-
-    x = data['input'].isel({INPUT_DIM: 0}).values
-    y = data['input'].isel({INPUT_DIM: 1}).values
-    z = data['output'].isel({OUTPUT_DIM: 0}).values
-    x.shape, y.shape, z.shape
+    z = evaluate(params=samples, task=task, key=jr.key(seed))
+    x = samples[:, 0]
+    y = samples[:, 1]
 
     import numpy as np
     from scipy.interpolate import griddata
@@ -479,70 +471,68 @@ def plot_2d_loss_landscape_only(task: Task, plot_resolution: int = 100,
 
     Z += eps
 
-    # # Create the figure and set up the subplots
-    # if ax is None:
-    #     fig, ax = plt.subplots(figsize=(12, 6))
-    # else:
-    #     fig = ax.get_figure()
+    # Create the figure and set up the subplots
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(12, 6))
+    else:
+        fig = ax.get_figure()
 
-    # heatmap = ax.pcolormesh(X, Y, Z, cmap='viridis',
-    #                         shading='auto', norm=LogNorm())
-    # fig.colorbar(heatmap, ax=ax)
-    # ax.set_xlabel('X axis')
-    # ax.set_ylabel('Y axis')
-    # ax.set_title('2D Heatmap')
-    return X, Y, Z
+    heatmap = ax.pcolormesh(X, Y, Z, cmap='viridis',
+                            shading='auto', norm=LogNorm())
+    if colorbar:
+        fig.colorbar(heatmap, ax=ax)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    return fig, ax
 
 
 def plot_3d_loss_landscape_only(task: Task, plot_resolution: int = 100,
                                 stepsize: float = 0.033, seed: int = 0,
                                 ax=None):
-    sampler = GridWeightSampler(
-        stepsize=stepsize, lower_bound=0.0, upper_bound=1.0)
+    params, static = eqx.partition(task.model, eqx.is_inexact_array)
+    samples = grid_sampling(
+        params=params, n_points_per_dim=int(1 // stepsize),
+        lower_bound=0.0, upper_bound=1.0)
 
-    evaluate_block = EvaluateModel(
-        task=task,
-        seed=seed,
-    )
+    z = evaluate(params=samples, task=task, key=jr.key(seed))
+    x = samples[:, 0]
+    y = samples[:, 1]
 
-    domain = Domain()
-    domain.add_parameter('x')
-    domain.add_output('y')
-    domain.add_output('opt_step')
-    data = ExperimentData(domain=domain)
-
-    data = sampler.call(data=data, model=task.model)
-    data = evaluate_block.call(data=data)
-    data = experimentdata_to_xarray(data=data, popsizes=None, budgets=None,
-                                    include_input=True, n_iterations=None)
-
-    x = data['input'].isel({INPUT_DIM: 0}).values
-    y = data['input'].isel({INPUT_DIM: 1}).values
-    z = data['output'].isel({OUTPUT_DIM: 0}).values
+    import numpy as np
+    from scipy.interpolate import griddata
 
     X, Y = np.meshgrid(np.linspace(min(x), max(x), plot_resolution),
                        np.linspace(min(y), max(y), plot_resolution))
-    Z = griddata((x, y), z, (X, Y), method='cubic')
 
-    # Normalize Z
-    Z_min = np.nanmin(Z)
+    Z = griddata((x, y), z, (X, Y), method='cubic')
+    Z_orig = Z.copy()
+
+    # Ensure Z is positive
+    Z_min = np.min(Z)
     Z = Z - Z_min
+
     Z_nonzero = Z[Z > 0]
     eps = np.min(Z_nonzero) if Z_nonzero.size > 0 else 1e-1
+
     Z += eps
 
     # If no axis is provided, create one
     created_fig = False
     if ax is None:
         fig = plt.figure(figsize=(6, 6))
-        ax = fig.add_subplot(111, projection='3d')
+        ax = fig.add_subplot(111, projection='3d', computed_zorder=False)
         created_fig = True
 
     # Plot on the provided or created axis
-    _ = ax.plot_surface(X, Y, Z, cmap='viridis', norm=LogNorm())
+    _ = ax.plot_surface(X, Y, Z, cmap='viridis', norm=LogNorm(),
+                        zorder=1)
+
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_zticks([])
 
     if created_fig:
-        return fig
+        return fig, ax, Z_orig
     else:
         return ax
 
@@ -589,3 +579,62 @@ def plot_2d_trajectories(raw_results_list: List[xr.DataArray], task: Task,
                        c='k', s=10, alpha=1.0, marker='x')
 
     return fig
+
+
+def make_trajectory_animation(task, data, ax):
+    fig, ax = plot_2d_loss_landscape_only(task=task, ax=ax, colorbar=False)
+    scatter = ax.scatter([], [], c='#CC3311', s=20)
+
+    def init():
+        scatter.set_offsets(np.empty((0, 2)))
+        return scatter,
+
+    def update(frame):
+        scatter.set_offsets(data[:frame + 1])
+        return scatter,
+
+    ani = animation.FuncAnimation(fig, update, frames=len(
+        data), init_func=init, blit=True, interval=200)
+
+    return ani
+
+
+def make_3d_trajectory_animation(task, data, loss):
+    fig, ax, Z = plot_3d_loss_landscape_only(task=task)
+    ax.view_init(elev=45, azim=-75)  # rotate the view
+
+    # Normalize Z offset
+    L = loss.ravel()
+    Z_min = np.min(Z)
+    L = L - Z_min
+    L_nonzero = L[L > 0]
+    eps = np.min(L_nonzero) if L_nonzero.size > 0 else 1e-1
+    L += eps
+
+    # Combine (x, y, z) points
+    data = np.concatenate([data, L[:, None]], axis=1)  # shape (N, 3)
+    xs, ys, zs = data[:, 0], data[:, 1], data[:, 2]
+
+    # Create initial empty 3D scatter
+    scatter = ax.scatter([], [], [], c='#CC3311', s=20,
+                         zorder=10, depthshade=False)
+
+    def init():
+        scatter._offsets3d = ([], [], [])
+        return scatter,
+
+    def update(frame):
+        scatter._offsets3d = (
+            xs[:frame + 1],
+            ys[:frame + 1],
+            zs[:frame + 1],
+        )
+
+        return scatter,
+
+    ani = animation.FuncAnimation(
+        fig, update, frames=len(data),
+        init_func=init, blit=False, interval=200
+    )
+
+    return ani
