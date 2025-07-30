@@ -64,20 +64,22 @@ class RolloutWrapper:
         self.observation_space = self.env.observation_space(self.env_params)
         self.action_size = self.env.action_space(self.env_params).shape
 
-    @partial(jax.jit, static_argnums=0)
+    @staticmethod
+    @eqx.filter_jit
     def select_action(
-        self,
         model: eqx.Module,
         obs: jax.Array,
         state: EnvState,
         rng: PRNGKeyArray,
-    ) -> Tuple[jax.Array, jax.Array]:
+    ) -> Tuple[jax.Array, jax.Array, jax.Array]:
 
-        logits = jax.vmap(model, in_axes=(0, None))(obs, state.time)
+        value, logits = jax.vmap(model, in_axes=(0, None))(obs, state.time)
         pi = tfp.distributions.Categorical(logits=logits)
         action = pi.sample(seed=rng)
         log_prob = pi.log_prob(action)
-        return action, log_prob
+
+        # Return value flattened to (num_envs,)
+        return action, log_prob, value[:, 0]
 
     @partial(jax.jit, static_argnums=(0, 2, 3))
     def batch_reset(self, key: PRNGKeyArray, num_envs: int,
@@ -103,7 +105,8 @@ class RolloutWrapper:
             keys, state, action, self.env_params
         )
 
-    @partial(jax.jit, static_argnums=(0, 3, 4))
+    # @partial(jax.jit, static_argnums=(0, 3, 4))
+    @eqx.filter_jit
     def batch_evaluate(self, rng_input: PRNGKeyArray,
                        model: eqx.Module,
                        num_envs: int,
@@ -120,7 +123,7 @@ class RolloutWrapper:
             obs, state, rng, cum_reward, valid_mask = state_input
             rng, rng_step, rng_net = jr.split(rng, 3)
 
-            action, log_prob, = self.select_action(model, obs, state, rng_net)
+            action, _, _ = self.select_action(model, obs, state, rng_net)
 
             next_o, next_s, reward, done, _ = self.batch_step(
                 jr.split(rng_step, num_envs),
@@ -151,6 +154,60 @@ class RolloutWrapper:
             ],
             (),
             self.env_params.max_steps_in_episode,
+        )
+        obs, action, reward, next_o, done = scan_out
+        cum_return = carry_out[-2].squeeze()
+        last_state = carry_out[1]
+        return (obs, action, reward, next_o, done,
+                cum_return, last_state)
+
+    @partial(jax.jit, static_argnums=(0, 3))
+    def batch_evaluate_precomputed(
+            self, rng_input: PRNGKeyArray,
+            actions: jax.Array,
+            fix_initial_conditions: bool = False):
+        """Rollout an episode with lax.scan."""
+        # Reset the environment
+        num_envs = actions.shape[0]
+        rng_reset, rng_episode = jr.split(rng_input)
+
+        obs, state = self.batch_reset(
+            rng_reset, num_envs, fix_initial_conditions)
+
+        def policy_step(state_input, action):
+            """lax.scan compatible step transition in jax env."""
+            obs, state, rng, cum_reward, valid_mask = state_input
+            rng, rng_step, rng_net = jr.split(rng, 3)
+
+            next_o, next_s, reward, done, _ = self.batch_step(
+                jr.split(rng_step, num_envs),
+                state,
+                action.squeeze(),
+            )
+            new_cum_reward = cum_reward + reward * valid_mask
+            new_valid_mask = valid_mask * (1 - done)
+            carry = [
+                next_o,
+                next_s,
+                rng,
+                new_cum_reward,
+                new_valid_mask,
+            ]
+            y = [obs, action, reward, next_o, done]
+            return carry, y
+
+        # Scan over episode step loop
+        carry_out, scan_out = jax.lax.scan(
+            policy_step,
+            [
+                obs,
+                state,
+                rng_episode,
+                jnp.array(num_envs * [0.0]),
+                jnp.array(num_envs * [1.0]),
+            ],
+            actions.T,
+            # self.env_params.max_steps_in_episode,
         )
         obs, action, reward, next_o, done = scan_out
         cum_return = carry_out[-2].squeeze()
@@ -328,7 +385,8 @@ def policy_train_step(
     rollout: RolloutWrapper,
     optimizer: optax.GradientTransformation,
     fix_initial_conditions: bool
-) -> Tuple[Tuple[PyTree, optax.OptState, PRNGKeyArray, PRNGKeyArray], jax.Array]:
+) -> Tuple[Tuple[PyTree, optax.OptState, PRNGKeyArray, PRNGKeyArray],
+           jax.Array]:
 
     params, opt_state, key_reset, key_episode = carry
 

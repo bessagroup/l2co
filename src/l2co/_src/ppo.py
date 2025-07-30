@@ -1,10 +1,10 @@
+# Standard
 from collections import defaultdict
 from functools import partial
-from typing import Tuple
+from typing import NamedTuple, Tuple
 
+# Third-party
 import equinox as eqx
-# import flax
-# import gymnax
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -12,9 +12,13 @@ import numpy as np
 import optax
 import tqdm
 from jaxtyping import PRNGKeyArray
+from tensorflow_probability.substrates import jax as tfp
 
+# Local
 from .environment import Env, EnvParams, EnvState
 from .run_optimization import RolloutWrapper
+
+# =============================================================================
 
 
 class BatchManager:
@@ -112,105 +116,27 @@ class BatchManager:
         return advantages, advantages + value[:-1]
 
 
-class RolloutManager(object):
-    def __init__(self, env, env_params):
-        # Setup functionalities for vectorized batch rollout
-        # self.env_name = env_name
-        self.env = env
-        self.env_params = env_params
-        # self.env, self.env_params = gymnax.make(env_name, **env_kwargs)
-        # self.env_params = self.env_params.replace(**env_params)
-        self.observation_space = self.env.observation_space(self.env_params)
-        self.action_size = self.env.action_space(self.env_params).shape
-        # self.apply_fn = model.apply
-        self.select_action = self.select_action_ppo
-
-    @partial(jax.jit, static_argnums=0)
-    def select_action_ppo(
-        self,
-        model: eqx.Module,
-        obs: jnp.ndarray,
-        rng: jax.random.PRNGKey,
-    ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.random.PRNGKey]:
-        # value, pi = policy(model, obs, rng)
-        value, pi = model(obs, rng)
-        action = pi.sample(seed=rng)
-        log_prob = pi.log_prob(action)
-        return action, log_prob, value[:, 0], rng
-
-    @partial(jax.jit, static_argnums=0)
-    def batch_reset(self, keys):
-        return jax.vmap(self.env.reset, in_axes=(0, None))(
-            keys, self.env_params
-        )
-
-    @partial(jax.jit, static_argnums=0)
-    def batch_step(self, keys, state, action):
-        return jax.vmap(self.env.step, in_axes=(0, 0, 0, None))(
-            keys, state, action, self.env_params
-        )
-
-    @partial(jax.jit, static_argnums=(0, 3))
-    def batch_evaluate(self, rng_input, model, num_envs):
-        """Rollout an episode with lax.scan."""
-        # Reset the environment
-        rng_reset, rng_episode = jax.random.split(rng_input)
-        obs, state = self.batch_reset(jax.random.split(rng_reset, num_envs))
-
-        def policy_step(state_input, _):
-            """lax.scan compatible step transition in jax env."""
-            obs, state, model, rng, cum_reward, valid_mask = state_input
-            rng, rng_step, rng_net = jax.random.split(rng, 3)
-            action, _, _, rng = self.select_action(model, obs, rng_net)
-            next_o, next_s, reward, done, _ = self.batch_step(
-                jax.random.split(rng_step, num_envs),
-                state,
-                action.squeeze(),
-            )
-            new_cum_reward = cum_reward + reward * valid_mask
-            new_valid_mask = valid_mask * (1 - done)
-            carry, y = [
-                next_o,
-                next_s,
-                model,
-                rng,
-                new_cum_reward,
-                new_valid_mask,
-            ], [new_valid_mask]
-            return carry, y
-
-        # Scan over episode step loop
-        carry_out, scan_out = jax.lax.scan(
-            policy_step,
-            [
-                obs,
-                state,
-                model,
-                rng_episode,
-                jnp.array(num_envs * [0.0]),
-                jnp.array(num_envs * [1.0]),
-            ],
-            (),
-            self.env_params.max_steps_in_episode,
-        )
-
-        cum_return = carry_out[-2].squeeze()
-        return jnp.mean(cum_return)
+class PPOConfig(NamedTuple):
+    num_train_steps: int = 150000
+    num_train_envs: int = 8
+    num_test_rollouts: int = 164
+    n_steps: int = 10
+    n_minibatch: int = 4
+    epoch_ppo: int = 4
+    clip_eps: float = 0.2
+    entropy_coeff: float = 0.01
+    critic_coeff: float = 0.5
+    gamma: float = 0.99
+    gae_lambda: float = 0.95
+    lr_begin: float = 5e-04
+    lr_end: float = 5e-04
+    lr_warmup: float = 0.05
+    max_grad_norm: float = 0.5
+    evaluate_every_epochs: int = 1000
 
 
-# # @partial(jax.jit, static_argnums=0)
-# @jax.jit
-# def policy(
-#     model: eqx.Module,
-#     obs: jnp.ndarray,
-#     rng,
-# ):
-#     # value, pi = apply_fn(params, obs, rng)
-#     value, pi = model(obs, rng)
-#     return value, pi
-
-
-def train_ppo(env: Env, env_params: EnvParams, rng: PRNGKeyArray, config, model: eqx.Module,
+def train_ppo(env: Env, env_params: EnvParams, rng: PRNGKeyArray,
+              config: PPOConfig, model: eqx.Module,
               fix_initial_conditions: bool):
     """Training loop for PPO based on https://github.com/bmazoure/ppo_jax."""
     num_total_epochs = int(config.num_train_steps // config.num_train_envs + 1)
@@ -227,19 +153,9 @@ def train_ppo(env: Env, env_params: EnvParams, rng: PRNGKeyArray, config, model:
         optax.scale_by_schedule(schedule_fn),
     )
 
-    # train_state = TrainState.create(
-    #     apply_fn=model.apply,
-    #     params=params,
-    #     tx=tx,
-    # )
-
     opt_state = tx.init(eqx.filter(model, eqx.is_inexact_array))
 
     # # Setup the rollout manager -> Collects data in vmapped-fashion over envs
-    # rollout_manager = RolloutManager(
-    #     model, config.env_name, config.env_kwargs, config.env_params
-    # )
-
     rollout_manager = RolloutWrapper(env, env_params)
 
     batch_manager = BatchManager(
@@ -251,7 +167,7 @@ def train_ppo(env: Env, env_params: EnvParams, rng: PRNGKeyArray, config, model:
         state_space=rollout_manager.observation_space,
     )
 
-    @partial(jax.jit, static_argnums=5)
+    @eqx.filter_jit
     def get_transition(
         model: eqx.Module,
         obs: jax.Array,
@@ -283,9 +199,11 @@ def train_ppo(env: Env, env_params: EnvParams, rng: PRNGKeyArray, config, model:
     if fix_initial_conditions:
         rng_eval = rng_reset
 
-    obs, state = rollout_manager.batch_reset(rng_reset, config.num_train_envs,
-                                             fix_initial_conditions
-                                             )
+    obs, state = rollout_manager.batch_reset(
+        key=rng_reset,
+        num_envs=config.num_train_envs,
+        fix_initial_conditions=fix_initial_conditions
+    )
 
     total_steps = 0
     log_steps, log_return = [], []
@@ -304,6 +222,7 @@ def train_ppo(env: Env, env_params: EnvParams, rng: PRNGKeyArray, config, model:
             metric_dict, model, opt_state, rng_update = update(
                 model,
                 opt_state,
+                tx,
                 batch_manager.get(batch),
                 config.num_train_envs,
                 config.n_steps,
@@ -367,8 +286,9 @@ def loss_actor_and_critic(
     entropy_coeff: float,
 ) -> jnp.ndarray:
 
-    value_pred, pi = model(obs, rng=None)
-    # value_pred, pi = apply_fn(params_model, obs, rng=None)
+    value_pred, logits = jax.vmap(model)(obs)
+    pi = tfp.distributions.Categorical(logits=logits)
+
     value_pred = value_pred[:, 0]
 
     # TODO: Figure out why training without 0 breaks categorical model
@@ -409,6 +329,7 @@ def loss_actor_and_critic(
 def update(
     model: eqx.Module,
     opt_state: optax.OptState,
+    optimizer: optax.GradientTransformation,
     batch: Tuple,
     num_envs: int,
     n_steps: int,
@@ -417,7 +338,7 @@ def update(
     clip_eps: float,
     entropy_coeff: float,
     critic_coeff: float,
-    rng: jax.random.PRNGKey,
+    rng: PRNGKeyArray,
 ):
     """Perform multiple epochs of updates with multiple updates."""
     obs, action, log_pi_old, value, target, gae = batch
@@ -436,6 +357,7 @@ def update(
         model, opt_state, total_loss = update_epoch(
             model,
             opt_state,
+            optimizer,
             idxes_list,
             flatten_dims(obs),
             flatten_dims(action),
@@ -471,10 +393,11 @@ def update(
     return avg_metrics_dict, model, opt_state, rng
 
 
-@jax.jit
+@eqx.filter_jit
 def update_epoch(
     model: eqx.Module,
     opt_state: optax.OptState,
+    optimizer: optax.GradientTransformation,
     idxes: jnp.ndarray,
     obs,
     action,
@@ -487,7 +410,6 @@ def update_epoch(
     critic_coeff: float,
 ):
     for idx in idxes:
-        # print(action[idx].shape, action[idx].reshape(-1, 1).shape)
         grad_fn = eqx.filter_value_and_grad(
             loss_actor_and_critic, has_aux=True)
         # grad_fn = jax.value_and_grad(loss_actor_and_critic, has_aux=True)
@@ -498,14 +420,14 @@ def update_epoch(
             value_old=value[idx],
             log_pi_old=log_pi_old[idx],
             gae=gae[idx],
-            # action=action[idx].reshape(-1, 1),
             action=jnp.expand_dims(action[idx], -1),
             clip_eps=clip_eps,
             critic_coeff=critic_coeff,
             entropy_coeff=entropy_coeff,
         )
         # train_state = train_state.apply_gradients(grads=grads)
-        updates, opt_state = optax.apply_updates(grads, opt_state)
+        updates, opt_state = optimizer.update(grads, opt_state)
+        # updates, opt_state = optax.apply_updates(grads, opt_state)
         model = eqx.apply_updates(model, updates)
 
     return model, opt_state, total_loss

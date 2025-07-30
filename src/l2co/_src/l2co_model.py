@@ -12,7 +12,7 @@ import json
 from abc import abstractmethod
 from collections import defaultdict
 from pathlib import Path
-from typing import Callable, Dict, Iterable
+from typing import Callable, Dict, Iterable, Union
 
 # Third-party
 import cloudpickle
@@ -541,3 +541,135 @@ def predict_stage0_model(model: Pipeline, x: pd.DataFrame) -> jnp.ndarray:
 #         return cls(stage0_model=stage0_model,
 #                    stage1_models=stage1_models,
 #                    opt_steps=opt_steps)
+
+# class CategoricalSeparateMLP(eqx.Module):
+
+#     critic_layers: list
+#     critic_output: eqx.nn.Linear
+
+#     actor_layers: list
+#     actor_output: eqx.nn.Linear
+
+#     def __init__(
+#         self,
+#         in_size: int,
+#         out_size: int,
+#         width_size: int,
+#         depth: int,
+#         *,
+#         key: jax.Array,
+#     ):
+#         key1, key2, * \
+#             rest = jax.random.split(key, 2 + 2 * (depth - 1))
+
+#         # Critic
+#         keys_c = jax.random.split(key1, depth)
+#         self.critic_layers = [
+#             eqx.nn.Linear(
+#                 in_features=in_size if i == 0 else width_size,
+#                 out_features=width_size,
+#                 key=keys_c[i])
+#             for i in range(depth)
+#         ]
+#         self.critic_output = eqx.nn.Linear(
+#             in_features=width_size, out_features=1, key=rest[0],
+#         )
+
+#         # Actor
+#         keys_a = jax.random.split(key2, depth)
+#         self.actor_layers = [
+#             eqx.nn.Linear(
+#                 in_features=in_size if i == 0 else width_size,
+#                 out_features=width_size,
+#                 key=keys_a[i])
+#             for i in range(depth)
+#         ]
+#         self.actor_output = eqx.nn.Linear(
+#             in_features=width_size, out_features=out_size,
+#             key=rest[1])
+
+#     def __call__(self, x: jax.Array) -> tuple[jax.Array, jax.Array]:
+#         # Critic
+#         x_v = x
+#         for layer in self.critic_layers:
+#             x_v = jax.nn.relu(layer(x_v))
+#         v = self.critic_output(x_v)
+
+#         # Actor
+#         x_a = x
+#         for layer in self.actor_layers:
+#             x_a = jax.nn.relu(layer(x_a))
+#         logits = self.actor_output(x_a)
+
+#         return v, logits
+
+
+class SafeMLP(eqx.Module):
+    mlp: eqx.nn.MLP
+    activation: Callable = eqx.field(static=True)
+    final_activation: Callable = eqx.field(static=True)
+
+    def __init__(
+        self,
+        in_size: int,
+        out_size: int,
+        width_size: int,
+        depth: int,
+        *,
+        activation: Callable,
+        final_activation: Callable,
+        key: jax.Array,
+    ):
+        self.activation = activation
+        self.final_activation = final_activation
+        self.mlp = eqx.nn.MLP(
+            in_size=in_size,
+            out_size=out_size,
+            width_size=width_size,
+            depth=depth,
+            activation=activation,
+            final_activation=final_activation,
+            key=key,
+        )
+
+    def __call__(self, x: jax.Array) -> jax.Array:
+        return self.mlp(x)
+
+
+class CategoricalSeparateMLP(eqx.Module):
+    critic: eqx.Module
+    actor: eqx.Module
+
+    def __init__(
+        self,
+        in_size: int,
+        out_size: int,
+        width_size: int,
+        depth: int,
+        *,
+        activation: Callable = jax.nn.relu,
+        final_activation: Callable = lambda x: x,
+        key: jax.Array,
+    ):
+        key1, key2 = jax.random.split(key, 2)
+        self.critic = eqx.nn.MLP(
+            in_size=in_size,
+            out_size=1,
+            width_size=width_size,
+            depth=depth,
+            activation=activation,
+            final_activation=final_activation,
+            key=key1,
+        )
+        self.actor = eqx.nn.MLP(
+            in_size=in_size,
+            out_size=out_size,
+            width_size=width_size,
+            depth=depth,
+            activation=activation,
+            final_activation=final_activation,
+            key=key2,
+        )
+
+    def __call__(self, x: jax.Array, *args, **kwargs) -> tuple[jax.Array, jax.Array]:
+        return self.critic(x), self.actor(x)

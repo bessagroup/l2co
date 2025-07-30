@@ -7,16 +7,21 @@ Module for pytree utilities.
 
 # Standard
 import json
-from typing import List
+from functools import partial
+from pathlib import Path
+from typing import List, Tuple
 
+import cloudpickle
 # Third-party
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import jax.random as jr
 import numpy as onp
+import optax
 import xarray as xr
 from f3dasm import ExperimentData
-from jaxtyping import PyTree
+from jaxtyping import PRNGKeyArray, PyTree
 
 # Local
 from .naming import BUDGET, INPUT_DIM, OUTPUT_DIM, UPDATE_STEP
@@ -107,25 +112,21 @@ def replace_nans_with_first_valid(x: jnp.ndarray) -> jnp.ndarray:
 
 
 def log_stabilized_minmax_scale(x: jax.Array) -> jax.Array:
-    """
-    Apply log-stabilized min-max scaling to the input array.
-
-    Parameters
-    ----------
-    x : jax.Array
-        Input array to scale.
-
-    Returns
-    -------
-    jax.Array
-        Scaled array.
-    """
     p = x - jnp.min(x)
-    eps = jnp.min(jnp.where(p > 0.0, p, jnp.max(p) + EPSILON)) + EPSILON
+
+    # Only take positive entries for epsilon computation
+    pos_vals = jnp.where(p > 0, p, jnp.inf)
+    eps = jnp.min(pos_vals)
+    eps = jnp.where(jnp.isinf(eps), EPSILON, eps) + EPSILON
+
     x_log10 = jnp.log10(p + eps)
     x_min = jnp.min(x_log10)
     x_max = jnp.max(x_log10)
-    return (x_log10 - x_min) / (x_max - x_min + EPSILON)
+
+    normed = (x_log10 - x_min) / (x_max - x_min + EPSILON)
+
+    # Do this to avoid floating point issues with jitting
+    return jnp.clip(normed, 0.0, 1.0)
 
 
 def output_cummin(x: jax.Array) -> jax.Array:
@@ -413,3 +414,84 @@ def dict_list_to_tree(dict_list: list[dict[str, PyTree]], name: str) -> PyTree:
     return jax.tree_util.tree_map(
         lambda *params: jax.numpy.stack(params, axis=0),
         *[d[name] for d in dict_list])
+
+
+def sigmoid_mean(x: jax.Array, a: float, b: float, c: float) -> jax.Array:
+    return a / (1 + jnp.exp(-b * (x - c)))
+
+
+def loss_fn(params: jax.Array, x: jax.Array, y: jax.Array) -> jax.Array:
+    a, b, c = params
+    y_pred = sigmoid_mean(x, a, b, c)
+    return jnp.mean((y - y_pred) ** 2)
+
+
+@partial(jax.jit, static_argnames=("max_iter", "tol"))
+def single_run_jit(init_params: jnp.ndarray, x: jnp.ndarray, y: jnp.ndarray,
+                   max_iter: int, tol: float
+                   ) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    fun = partial(loss_fn, x=x, y=y)
+    opt = optax.lbfgs()
+    value_and_grad_fun = optax.value_and_grad_from_state(fun)
+    state = opt.init(init_params)
+
+    def step(carry):
+        params, state = carry
+        value, grad = value_and_grad_fun(params, state=state)
+        updates, state = opt.update(
+            grad, state, params, value=value, grad=grad, value_fn=fun
+        )
+        params = optax.apply_updates(params, updates)
+        return (params, state)
+
+    def continuing_criterion(carry):
+        _, state = carry
+        iter_num = optax.tree_utils.tree_get(state, 'count')
+        grad = optax.tree_utils.tree_get(state, 'grad')
+        err = optax.tree_utils.tree_l2_norm(grad)
+        return (iter_num == 0) | ((iter_num < max_iter) & (err >= tol))
+
+    final_params, _ = jax.lax.while_loop(
+        continuing_criterion, step, (init_params, state))
+    final_loss = fun(final_params)
+    return final_params, final_loss
+
+
+@partial(jax.jit, static_argnames=("max_iter", "tol", "num_restarts"))
+def fit_basis_function(y: jnp.ndarray, max_iter: int = 100, tol: float = 1e-6,
+                       num_restarts: int = 5, *,
+                       key: PRNGKeyArray) -> jnp.ndarray:
+    x = jnp.linspace(0., 1., len(y))
+
+    keys = jr.split(key, num_restarts)
+    init_guesses = jax.vmap(lambda k: jr.uniform(
+        k, (3,), minval=-1.0, maxval=1.0))(keys)
+
+    def run_for_init(params):
+        return single_run_jit(params, x, y, max_iter, tol)
+
+    params_all, losses_all = jax.vmap(run_for_init)(init_guesses)
+
+    best_index = jnp.argmin(losses_all)
+    return params_all[best_index]
+
+
+def save_eqx_model(model: eqx.Module, path: str):
+    _path = Path(path)
+    model_shape = eqx.filter_eval_shape(lambda x: model, None)
+
+    with open(_path.with_suffix('.pkl'), 'wb') as f:
+        cloudpickle.dump(model_shape, f)
+
+    eqx.tree_serialise_leaves(_path.with_suffix('.eqx'), model)
+
+
+def load_eqx_model(path: str) -> eqx.Module:
+    _path = Path(path)
+
+    with open(_path.with_suffix('.pkl'), 'rb') as f:
+        model_shape = cloudpickle.load(f)
+
+    return eqx.tree_deserialise_leaves(
+        _path.with_suffix('.eqx'),
+        like=model_shape)

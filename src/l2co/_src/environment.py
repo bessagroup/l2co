@@ -21,8 +21,9 @@ from .history_state import HistoryState
 from .optimizers import OPTIMIZER_MAPPING, UpdateClass
 from .optimizerschedule import OptimizationStep
 from .task import Task
-from .tree_utils import (bfill, ffill, log_stabilized_minmax_scale,
-                         one_hot_encode, output_cummin, staircase)
+from .tree_utils import (bfill, ffill, fit_basis_function,
+                         log_stabilized_minmax_scale, one_hot_encode,
+                         output_cummin, staircase)
 from .update_state import UpdateState, new
 
 #                                                          Authorship & Credits
@@ -307,4 +308,30 @@ class Env():
 
     def observation_space(self, params: EnvParams) -> spaces.Box:
         return spaces.Box(0.0, 1.0, (2+params.n_optimizers,),
+                          dtype=jnp.float32)
+
+
+class EnvFeatureFit(Env):
+    def get_obs(self, state: EnvState, params: EnvParams,
+                key=None) -> jax.Array:
+
+        x = state.history_state.output_min
+        x_select = x[-(params.n_iterations + 1):]
+
+        stair = log_stabilized_minmax_scale(
+            output_cummin(
+                ffill(bfill(x_select))))
+
+        fit_params = fit_basis_function(stair, key=state.update_state.key)
+
+        return jnp.concatenate(
+            [
+                fit_params,
+                jnp.array([state.time]),
+            ],
+            dtype=jnp.float32,
+        )
+
+    def observation_space(self, params: EnvParams) -> spaces.Box:
+        return spaces.Box(0.0, 1.0, (4,),
                           dtype=jnp.float32)
