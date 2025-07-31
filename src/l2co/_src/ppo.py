@@ -1,3 +1,12 @@
+"""
+Module containing the PPO implementation for reinforcement learning.
+
+"""
+
+#                                                                       Modules
+# =============================================================================
+
+
 # Standard
 from collections import defaultdict
 from functools import partial
@@ -18,6 +27,14 @@ from tensorflow_probability.substrates import jax as tfp
 from .environment import Env, EnvParams, EnvState
 from .run_optimization import RolloutWrapper
 
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
+__credits__ = ['Martin van der Schelling']
+__status__ = 'Planning'
+# =============================================================================
+
+#                                                                 Batch Manager
 # =============================================================================
 
 
@@ -135,7 +152,7 @@ class PPOConfig(NamedTuple):
     evaluate_every_epochs: int = 1000
 
 
-def train_ppo(env: Env, env_params: EnvParams, rng: PRNGKeyArray,
+def train_ppo(env: Env, env_params: EnvParams, key: PRNGKeyArray,
               config: PPOConfig, model: eqx.Module,
               fix_initial_conditions: bool):
     """Training loop for PPO based on https://github.com/bmazoure/ppo_jax."""
@@ -173,34 +190,32 @@ def train_ppo(env: Env, env_params: EnvParams, rng: PRNGKeyArray,
         obs: jax.Array,
         state: EnvState,
         batch: BatchManager,
-        rng: PRNGKeyArray,
+        key: PRNGKeyArray,
         num_train_envs: int,
     ):
-        # TODO: Fix that select_action returns value
         action, log_pi, value = rollout_manager.select_action(
-            model, obs, state, rng
+            model, obs, state, key
         )
 
-        new_key, key_step = jr.split(rng)
-        b_rng = jr.split(key_step, num_train_envs)
-        # Automatic env resetting in gymnax step!
+        next_key, key_step = jr.split(key)
+
         next_obs, next_state, reward, done, _ = rollout_manager.batch_step(
-            b_rng, state, action
+            jr.split(key_step, num_train_envs), state, action
         )
         batch = batch_manager.append(
             batch, obs, action, reward, done, log_pi, value
         )
-        return model, next_obs, next_state, batch, new_key
+        return model, next_obs, next_state, batch, next_key
 
     batch = batch_manager.reset()
 
-    rng, rng_step, rng_reset, rng_eval, rng_update = jax.random.split(rng, 5)
+    key, key_step, key_reset, key_eval, key_update = jr.split(key, 5)
 
     if fix_initial_conditions:
-        rng_eval = rng_reset
+        key_eval = key_reset
 
     obs, state = rollout_manager.batch_reset(
-        key=rng_reset,
+        key=key_reset,
         num_envs=config.num_train_envs,
         fix_initial_conditions=fix_initial_conditions
     )
@@ -209,51 +224,51 @@ def train_ppo(env: Env, env_params: EnvParams, rng: PRNGKeyArray,
     log_steps, log_return = [], []
     t = tqdm.tqdm(range(1, num_total_epochs + 1), desc="PPO", leave=True)
     for step in t:
-        model, obs, state, batch, rng_step = get_transition(
+        # key_step is updated each time step
+        model, obs, state, batch, key_step = get_transition(
             model,
             obs,
             state,
             batch,
-            rng_step,
+            key_step,
             config.num_train_envs,
         )
         total_steps += config.num_train_envs
         if step % (config.n_steps + 1) == 0:
-            metric_dict, model, opt_state, rng_update = update(
-                model,
-                opt_state,
-                tx,
-                batch_manager.get(batch),
-                config.num_train_envs,
-                config.n_steps,
-                config.n_minibatch,
-                config.epoch_ppo,
-                config.clip_eps,
-                config.entropy_coeff,
-                config.critic_coeff,
-                rng_update,
+            # key_update is updated each update
+            metric_dict, model, opt_state, key_update = update(
+                model=model,
+                opt_state=opt_state,
+                optimizer=tx,
+                batch=batch_manager.get(batch),
+                num_envs=config.num_train_envs,
+                n_steps=config.n_steps,
+                n_minibatch=config.n_minibatch,
+                epoch_ppo=config.epoch_ppo,
+                clip_eps=config.clip_eps,
+                entropy_coeff=config.entropy_coeff,
+                critic_coeff=config.critic_coeff,
+                key=key_update,
             )
             batch = batch_manager.reset()
-            # TODO: does rng_reset reset the initial conditions always in
-            # the same way? If so, we might want to change that.
-            if fix_initial_conditions:
-                obs, state = rollout_manager.batch_reset(
-                    rng_reset, config.num_train_envs,
-                    fix_initial_conditions
-                )
-            else:
-                obs, state = rollout_manager.batch_reset(
-                    rng_step, config.num_train_envs,
-                    fix_initial_conditions
-                )
+
+            # If we want to fix the environment stochastics, do not
+            # change the key_reset
+            if not fix_initial_conditions:
+                key_reset, _ = jr.split(key_reset)
+
+            obs, state = rollout_manager.batch_reset(
+                key_reset, config.num_train_envs,
+                fix_initial_conditions
+            )
 
         if (step + 1) % config.evaluate_every_epochs == 0:
-            rng, rng_eval = jax.random.split(rng)
+            key, key_eval = jr.split(key)
             (_, _, _, _, _, cum_return, _) = rollout_manager.batch_evaluate(
-                rng_eval,
-                model,
-                config.num_test_rollouts,
-                fix_initial_conditions,
+                key=key_eval,
+                model=model,
+                num_envs=config.num_test_rollouts,
+                fix_initial_conditions=fix_initial_conditions,
             )
             rewards = jnp.mean(cum_return)
             log_steps.append(total_steps)
@@ -338,7 +353,7 @@ def update(
     clip_eps: float,
     entropy_coeff: float,
     critic_coeff: float,
-    rng: PRNGKeyArray,
+    key: PRNGKeyArray,
 ):
     """Perform multiple epochs of updates with multiple updates."""
     obs, action, log_pi_old, value, target, gae = batch
@@ -346,9 +361,11 @@ def update(
     size_minibatch = size_batch // n_minibatch
     idxes = jnp.arange(num_envs * n_steps)
     avg_metrics_dict = defaultdict(int)
+    key, key_perm = jr.split(key)
 
     for _ in range(epoch_ppo):
-        idxes = jax.random.permutation(rng, idxes)
+        key_perm, _ = jr.split(key_perm)
+        idxes = jr.permutation(key_perm, idxes)
         idxes_list = [
             idxes[start: start + size_minibatch]
             for start in jnp.arange(0, size_batch, size_minibatch)
@@ -390,7 +407,7 @@ def update(
     for k, v in avg_metrics_dict.items():
         avg_metrics_dict[k] = v / (epoch_ppo)
 
-    return avg_metrics_dict, model, opt_state, rng
+    return avg_metrics_dict, model, opt_state, key
 
 
 @eqx.filter_jit

@@ -107,21 +107,20 @@ class RolloutWrapper:
 
     # @partial(jax.jit, static_argnums=(0, 3, 4))
     @eqx.filter_jit
-    def batch_evaluate(self, rng_input: PRNGKeyArray,
+    def batch_evaluate(self, key: PRNGKeyArray,
                        model: eqx.Module,
                        num_envs: int,
                        fix_initial_conditions: bool = False):
         """Rollout an episode with lax.scan."""
-        # Reset the environment
-        rng_reset, rng_episode = jr.split(rng_input)
 
+        # Reset the environment
         obs, state = self.batch_reset(
-            rng_reset, num_envs, fix_initial_conditions)
+            key, num_envs, fix_initial_conditions)
 
         def policy_step(state_input, _):
             """lax.scan compatible step transition in jax env."""
             obs, state, rng, cum_reward, valid_mask = state_input
-            rng, rng_step, rng_net = jr.split(rng, 3)
+            next_rng, rng_step, rng_net = jr.split(rng, 3)
 
             action, _, _ = self.select_action(model, obs, state, rng_net)
 
@@ -135,7 +134,7 @@ class RolloutWrapper:
             carry = [
                 next_o,
                 next_s,
-                rng,
+                next_rng,
                 new_cum_reward,
                 new_valid_mask,
             ]
@@ -148,7 +147,7 @@ class RolloutWrapper:
             [
                 obs,
                 state,
-                rng_episode,
+                key,
                 jnp.array(num_envs * [0.0]),
                 jnp.array(num_envs * [1.0]),
             ],
@@ -163,21 +162,20 @@ class RolloutWrapper:
 
     @partial(jax.jit, static_argnums=(0, 3))
     def batch_evaluate_precomputed(
-            self, rng_input: PRNGKeyArray,
+            self, key: PRNGKeyArray,
             actions: jax.Array,
             fix_initial_conditions: bool = False):
         """Rollout an episode with lax.scan."""
         # Reset the environment
         num_envs = actions.shape[0]
-        rng_reset, rng_episode = jr.split(rng_input)
 
         obs, state = self.batch_reset(
-            rng_reset, num_envs, fix_initial_conditions)
+            key, num_envs, fix_initial_conditions)
 
         def policy_step(state_input, action):
             """lax.scan compatible step transition in jax env."""
             obs, state, rng, cum_reward, valid_mask = state_input
-            rng, rng_step, rng_net = jr.split(rng, 3)
+            next_rng, rng_step, _ = jr.split(rng, 3)
 
             next_o, next_s, reward, done, _ = self.batch_step(
                 jr.split(rng_step, num_envs),
@@ -189,7 +187,7 @@ class RolloutWrapper:
             carry = [
                 next_o,
                 next_s,
-                rng,
+                next_rng,
                 new_cum_reward,
                 new_valid_mask,
             ]
@@ -202,7 +200,7 @@ class RolloutWrapper:
             [
                 obs,
                 state,
-                rng_episode,
+                key,
                 jnp.array(num_envs * [0.0]),
                 jnp.array(num_envs * [1.0]),
             ],

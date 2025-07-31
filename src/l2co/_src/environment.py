@@ -14,7 +14,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from gymnax.environments import spaces
-from jaxtyping import PyTree
+from jaxtyping import PRNGKeyArray, PyTree
 
 # Local
 from .history_state import HistoryState
@@ -136,11 +136,11 @@ class Env():
         update_state = UpdateState.init(
             params=model_params,
             memory_size=params.memory_size,
-            key=key,
         )
 
         update_state = new(update_state=update_state,
-                           task=params.task, sampler=params.sampler)
+                           task=params.task, sampler=params.sampler,
+                           key=key)
 
         history_state = HistoryState.init(
             n_iterations=params.total_iterations+1,
@@ -148,7 +148,7 @@ class Env():
 
         init_params = jax.tree.map(lambda x: x[-1], update_state.last_params)
         init_loss = jax.tree.map(
-            lambda x: x[-1], update_state.evaluate(params.task))
+            lambda x: x[-1], update_state.evaluate(params.task, key))
 
         # Add initial state to history
         history_state = history_state.add({
@@ -161,7 +161,8 @@ class Env():
             )
         })
 
-        opt_states = tuple(opt.init(update_state) for opt in params.optimizers)
+        opt_states = tuple(opt.init(update_state, key)
+                           for opt in params.optimizers)
 
         state = EnvState(
             update_state=update_state,
@@ -170,10 +171,10 @@ class Env():
             time=0.0,
         )
 
-        return self.get_obs(state, params), state
+        return self.get_obs(state, params, key), state
 
     def get_obs(self, state: EnvState, params: EnvParams,
-                key=None) -> jax.Array:
+                key: PRNGKeyArray = None) -> jax.Array:
 
         traj = ffill(bfill(state.history_state.output_mean))
         stair = output_cummin(ffill(bfill(state.history_state.output_min)))
@@ -214,12 +215,14 @@ class Env():
         """
 
         # === Static dispatch via lax.switch === #
+        # TODO: Source of stochasticity in optimizer should be changeable
         def make_branch(optim: UpdateClass):
             return lambda _: optim.step(
                 opt_states=state.opt_states,
                 update_state=state.update_state,
                 history_state=state.history_state,
                 n_iterations=params.n_iterations,
+                key=key,
             )
 
         branches = [make_branch(optim) for optim in params.optimizers]
@@ -259,7 +262,7 @@ class Env():
         info = {}
 
         return (
-            jax.lax.stop_gradient(self.get_obs(state, params)),
+            jax.lax.stop_gradient(self.get_obs(state, params, key)),
             jax.lax.stop_gradient(state),
             jnp.array(reward),
             done,
@@ -313,7 +316,7 @@ class Env():
 
 class EnvFeatureFit(Env):
     def get_obs(self, state: EnvState, params: EnvParams,
-                key=None) -> jax.Array:
+                key: PRNGKeyArray) -> jax.Array:
 
         x = state.history_state.output_min
         x_select = x[-(params.n_iterations + 1):]
@@ -322,7 +325,7 @@ class EnvFeatureFit(Env):
             output_cummin(
                 ffill(bfill(x_select))))
 
-        fit_params = fit_basis_function(stair, key=state.update_state.key)
+        fit_params = fit_basis_function(stair, key=key)
 
         return jnp.concatenate(
             [

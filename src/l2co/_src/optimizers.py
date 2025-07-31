@@ -54,7 +54,8 @@ def optax_fn(static: PyTree,
              **kwargs
              ) -> Tuple[InitFunction, StepFunction]:
 
-    def init_fn(update_state: UpdateState, **sample) -> OptaxState:
+    def init_fn(update_state: UpdateState, key: PRNGKeyArray = None,
+                **sample) -> OptaxState:
         params = jax.tree.map(lambda x: x[-1], update_state.last_params)
         opt_state = optimizer.init(params)
         return opt_state
@@ -122,7 +123,7 @@ def optax_extra_args_fn(static: PyTree,
                         n_optimizers: int,
                         **kwargs
                         ) -> Tuple[InitFunction, StepFunction]:
-    def init_fn(update_state: UpdateState, **sample) -> OptaxState:
+    def init_fn(update_state: UpdateState, key: PRNGKeyArray = None, **sample) -> OptaxState:
         params = jax.tree.map(lambda x: x[-1], update_state.last_params)
         opt_state = optimizer.init(params)
         return opt_state
@@ -197,9 +198,10 @@ def evosax_distribution_based_fn(
         **kwargs
 ) -> Tuple[InitFunction, StepFunction]:
 
-    def init_fn(update_state: UpdateState, **sample) -> EvoSaxState:
+    def init_fn(update_state: UpdateState,
+                key: PRNGKeyArray = None, **sample) -> EvoSaxState:
         params = jax.tree.map(lambda x: x[-1], update_state.last_params)
-        return optimizer.init(update_state.key, params, es_params)
+        return optimizer.init(key, params, es_params)
 
     @eqx.filter_jit
     def step_fn(carry: Tuple[InputParameters, OptStates, PRNGKeyArray],
@@ -265,12 +267,13 @@ def evosax_population_based_fn(
     n_optimizers: int,
     **kwargs
 ) -> Tuple[InitFunction, StepFunction]:
-    def init_fn(update_state: UpdateState, **sample) -> EvoSaxState:
+    def init_fn(update_state: UpdateState, key: PRNGKeyArray,
+                **sample) -> EvoSaxState:
         population = jax.tree.map(
             lambda x: x[-popsize:], update_state.last_params)
 
         if pass_rng:
-            rng_sample = {'key': jr.split(update_state.key, num=popsize)}
+            rng_sample = {'key': jr.split(key, num=popsize)}
         else:
             rng_sample = {}
 
@@ -278,7 +281,7 @@ def evosax_population_based_fn(
                                 loss_fn=loss_fn, **sample)
                         )(population, **rng_sample)
 
-        return optimizer.init(key=update_state.key,
+        return optimizer.init(key=key,
                               population=population,
                               fitness=loss,
                               params=es_params
@@ -346,12 +349,13 @@ class UpdateClass(eqx.Module):
     hash: int = eqx.field(static=True)
 
     @jax.jit
-    def init(self, update_state: UpdateState) -> PyTree:
+    def init(self, update_state: UpdateState, key: PRNGKeyArray) -> PyTree:
         """Initialize the optimizer state."""
-        return self.init_fn(update_state)
+        return self.init_fn(update_state, key)
 
     @jax.jit
-    def handshake(self, update_state: UpdateState) -> UpdateState:
+    def handshake(self, update_state: UpdateState,
+                  key: PRNGKeyArray) -> UpdateState:
         case_id = jnp.where(
             (update_state.last_step == SAMPLING_STEP) | (
                 update_state.last_step == self.hash),
@@ -363,30 +367,30 @@ class UpdateClass(eqx.Module):
             case_id,
             (
                 lambda s: s,
-                lambda s: self.handshake_fn(update_state=s),
+                lambda s: self.handshake_fn(update_state=s, key=key),
             ),
             update_state,
         )
 
-    # @partial(jax.jit, static_argnames=('n_iterations',))
     def step(
         self,
         opt_states: Tuple[PyTree],
         update_state: UpdateState,
         history_state: HistoryState,
         n_iterations: int,
+        key: PRNGKeyArray,
     ) -> Tuple[PyTree, UpdateState]:
 
         update_state = self.handshake(
-            update_state=update_state)
+            update_state=update_state, key=key)
 
         params = jax.tree.map(
             lambda x: x[-self.popsize:], update_state.last_params)
 
-        (_, opt_states, final_key), history = jax.lax.scan(
+        (_, opt_states, _), history = jax.lax.scan(
             f=lambda carry, _: self.step_fn(
                 carry, sample={}),
-            init=(params, opt_states, update_state.key),
+            init=(params, opt_states, key),
             xs=None,
             length=n_iterations+1
         )
@@ -404,7 +408,6 @@ class UpdateClass(eqx.Module):
         final_update_state = UpdateState.from_history(
             history=history_flattened,
             memory_size=update_state.memory_size,
-            key=final_key,
             last_step=self.hash,)
 
         update_state = update_state.merge(final_update_state)
