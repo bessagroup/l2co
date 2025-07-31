@@ -123,7 +123,8 @@ def optax_extra_args_fn(static: PyTree,
                         n_optimizers: int,
                         **kwargs
                         ) -> Tuple[InitFunction, StepFunction]:
-    def init_fn(update_state: UpdateState, key: PRNGKeyArray = None, **sample) -> OptaxState:
+    def init_fn(update_state: UpdateState,
+                key: PRNGKeyArray = None, **sample) -> OptaxState:
         params = jax.tree.map(lambda x: x[-1], update_state.last_params)
         opt_state = optimizer.init(params)
         return opt_state
