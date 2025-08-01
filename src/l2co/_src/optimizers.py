@@ -9,7 +9,7 @@ Module for optimizers.
 from __future__ import annotations
 
 from functools import partial
-from typing import Callable, Optional, Tuple, Type
+from typing import Callable, Dict, Optional, Tuple, Type
 
 # Third-party
 import equinox as eqx
@@ -417,6 +417,8 @@ class UpdateClass(eqx.Module):
 
         return update_state, opt_states, new_history_state
 
+# =============================================================================
+
 
 def optax_update(task: Task,
                  optimizer: optax.GradientTransformation,
@@ -627,7 +629,7 @@ def sepcmaes_variable_popsize(
     return optimizer(**kwargs, task=task, popsize=popsize)
 
 
-OPTIMIZER_MAPPING = {
+OPTIMIZER_MAPPING: Dict[str, UpdateClass] = {
     'adam': partial(optax_update, optimizer=optax.adam,
                     popsize=1),
     'sgd': partial(optax_update, optimizer=optax.sgd,

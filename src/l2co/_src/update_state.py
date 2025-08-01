@@ -95,6 +95,8 @@ class UpdateState(eqx.Module):
     def evaluate(self, task: Task, key: PRNGKeyArray) -> jax.Array:
         return evaluate(params=self.last_params, task=task, key=key)
 
+# =============================================================================
+
 
 def evaluate(params: PyTree, task: Task, *, key: PRNGKeyArray) -> jax.Array:
 

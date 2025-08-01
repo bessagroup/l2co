@@ -13,12 +13,11 @@ import hashlib
 import json
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Optional
+from typing import Any, Dict, Iterator, Optional
 
 # Third-party
 import jax
 import jax.numpy as jnp
-import numpy as np
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -73,6 +72,25 @@ class OptimizationStep:
             dtype=jnp.uint32)
 
     @property
+    def tag_hashable(self) -> tuple[tuple[str, Any]]:
+        def make_hashable(value):
+            """Recursively convert lists to tuples and dicts to frozensets."""
+            if isinstance(value, list):
+                return tuple(make_hashable(v) for v in value)
+            elif isinstance(value, dict):
+                return frozenset(
+                    (k, make_hashable(v)) for k, v in value.items())
+            return value  # Leave other types unchanged
+
+        tag_hashable = {
+            'opt_name': make_hashable(self.optimizer),
+            'hyperparameters': make_hashable(self.hyperparameters),
+        }
+
+        # Use frozenset for order independence
+        return frozenset(tag_hashable.items())
+
+    @property
     def name(self) -> str:
         hyperparameters = '_'.join(
             [f"{k}={v}" for k, v in self.hyperparameters.items()])
@@ -93,6 +111,17 @@ class OptimizationStep:
         else:
             return cls(optimizer=config['optimizer'],
                        hyperparameters=config['hyperparameters'])
+
+    @staticmethod
+    def save(object: OptimizationStep, path: str) -> str:
+        object.save_to_json(path)
+        return Path(path).with_suffix('.json')
+
+    @classmethod
+    def load(cls, filepath: str) -> OptimizationStep:
+        with open(filepath, 'r') as f:
+            data = json.load(f)
+        return cls.from_dict(data)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -236,68 +265,3 @@ class OptimizationSchedule:
 
     def copy(self) -> OptimizationSchedule:
         return deepcopy(self)
-
-
-def get_combination(optimizer_1: OptimizationStep,
-                    optimizer_2: OptimizationStep,
-                    switch: float) -> OptimizationSchedule:
-
-    # create copies
-    optimizer_1 = optimizer_1.copy()
-    optimizer_2 = optimizer_2.copy()
-
-    if optimizer_1 == optimizer_2:
-        steps = [optimizer_1]
-        budgets = 1.0
-    else:
-        steps = [optimizer_1, optimizer_2]
-        budgets = [switch, 1-switch]
-
-    return OptimizationSchedule(steps=steps, budgets=budgets)
-
-
-def get_combination_5(optimizer_1: OptimizationStep,
-                      optimizer_2: OptimizationStep,
-                      optimizer_3: OptimizationStep,
-                      optimizer_4: OptimizationStep,
-                      optimizer_5: OptimizationStep,
-                      budgets: Iterable[float]) -> OptimizationSchedule:
-    # create copies
-    optimizer_1 = optimizer_1.copy()
-    optimizer_2 = optimizer_2.copy()
-    optimizer_3 = optimizer_3.copy()
-    optimizer_4 = optimizer_4.copy()
-    optimizer_5 = optimizer_5.copy()
-
-    return OptimizationSchedule(
-        steps=[optimizer_1, optimizer_2,
-               optimizer_3, optimizer_4, optimizer_5],
-        budgets=list(budgets)
-    )
-
-
-def step_n_iterations(n_iterations: int, budgets: List[int]) -> List[int]:
-    allocations = np.floor(np.array(budgets) * n_iterations)
-    remainder = n_iterations - np.sum(allocations)
-    allocations[-1] += remainder
-    return list(allocations.astype(int))
-
-
-def step_n_iterations_equal(n_iterations: int,
-                            n_switches: int) -> List[int]:
-    base_value = n_iterations // n_switches  # Integer division
-    remainder = n_iterations % n_switches    # Remainder
-
-    result = [base_value] * n_switches
-    result[-1] += remainder  # Add remainder to the last entry
-
-    return result
-
-
-def get_single(optimizer_1: OptimizationStep) -> OptimizationSchedule:
-    # create copies
-    optimizer_1 = optimizer_1.copy()
-
-    steps = [optimizer_1]
-
-    return OptimizationSchedule(steps=steps, budgets=1.)

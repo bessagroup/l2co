@@ -14,8 +14,8 @@ from mpi4py import MPI
 from omegaconf import DictConfig
 
 # Local
-from l2co import (OptimizationSchedule, OptimizationStep, RunOptimization,
-                  Task, logger)
+from l2co import OptimizationStep, Task, logger
+from l2co._src.run_optimization import RunOptimization
 from l2co._src.tasks.continue_from_path import retrieve_tasks
 
 # =============================================================================
@@ -112,32 +112,21 @@ def create_experimentdata(config: DictConfig):
 
     # Schedule
     domain_schedule = Domain()
-    for k, v in config.schedules.schedules.items():
-        domain_schedule.add_category(
-            name=k, categories=[OptimizationStep.from_yaml(opt) for opt in v])
+
+    domain_schedule.add_category(
+        name='optimizer',
+        categories=[OptimizationStep.from_yaml(opt)
+                    for opt in config.optimizers])
 
     experiment_data_schedules = grid().call(
         data=ExperimentData(domain=domain_schedule))
-
-    schedule_fn = datagenerator(output_names='optimizer schedule')(instantiate(
-        config.schedules.data_generation.data_generator, _partial_=True))
-
-    if config.schedules.data_generation.kwargs is None:
-        schedules_kwargs = {}
-    else:
-        schedules_kwargs = config.schedules.data_generation.kwargs
-
-    experiment_data_schedules = schedule_fn.call(
-        data=experiment_data_schedules,
-        **schedules_kwargs
-    )
 
     # Grid sample tasks + schedules
     domain_grid_sampling = Domain()
 
     _, df_task = experiment_data_tasks.to_pandas(
         keep_references=False)
-    _, df_optimizer = experiment_data_schedules.to_pandas(
+    df_optimizer, _ = experiment_data_schedules.to_pandas(
         keep_references=False)
 
     domain_grid_sampling.add_category(
@@ -145,7 +134,7 @@ def create_experimentdata(config: DictConfig):
         categories=df_task['task'].to_list())
     domain_grid_sampling.add_category(
         name='optimizer schedule',
-        categories=df_optimizer['optimizer schedule'].to_list())
+        categories=df_optimizer['optimizer'].to_list())
 
     experiment_data_combined = grid().call(
         data=ExperimentData(domain=domain_grid_sampling))
@@ -170,8 +159,8 @@ def create_experimentdata(config: DictConfig):
     domain_combined.add_parameter(
         name='optimizer schedule',
         to_disk=True,
-        store_function=OptimizationSchedule.save,
-        load_function=OptimizationSchedule.load)
+        store_function=OptimizationStep.save,
+        load_function=OptimizationStep.load)
 
     domain_combined.add_output(
         name='loss history',
@@ -197,15 +186,14 @@ def process(config: DictConfig):
         bounded = (None, None)
 
     run_opt = RunOptimization(
-        budget_fn=instantiate(config.budgets),
-        n_realizations=config.n_realizations,
-        seed=int(config.seed),
         sampler=instantiate(config.samplers),
-        memory_size=config.memory_size,
-        iteration_stepsize=config.iteration_stepsize,
+        budget_fn=instantiate(config.budgets),
+        seed=int(config.seed),
+        n_realizations=config.n_realizations,
         bounded=bounded,
-        clear_jax_cache=True,
+        clear_jax_cache=config.clear_jax_cache,
         verbose=config.verbose,
+        save_input_parameters=config.save_input_parameters,
     )
 
     if config.project_job is None:

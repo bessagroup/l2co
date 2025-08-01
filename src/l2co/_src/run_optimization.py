@@ -1,6 +1,35 @@
+
 """
-Module for running optimization tasks using a JAX-based environment
-and policy model.
+Optimization execution module for L2CO optimization tasks.
+
+This module provides functions and classes for executing optimization tasks
+with configurable parameters, supporting both single and multiple realization
+runs. It includes utilities for initializing optimizers, running optimization
+loops, and managing optimization history.
+
+The main components include:
+- Functions for optimizer initialization and optimization execution
+- Support for vectorized multiple realizations using JAX
+- Data generator class for integration with f3dasm framework
+- History tracking and result storage
+
+Classes
+-------
+RunOptimizationSimple : DataGenerator
+    Main class for executing optimization tasks with configurable parameters.
+
+Functions
+---------
+initialize_optimizer : Initialize an optimizer with given parameters
+run_optimization : Execute a single optimization process
+run_optimization_many_realizations : Run multiple optimization realizations
+
+Notes
+-----
+This module heavily relies on JAX for efficient computation and vectorization,
+particularly for running multiple optimization realizations in parallel. The
+implementation is designed to work with the f3dasm framework for experiment
+management and data generation.
 """
 
 #                                                                       Modules
@@ -8,28 +37,26 @@ and policy model.
 
 # Standard
 import gc
-from functools import partial
-from pathlib import Path
 from time import time
-from typing import Any, Callable, Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 # Third-party
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import optax
 from f3dasm import ExperimentSample
 from f3dasm.datageneration import DataGenerator
-from jaxtyping import PRNGKeyArray, PyTree
-from tensorflow_probability.substrates import jax as tfp
+from jaxtyping import PRNGKeyArray
 
 # Local
 from ._logging import logger
-from .environment import Env, EnvParams, EnvState
-from .l2co_model import L2CO_model
-from .optimizerschedule import OptimizationSchedule
+from .history_state import HistoryState
+from .naming import INPUT_MEAN
+from .optimizers import OPTIMIZER_MAPPING, UpdateClass
+from .optimizerschedule import OptimizationStep
 from .task import Task
+from .update_state import UpdateState, new
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -39,485 +66,292 @@ __status__ = 'Stable'
 # =============================================================================
 
 
-class RolloutWrapper:
+def initialize_optimizer(
+        optimizer: OptimizationStep,
+        task: Task,
+        bounded: Tuple[float, float], *,
+        key: PRNGKeyArray
+) -> Tuple[UpdateState, UpdateClass]:
     """
-    Wrapper for performing rollouts in the optimization environment.
+    Initialize an optimizer with the given parameters.
 
     Parameters
     ----------
-    env : Env
-        The optimization environment.
-    env_params : EnvParams
-        Parameters for the environment.
-    policy_model : eqx.Module
-        Policy model for decision-making.
+    optimizer : OptimizationStep
+        The optimization step configuration containing optimizer type and
+        hyperparameters.
+    task : Task
+        The optimization task containing the model to be optimized.
+    bounded : Tuple[float, float]
+        The bounds for the optimization variables as (lower, upper).
+    key : PRNGKeyArray
+        JAX random key for stochastic operations.
 
-    Methods
+    Returns
     -------
-    single_rollout(key_input)
-        Perform a single rollout in the environment.
+    Tuple[UpdateState, UpdateClass]
+        A tuple containing the initialized update state and update class.
     """
 
-    def __init__(self, env: Env, env_params: EnvParams):
-        self.env = env
-        self.env_params = env_params
-        self.observation_space = self.env.observation_space(self.env_params)
-        self.action_size = self.env.action_space(self.env_params).shape
+    update_class: UpdateClass = OPTIMIZER_MAPPING[optimizer.optimizer](
+        **optimizer.hyperparameters,
+        task=task,
+        opt_hash=optimizer.hash,
+        bounded=bounded)
 
-    @staticmethod
-    @eqx.filter_jit
-    def select_action(
-        model: eqx.Module,
-        obs: jax.Array,
-        state: EnvState,
-        rng: PRNGKeyArray,
-    ) -> Tuple[jax.Array, jax.Array, jax.Array]:
+    update_state = UpdateState.init(
+        params=eqx.filter(task.model, eqx.is_inexact_array),
+        memory_size=update_class.popsize,
+    )
 
-        value, logits = jax.vmap(model, in_axes=(0, None))(obs, state.time)
-        pi = tfp.distributions.Categorical(logits=logits)
-        action = pi.sample(seed=rng)
-        log_prob = pi.log_prob(action)
+    return update_state, update_class
 
-        # Return value flattened to (num_envs,)
-        return action, log_prob, value[:, 0]
 
-    @partial(jax.jit, static_argnums=(0, 2, 3))
-    def batch_reset(self, key: PRNGKeyArray, num_envs: int,
-                    fix_initial_conditions: bool = False):
-        if fix_initial_conditions:
-            return self.batch_reset_fixed(key, num_envs)
-        else:
-            return jax.vmap(self.env.reset, in_axes=(0, None))(
-                jr.split(key, num_envs), self.env_params
-            )
+def run_optimization(
+        update_state: UpdateState,
+        optimizer: UpdateClass,
+        sampler: Callable,
+        task: Task,
+        n_iterations: int,
+        key: PRNGKeyArray) -> HistoryState:
+    """
+    Run a single optimization process for a given task.
 
-    @partial(jax.jit, static_argnums=(0, 2))
-    def batch_reset_fixed(self, key: PRNGKeyArray, num_envs: int):
-        obs, state = self.env.reset(key, self.env_params)
-        obs = jnp.repeat(obs[None, :], repeats=num_envs, axis=0)
-        state = jax.tree.map(lambda x: jnp.repeat(
-            x[None, ...], num_envs, axis=0), state)
-        return obs, state
+    This function executes the main optimization loop, starting with an
+    initial parameter sample and iteratively improving the model parameters
+    using the specified optimizer.
 
-    @partial(jax.jit, static_argnums=0)
-    def batch_step(self, keys, state, action):
-        return jax.vmap(self.env.step, in_axes=(0, 0, 0, None))(
-            keys, state, action, self.env_params
+    Parameters
+    ----------
+    update_state : UpdateState
+        The current state of the optimization containing parameters and
+        memory.
+    optimizer : UpdateClass
+        The optimizer instance to use for parameter updates.
+    sampler : Callable
+        Function to generate initial parameter samples.
+    task : Task
+        The optimization task containing the model and objective function.
+    n_iterations : int
+        Number of optimization iterations to perform.
+    key : PRNGKeyArray
+        JAX random key for stochastic operations.
+
+    Returns
+    -------
+    HistoryState
+        Complete history of the optimization process including parameters,
+        losses, and update steps.
+    """
+
+    # Initialize the optimizer state
+    opt_state = (optimizer.init(update_state, key),)
+
+    # Create the initial sample of model parameters
+    update_state = new(update_state=update_state,
+                       task=task, sampler=sampler,
+                       key=key)
+
+    # Initialize the history state
+    history_state = HistoryState.init(
+        n_iterations=n_iterations+1,
+        params=eqx.filter(task.model, eqx.is_inexact_array),
+    )
+
+    # Evaluate the initial parameters
+    init_params = jax.tree.map(lambda x: x[-1], update_state.last_params)
+    init_loss = jax.tree.map(
+        lambda x: x[-1], update_state.evaluate(task, key))
+
+    # Add initial parameters and loss to history
+    history_state = history_state.add({
+        'loss': jax.tree.map(
+            lambda x: jnp.expand_dims(x, (0, 1)), init_loss),
+        'update_step': jax.tree.map(
+            lambda x: jnp.expand_dims(x, (0, 1)), update_state.last_step),
+        'params': jax.tree.map(
+            lambda x: jnp.expand_dims(x, (0, 1)), init_params
         )
+    })
 
-    # @partial(jax.jit, static_argnums=(0, 3, 4))
-    @eqx.filter_jit
-    def batch_evaluate(self, key: PRNGKeyArray,
-                       model: eqx.Module,
-                       num_envs: int,
-                       fix_initial_conditions: bool = False):
-        """Rollout an episode with lax.scan."""
-
-        # Reset the environment
-        obs, state = self.batch_reset(
-            key, num_envs, fix_initial_conditions)
-
-        def policy_step(state_input, _):
-            """lax.scan compatible step transition in jax env."""
-            obs, state, rng, cum_reward, valid_mask = state_input
-            next_rng, rng_step, rng_net = jr.split(rng, 3)
-
-            action, _, _ = self.select_action(model, obs, state, rng_net)
-
-            next_o, next_s, reward, done, _ = self.batch_step(
-                jr.split(rng_step, num_envs),
-                state,
-                action.squeeze(),
-            )
-            new_cum_reward = cum_reward + reward * valid_mask
-            new_valid_mask = valid_mask * (1 - done)
-            carry = [
-                next_o,
-                next_s,
-                next_rng,
-                new_cum_reward,
-                new_valid_mask,
-            ]
-            y = [obs, action, reward, next_o, done]
-            return carry, y
-
-        # Scan over episode step loop
-        carry_out, scan_out = jax.lax.scan(
-            policy_step,
-            [
-                obs,
-                state,
-                key,
-                jnp.array(num_envs * [0.0]),
-                jnp.array(num_envs * [1.0]),
-            ],
-            (),
-            self.env_params.max_steps_in_episode,
-        )
-        obs, action, reward, next_o, done = scan_out
-        cum_return = carry_out[-2].squeeze()
-        last_state = carry_out[1]
-        return (obs, action, reward, next_o, done,
-                cum_return, last_state)
-
-    @partial(jax.jit, static_argnums=(0, 3))
-    def batch_evaluate_precomputed(
-            self, key: PRNGKeyArray,
-            actions: jax.Array,
-            fix_initial_conditions: bool = False):
-        """Rollout an episode with lax.scan."""
-        # Reset the environment
-        num_envs = actions.shape[0]
-
-        obs, state = self.batch_reset(
-            key, num_envs, fix_initial_conditions)
-
-        def policy_step(state_input, action):
-            """lax.scan compatible step transition in jax env."""
-            obs, state, rng, cum_reward, valid_mask = state_input
-            next_rng, rng_step, _ = jr.split(rng, 3)
-
-            next_o, next_s, reward, done, _ = self.batch_step(
-                jr.split(rng_step, num_envs),
-                state,
-                action.squeeze(),
-            )
-            new_cum_reward = cum_reward + reward * valid_mask
-            new_valid_mask = valid_mask * (1 - done)
-            carry = [
-                next_o,
-                next_s,
-                next_rng,
-                new_cum_reward,
-                new_valid_mask,
-            ]
-            y = [obs, action, reward, next_o, done]
-            return carry, y
-
-        # Scan over episode step loop
-        carry_out, scan_out = jax.lax.scan(
-            policy_step,
-            [
-                obs,
-                state,
-                key,
-                jnp.array(num_envs * [0.0]),
-                jnp.array(num_envs * [1.0]),
-            ],
-            actions.T,
-            # self.env_params.max_steps_in_episode,
-        )
-        obs, action, reward, next_o, done = scan_out
-        cum_return = carry_out[-2].squeeze()
-        last_state = carry_out[1]
-        return (obs, action, reward, next_o, done,
-                cum_return, last_state)
-
-    def batch_rollout(self, model: eqx.Module,
-                      n_realizations: int, key: PRNGKeyArray,
-                      fix_initial_conditions: bool = False):
-        params, static = eqx.partition(model, eqx.is_inexact_array)
-
-        key_reset, key_episode = jr.split(key)
-        key_episode = jr.split(key_episode, n_realizations)
-        if fix_initial_conditions:
-            in_axes = (None, None, None, 0)
-        else:
-            key_reset = jr.split(key_reset, n_realizations)
-            in_axes = (None, None, 0, 0)
-
-        return jax.vmap(self.single_rollout,
-                        in_axes=in_axes,
-                        out_axes=0)(params, static, key_reset, key_episode)
-
-    def batch_rollout_precomputed(self, schedules: jax.Array,
-                                  key: PRNGKeyArray,
-                                  fix_initial_conditions: bool = False):
-        k1, k2 = jr.split(key)
-        key_episode = jr.split(k2, schedules.shape[0])
-
-        if fix_initial_conditions:
-            key_reset = k1
-            in_axes = (0, None, 0)
-        else:
-            key_reset = jr.split(k1, schedules.shape[0])
-            in_axes = (0, 0, 0)
-
-        return jax.vmap(self.precomputed_rollout,
-                        in_axes=in_axes,
-                        out_axes=0)(schedules, key_reset, key_episode)
-
-    @partial(jax.jit, static_argnames=("self"))
-    def precomputed_rollout(
-            self, schedule: jax.Array,
-            key_reset: PRNGKeyArray, key_episode: PRNGKeyArray):
-        obs, state = self.env.reset(key_reset, self.env_params)
-
-        def policy_step(state_input: Tuple[jax.Array, EnvState, PRNGKeyArray,
-                                           jax.Array, jax.Array], action: int):
-            obs, state, key, cum_reward, valid_mask = state_input
-            key, key_step, key_net = jr.split(key, 3)
-
-            # logits = policy_model(obs, state.time)
-            # action = jr.categorical(key_net, logits)
-            # action = jnp.squeeze(action)
-            next_obs, next_state, reward, done, _ = self.env.step(
-                key_step, state, action, self.env_params)
-
-            new_cum_reward = cum_reward + reward * valid_mask
-            new_valid_mask = valid_mask * (1 - done)
-
-            carry = [
-                next_obs,
-                next_state,
-                key,
-                new_cum_reward,
-                new_valid_mask,
-            ]
-            y = [obs, action, reward, next_obs, done]
-            return carry, y
-
-        # Scan over episode step loop
-        carry_out, scan_out = jax.lax.scan(
-            policy_step,
-            [
-                obs,
-                state,
-                key_episode,
-                jnp.array([0.0]),
-                jnp.array([1.0]),
-            ],
-            schedule,
-            self.env_params.max_steps_in_episode,
-        )
-
-        # Return the sum of rewards accumulated by agent in episode rollout
-        obs, action, reward, next_obs, done = scan_out
-        cum_return = carry_out[-2]
-        last_state = carry_out[1]
-        return (obs, action, reward, next_obs, done,
-                cum_return, last_state)
-
-    @partial(jax.jit, static_argnames=("self", "static",))
-    def single_rollout(self, params: PyTree, static: PyTree,
-                       key_reset: PRNGKeyArray, key_episode: PRNGKeyArray):
-        policy_model = eqx.combine(params, static)
-        obs, state = self.env.reset(key_reset, self.env_params)
-
-        def policy_step(state_input: Tuple[jax.Array, EnvState, PRNGKeyArray,
-                                           jax.Array, jax.Array], _):
-            obs, state, key, cum_reward, valid_mask = state_input
-            key, key_step, key_net = jr.split(key, 3)
-
-            logits = policy_model(obs, state.time)
-            action = jr.categorical(key_net, logits)
-            action = jnp.squeeze(action)
-            next_obs, next_state, reward, done, _ = self.env.step(
-                key_step, state, action, self.env_params)
-
-            new_cum_reward = cum_reward + reward * valid_mask
-            new_valid_mask = valid_mask * (1 - done)
-
-            carry = [
-                next_obs,
-                next_state,
-                key,
-                new_cum_reward,
-                new_valid_mask,
-            ]
-            y = [obs, action, reward, next_obs, logits, done]
-            return carry, y
-
-        # Scan over episode step loop
-        carry_out, scan_out = jax.lax.scan(
-            policy_step,
-            [
-                obs,
-                state,
-                key_episode,
-                jnp.array([0.0]),
-                jnp.array([1.0]),
-            ],
-            (),
-            self.env_params.max_steps_in_episode,
-        )
-
-        # Return the sum of rewards accumulated by agent in episode rollout
-        obs, action, reward, next_obs, logits, done = scan_out
-        cum_return = carry_out[-2]
-        last_state = carry_out[1]
-        return (obs, action, reward, next_obs, logits, done,
-                cum_return, last_state)
-
-    def train(self, model: eqx.Module, optimizer: optax.GradientTransformation,
-              n_episodes: int, *, key: PRNGKeyArray,
-              fix_initial_conditions: bool = False
-              ) -> Tuple[eqx.Module, optax.OptState, jax.Array]:
-        params, static = eqx.partition(model, eqx.is_inexact_array)
-        key_reset, key_episode = jr.split(key)
-
-        scan_fn = partial(policy_train_step,
-                          static=static,
-                          rollout=self,
-                          optimizer=optimizer,
-                          fix_initial_conditions=fix_initial_conditions,
-                          )
-
-        carry_init = (params, optimizer.init(params), key_reset, key_episode)
-
-        (carry_final, losses) = jax.lax.scan(
-            scan_fn,
-            carry_init,
-            xs=None,
-            length=n_episodes,
-        )
-        params, opt_state, key_reset, key_episode = carry_final
-
-        return eqx.combine(params, static), opt_state, losses
+    # Main optimization loop
+    update_state, opt_state, history_state = optimizer.step(
+        opt_states=opt_state,
+        update_state=update_state,
+        history_state=history_state,
+        n_iterations=n_iterations,
+        key=key,
+    )
+    return history_state
 
 
-def policy_train_step(
-    carry: Tuple[PyTree, optax.OptState, PRNGKeyArray, PRNGKeyArray],
-    _: Any,
-    static: PyTree,
-    rollout: RolloutWrapper,
-    optimizer: optax.GradientTransformation,
-    fix_initial_conditions: bool
-) -> Tuple[Tuple[PyTree, optax.OptState, PRNGKeyArray, PRNGKeyArray],
-           jax.Array]:
+def run_optimization_many_realizations(
+        update_state: UpdateState,
+        optimizer: UpdateClass,
+        sampler: Callable,
+        task: Task,
+        n_iterations: int,
+        n_realizations: int, *,
+        key: PRNGKeyArray
+) -> HistoryState:
+    """
+    Run optimization for multiple realizations using vectorized computation.
 
-    params, opt_state, key_reset, key_episode = carry
+    This function runs the optimization process multiple times with different
+    random seeds, enabling statistical analysis of the optimization
+    performance across multiple independent runs.
 
-    if not fix_initial_conditions:
-        key_reset, _ = jr.split(key_reset)
+    Parameters
+    ----------
+    update_state : UpdateState
+        The current state of the optimization containing parameters and
+        memory.
+    optimizer : UpdateClass
+        The optimizer instance to use for parameter updates.
+    sampler : Callable
+        Function to generate initial parameter samples.
+    task : Task
+        The optimization task containing the model and objective function.
+    n_iterations : int
+        Number of optimization iterations to perform.
+    n_realizations : int
+        Number of independent optimization runs to execute.
+    key : PRNGKeyArray
+        JAX random key for stochastic operations.
 
-    key_episode, _ = jr.split(key_episode)
+    Returns
+    -------
+    HistoryState
+        Combined history state containing results from all realizations.
 
-    # Compute loss and gradients
-    loss, grads = eqx.filter_value_and_grad(
-        loss_fn)(params, static, rollout, key_reset, key_episode)
+    Notes
+    -----
+    This function uses JAX's vectorization (`vmap`) to efficiently run
+    multiple optimization realizations in parallel, splitting the random
+    key to ensure each realization uses a different random seed.
+    """
 
-    # Update model
-    updates, opt_state = optimizer.update(grads, opt_state)
-    params = eqx.apply_updates(params, updates)
+    return jax.vmap(run_optimization,
+                    in_axes=(None, None, None, None, None, 0))(
+        update_state,
+        optimizer,
+        sampler,
+        task,
+        n_iterations,
+        jax.random.split(key, n_realizations)
+    )
 
-    new_carry = (params, opt_state, key_reset, key_episode)
-    return new_carry, loss
-
-
-def loss_fn(params: PyTree, static: PyTree, rollout: RolloutWrapper,
-            key_reset: PRNGKeyArray, key_episode: PRNGKeyArray) -> jax.Array:
-    # One rollout using the current model
-    (obs, action, reward, next_obs,
-     logits, done, cum_return, _) = rollout.single_rollout(
-        params, static, key_reset, key_episode)
-
-    # Compute returns
-    returns = compute_returns(reward, gamma=0.99)  # [T]
-
-    # Per-timestep loss using logits and actions
-    per_step_loss = jax.vmap(policy_loss)(logits, action, returns)
-
-    # Total loss over trajectory
-    return jnp.sum(per_step_loss)
-
-
-def compute_returns(rewards: jax.Array, gamma: float = 0.99) -> jax.Array:
-    def scan_fn(G, r):
-        G = r + gamma * G
-        return G, G
-
-    reversed_rewards = jnp.flip(rewards)
-    _, reversed_returns = jax.lax.scan(scan_fn, init=0.0, xs=reversed_rewards)
-    returns = jnp.flip(reversed_returns)
-    return returns
-
-
-def policy_loss(logits: jax.Array, action: int, G: float) -> jax.Array:
-    log_probs = jax.nn.log_softmax(logits)
-    log_prob = log_probs[action]
-    return -log_prob * G
+# =============================================================================
 
 
 class RunOptimization(DataGenerator):
     """
-    Class for running optimization tasks.
+    Data generator class for running optimization tasks.
+
+    This class provides a framework for executing optimization tasks with
+    configurable parameters including sampling strategies, budget functions,
+    and multiple realizations for statistical analysis.
 
     Parameters
     ----------
-    budget_fn : Callable[[], int]
-        Function to determine the budget for the task.
-    n_realizations : int
-        Number of realizations to run.
-    seed : int
-        Random seed for reproducibility.
     sampler : Callable
-        Sampler for generating initial parameters.
-    memory_size : int
-        Size of the memory buffer.
-    iteration_stepsize : int, optional
-        Step size for iterations, by default 1.
+        Sampler function for generating initial parameters.
+    budget_fn : Callable[[], int]
+        Function to determine the optimization budget (number of iterations)
+        for the task.
+    seed : int
+        Random seed for reproducibility across optimization runs.
+    n_realizations : int, optional
+        Number of independent optimization realizations to run, by default 1.
     bounded : Optional[Tuple[float, float]], optional
-        Bounds for the optimization, by default (None, None).
+        Bounds for the optimization variables as (lower, upper), by default
+        (None, None).
     clear_jax_cache : bool, optional
-        Whether to clear the JAX cache after execution, by default True.
+        Whether to clear the JAX cache after execution to free memory, by
+        default True.
     verbose : bool, optional
-        Whether to enable verbose logging, by default False.
+        Whether to enable verbose logging during optimization, by default
+        False.
+    save_input_parameters : bool, optional
+        Whether to save the history of input parameters in the output
+        xarray, by default False.
 
     Methods
     -------
     execute(experiment_sample)
-        Execute the optimization task.
-    run_optimization(experiment_sample, task, schedule)
-        Run the optimization process.
+        Execute the optimization task for a given experiment sample.
+    run_optimization(experiment_sample, task, optimizer)
+        Run the optimization process with specified configuration.
+
+    Examples
+    --------
+    >>> import jax.random as jr
+    >>> from l2co._src.sampling import uniform_sampler
+    >>>
+    >>> # Create a simple optimization runner
+    >>> runner = RunOptimizationSimple(
+    ...     sampler=uniform_sampler,
+    ...     budget_fn=lambda task: 100,
+    ...     seed=42,
+    ...     n_realizations=5
+    ... )
+    >>>
+    >>> # Execute optimization on an experiment sample
+    >>> result = runner.execute(experiment_sample)
     """
 
     def __init__(self,
-                 budget_fn: Callable[[], int],
-                 n_realizations: int,
-                 seed: int,
                  sampler: Callable,
-                 memory_size: float,
-                 iteration_stepsize: float = 0.1,
+                 budget_fn: Callable[[], int],
+                 seed: int,
+                 n_realizations: int = 1,
                  bounded: Optional[Tuple[float, float]] = (None, None),
                  clear_jax_cache: bool = True,
                  verbose: bool = False,
+                 save_input_parameters: bool = False
                  ):
-        self.budget_fn = budget_fn
-        self.n_realizations = n_realizations
-        self.seed = seed
         self.sampler = sampler
-        self.memory_size = memory_size
-        self.iteration_stepsize = iteration_stepsize
+        self.budget_fn = budget_fn
+        self.seed = seed
+        self.n_realizations = n_realizations
         self.bounded = bounded
         self.clear_jax_cache = clear_jax_cache
         self.verbose = verbose
+        self.save_input_parameters = save_input_parameters
 
     def execute(self, experiment_sample: ExperimentSample) -> ExperimentSample:
+        """
+        Execute the optimization task for a given experiment sample.
+
+        This method extracts the task and optimizer schedule from the
+        experiment sample and runs the optimization process, storing the
+        results back into the experiment sample.
+
+        Parameters
+        ----------
+        experiment_sample : ExperimentSample
+            The experiment sample containing task and optimizer configuration
+            in the input_data.
+
+        Returns
+        -------
+        ExperimentSample
+            The updated experiment sample with optimization results stored.
+
+        Notes
+        -----
+        If clear_jax_cache is True, this method will clear JAX caches and
+        call garbage collection after optimization to free memory.
+        """
         es = experiment_sample.input_data
         task: Task = es['task']
-        schedule: OptimizationSchedule = es['optimizer schedule']
+        optimizer: OptimizationStep = es['optimizer schedule']
 
-        if schedule.name.startswith('l2co'):
-            l2co_path = Path(
-                schedule.steps[0].hyperparameters['model_dir']) / str(
-                schedule.steps[0].hyperparameters['l2co_path'])
-
-            trained_l2co_model = L2CO_model.load(l2co_path)
-
-            self.run_optimization_l2co(
-                experiment_sample=experiment_sample,
-                task=task,
-                model=trained_l2co_model,
-                train=schedule.steps[0].hyperparameters.get('train', False),
-            )
-
-        else:
-            experiment_sample = self.run_optimization(
-                experiment_sample=experiment_sample,
-                task=task,
-                schedule=schedule,
-            )
+        experiment_sample = self.run_optimization(
+            experiment_sample=experiment_sample,
+            task=task,
+            optimizer=optimizer,
+        )
 
         if self.clear_jax_cache:
             eqx.clear_caches()
@@ -530,105 +364,69 @@ class RunOptimization(DataGenerator):
             self,
             experiment_sample: ExperimentSample,
             task: Task,
-            schedule: OptimizationSchedule) -> ExperimentSample:
+            optimizer: OptimizationStep) -> ExperimentSample:
+        """
+        Run the optimization process with specified configuration.
+
+        This method performs the core optimization logic including
+        initializing the optimizer, running optimization iterations,
+        and storing the results.
+
+        Parameters
+        ----------
+        experiment_sample : ExperimentSample
+            The experiment sample to store results in.
+        task : Task
+            The optimization task containing the model and objective function.
+        optimizer : OptimizationStep
+            The optimization step configuration containing optimizer type and
+            hyperparameters.
+
+        Returns
+        -------
+        ExperimentSample
+            The updated experiment sample with optimization results stored
+            as an xarray dataset.
+
+        Notes
+        -----
+        The optimization history is stored as 'loss history' in the
+        experiment sample's output data. If save_input_parameters is False,
+        the input parameters are excluded from the stored data to save space.
+        """
         t1 = time()
-
-        total_iterations = self.budget_fn(task=task)
-
-        iteration_stepsize = int(self.iteration_stepsize * total_iterations)
-        memory_size = int(self.memory_size * total_iterations)
-
-        env = Env()
-        env_params = EnvParams.init(
-            task=task,
-            schedules=schedule.steps,
-            sampler=self.sampler,
-            n_iterations=iteration_stepsize,
-            total_iterations=total_iterations,
-            memory_size=memory_size,
-            bounded=self.bounded,
-        )
 
         key = jr.key(self.seed)
 
-        policy_model = schedule.to_policy()
-        rollout = RolloutWrapper(env, env_params)
+        n_iterations = self.budget_fn(task=task)
 
-        (obs, action, reward, next_obs, logits, done, cum_return,
-         last_state) = rollout.batch_rollout(
-            model=policy_model,
+        update_state, update_class = initialize_optimizer(
+            optimizer=optimizer,
+            task=task,
+            bounded=self.bounded,
+            key=key)
+
+        history_state: HistoryState = run_optimization_many_realizations(
+            update_state=update_state,
+            optimizer=update_class,
+            sampler=self.sampler,
+            task=task,
+            n_iterations=n_iterations,
             n_realizations=self.n_realizations,
-            key=key,
-        )
+            key=key)
 
-        data_xarr = last_state.history_state.to_xarray_realizations()
+        data_xarr = history_state.to_xarray_realizations()
+
+        if not self.save_input_parameters:
+            data_xarr = data_xarr.drop_vars(INPUT_MEAN)
 
         experiment_sample.store(
             name="loss history",
             object=data_xarr, to_disk=True)
 
         logger.info((
-            f"Finished optimization task {task.name} with {schedule.name} with"
-            f" {total_iterations} "
-            f"iterations for {self.n_realizations} realizations"
-            f" (took {time() - t1:.2f} seconds)"
-        ))
-
-        return experiment_sample
-
-    def run_optimization_l2co(
-            self,
-            experiment_sample: ExperimentSample,
-            task: Task,
-            model: L2CO_model,
-            train: bool = False) -> ExperimentSample:
-        t1 = time()
-
-        total_iterations = self.budget_fn(task=task)
-
-        iteration_stepsize = int(self.iteration_stepsize * total_iterations)
-        memory_size = int(self.memory_size * total_iterations)
-
-        env = Env()
-        env_params = EnvParams.init(
-            task=task,
-            schedules=model.optimizers,
-            sampler=self.sampler,
-            n_iterations=iteration_stepsize,
-            total_iterations=total_iterations,
-            memory_size=memory_size,
-            bounded=self.bounded,
-        )
-
-        key = jr.key(self.seed)
-
-        rollout = RolloutWrapper(env, env_params)
-
-        if train:
-            train_key, _ = jr.split(key)
-            model, _, _ = rollout.train(
-                model=model,
-                optimizer=optax.adam(learning_rate=0.01),
-                n_episodes=100,
-                key=train_key,
-            )
-
-        (obs, action, reward, next_obs, logits, done, cum_return,
-         last_state) = rollout.batch_rollout(
-            model=model,
-            n_realizations=self.n_realizations,
-            key=key,
-        )
-
-        data_xarr = last_state.history_state.to_xarray_realizations()
-
-        experiment_sample.store(
-            name="loss history",
-            object=data_xarr, to_disk=True)
-
-        logger.info((
-            f"Finished optimization task {task.name} with L2CO model with"
-            f" {total_iterations} "
+            f"Finished optimization task {task.name} with {optimizer.name} for"
+            f" {n_iterations} "
             f"iterations for {self.n_realizations} realizations"
             f" (took {time() - t1:.2f} seconds)"
         ))

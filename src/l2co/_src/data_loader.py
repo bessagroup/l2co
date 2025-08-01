@@ -210,7 +210,7 @@ class DataLoader:
                   t_start: float = 0.0,
                   t_end: float = 1.0) -> xr.Dataset:
         """
-        Generate parameters for optimization tasks within a specific 
+        Generate parameters for optimization tasks within a specific
         budget range.
 
         Parameters

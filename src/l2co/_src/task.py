@@ -16,9 +16,12 @@ from typing import Any, Callable, Dict, Optional, TypedDict
 # Third-party
 import cloudpickle
 import equinox as eqx
-import jax.numpy as jnp
 import jax.tree_util as jtu
 from jaxtyping import PyTree
+
+# Local
+from .tree_utils import (load_dataset, load_jnparray, load_model,
+                         save_jnparray, save_model)
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -28,62 +31,11 @@ __status__ = 'Stable'
 # =============================================================================
 
 
-def save_dataset(dataset: Dict[str, jnp.ndarray], path: str | Path):
-    _path = Path(path)
-    _path.parent.mkdir(parents=True, exist_ok=True)
-
-    jnp.savez(path, **dataset)
-
-
-def load_dataset(path: Optional[str | Path]) -> Dict[str, jnp.ndarray]:
-    if path is None:
-        return {}
-    loaded_data = jnp.load(Path(path).with_suffix('.npz'))
-    return {k: jnp.array(v) for k, v in loaded_data.items()}
-
-# =============================================================================
-
-
-def save_model(model, path: str | Path) -> None:
-    _path = Path(path)
-    model_shape = eqx.filter_eval_shape(lambda x: model, None)
-
-    with open(_path.with_suffix('.pkl'), 'wb') as f:
-        cloudpickle.dump(model_shape, f)
-
-    eqx.tree_serialise_leaves(_path.with_suffix('.eqx'), model)
-
-
-def load_model(model_path: str, shape_path: str) -> eqx.Module:
-    _model_path = Path(model_path)
-    _shape_path = Path(shape_path)
-    with open(_shape_path.with_suffix('.pkl'), 'rb') as f:
-        model_shape = cloudpickle.load(f)
-
-    model = eqx.tree_deserialise_leaves(
-        _model_path.with_suffix('.eqx'), model_shape)
-
-    return model
-
-
-def load_jnparray(path: str | Path) -> jnp.ndarray:
-    # TODO: investigate this flatten behaviour
-    return jnp.load(Path(path)).flatten()
-
-
-def save_jnparray(model, path: str | Path) -> None:
-    jnp.save(path, model)
-
-# =============================================================================
-
-
 class DatasetDict(TypedDict):
     dataset_path: str
     batch_size: int
     seed: int
 
-
-TagDict = Dict[str, Any]
 
 # =============================================================================
 

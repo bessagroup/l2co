@@ -15,21 +15,17 @@ plot_perf_profile
 # =============================================================================
 
 # Standard
-import matplotlib.animation as animation
 import math
 from typing import Iterable, List, Optional, Tuple
 
-import equinox as eqx
-import jax
-import jax.random as jr
 # Third-party
+import equinox as eqx
+import jax.random as jr
+import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
-from f3dasm import ExperimentData
-from f3dasm.design import Domain
 from matplotlib.colors import LinearSegmentedColormap, LogNorm, SymLogNorm
-from scipy.interpolate import griddata
 
 # Local
 from .data_loader import DataLoader, OptimizationDynamics
@@ -37,7 +33,6 @@ from .naming import (BUDGET, INPUT_DIM, OUTPUT_DIM, PROBLEM, REALIZATION,
                      SCHEDULE)
 from .sampler import grid_sampling
 from .task import Task
-from .tree_utils import experimentdata_to_xarray
 from .update_state import evaluate
 
 #                                                          Authorship & Credits
@@ -374,72 +369,6 @@ def format_plot(ax: plt.Axes, xlim_right: int, ylabel: str,
                 old_label, old_label)  # Replace if found
             text.set_text(new_label)
             text.set_fontsize(12)
-
-
-def plot_2d_loss_landscape(task: Task, plot_resolution: int = 100,
-                           stepsize: float = 0.033, seed: int = 0):
-    sampler = GridWeightSampler(
-        stepsize=stepsize, lower_bound=0.0, upper_bound=1.0)
-
-    evaluate_block = EvaluateModel(
-        task=task,
-        seed=seed,
-    )
-
-    domain = Domain()
-    domain.add_parameter('x')
-    domain.add_output('y')
-    domain.add_output('opt_step')
-    data = ExperimentData(domain=domain)
-
-    data = sampler.call(data=data, model=task.model)
-    data = evaluate_block.call(data=data)
-    data = experimentdata_to_xarray(data=data, popsizes=None, budgets=None,
-                                    include_input=True, n_iterations=None)
-
-    x = data['input'].isel({INPUT_DIM: 0}).values
-    y = data['input'].isel({INPUT_DIM: 1}).values
-    z = data['output'].isel({OUTPUT_DIM: 0}).values
-    x.shape, y.shape, z.shape
-
-    import numpy as np
-    from scipy.interpolate import griddata
-
-    X, Y = np.meshgrid(np.linspace(min(x), max(x), plot_resolution),
-                       np.linspace(min(y), max(y), plot_resolution))
-
-    Z = griddata((x, y), z, (X, Y), method='cubic')
-
-    # Ensure Z is positive
-    Z_min = np.min(Z)
-    Z = Z - Z_min
-
-    Z_nonzero = Z[Z > 0]
-    eps = np.min(Z_nonzero) if Z_nonzero.size > 0 else 1e-1
-
-    Z += eps
-
-    # Create the figure and set up the subplots
-    fig = plt.figure(figsize=(12, 6))
-
-    # 3D Surface Plot
-    ax1 = fig.add_subplot(121, projection='3d')
-    surf = ax1.plot_surface(X, Y, Z, cmap='viridis', norm=LogNorm())
-    fig.colorbar(surf, ax=ax1)
-    ax1.set_xlabel('X axis')
-    ax1.set_ylabel('Y axis')
-    ax1.set_zlabel('Z axis')
-    ax1.set_title('3D Surface Plot')
-
-    # 2D Heatmap
-    ax2 = fig.add_subplot(122)
-    heatmap = ax2.pcolormesh(X, Y, Z, cmap='viridis',
-                             shading='auto', norm=LogNorm())
-    fig.colorbar(heatmap, ax=ax2)
-    ax2.set_xlabel('X axis')
-    ax2.set_ylabel('Y axis')
-    ax2.set_title('2D Heatmap')
-    return fig
 
 
 def plot_2d_loss_landscape_only(task: Task, plot_resolution: int = 100,

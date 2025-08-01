@@ -9,6 +9,7 @@ Module for samplers.
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jaxtyping import PRNGKeyArray, PyTree
 
 # Local
 from ._typing import InputParameters
@@ -21,7 +22,8 @@ __status__ = 'Stable'
 # =============================================================================
 
 
-def random_sampling(key, params, n_samples: int, lower_bound: float = 0.0,
+def random_sampling(key: PRNGKeyArray, params: PyTree,
+                    n_samples: int, lower_bound: float = 0.0,
                     upper_bound: float = 1.0) -> InputParameters:
     """
     Perform random sampling within the specified bounds.
@@ -51,7 +53,7 @@ def random_sampling(key, params, n_samples: int, lower_bound: float = 0.0,
         params)
 
 
-def grid_sampling(params, n_points_per_dim: int,
+def grid_sampling(params: PyTree, n_points_per_dim: int,
                   lower_bound: float = 0.0, upper_bound: float = 1.0
                   ) -> InputParameters:
     grid_params = []

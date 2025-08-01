@@ -18,7 +18,7 @@ extend-exclude =
 	experiments,
 	notebooks,
 	tests,
-	src/app.py
+	src/l2co/app.py
 
 # <<< UPDATE ACCORDING WITH YOUR PYTHON PROJECT
 

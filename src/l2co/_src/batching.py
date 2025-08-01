@@ -12,7 +12,6 @@ from typing import Dict, Iterator, Optional
 # Third-party
 import grain.python as grain
 import jax.numpy as jnp
-import jax.tree_util as jtu
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -139,32 +138,3 @@ def batch_iter(dataset: Optional[Dict[str, jnp.ndarray]],
         operations=[transformation],
         sampler=index_sampler,
     ))
-
-
-def unroll_batches(data_iter: Iterator, inner_steps: int):
-    """
-    Unroll batches from an iterator into a stacked format.
-
-    Parameters
-    ----------
-    data_iter : Iterator
-        Iterator that yields batches of data.
-    inner_steps : int
-        Number of steps to unroll.
-
-    Returns
-    -------
-    Tuple[Dict[str, jnp.ndarray], Dict[str, jnp.ndarray]]
-        Stacked samples from the iterator.
-    """
-    # Collect samples while preserving dictionary structure
-    data = [next(data_iter) for _ in range(inner_steps)]
-
-    if not data:
-        return {}, {}
-
-    # Stack the batch data directly
-    samples = jtu.tree_map(
-        lambda *vals: jnp.stack(vals, axis=0), *data)
-
-    return samples

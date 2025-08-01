@@ -3,7 +3,7 @@ import hashlib
 import json
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import hydra
 import numpy as np
@@ -13,7 +13,7 @@ from f3dasm import ExperimentData
 
 from l2co import logger as l2co_logger
 from l2co._src.naming import FEATURE, INPUT_DIM, REALIZATION, SCHEDULE, TASK_ID
-from l2co._src.optimizerschedule import OptimizationSchedule
+from l2co._src.optimizerschedule import OptimizationStep
 from l2co._src.task import Task
 from l2co._src.validation import validation_fn
 
@@ -189,15 +189,15 @@ def create_pivot_table(
         labels, columns=[f"task_{i}" for i in range(len(labels[0]))])
 
     schedules = []
-    step_list = []
+    step_list: List[OptimizationStep] = []
     for schedule_path in df[optimizer_column_name]:
-        schedule = OptimizationSchedule.load(schedule_path)
-        step_list.append(schedule)
-        schedules.append(schedule.tag_hashable)
-        del schedule
+        step = OptimizationStep.load(schedule_path)
+        step_list.append(step)
+        schedules.append(step.tag_hashable)
+        del step
 
     step_dict: Dict[str, Dict[str, Any]] = {
-        schedule.name: schedule.to_dict() for schedule in step_list}
+        s.name: s.to_dict() for s in step_list}
 
     df_schedules = pd.DataFrame(
         schedules, columns=[f"schedule{i}" for i in range(len(schedules[0]))])

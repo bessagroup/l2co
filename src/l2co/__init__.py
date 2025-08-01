@@ -17,14 +17,17 @@ Author: Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)
 
 # Local
 
-from . import plotting, sampling
-from ._src._logging import logger
-from ._src.data_loader import DataLoader, OptimizationDynamics
-from ._src.l2co_model import L2CO_model
-from ._src.optimizerschedule import OptimizationSchedule, OptimizationStep
-from ._src.preprocessing import preprocessing_factory
-from ._src.run_optimization import RunOptimization
-from ._src.task import Task
+import l2co._src.tree_utils as tree_utils
+from l2co import plotting, sampling
+from l2co._src._logging import logger
+from l2co._src.data_loader import DataLoader, OptimizationDynamics
+from l2co._src.history_state import HistoryState
+from l2co._src.optimizers import OPTIMIZER_MAPPING, UpdateClass
+from l2co._src.optimizerschedule import OptimizationSchedule, OptimizationStep
+from l2co._src.preprocessing import preprocessing_factory
+from l2co._src.run_optimization import RunOptimization
+from l2co._src.task import Task
+from l2co._src.update_state import UpdateState, new
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -36,15 +39,20 @@ __status__ = 'Planning'
 # =============================================================================
 
 __all__ = [
-    "plotting",
-    "sampling",
-    "logger",
-    "DataLoader",
-    "preprocessing_factory",
-    "OptimizationSchedule",
-    "OptimizationStep",
-    "OptimizationDynamics",
-    "Task",
-    "L2CO_model",
-    "RunOptimization",
+    'DataLoader',
+    'HistoryState',
+    'OPTIMIZER_MAPPING',
+    'UpdateClass',
+    'OptimizationSchedule',
+    'OptimizationDynamics',
+    'OptimizationStep',
+    'preprocessing_factory',
+    'RunOptimization',
+    'Task',
+    'UpdateState',
+    'new',
+    'plotting',
+    'sampling',
+    'tree_utils',
+    'logger',
 ]
