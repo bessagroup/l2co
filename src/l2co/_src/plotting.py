@@ -16,7 +16,7 @@ plot_perf_profile
 
 # Standard
 import math
-from typing import Iterable, List, Optional, Tuple
+from collections.abc import Iterable
 
 # Third-party
 import equinox as eqx
@@ -29,8 +29,14 @@ from matplotlib.colors import LinearSegmentedColormap, LogNorm, SymLogNorm
 
 # Local
 from .data_loader import DataLoader, OptimizationDynamics
-from .naming import (BUDGET, INPUT_DIM, OUTPUT_DIM, PROBLEM, REALIZATION,
-                     SCHEDULE)
+from .naming import (
+    BUDGET,
+    INPUT_DIM,
+    OUTPUT_DIM,
+    PROBLEM,
+    REALIZATION,
+    SCHEDULE,
+)
 from .sampler import grid_sampling
 from .task import Task
 from .update_state import evaluate
@@ -99,11 +105,11 @@ def set_size(width, fraction=1, subplots=(1, 1)):
 # =============================================================================
 
 
-def plot_rtd_profile(d: DataLoader, ax: Optional[plt.Axes] = None,
-                     strategies: Optional[List[xr.DataArray]] = None,
+def plot_rtd_profile(d: DataLoader, ax: plt.Axes | None = None,
+                     strategies: list[xr.DataArray] | None = None,
                      include_best: bool = False,
-                     optimizers_to_plot: Optional[Iterable[str]] = None
-                     ) -> Tuple[plt.Figure, plt.Axes]:
+                     optimizers_to_plot: Iterable[str] | None = None
+                     ) -> tuple[plt.Figure, plt.Axes]:
     """
     Plot the run-time distribution for the given DataLoader.
 
@@ -155,10 +161,10 @@ def plot_rtd_profile(d: DataLoader, ax: Optional[plt.Axes] = None,
 
 
 def plot_perf_profile(
-    d: DataLoader, ax: Optional[plt.Axes] = None,
-    strategies: Optional[List[xr.DataArray]] = None,
+    d: DataLoader, ax: plt.Axes | None = None,
+    strategies: list[xr.DataArray] | None = None,
     include_best: bool = False,
-) -> Tuple[plt.Figure, plt.Axes]:
+) -> tuple[plt.Figure, plt.Axes]:
     """
     Plot the performance profile for the given DataLoader.
 
@@ -204,8 +210,8 @@ def plot_perf_profile(
 def plot_trajectories(
         optimization_dynamics: OptimizationDynamics, optimizer: str,
         n_rows: int = 10, n_columns: int = 10,
-        seed: Optional[int] = None,
-        idx: Iterable[int] = None) -> Tuple[plt.Figure, np.ndarray]:
+        seed: int | None = None,
+        idx: Iterable[int] = None) -> tuple[plt.Figure, np.ndarray]:
 
     X_traj = optimization_dynamics._X_trajectory.isel(
         {SCHEDULE: 0}).T
@@ -225,7 +231,7 @@ def plot_trajectories(
     idx = idx[:len(axes)]
 
     # randomly select 100 trajectories
-    for ax, i in zip(axes, idx):
+    for ax, i in zip(axes, idx, strict=False):
 
         # Bar colors
         bar_colors = [
@@ -256,7 +262,7 @@ def plot_trajectories(
 
 
 def plot_quadric_curve(y: np.ndarray, coeffs, color: str,
-                       ax: Optional[plt.Axes] = None, res: int = 500):
+                       ax: plt.Axes | None = None, res: int = 500):
     """
     Plots the original points and the fitted quadratic curve.
 
@@ -466,7 +472,7 @@ def plot_3d_loss_landscape_only(task: Task, plot_resolution: int = 100,
         return ax
 
 
-def plot_2d_trajectories(raw_results_list: List[xr.DataArray], task: Task,
+def plot_2d_trajectories(raw_results_list: list[xr.DataArray], task: Task,
                          realization: int):
     # Get the default color cycle
     prop_cycle = plt.rcParams['axes.prop_cycle']
@@ -482,7 +488,7 @@ def plot_2d_trajectories(raw_results_list: List[xr.DataArray], task: Task,
     if len(raw_results_list) == 1:
         axes = np.array([axes])
 
-    for ax, r_i in zip(axes.flatten(), raw_results_list):
+    for ax, r_i in zip(axes.flatten(), raw_results_list, strict=False):
         heatmap = ax.pcolormesh(X, Y, Z, cmap='viridis',
                                 shading='auto', norm=LogNorm())
         fig.colorbar(heatmap, ax=ax)
@@ -490,8 +496,8 @@ def plot_2d_trajectories(raw_results_list: List[xr.DataArray], task: Task,
         ax.set_ylabel('$x_1$')
         switching_iters = np.cumsum(
             [int(round(pop * b * r_i.attrs['n_iterations']))
-             for pop, b in zip(r_i.attrs['popsizes'], r_i.attrs['budgets'])])
-        for j, (color, current) in enumerate(zip(colors, switching_iters)):
+             for pop, b in zip(r_i.attrs['popsizes'], r_i.attrs['budgets'], strict=False)])
+        for j, (color, current) in enumerate(zip(colors, switching_iters, strict=False)):
             prev = 0 if j == 0 else switching_iters[j-1]
             current
             x0 = r_i['input'].isel(

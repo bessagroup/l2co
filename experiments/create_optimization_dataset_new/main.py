@@ -230,8 +230,8 @@ rank = comm.Get_rank()
 size = comm.Get_size()
 hostname = socket.gethostname()
 
-print((
-    f"[Rank {rank}/{size}] Running on {hostname}")
+print(
+    f"[Rank {rank}/{size}] Running on {hostname}"
 )
 
 print(f"[Rank {rank}/{size}] Jax backend used: {get_backend().platform}")

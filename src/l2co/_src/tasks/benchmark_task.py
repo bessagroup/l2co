@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 # Standard
-from typing import List, Optional, Tuple
-
 # Third-party
 import jax.numpy as jnp
 import numpy as np
 import opfunu
 import pandas as pd
 from f3dasm import Block, ExperimentData
-from f3dasm._src.datageneration.functions.adapters.pybenchfunction import \
-    PyBenchFunction
+from f3dasm._src.datageneration.functions.adapters.pybenchfunction import (
+    PyBenchFunction,
+)
 from opfunu import create_benchmark_loss_function
 from opfunu.cec_based import CecBenchmark
 
@@ -36,10 +35,10 @@ class OpfunuFunc(PyBenchFunction):
     def __init__(
             self,
             dimensionality: int,
-            scale_bounds: Optional[np.ndarray] = None,
-            noise: Optional[float] = None,
+            scale_bounds: np.ndarray | None = None,
+            noise: float | None = None,
             offset: bool = True,
-            seed: Optional[int] = None):
+            seed: int | None = None):
         """
         Opfunu function base class.
 
@@ -119,7 +118,7 @@ class OpfunuFunc(PyBenchFunction):
     @staticmethod
     def _check_dim_supported(
             d: int,
-            dim_supported: List[int] | None, dim_max: int) -> bool:
+            dim_supported: list[int] | None, dim_max: int) -> bool:
         """
         Static method to check if the dimensionality is supported.
 
@@ -206,7 +205,7 @@ class OpfunuFunc(PyBenchFunction):
         return not self.opfunu_class.unimodal
 
     def get_global_minimum(
-            self, *args, **kwargs) -> Tuple[np.ndarray, np.ndarray]:
+            self, *args, **kwargs) -> tuple[np.ndarray, np.ndarray]:
         """
         Retrieve the global minimum of the function.
 
@@ -282,7 +281,7 @@ class BenchmarkFuncSampler(Block):
         Sample benchmark functions based on the given data.
     """
 
-    def __init__(self, noise_distribution: List[float]):
+    def __init__(self, noise_distribution: list[float]):
         self.noise_distribution = noise_distribution
 
     def call(self, data: ExperimentData, n_samples: int,

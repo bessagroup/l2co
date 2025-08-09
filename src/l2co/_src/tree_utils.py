@@ -7,7 +7,6 @@ Module for pytree utilities.
 
 # Standard
 from pathlib import Path
-from typing import Dict, Optional
 
 # Third-party
 import cloudpickle
@@ -181,14 +180,14 @@ def save_jnparray(model, path: str | Path) -> None:
     jnp.save(path, model)
 
 
-def save_dataset(dataset: Dict[str, jnp.ndarray], path: str | Path):
+def save_dataset(dataset: dict[str, jnp.ndarray], path: str | Path):
     _path = Path(path)
     _path.parent.mkdir(parents=True, exist_ok=True)
 
     jnp.savez(path, **dataset)
 
 
-def load_dataset(path: Optional[str | Path]) -> Dict[str, jnp.ndarray]:
+def load_dataset(path: str | Path | None) -> dict[str, jnp.ndarray]:
     if path is None:
         return {}
     loaded_data = jnp.load(Path(path).with_suffix('.npz'))

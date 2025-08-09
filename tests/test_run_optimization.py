@@ -4,8 +4,9 @@ import pytest
 import xarray as xr
 
 from l2co._src.budget import based_on_dimensionality
-from l2co._src.run_optimization import \
-    run_optimization_schedule_multiple_realizations
+from l2co._src.run_optimization import (
+    run_optimization_schedule_multiple_realizations,
+)
 
 from . import OPTIMIZATION_SCHEDULES
 

@@ -1,9 +1,10 @@
 # import argparse
 import hashlib
 import json
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 import hydra
 import numpy as np
@@ -44,9 +45,9 @@ def main(config):
         schedule_data.to_netcdf(
             (path / 'entire_dataset_schedules').with_suffix(OPTIMIZATION_SCHEDULE_SUFFIX))
 
-        l2co_logger.info((
+        l2co_logger.info(
             f"Entire dataset schedules stored at "
-            f"{(path / 'entire_dataset_schedules').with_suffix(OPTIMIZATION_SCHEDULE_SUFFIX)}"))
+            f"{(path / 'entire_dataset_schedules').with_suffix(OPTIMIZATION_SCHEDULE_SUFFIX)}")
 
     l2co_logger.info("End of the program")
 
@@ -59,7 +60,7 @@ def create_entire_dataset(
         optimizer_column_name: str = 'optimizer schedule',
         task_column_name: str = 'task',
         l2co_schedules_column_name: str = 'l2co schedules',
-) -> Tuple[xr.Dataset, xr.Dataset | None, Path]:
+) -> tuple[xr.Dataset, xr.Dataset | None, Path]:
     """
     Create an entire dataset from a given experiment data object.
 
@@ -176,7 +177,7 @@ def create_pivot_table(
         loss_column_name: str = 'loss history',
         optimizer_column_name: str = 'optimizer schedule',
         task_column_name: str = 'task'
-) -> Tuple[pd.DataFrame, Dict[str, Dict[str, Any]]]:
+) -> tuple[pd.DataFrame, dict[str, dict[str, Any]]]:
 
     labels = []
     for task_path in df[task_column_name]:
@@ -189,14 +190,14 @@ def create_pivot_table(
         labels, columns=[f"task_{i}" for i in range(len(labels[0]))])
 
     schedules = []
-    step_list: List[OptimizationStep] = []
+    step_list: list[OptimizationStep] = []
     for schedule_path in df[optimizer_column_name]:
         step = OptimizationStep.load(schedule_path)
         step_list.append(step)
         schedules.append(step.tag_hashable)
         del step
 
-    step_dict: Dict[str, Dict[str, Any]] = {
+    step_dict: dict[str, dict[str, Any]] = {
         s.name: s.to_dict() for s in step_list}
 
     df_schedules = pd.DataFrame(
@@ -240,7 +241,7 @@ def create_task_labels_df(pivot_table: pd.DataFrame) -> pd.DataFrame:
 
 def create_optimization_data(
         pivot_table: pd.DataFrame,
-        validation_fn: Optional[Callable] = None) -> Tuple[xr.Dataset, Path]:
+        validation_fn: Callable | None = None) -> tuple[xr.Dataset, Path]:
 
     df = pivot_table.copy(deep=True)
     df_labels = create_task_labels_df(df)

@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, TypedDict
+from typing import Any, TypedDict
 
 # Third-party
 import cloudpickle
@@ -20,8 +21,13 @@ import jax.tree_util as jtu
 from jaxtyping import PyTree
 
 # Local
-from .tree_utils import (load_dataset, load_jnparray, load_model,
-                         save_jnparray, save_model)
+from .tree_utils import (
+    load_dataset,
+    load_jnparray,
+    load_model,
+    save_jnparray,
+    save_model,
+)
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -72,9 +78,9 @@ class Task:
         model: PyTree,
         loss_fn: Callable,
         pass_rng: bool = False,
-        dataset: Optional[DatasetDict] = None,
+        dataset: DatasetDict | None = None,
         has_aux: bool = False,
-        tag: Optional[Dict[str, Any]] = None,
+        tag: dict[str, Any] | None = None,
     ):
         if tag is None:
             tag = {}
@@ -96,7 +102,7 @@ class Task:
         self.tag = tag
 
     @property
-    def loaded_dataset(self) -> Dict[str, Any] | None:
+    def loaded_dataset(self) -> dict[str, Any] | None:
         return load_dataset(self.dataset['dataset_path'])
 
     @property
@@ -136,8 +142,8 @@ class Task:
         return hashlib.sha256(str(t).encode()).hexdigest()[:16]
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any],
-                  filepath: Optional[str] = None) -> Task:
+    def from_dict(cls, data: dict[str, Any],
+                  filepath: str | None = None) -> Task:
 
         if 'model' in data['model_path']:
             try:
@@ -224,7 +230,7 @@ class Task:
         Task
             The loaded task.
         """
-        with open(filepath, 'r') as f:
+        with open(filepath) as f:
             data = json.load(f)
         return cls.from_dict(data, filepath)
 

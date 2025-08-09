@@ -7,7 +7,6 @@ Module for determining the budget for optimization tasks.
 
 
 # Standard
-from typing import Optional
 
 # Local
 from .task import Task
@@ -44,7 +43,7 @@ def fixed_budget(budget: int, **kwargs) -> int:
 
 def based_on_dimensionality(
     task: Task, budget_per_dimension: int,
-    max_iterations: Optional[int] = None
+    max_iterations: int | None = None
 ) -> int:
     """
     Calculate the budget based on the dimensionality of the task.

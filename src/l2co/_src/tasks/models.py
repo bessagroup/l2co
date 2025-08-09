@@ -1,4 +1,5 @@
-from typing import Any, Callable, Dict, List, Tuple
+from collections.abc import Callable
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -7,7 +8,7 @@ import jax.random as jrd
 
 # =============================================================================
 
-TagDict = Dict[str, Any]
+TagDict = dict[str, Any]
 
 # =============================================================================
 
@@ -41,7 +42,7 @@ class RNN(eqx.Module):
 
 
 def rnn(in_size: int, out_size: int, hidden_size: int, *, key
-        ) -> Tuple[eqx.Module, Dict[str, Any]]:
+        ) -> tuple[eqx.Module, dict[str, Any]]:
     return (RNN(in_size=in_size,
                 out_size=out_size, hidden_size=hidden_size, key=key),
             {'model': 'rnn',
@@ -76,7 +77,7 @@ class MLP(eqx.Module):
     __call__(x)
         Forward pass of the MLP.
     """
-    layers: List[eqx.nn.Linear]
+    layers: list[eqx.nn.Linear]
     hidden_activation: Callable[[jnp.ndarray],
                                 jnp.ndarray] = eqx.field(static=True)
     output_activation: Callable[[jnp.ndarray],
@@ -112,7 +113,7 @@ def mlp(
     hidden_activation: Callable = jax.nn.tanh,
     output_activation: Callable = lambda x: x,
     *, key
-) -> Tuple[eqx.Module, Dict[str, Any]]:
+) -> tuple[eqx.Module, dict[str, Any]]:
     """
     Create an MLP model.
 
@@ -204,7 +205,7 @@ def cnn(in_size: int, out_size: int, hidden_channels: int,
         num_layers: int, kernel_size: int,
         height: int, width: int,
         in_channels: int, *, key
-        ) -> Tuple[eqx.Module, Dict[str, Any]]:
+        ) -> tuple[eqx.Module, dict[str, Any]]:
     return (CNN(in_size=in_size,
                 out_size=out_size,
                 hidden_channels=hidden_channels,

@@ -15,8 +15,17 @@ import jax.numpy as jnp
 import xarray as xr
 from jaxtyping import PyTree
 
-from .naming import (BUDGET, INPUT_DIM, INPUT_MEAN, OUTPUT_DIM, OUTPUT_MEAN,
-                     OUTPUT_MIN, OUTPUT_STD, REALIZATION, UPDATE_STEP)
+from .naming import (
+    BUDGET,
+    INPUT_DIM,
+    INPUT_MEAN,
+    OUTPUT_DIM,
+    OUTPUT_MEAN,
+    OUTPUT_MIN,
+    OUTPUT_STD,
+    REALIZATION,
+    UPDATE_STEP,
+)
 
 #                                                          Authorship & Credits
 # =============================================================================

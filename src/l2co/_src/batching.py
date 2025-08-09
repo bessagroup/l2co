@@ -7,7 +7,7 @@ Module for batching data for optimization processes
 
 # Standard
 import math
-from typing import Dict, Iterator, Optional
+from collections.abc import Iterator
 
 # Third-party
 import grain.python as grain
@@ -65,7 +65,7 @@ class NoneIterator:
         Returns the stored data.
     """
 
-    def __init__(self, data: Optional[Dict[str, jnp.ndarray]] = None):
+    def __init__(self, data: dict[str, jnp.ndarray] | None = None):
         if data is None:
             data = {}
 
@@ -80,9 +80,9 @@ class NoneIterator:
 # =============================================================================
 
 
-def batch_iter(dataset: Optional[Dict[str, jnp.ndarray]],
-               n_evals: int, batch_size: Optional[int], *,
-               key: Optional[int]) -> Iterator:
+def batch_iter(dataset: dict[str, jnp.ndarray] | None,
+               n_evals: int, batch_size: int | None, *,
+               key: int | None) -> Iterator:
     """
     Create an iterator for batching data.
 
@@ -113,9 +113,9 @@ def batch_iter(dataset: Optional[Dict[str, jnp.ndarray]],
         return NoneIterator(dataset)
 
     if key is None:
-        raise ValueError((
+        raise ValueError(
             f"Key must be provided when dataset is not None"
-            f"{key=}, {dataset=}")
+            f"{key=}, {dataset=}"
         )
 
     source = DictSource(dataset)

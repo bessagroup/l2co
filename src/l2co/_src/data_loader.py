@@ -22,10 +22,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable, Iterable
 from copy import deepcopy
 from pathlib import Path
 from time import perf_counter
-from typing import Callable, Dict, Iterable, Literal, Optional, Tuple, Type
+from typing import Literal
 
 # Third-party
 import jax
@@ -38,13 +39,32 @@ from scipy.linalg import svd
 from sklearn.model_selection import train_test_split
 
 # Local
-from .naming import (BATCH, BUDGET, FEATURE, OPT_CHOICE, OPT_HISTORY,
-                     OUTPUT_DIM, OUTPUT_MEAN, OUTPUT_MIN, PERFORMANCE, PROBLEM,
-                     REALIZATION, SCHEDULE, STAIRCASE, TASK_ID, TASK_LABELS,
-                     TRAJECTORY, UPDATE_STEP)
+from .naming import (
+    BATCH,
+    BUDGET,
+    FEATURE,
+    OPT_CHOICE,
+    OPT_HISTORY,
+    OUTPUT_DIM,
+    OUTPUT_MEAN,
+    OUTPUT_MIN,
+    PERFORMANCE,
+    PROBLEM,
+    REALIZATION,
+    SCHEDULE,
+    STAIRCASE,
+    TASK_ID,
+    TASK_LABELS,
+    TRAJECTORY,
+    UPDATE_STEP,
+)
 from .optimizerschedule import OptimizationSchedule
-from .performance import (output_cummin, scale_by_problem,
-                          scale_by_problem_and_schedule, scale_by_task)
+from .performance import (
+    output_cummin,
+    scale_by_problem,
+    scale_by_problem_and_schedule,
+    scale_by_task,
+)
 from .task import Task
 
 #                                                          Authorship & Credits
@@ -97,7 +117,7 @@ class DataLoader:
         data: xr.Dataset,
         task_labels: xr.DataArray,
         opt_steps: Iterable[OptimizationSchedule],
-        l2co_schedules: Optional[xr.Dataset] = None,
+        l2co_schedules: xr.Dataset | None = None,
     ):
         """
         A data loader class for stage0 of the L2CO framework.
@@ -294,7 +314,7 @@ class DataLoader:
         )
 
     def to_all_params(self, window_size: float,
-                      budget_size: Optional[int] = None,
+                      budget_size: int | None = None,
                       include_last: bool = False) -> xr.DataTree:
         """
         Generate parameters for all tasks over multiple budget windows.
@@ -523,7 +543,7 @@ class DataLoader:
             SCHEDULE, OUTPUT_DIM, PROBLEM, BUDGET)
 
     def _performance(self, include_best: bool,
-                     exclude_optimizer: Optional[str] = None) -> xr.DataArray:
+                     exclude_optimizer: str | None = None) -> xr.DataArray:
         """
         Computes the performance of the optimizers.
 
@@ -705,8 +725,8 @@ class DataLoader:
 
     def train_test_split(
             self,
-            test_size: float = 0.2, random_state: Optional[int] = None
-    ) -> Tuple[DataLoader, DataLoader]:
+            test_size: float = 0.2, random_state: int | None = None
+    ) -> tuple[DataLoader, DataLoader]:
         """
         Split the data into train and test sets.
 
@@ -732,7 +752,7 @@ class DataLoader:
 #                                                              Selecting budget
 # =============================================================================
 
-    def select_t(self, t: int, t_start: Optional[float] = 0.0,
+    def select_t(self, t: int, t_start: float | None = 0.0,
                  select_one_before: bool = True) -> DataLoader:
         """
         Select a subset of the data loader at a specific budget.
@@ -887,7 +907,7 @@ class DataLoader:
 
     def performance_profile(
             self, max_f_value: int = 2.0, include_best: bool = False,
-            exclude_optimizer: Optional[str] = None,
+            exclude_optimizer: str | None = None,
     ) -> xr.DataArray:
         """
         Create a performance profile for the given performance data.
@@ -915,7 +935,7 @@ class DataLoader:
         return performance_profile(performance=p, max_f_value=max_f_value)
 
     def rtd_profile(self, include_best: bool = False,
-                    exclude_optimizer: Optional[str] = None,) -> xr.DataArray:
+                    exclude_optimizer: str | None = None,) -> xr.DataArray:
         """
         Compute the runtime distribution (RTD) profile.
 
@@ -1031,9 +1051,9 @@ class OptimizationDynamics:
 
     @classmethod
     def from_data(
-            cls: Type[OptimizationDynamics],
+            cls: type[OptimizationDynamics],
             data: xr.DataTree,
-            previous_step: Optional[str] = None) -> OptimizationDynamics:
+            previous_step: str | None = None) -> OptimizationDynamics:
         ds_list = []
         for k in data.keys():
             ds = data[k].to_dataset()
@@ -1086,15 +1106,15 @@ class OptimizationDynamics:
 
     @classmethod
     def from_task_and_run(
-            cls: Type[OptimizationDynamics],
+            cls: type[OptimizationDynamics],
             task: Task,
-            data: Optional[ExperimentData] = None,
+            data: ExperimentData | None = None,
     ) -> OptimizationDynamics:
         ...
 
 
 def load_dynamics(path: str | Path | xr.DataTree
-                  ) -> Dict[str, OptimizationDynamics]:
+                  ) -> dict[str, OptimizationDynamics]:
     if not isinstance(path, xr.DataTree):
         _path = Path(path)
         datatree = xr.open_datatree(_path.with_suffix('.nc'))

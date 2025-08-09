@@ -1,8 +1,8 @@
 # Standard
+from collections.abc import Callable
 from copy import deepcopy
 from functools import partial
 from pathlib import Path
-from typing import Callable, Dict, Tuple
 
 # Third-party
 import equinox as eqx
@@ -188,10 +188,10 @@ def wave_pde_loss(
 
 
 def create_points_dataset(
-    x_range: Tuple[float], t_range: Tuple[float], xgrid_resolution: int,
+    x_range: tuple[float], t_range: tuple[float], xgrid_resolution: int,
     tgrid_resolution: int, num_ic_points: int, num_bc_points: int,
     num_res_points: int, *, key: jnp.ndarray
-) -> Dict[str, jnp.ndarray]:
+) -> dict[str, jnp.ndarray]:
     """
     Create a dataset of points for PDE tasks.
 
@@ -253,7 +253,7 @@ def create_points_dataset(
     }
 
 
-def save_dataset(dataset: Dict[str, jnp.ndarray], path: str | Path):
+def save_dataset(dataset: dict[str, jnp.ndarray], path: str | Path):
     _path = Path(path)
     _path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -264,8 +264,8 @@ def create_pde_task(
     pde_task_name: str,
     seed: int,
     dataset_path: str,
-    x_range: Tuple[float, float],
-    t_range: Tuple[float, float],
+    x_range: tuple[float, float],
+    t_range: tuple[float, float],
     xgrid_resolution: int,
     tgrid_resolution: int,
     num_ic_points: int,

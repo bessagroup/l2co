@@ -8,8 +8,8 @@ Module for optimizers.
 # Standard
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import partial
-from typing import Callable, Dict, Optional, Tuple, Type
 
 # Third-party
 import equinox as eqx
@@ -20,15 +20,21 @@ import optax
 from evosax.algorithms import CMA_ES, PSO, Sep_CMA_ES
 from evosax.algorithms.base import Params
 from evosax.algorithms.base import State as EvoSaxState
-from evosax.algorithms.distribution_based.base import \
-    DistributionBasedAlgorithm
+from evosax.algorithms.distribution_based.base import (
+    DistributionBasedAlgorithm,
+)
 from evosax.algorithms.population_based.base import PopulationBasedAlgorithm
 from jaxtyping import PRNGKeyArray, PyTree
 from optax import OptState as OptaxState
 
 # Local
-from ._typing import (InitFunction, InputParameters, LossFunction, OptStates,
-                      StepFunction)
+from ._typing import (
+    InitFunction,
+    InputParameters,
+    LossFunction,
+    OptStates,
+    StepFunction,
+)
 from .history_state import HistoryState
 from .sampler import random_sampling
 from .task import Task
@@ -46,13 +52,13 @@ __status__ = 'Stable'
 def optax_fn(static: PyTree,
              optimizer: optax.GradientTransformation,
              loss_fn: LossFunction,
-             bounded: Tuple[float, float],
+             bounded: tuple[float, float],
              pass_rng: bool,
              opt_hash: int,
              opt_index: int,
              n_optimizers: int,
              **kwargs
-             ) -> Tuple[InitFunction, StepFunction]:
+             ) -> tuple[InitFunction, StepFunction]:
 
     def init_fn(update_state: UpdateState, key: PRNGKeyArray = None,
                 **sample) -> OptaxState:
@@ -61,9 +67,9 @@ def optax_fn(static: PyTree,
         return opt_state
 
     @eqx.filter_jit
-    def step_fn(carry: Tuple[InputParameters, OptStates, PRNGKeyArray],
+    def step_fn(carry: tuple[InputParameters, OptStates, PRNGKeyArray],
                 sample: dict, *args, **kwargs
-                ) -> Tuple[Tuple[InputParameters, OptStates, PRNGKeyArray],
+                ) -> tuple[tuple[InputParameters, OptStates, PRNGKeyArray],
                            dict]:
         input_params, opt_states, key = carry
 
@@ -116,13 +122,13 @@ def optax_fn(static: PyTree,
 def optax_extra_args_fn(static: PyTree,
                         optimizer: optax.GradientTransformationExtraArgs,
                         loss_fn: LossFunction,
-                        bounded: Tuple[float, float],
+                        bounded: tuple[float, float],
                         pass_rng: bool,
                         opt_hash: int,
                         opt_index: int,
                         n_optimizers: int,
                         **kwargs
-                        ) -> Tuple[InitFunction, StepFunction]:
+                        ) -> tuple[InitFunction, StepFunction]:
     def init_fn(update_state: UpdateState,
                 key: PRNGKeyArray = None, **sample) -> OptaxState:
         params = jax.tree.map(lambda x: x[-1], update_state.last_params)
@@ -130,9 +136,9 @@ def optax_extra_args_fn(static: PyTree,
         return opt_state
 
     @eqx.filter_jit
-    def step_fn(carry: Tuple[InputParameters, OptStates, PRNGKeyArray],
+    def step_fn(carry: tuple[InputParameters, OptStates, PRNGKeyArray],
                 sample: dict, *args, **kwargs
-                ) -> Tuple[Tuple[InputParameters, OptStates, PRNGKeyArray],
+                ) -> tuple[tuple[InputParameters, OptStates, PRNGKeyArray],
                            dict]:
         input_params, opt_states, key = carry
 
@@ -189,7 +195,7 @@ def evosax_distribution_based_fn(
     static: PyTree,
         optimizer: DistributionBasedAlgorithm,
         loss_fn: LossFunction,
-        bounded: Tuple[float, float],
+        bounded: tuple[float, float],
         pass_rng: bool,
         popsize: int,
         es_params: Params,
@@ -197,7 +203,7 @@ def evosax_distribution_based_fn(
         opt_index: int,
         n_optimizers: int,
         **kwargs
-) -> Tuple[InitFunction, StepFunction]:
+) -> tuple[InitFunction, StepFunction]:
 
     def init_fn(update_state: UpdateState,
                 key: PRNGKeyArray = None, **sample) -> EvoSaxState:
@@ -205,9 +211,9 @@ def evosax_distribution_based_fn(
         return optimizer.init(key, params, es_params)
 
     @eqx.filter_jit
-    def step_fn(carry: Tuple[InputParameters, OptStates, PRNGKeyArray],
-                sample: dict, *args, **kwargs) -> Tuple[
-                    Tuple[InputParameters, OptStates, PRNGKeyArray], dict]:
+    def step_fn(carry: tuple[InputParameters, OptStates, PRNGKeyArray],
+                sample: dict, *args, **kwargs) -> tuple[
+                    tuple[InputParameters, OptStates, PRNGKeyArray], dict]:
         input_params, opt_states, key = carry
 
         new_key, rng_key = jr.split(key)
@@ -259,7 +265,7 @@ def evosax_population_based_fn(
     static: PyTree,
     optimizer: PopulationBasedAlgorithm,
     loss_fn: LossFunction,
-    bounded: Tuple[float, float],
+    bounded: tuple[float, float],
     pass_rng: bool,
     popsize: int,
     es_params: Params,
@@ -267,7 +273,7 @@ def evosax_population_based_fn(
     opt_index: int,
     n_optimizers: int,
     **kwargs
-) -> Tuple[InitFunction, StepFunction]:
+) -> tuple[InitFunction, StepFunction]:
     def init_fn(update_state: UpdateState, key: PRNGKeyArray,
                 **sample) -> EvoSaxState:
         population = jax.tree.map(
@@ -289,9 +295,9 @@ def evosax_population_based_fn(
                               )
 
     @eqx.filter_jit
-    def step_fn(carry: Tuple[InputParameters, OptStates, PRNGKeyArray],
-                sample: dict, *args, **kwargs) -> Tuple[
-                    Tuple[InputParameters, OptStates, PRNGKeyArray], dict]:
+    def step_fn(carry: tuple[InputParameters, OptStates, PRNGKeyArray],
+                sample: dict, *args, **kwargs) -> tuple[
+                    tuple[InputParameters, OptStates, PRNGKeyArray], dict]:
         input_params, opt_states, key = carry
 
         new_key, rng_key = jr.split(key)
@@ -375,12 +381,12 @@ class UpdateClass(eqx.Module):
 
     def step(
         self,
-        opt_states: Tuple[PyTree],
+        opt_states: tuple[PyTree],
         update_state: UpdateState,
         history_state: HistoryState,
         n_iterations: int,
         key: PRNGKeyArray,
-    ) -> Tuple[PyTree, UpdateState]:
+    ) -> tuple[PyTree, UpdateState]:
 
         update_state = self.handshake(
             update_state=update_state, key=key)
@@ -424,7 +430,7 @@ def optax_update(task: Task,
                  optimizer: optax.GradientTransformation,
                  opt_hash: int,
                  popsize: int,
-                 bounded: Optional[Tuple[float, float]] = None,
+                 bounded: tuple[float, float] | None = None,
                  opt_index: int = 0,
                  n_optimizers: int = 1,
                  **hyperparameters
@@ -458,7 +464,7 @@ def optax_update_extra_args(task: Task,
                             optimizer: optax.GradientTransformationExtraArgs,
                             opt_hash: int,
                             popsize: int,
-                            bounded: Optional[Tuple[float, float]] = None,
+                            bounded: tuple[float, float] | None = None,
                             opt_index: int = 0,
                             n_optimizers: int = 1,
                             **hyperparameters) -> UpdateClass:
@@ -487,10 +493,10 @@ def optax_update_extra_args(task: Task,
 
 
 def evosax_distribution_update(task: Task,
-                               optimizer: Type[DistributionBasedAlgorithm],
+                               optimizer: type[DistributionBasedAlgorithm],
                                opt_hash: int,
                                popsize: int,
-                               bounded: Optional[Tuple[float, float]] = (
+                               bounded: tuple[float, float] | None = (
                                    None, None),
                                opt_index: int = 0,
                                n_optimizers: int = 1,
@@ -534,10 +540,10 @@ def evosax_distribution_update(task: Task,
 
 
 def evosax_population_update(task: Task,
-                             optimizer: Type[PopulationBasedAlgorithm],
+                             optimizer: type[PopulationBasedAlgorithm],
                              opt_hash: int,
                              popsize: int,
-                             bounded: Optional[Tuple[float, float]] = (
+                             bounded: tuple[float, float] | None = (
                                  None, None),
                              opt_index: int = 0,
                              n_optimizers: int = 1,
@@ -583,7 +589,7 @@ def evosax_population_update(task: Task,
 
 
 def cmaes_variable_popsize(
-    task: Task, popsize: Optional[int] = None,
+    task: Task, popsize: int | None = None,
         **kwargs) -> UpdateClass:
     d = task.dimensionality
 
@@ -599,7 +605,7 @@ def cmaes_variable_popsize(
 
 
 def pso_variable_popsize(
-    task: Task, popsize: Optional[int] = None,
+    task: Task, popsize: int | None = None,
         **kwargs) -> UpdateClass:
     d = task.dimensionality
 
@@ -615,7 +621,7 @@ def pso_variable_popsize(
 
 
 def sepcmaes_variable_popsize(
-    task: Task, popsize: Optional[int] = None,
+    task: Task, popsize: int | None = None,
         **kwargs) -> UpdateClass:
     d = task.dimensionality
 
@@ -629,7 +635,7 @@ def sepcmaes_variable_popsize(
     return optimizer(**kwargs, task=task, popsize=popsize)
 
 
-OPTIMIZER_MAPPING: Dict[str, UpdateClass] = {
+OPTIMIZER_MAPPING: dict[str, UpdateClass] = {
     'adam': partial(optax_update, optimizer=optax.adam,
                     popsize=1),
     'sgd': partial(optax_update, optimizer=optax.sgd,

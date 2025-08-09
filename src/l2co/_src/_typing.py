@@ -6,7 +6,8 @@ Module for defining type aliases used throughout the optimization process.
 # =============================================================================
 
 # Standard
-from typing import Any, Callable, Tuple, Union
+from collections.abc import Callable
+from typing import Any, Union
 
 # Third-party
 from evosax.algorithms.base import State as EvoSaxState
@@ -24,9 +25,9 @@ InputParameters = PyTree
 OptStates = PyTree[Union[OptaxOptState, EvoSaxState]]
 
 StepFunction = Callable[
-    [Tuple[InputParameters, OptStates, PRNGKeyArray]],
-    Tuple[Tuple[InputParameters, OptStates, PRNGKeyArray], dict]]
+    [tuple[InputParameters, OptStates, PRNGKeyArray]],
+    tuple[tuple[InputParameters, OptStates, PRNGKeyArray], dict]]
 
-InitFunction = Callable[[PyTree], Union[OptaxOptState, EvoSaxState]]
+InitFunction = Callable[[PyTree], OptaxOptState | EvoSaxState]
 
 LossFunction = Any

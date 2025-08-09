@@ -14,7 +14,6 @@ preprocessing_factory
 # =============================================================================
 
 # Standard
-from typing import Dict
 
 # Third-party
 import numpy as np
@@ -92,7 +91,7 @@ class EnsureColumnsTransformer(BaseEstimator, TransformerMixin):
 class DataFrameColumnTransformer(BaseEstimator, TransformerMixin):
     """ColumnTransformer that preserves DataFrame format and column names."""
 
-    def __init__(self, feature_types: Dict[str, str]):
+    def __init__(self, feature_types: dict[str, str]):
         self.feature_types = feature_types
         self.column_transformer = None
 

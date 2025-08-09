@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterator
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional
+from typing import Any
 
 # Third-party
 import jax
@@ -29,7 +30,7 @@ __status__ = 'Stable'
 
 class OptimizationStep:
     def __init__(self, optimizer: str,
-                 hyperparameters: Optional[Dict[str, Any]] = None):
+                 hyperparameters: dict[str, Any] | None = None):
 
         if hyperparameters is None:
             hyperparameters = {}
@@ -105,7 +106,7 @@ class OptimizationStep:
         return self.hyperparameters.get('popsize', 1)
 
     @classmethod
-    def from_yaml(cls, config: Dict[str, Any]) -> OptimizationStep:
+    def from_yaml(cls, config: dict[str, Any]) -> OptimizationStep:
         if 'hyperparameters' not in config:
             return cls(optimizer=config['optimizer'])
         else:
@@ -119,11 +120,11 @@ class OptimizationStep:
 
     @classmethod
     def load(cls, filepath: str) -> OptimizationStep:
-        with open(filepath, 'r') as f:
+        with open(filepath) as f:
             data = json.load(f)
         return cls.from_dict(data)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             'optimizer': self.optimizer,
             'hyperparameters': self.hyperparameters,
@@ -134,7 +135,7 @@ class OptimizationStep:
             json.dump(self.to_dict(), f, indent=4)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> OptimizationStep:
+    def from_dict(cls, data: dict[str, Any]) -> OptimizationStep:
         return cls(
             optimizer=data['optimizer'],
             hyperparameters=data.get('hyperparameters'),
@@ -218,7 +219,7 @@ class OptimizationSchedule:
     def __len__(self):
         return len(self.steps)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             'steps': [step.to_dict() for step in self.steps],
             'budgets': self.budgets,
@@ -238,7 +239,7 @@ class OptimizationSchedule:
         return policy_fn
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> OptimizationSchedule:
+    def from_dict(cls, data: dict[str, Any]) -> OptimizationSchedule:
         steps = [OptimizationStep.from_dict(
             step_data) for step_data in data['steps']]
         return cls(steps=steps, budgets=data['budgets'])
@@ -259,7 +260,7 @@ class OptimizationSchedule:
 
     @classmethod
     def load(cls, filepath: str) -> OptimizationSchedule:
-        with open(filepath, 'r') as f:
+        with open(filepath) as f:
             data = json.load(f)
         return cls.from_dict(data)
 

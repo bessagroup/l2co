@@ -1,7 +1,6 @@
 # Local
 import math
 from pathlib import Path
-from typing import Dict
 
 # Third-party
 import jax.numpy as jnp
@@ -31,7 +30,7 @@ def spiral_dataset(dataset_size, *, key: jrd.PRNGKey):
     return {'x': x, 'y': y}
 
 
-def save_dataset(dataset: Dict[str, jnp.ndarray], path: str | Path):
+def save_dataset(dataset: dict[str, jnp.ndarray], path: str | Path):
     _path = Path(path)
     _path.parent.mkdir(parents=True, exist_ok=True)
 

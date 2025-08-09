@@ -1,13 +1,12 @@
 # Standard
 from functools import partial
 from pathlib import Path
-from typing import Dict
 
 # Third-party
 import jax
 import jax.numpy as jnp
-import jax.random as random
 import jax.random as jrd
+import jax.random as random
 import jax.tree_util as jtu
 
 # Local
@@ -20,7 +19,7 @@ from .models import mlp
 
 def generate_one_gaussian_dataset(
     num_gaussians=4, num_samples_per_gaussian=25, dim=2, *, key: jrd.PRNGKey
-) -> Dict[str, jnp.ndarray]:
+) -> dict[str, jnp.ndarray]:
     """
     Generate a synthetic dataset of Gaussian distributions.
 
@@ -81,7 +80,7 @@ def generate_one_gaussian_dataset(
 # =========================================================================================
 
 
-def save_dataset(dataset: Dict[str, jnp.ndarray], path: str | Path):
+def save_dataset(dataset: dict[str, jnp.ndarray], path: str | Path):
     _path = Path(path)
     _path.parent.mkdir(parents=True, exist_ok=True)
 

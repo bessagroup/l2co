@@ -9,8 +9,8 @@ Module for defining the update state of the optimization process.
 # Standard
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import partial
-from typing import Callable
 
 # Third-party
 import equinox as eqx

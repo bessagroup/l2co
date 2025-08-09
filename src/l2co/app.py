@@ -12,8 +12,15 @@ import scienceplots  # noqa
 # Local
 from l2co import DataLoader
 from l2co._src.data_loader import performance_profile, rtd
-from l2co._src.naming import (BUDGET, OUTPUT_DIM, OUTPUT_MEAN, OUTPUT_MIN,
-                              OUTPUT_STD, PROBLEM, SCHEDULE, TASK_ID)
+from l2co._src.naming import (
+    OUTPUT_DIM,
+    OUTPUT_MEAN,
+    OUTPUT_MIN,
+    OUTPUT_STD,
+    PROBLEM,
+    SCHEDULE,
+    TASK_ID,
+)
 from l2co.plotting import format_plot
 
 # =============================================================================

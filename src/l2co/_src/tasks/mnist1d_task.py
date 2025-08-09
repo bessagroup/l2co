@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Dict
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -19,7 +18,7 @@ def mnist1d_dataset(dataset_size, seed: int):
     return {'x': data['x'], 'y': data['y']}
 
 
-def save_dataset(dataset: Dict[str, jnp.ndarray], path: str | Path):
+def save_dataset(dataset: dict[str, jnp.ndarray], path: str | Path):
     _path = Path(path)
     _path.parent.mkdir(parents=True, exist_ok=True)
 

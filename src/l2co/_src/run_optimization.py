@@ -37,8 +37,8 @@ management and data generation.
 
 # Standard
 import gc
+from collections.abc import Callable
 from time import time
-from typing import Callable, Optional, Tuple
 
 # Third-party
 import equinox as eqx
@@ -69,9 +69,9 @@ __status__ = 'Stable'
 def initialize_optimizer(
         optimizer: OptimizationStep,
         task: Task,
-        bounded: Tuple[float, float], *,
+        bounded: tuple[float, float], *,
         key: PRNGKeyArray
-) -> Tuple[UpdateState, UpdateClass]:
+) -> tuple[UpdateState, UpdateClass]:
     """
     Initialize an optimizer with the given parameters.
 
@@ -305,7 +305,7 @@ class RunOptimization(DataGenerator):
                  budget_fn: Callable[[], int],
                  seed: int,
                  n_realizations: int = 1,
-                 bounded: Optional[Tuple[float, float]] = (None, None),
+                 bounded: tuple[float, float] | None = (None, None),
                  clear_jax_cache: bool = True,
                  verbose: bool = False,
                  save_input_parameters: bool = False
@@ -424,11 +424,11 @@ class RunOptimization(DataGenerator):
             name="loss history",
             object=data_xarr, to_disk=True)
 
-        logger.info((
+        logger.info(
             f"Finished optimization task {task.name} with {optimizer.name} for"
             f" {n_iterations} "
             f"iterations for {self.n_realizations} realizations"
             f" (took {time() - t1:.2f} seconds)"
-        ))
+        )
 
         return experiment_sample

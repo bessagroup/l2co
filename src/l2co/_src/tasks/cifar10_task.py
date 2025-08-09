@@ -2,7 +2,6 @@ import pickle
 import tarfile
 import urllib.request
 from pathlib import Path
-from typing import Dict
 
 # Third-party
 import jax.numpy as jnp
@@ -57,7 +56,7 @@ def download_cifar10():
     return {'x': data_dict[b"data"], 'y': data_dict[b"labels"]}
 
 
-def save_dataset(dataset: Dict[str, jnp.ndarray], path: str | Path):
+def save_dataset(dataset: dict[str, jnp.ndarray], path: str | Path):
     _path = Path(path)
     _path.parent.mkdir(parents=True, exist_ok=True)
 

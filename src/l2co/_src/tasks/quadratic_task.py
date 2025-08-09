@@ -1,6 +1,5 @@
 from functools import partial
 from pathlib import Path
-from typing import Dict
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -17,7 +16,7 @@ def generate_dataset(dimensionality: int, *, key: jr.PRNGKey):
     return {'W': Ws, 'y': ys}
 
 
-def save_dataset(dataset: Dict[str, jnp.ndarray], path: str | Path):
+def save_dataset(dataset: dict[str, jnp.ndarray], path: str | Path):
     _path = Path(path)
     _path.parent.mkdir(parents=True, exist_ok=True)
 
