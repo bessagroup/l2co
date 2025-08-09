@@ -63,6 +63,19 @@ ignore = [
     "C901",
 ]
 
+exclude = [
+    "__pycache__",
+    "dist",
+	"*.egg",
+	"docs/source",
+	"tests",
+	".git",
+	"experiments/*",
+	"notebooks",
+	"tests/*",
+	"src/l2co/app.py",
+]
+
 [tool.uv]
 package = true
 
