@@ -5,7 +5,6 @@ Module for defining the update state of the optimization process.
 #                                                                       Modules
 # =============================================================================
 
-
 # Standard
 from __future__ import annotations
 
@@ -27,9 +26,9 @@ from .tree_utils import combined_loss, get_best, tree_where
 
 #                                                          Authorship & Credits
 # =============================================================================
-__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
-__credits__ = ['Martin van der Schelling']
-__status__ = 'Stable'
+__author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
+__credits__ = ["Martin van der Schelling"]
+__status__ = "Stable"
 # =============================================================================
 
 
@@ -49,11 +48,10 @@ class UpdateState(eqx.Module):
 
     @classmethod
     def init(cls, params: InputParameters, memory_size: int) -> UpdateState:
-
         # Add leading axis and tile to memory_size
         last_params = jax.tree.map(
             lambda x: jnp.broadcast_to(x[None, ...], (memory_size,) + x.shape),
-            params
+            params,
         )
 
         return cls(
@@ -64,11 +62,11 @@ class UpdateState(eqx.Module):
         )
 
     @classmethod
-    def from_history(cls, history: PyTree,
-                     memory_size: int, last_step: int) -> UpdateState:
-
-        params = history['params'][-memory_size:]
-        losses = history['loss'][-memory_size:]
+    def from_history(
+        cls, history: PyTree, memory_size: int, last_step: int
+    ) -> UpdateState:
+        params = history["params"][-memory_size:]
+        losses = history["loss"][-memory_size:]
 
         # Get the best parameters and loss from the history
         best_params, best_loss = get_best(params, losses)
@@ -77,7 +75,7 @@ class UpdateState(eqx.Module):
             last_params=params,
             best_params=best_params,
             best_loss=best_loss,
-            last_step=last_step,
+            last_step=jnp.array(last_step, dtype=jnp.uint32),
         )
 
     def merge(self, other: UpdateState) -> UpdateState:
@@ -95,28 +93,34 @@ class UpdateState(eqx.Module):
     def evaluate(self, task: Task, key: PRNGKeyArray) -> jax.Array:
         return evaluate(params=self.last_params, task=task, key=key)
 
+
 # =============================================================================
 
 
 def evaluate(params: PyTree, task: Task, *, key: PRNGKeyArray) -> jax.Array:
-
     _, static = eqx.partition(task.model, eqx.is_inexact_array)
     n_samples = jax.tree_util.tree_leaves(params)[0].shape[0]
 
-    data_iter = batch_iter(dataset=task.loaded_dataset,
-                           n_evals=n_samples,
-                           batch_size=task.batch_size,
-                           key=task.dataset.get('seed', None))
+    data_iter = batch_iter(
+        dataset=task.loaded_dataset,
+        n_evals=n_samples,
+        batch_size=task.batch_size,
+        key=task.dataset.get("seed", None),
+    )
 
     if task.pass_rng:
-        rng_sample = {'key': jr.split(key, num=n_samples)}
+        rng_sample = {"key": jr.split(key, num=n_samples)}
     else:
         rng_sample = {}
 
-    return jax.vmap(partial(combined_loss, static=static,
-                            loss_fn=task.loss_fn,
-                            **next(data_iter))
-                    )(params, **rng_sample)
+    return jax.vmap(
+        partial(
+            combined_loss,
+            static=static,
+            loss_fn=task.loss_fn,
+            **next(data_iter),
+        )
+    )(params, **rng_sample)
 
 
 def new(
@@ -125,27 +129,32 @@ def new(
     sampler: Callable,
     key: PRNGKeyArray,
 ) -> UpdateState:
-
     n_samples = update_state.memory_size
     params, static = eqx.partition(task.model, eqx.is_inexact_array)
 
     # Sample new parameters using the provided sampler
     new_params = sampler(key, params, n_samples)
 
-    data_iter = batch_iter(dataset=task.loaded_dataset,
-                           n_evals=n_samples,
-                           batch_size=task.batch_size,
-                           key=task.dataset.get('seed', None))
+    data_iter = batch_iter(
+        dataset=task.loaded_dataset,
+        n_evals=n_samples,
+        batch_size=task.batch_size,
+        key=task.dataset.get("seed", None),
+    )
 
     if task.pass_rng:
-        rng_sample = {'key': jr.split(key, num=n_samples)}
+        rng_sample = {"key": jr.split(key, num=n_samples)}
     else:
         rng_sample = {}
 
-    losses = jax.vmap(partial(combined_loss, static=static,
-                              loss_fn=task.loss_fn,
-                              **next(data_iter))
-                      )(new_params, **rng_sample)
+    losses = jax.vmap(
+        partial(
+            combined_loss,
+            static=static,
+            loss_fn=task.loss_fn,
+            **next(data_iter),
+        )
+    )(new_params, **rng_sample)
 
     best_params, best_loss = get_best(new_params, losses)
 
@@ -153,7 +162,7 @@ def new(
         last_params=new_params,
         best_params=best_params,
         best_loss=best_loss,
-        last_step=SAMPLING_STEP
+        last_step=SAMPLING_STEP,
     )
 
 
@@ -171,9 +180,13 @@ def best(update_state: UpdateState, **kwargs) -> UpdateState:
     )
 
 
-def best_one(update_state: UpdateState, task: Task, sampler: Callable,
-             key: PRNGKeyArray, **kwargs) -> UpdateState:
-
+def best_one(
+    update_state: UpdateState,
+    task: Task,
+    sampler: Callable,
+    key: PRNGKeyArray,
+    **kwargs,
+) -> UpdateState:
     samples = new(
         update_state=update_state,
         task=task,
