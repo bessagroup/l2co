@@ -162,7 +162,7 @@ def new(
         last_params=new_params,
         best_params=best_params,
         best_loss=best_loss,
-        last_step=SAMPLING_STEP,
+        last_step=jnp.array(SAMPLING_STEP, dtype=jnp.uint32),
     )
 
 
