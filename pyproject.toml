@@ -22,19 +22,14 @@ dependencies = [
     "dask>=2025.7.0",
     "equinox>=0.13.0",
     "evosax>=0.2.0",
-    "f3dasm>=2.0.1",
+    "f3dasm",
     "grain>=0.2.11",
-    "jax>=0.6.2",
+    "jax==0.5.0",
     "jaxtyping>=0.3.2",
-    "joblib>=1.5.1",
-    "netcdf4>=1.7.2",
-    "numpy>=2.2.6",
+    "mpi4py>=4.1.0",
     "opfunu",
-    "optax>=0.2.5",
     "scikit-learn>=1.7.1",
-    "scipy>=1.15.3",
     "tqdm>=4.67.1",
-    "xarray>=2025.6.1",
 ]
 
 [dependency-groups]
@@ -82,4 +77,5 @@ exclude = [
 package = true
 
 [tool.uv.sources]
-opfunu = { git = "https://github.com/mpvanderschelling/opfunu", rev = "jaxnumpy" }
+f3dasm = { path = "../f3dasm", editable = true }
+opfunu = { path = "../opfunu", editable = true }
