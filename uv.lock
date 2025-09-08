@@ -74,19 +74,6 @@ wheels = [
 ]
 
 [[package]]
-name = "autograd"
-version = "1.8.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.3.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/67/1c/3c24ec03c8ba4decc742b1df5a10c52f98c84ca8797757f313e7bdcdf276/autograd-1.8.0.tar.gz", hash = "sha256:107374ded5b09fc8643ac925348c0369e7b0e73bbed9565ffd61b8fd04425683", size = 2562146, upload-time = "2025-05-05T12:49:02.502Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/84/ea/e16f0c423f7d83cf8b79cae9452040fb7b2e020c7439a167ee7c317de448/autograd-1.8.0-py3-none-any.whl", hash = "sha256:4ab9084294f814cf56c280adbe19612546a35574d67c574b04933c7d2ecb7d78", size = 51478, upload-time = "2025-05-05T12:49:00.585Z" },
-]
-
-[[package]]
 name = "babel"
 version = "2.17.0"
 source = { registry = "https://pypi.org/simple" }
@@ -663,10 +650,9 @@ wheels = [
 
 [[package]]
 name = "f3dasm"
-version = "2.0.2"
+version = "2.1.0"
 source = { editable = "../f3dasm" }
 dependencies = [
-    { name = "autograd" },
     { name = "filelock" },
     { name = "hydra-core" },
     { name = "matplotlib" },
@@ -683,7 +669,6 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "autograd", specifier = ">=1.7.0" },
     { name = "filelock", specifier = ">=3.16.1" },
     { name = "hydra-core", specifier = ">=1.3.2" },
     { name = "matplotlib", specifier = ">=3.7.5" },
@@ -693,6 +678,26 @@ requires-dist = [
     { name = "salib", specifier = ">=1.4.8" },
     { name = "scipy", specifier = ">=1.10.1" },
     { name = "xarray", specifier = ">=2023.1.0" },
+]
+
+[package.metadata.requires-dev]
+all = [{ name = "optuna", specifier = ">=4.4.0" }]
+dev = [
+    { name = "build", specifier = ">=1.2.2.post1" },
+    { name = "hypothesis", specifier = ">=6.113.0" },
+    { name = "ipykernel", specifier = ">=6.29.5" },
+    { name = "ipywidgets", specifier = ">=8.1.7" },
+    { name = "nbsphinx", specifier = ">=0.9.7" },
+    { name = "optuna", specifier = ">=4.4.0" },
+    { name = "pytest", specifier = ">=8.3.5" },
+    { name = "pytest-cov", specifier = ">=5.0.0" },
+    { name = "setuptools", specifier = ">=75.3.2" },
+    { name = "sphinx", specifier = ">=7.1.2" },
+    { name = "sphinx-autodoc-typehints", specifier = ">=2.0.1" },
+    { name = "sphinx-book-theme", specifier = ">=0.0.39" },
+    { name = "sphinx-tabs", specifier = "==3.4.4" },
+    { name = "sphinxcontrib-bibtex", specifier = ">=2.5.0" },
+    { name = "wheel", specifier = ">=0.45.1" },
 ]
 
 [[package]]
