@@ -20,15 +20,13 @@ from .performance import EPSILON
 
 #                                                          Authorship & Credits
 # =============================================================================
-__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
-__credits__ = ['Martin van der Schelling']
-__status__ = 'Stable'
+__author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
+__credits__ = ["Martin van der Schelling"]
+__status__ = "Stable"
 # =============================================================================
 
 
-def combined_loss(params, loss_fn,
-                  static: PyTree,
-                  **rng_sample: dict) -> jax.Array:
+def combined_loss(params, loss_fn, static: PyTree, **rng_sample: dict) -> jax.Array:
     """
     Compute the combined loss for a given set of parameters.
 
@@ -62,6 +60,14 @@ def ffill(x: jnp.ndarray) -> jnp.ndarray:
 
 def bfill(x: jnp.ndarray) -> jnp.ndarray:
     return jnp.flip(ffill(jnp.flip(x)))
+
+
+def interpolate(x: jnp.ndarray, n_points: int) -> jnp.ndarray:
+    return jax.vmap(
+        lambda xi: jnp.interp(
+            jnp.linspace(0, 1, n_points), jnp.linspace(0, 1, len(xi)), xi
+        )
+    )(x)
 
 
 def log_stabilized_minmax_scale(x: jax.Array) -> jax.Array:
@@ -141,9 +147,12 @@ def tree_where(pred, true, false):
     PyTree
         Resulting PyTree after applying the condition.
     """
+
     def keep(a, b):
         return jnp.where(pred, a, b)
+
     return jax.tree.map(keep, true, false)
+
 
 #                                                  Loading and saving functions
 # =============================================================================
@@ -153,20 +162,19 @@ def save_model(model, path: str | Path) -> None:
     _path = Path(path)
     model_shape = eqx.filter_eval_shape(lambda x: model, None)
 
-    with open(_path.with_suffix('.pkl'), 'wb') as f:
+    with open(_path.with_suffix(".pkl"), "wb") as f:
         cloudpickle.dump(model_shape, f)
 
-    eqx.tree_serialise_leaves(_path.with_suffix('.eqx'), model)
+    eqx.tree_serialise_leaves(_path.with_suffix(".eqx"), model)
 
 
 def load_model(model_path: str, shape_path: str) -> eqx.Module:
     _model_path = Path(model_path)
     _shape_path = Path(shape_path)
-    with open(_shape_path.with_suffix('.pkl'), 'rb') as f:
+    with open(_shape_path.with_suffix(".pkl"), "rb") as f:
         model_shape = cloudpickle.load(f)
 
-    model = eqx.tree_deserialise_leaves(
-        _model_path.with_suffix('.eqx'), model_shape)
+    model = eqx.tree_deserialise_leaves(_model_path.with_suffix(".eqx"), model_shape)
 
     return model
 
@@ -190,5 +198,5 @@ def save_dataset(dataset: dict[str, jnp.ndarray], path: str | Path):
 def load_dataset(path: str | Path | None) -> dict[str, jnp.ndarray]:
     if path is None:
         return {}
-    loaded_data = jnp.load(Path(path).with_suffix('.npz'))
+    loaded_data = jnp.load(Path(path).with_suffix(".npz"))
     return {k: jnp.array(v) for k, v in loaded_data.items()}
