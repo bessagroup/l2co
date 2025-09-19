@@ -425,7 +425,8 @@ class RunOptimization(DataGenerator):
             object=data_xarr, to_disk=True)
 
         logger.info(
-            f"Finished optimization task {task.name} with {optimizer.name} for"
+            f"Finished optimization task {task.name} ({task.dimensionality}D) "
+            f"with {optimizer.name} for"
             f" {n_iterations} "
             f"iterations for {self.n_realizations} realizations"
             f" (took {time() - t1:.2f} seconds)"

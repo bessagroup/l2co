@@ -178,6 +178,10 @@ class Task(eqx.Module):
         loss_fn = cloudpickle.loads(bytes.fromhex(data["loss_fn"]))
 
         dataset = data.get("dataset", {})
+
+        if dataset is None:
+            dataset = {}
+
         tag = data.get("tag", {})
         has_aux = data["has_aux"]
         pass_rng = data["pass_rng"]
