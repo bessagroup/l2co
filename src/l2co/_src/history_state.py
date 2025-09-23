@@ -12,6 +12,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as onp
 import xarray as xr
 from jaxtyping import PyTree
 
@@ -80,43 +81,83 @@ class HistoryState(eqx.Module):
             update_step=roll_concat(self.update_step, u_step),
         )
 
-    def to_xarray(self) -> xr.Dataset:
-        input_mean = xr.DataArray(self.input_mean, dims=[BUDGET, INPUT_DIM])
+    def to_xarray(
+        self, include_input_mean: bool = True, budget_steps: int | None = None
+    ) -> xr.Dataset:
+        if include_input_mean:
+            input_mean = xr.DataArray(
+                self.input_mean, dims=[BUDGET, INPUT_DIM]
+            )
+
         output_min = xr.DataArray(self.output_min, dims=[BUDGET]).expand_dims(
             {OUTPUT_DIM: ["y"]}
         )
+
         output_mean = xr.DataArray(
             self.output_mean, dims=[BUDGET]
         ).expand_dims({OUTPUT_DIM: ["y"]})
+
         output_std = xr.DataArray(self.output_std, dims=[BUDGET]).expand_dims(
             {OUTPUT_DIM: ["y"]}
         )
+
         update_step = xr.DataArray(
             self.update_step, dims=[BUDGET]
         ).expand_dims({OUTPUT_DIM: ["y"]})
 
-        ds = xr.Dataset(
-            {
-                INPUT_MEAN: input_mean,
-                OUTPUT_MIN: output_min,
-                OUTPUT_MEAN: output_mean,
-                OUTPUT_STD: output_std,
-                UPDATE_STEP: update_step,
-            }
-        )
+        data_vars = {
+            OUTPUT_MIN: output_min,
+            OUTPUT_MEAN: output_mean,
+            OUTPUT_STD: output_std,
+            UPDATE_STEP: update_step,
+        }
+        if include_input_mean:
+            data_vars[INPUT_MEAN] = input_mean
+
+        ds = xr.Dataset(data_vars)
+
+        if budget_steps is not None:
+            ds = ds.assign_coords(
+                {
+                    BUDGET: onp.linspace(
+                        0.0, 1.0, ds[BUDGET].size, dtype=onp.float32
+                    )
+                }
+            )
+            ds = ds.interp(
+                {
+                    BUDGET: onp.linspace(
+                        0.0, 1.0, budget_steps, dtype=onp.float32
+                    )
+                },
+                method="nearest",
+            )
+            n = budget_steps - 1
+            step = 1.0 / (n - 1)
+            arr_interp = onp.linspace(0.0, 1.0, n, dtype=onp.float32)
+            new_budget_coord = onp.concatenate([[-step], arr_interp])
+
+            return ds.assign_coords({BUDGET: new_budget_coord})
 
         return ds
 
-    def to_xarray_realizations(self) -> xr.Dataset:
+    def to_xarray_realizations(
+        self, include_input_mean: bool = True, budget_steps: int | None = None
+    ) -> xr.Dataset:
         arrs = []
         n_realizations = self.output_min.shape[0]
 
         for realization in range(n_realizations):
-            new_history = jax.tree.map(
-                lambda x: x[realization, :],
+            new_history: HistoryState = jax.tree.map(
+                lambda x: x[realization, :],  # noqa
                 self,
             )
-            arrs.append(new_history.to_xarray())
+            arrs.append(
+                new_history.to_xarray(
+                    include_input_mean=include_input_mean,
+                    budget_steps=budget_steps,
+                )
+            )
 
         return xr.concat(
             arrs,
