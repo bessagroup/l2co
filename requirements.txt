@@ -1,7 +1,6 @@
 numpy
 scipy
 f3dasm >= 2.0.1
-f3dasm_optimize
 scikit-learn
 xarray
 NetCDF4
