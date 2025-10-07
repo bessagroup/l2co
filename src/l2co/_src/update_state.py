@@ -47,7 +47,11 @@ class UpdateState(eqx.Module):
         return jax.tree_util.tree_leaves(self.last_params)[0].shape[0]
 
     @classmethod
-    def init(cls, params: InputParameters, memory_size: int) -> UpdateState:
+    def init(
+        cls,
+        params: InputParameters,
+        memory_size: int,
+    ) -> UpdateState:
         # Add leading axis and tile to memory_size
         last_params = jax.tree.map(
             lambda x: jnp.broadcast_to(x[None, ...], (memory_size,) + x.shape),
