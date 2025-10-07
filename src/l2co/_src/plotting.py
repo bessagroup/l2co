@@ -29,14 +29,7 @@ from matplotlib.colors import LinearSegmentedColormap, LogNorm, SymLogNorm
 
 # Local
 from .data_loader import DataLoader, OptimizationDynamics
-from .naming import (
-    BUDGET,
-    INPUT_DIM,
-    OUTPUT_DIM,
-    PROBLEM,
-    REALIZATION,
-    SCHEDULE,
-)
+from .naming import BUDGET, INPUT_DIM, OUTPUT_DIM, PROBLEM, REALIZATION, SCHEDULE
 from .sampler import grid_sampling
 from .task import Task
 from .update_state import evaluate
@@ -55,6 +48,7 @@ __status__ = "Stable"
 
 OPTIMIZER_COLORS = {
     "adam": "#1f77b4",
+    "adam_variable_updates_learning_rate=0.01": "#1f77b4",
     "adam_learning_rate=0.01": "#1f77b4",
     "adam_learning_rate=0.1": "#17becf",
     "sepcmaes": "#ff7f0e",
@@ -163,9 +157,7 @@ def plot_rtd_profile(
     )
 
     if ax is None:
-        fig, ax = plt.subplots(
-            1, 1, figsize=set_size(width="paper", subplots=(1, 1))
-        )
+        fig, ax = plt.subplots(1, 1, figsize=set_size(width="paper", subplots=(1, 1)))
     else:
         fig = ax.get_figure()
 
@@ -211,22 +203,18 @@ def plot_perf_profile(
     -----
     If no axes are provided, a new figure is created.
     """
-    _perf = d.performance_profile(
-        strategies, include_best=include_best
-    ).to_array("optimizer")
+    _perf = d.performance_profile(strategies, include_best=include_best).to_array(
+        "optimizer"
+    )
     rel_error = _perf.f * 100 - 100
 
     if ax is None:
-        fig, ax = plt.subplots(
-            1, 1, figsize=set_size(width="paper", subplots=(1, 1))
-        )
+        fig, ax = plt.subplots(1, 1, figsize=set_size(width="paper", subplots=(1, 1)))
     else:
         fig = ax.get_figure()
 
     for optimizer in _perf[SCHEDULE]:
-        ax.plot(
-            rel_error, _perf.sel({SCHEDULE: optimizer}), label=optimizer.values
-        )
+        ax.plot(rel_error, _perf.sel({SCHEDULE: optimizer}), label=optimizer.values)
 
     ax.legend()
     ax.set_xlabel("Relative error [%]")
@@ -282,8 +270,7 @@ def plot_trajectories(
             Y_substract_mean.isel({PROBLEM: i}),
             color=bar_colors,
             edgecolor=[
-                OPTIMIZER_COLORS[opt]
-                for opt in Y_substract_mean.optimizer.values
+                OPTIMIZER_COLORS[opt] for opt in Y_substract_mean.optimizer.values
             ],
             linewidth=1.5,
         )
@@ -330,9 +317,7 @@ def plot_quadric_curve(
 
     # Custom colormap: white for negative, black near 0, white for positive
     colors = [(1, 1, 1), (0, 0, 0), (1, 1, 1)]  # RGB: white -> black -> white
-    custom_cmap = LinearSegmentedColormap.from_list(
-        "white_black_white", colors
-    )
+    custom_cmap = LinearSegmentedColormap.from_list("white_black_white", colors)
     norm = SymLogNorm(linthresh=0.03, linscale=0.03, vmin=-0.3, vmax=0.3)
 
     # Plot filled contour with custom colormap
@@ -372,9 +357,7 @@ def plot_quadric_curve(
 # =============================================================================
 
 
-def format_plot(
-    ax: plt.Axes, xlim_right: int, ylabel: str, xlabel: str, title: str
-):
+def format_plot(ax: plt.Axes, xlim_right: int, ylabel: str, xlabel: str, title: str):
     """
     Format a plot with consistent styling.
 
@@ -420,9 +403,7 @@ def format_plot(
         legend.get_title().set_fontsize(14)
         for text in legend.get_texts():
             old_label = text.get_text()
-            new_label = custom_labels.get(
-                old_label, old_label
-            )  # Replace if found
+            new_label = custom_labels.get(old_label, old_label)  # Replace if found
             text.set_text(new_label)
             text.set_fontsize(12)
 
@@ -472,9 +453,7 @@ def plot_2d_loss_landscape_only(
     else:
         fig = ax.get_figure()
 
-    heatmap = ax.pcolormesh(
-        X, Y, Z, cmap="viridis", shading="auto", norm=LogNorm()
-    )
+    heatmap = ax.pcolormesh(X, Y, Z, cmap="viridis", shading="auto", norm=LogNorm())
     if colorbar:
         fig.colorbar(heatmap, ax=ax)
     ax.set_xticks([])
@@ -561,9 +540,7 @@ def plot_2d_trajectories(
         axes = np.array([axes])
 
     for ax, r_i in zip(axes.flatten(), raw_results_list, strict=False):
-        heatmap = ax.pcolormesh(
-            X, Y, Z, cmap="viridis", shading="auto", norm=LogNorm()
-        )
+        heatmap = ax.pcolormesh(X, Y, Z, cmap="viridis", shading="auto", norm=LogNorm())
         fig.colorbar(heatmap, ax=ax)
         ax.set_xlabel("$x_0$")
         ax.set_ylabel("$x_1$")
@@ -650,9 +627,7 @@ def make_3d_trajectory_animation(task, data, loss):
     xs, ys, zs = data[:, 0], data[:, 1], data[:, 2]
 
     # Create initial empty 3D scatter
-    scatter = ax.scatter(
-        [], [], [], c="#CC3311", s=20, zorder=10, depthshade=False
-    )
+    scatter = ax.scatter([], [], [], c="#CC3311", s=20, zorder=10, depthshade=False)
 
     def init():
         scatter._offsets3d = ([], [], [])
@@ -689,9 +664,7 @@ def change_colors_and_style(ax: plt.Axes):
     for lbl in labels:
         color = OPTIMIZER_COLORS.get(lbl, "black")
         ls = OPTIMIZER_LINESTYLES.get(lbl, "-")
-        new_handles.append(
-            plt.Line2D([0], [0], color=color, linestyle=ls, label=lbl)
-        )
+        new_handles.append(plt.Line2D([0], [0], color=color, linestyle=ls, label=lbl))
 
     ax.legend(handles=new_handles, labels=labels)
 
