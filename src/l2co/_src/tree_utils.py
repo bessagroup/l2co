@@ -88,6 +88,29 @@ def log_stabilized_minmax_scale(x: jax.Array) -> jax.Array:
     return jnp.clip(normed, 0.0, 1.0)
 
 
+def log_stabilized_minmax_scale_with_global_min(
+    x: jax.Array, global_min: jax.Array
+) -> jax.Array:
+    shift = jnp.minimum(jnp.min(x), global_min)
+    p = x - shift
+
+    # Only take positive entries for epsilon computation
+    pos_vals = jnp.where(p > 0, p, jnp.inf)
+    eps = jnp.min(pos_vals)
+    eps = jnp.where(jnp.isinf(eps), EPSILON, eps) + EPSILON
+
+    x_log10 = jnp.log10(p + eps)
+
+    # x_min = jnp.min(x_log10)
+    x_min = jnp.log10(global_min - shift + EPSILON)
+    x_max = jnp.max(x_log10)
+
+    normed = (x_log10 - x_min) / (x_max - x_min + EPSILON)
+
+    # Do this to avoid floating point issues with jitting
+    return jnp.clip(normed, 0.0, 1.0)
+
+
 def output_cummin(x: jax.Array) -> jax.Array:
     """
     Compute the cumulative minimum along the first axis.
