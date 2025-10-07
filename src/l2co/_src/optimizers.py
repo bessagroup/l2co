@@ -58,6 +58,7 @@ def optax_fn(
     opt_hash: int,
     opt_index: int,
     n_optimizers: int,
+    n_updates_per_iteration: int,
     **kwargs,
 ) -> tuple[InitFunction, StepFunction]:
     def init_fn(
@@ -66,6 +67,36 @@ def optax_fn(
         params = jax.tree.map(lambda x: x[-1], update_state.last_params)
         opt_state = optimizer.init(params)
         return opt_state
+
+    def _single_update(carry, _):
+        input_params, opt_states, sample, key = carry
+
+        model = eqx.combine(input_params, static)
+        new_key, _ = jr.split(key)
+
+        if pass_rng:
+            rng_sample = {"key": new_key}
+        else:
+            rng_sample = {}
+
+        fn = partial(loss_fn, **sample, **rng_sample)
+        loss, grads = eqx.filter_value_and_grad(fn)(model)
+        opt_state: OptaxState = opt_states[opt_index]
+        updates, new_opt_state = optimizer.update(grads, opt_state)
+        new_params = eqx.apply_updates(input_params, updates)
+        new_opt_states = eqx.tree_at(
+            lambda t: t[opt_index], opt_states, new_opt_state
+        )
+        history = {
+            "loss": loss,  # shape (1,)
+            "params": input_params,  # shape (dim,)
+            "update_step": opt_hash,  # shape (1,)
+        }
+
+        # Apply box constraints
+        new_params = jax.tree.map(lambda p: jnp.clip(p, *bounded), new_params)
+
+        return (new_params, new_opt_states, sample, new_key), history
 
     @eqx.filter_jit
     def step_fn(
@@ -80,37 +111,12 @@ def optax_fn(
             lambda x: jnp.squeeze(x, axis=0), input_params
         )
 
-        model = eqx.combine(input_params, static)
-        new_key, _ = jr.split(key)
-
-        if pass_rng:
-            rng_sample = {"key": new_key}
-        else:
-            rng_sample = {}
-
-        fn = partial(loss_fn, **sample, **rng_sample)
-        loss, grads = eqx.filter_value_and_grad(fn)(model)
-
-        # Extract and update the active optimizer state
-        opt_state: OptaxState = opt_states[opt_index]
-        updates, new_opt_state = optimizer.update(grads, opt_state)
-        new_params = eqx.apply_updates(input_params, updates)
-
-        new_opt_states = eqx.tree_at(
-            lambda t: t[opt_index], opt_states, new_opt_state
+        (new_params, new_opt_states, _, new_key), history = jax.lax.scan(
+            f=_single_update,
+            init=(input_params, opt_states, sample, key),
+            xs=None,
+            length=n_updates_per_iteration,
         )
-
-        history = {
-            "loss": loss,  # shape (1,)
-            "params": input_params,  # shape (dim,)
-            "update_step": opt_hash,  # shape (1,)
-        }
-
-        # Expand dimensions
-        history = jax.tree.map(lambda x: jnp.expand_dims(x, 0), history)
-
-        # Apply box constraints
-        new_params = jax.tree.map(lambda p: jnp.clip(p, *bounded), new_params)
 
         new_params = jax.tree.map(lambda x: jnp.expand_dims(x, 0), new_params)
 
@@ -448,6 +454,7 @@ def optax_update(
     bounded: tuple[float, float] | None = None,
     opt_index: int = 0,
     n_optimizers: int = 1,
+    n_updates_per_iteration: int = 1,
     **hyperparameters,
 ) -> UpdateClass:
     params, static = eqx.partition(task.model, eqx.is_inexact_array)
@@ -461,6 +468,7 @@ def optax_update(
         opt_hash=opt_hash,
         opt_index=opt_index,
         n_optimizers=n_optimizers,
+        n_updates_per_iteration=n_updates_per_iteration,
     )
 
     handshake_fn = best
@@ -652,8 +660,27 @@ def sepcmaes_variable_popsize(
     return optimizer(**kwargs, task=task, popsize=popsize)
 
 
+def adam_variable_updates(
+    task: Task, n_updates_per_iteration: int | None = None, **kwargs
+):
+    d = task.dimensionality
+
+    optimizer = partial(
+        optax_update,
+        optimizer=optax.adam,
+        popsize=1,
+    )
+
+    n_updates_per_iteration = int(4 + 3 * jnp.log(d))
+
+    return optimizer(
+        **kwargs, task=task, n_updates_per_iteration=n_updates_per_iteration
+    )
+
+
 OPTIMIZER_MAPPING: dict[str, UpdateClass] = {
     "adam": partial(optax_update, optimizer=optax.adam, popsize=1),
+    "adam_variable_updates": adam_variable_updates,
     "sgd": partial(optax_update, optimizer=optax.sgd, popsize=1),
     "sepcmaes": sepcmaes_variable_popsize,
     "cmaes": cmaes_variable_popsize,
