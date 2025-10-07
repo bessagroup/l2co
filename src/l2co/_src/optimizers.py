@@ -118,6 +118,8 @@ def optax_fn(
             length=n_updates_per_iteration,
         )
 
+        history = jax.tree.map(lambda x: jnp.expand_dims(x[-1], 0), history)
+
         new_params = jax.tree.map(lambda x: jnp.expand_dims(x, 0), new_params)
 
         return (new_params, new_opt_states, new_key), history
