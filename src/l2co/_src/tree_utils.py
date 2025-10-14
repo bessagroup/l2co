@@ -62,12 +62,29 @@ def bfill(x: jnp.ndarray) -> jnp.ndarray:
     return jnp.flip(ffill(jnp.flip(x)))
 
 
+def signlog1p(x: jnp.ndarray) -> jnp.ndarray:
+    return jnp.sign(x) * jnp.log1p(jnp.abs(x))
+
+
+def signed_softlog(x: jax.Array, alpha: float = EPSILON) -> jax.Array:
+    scaled = jnp.abs(x) / alpha
+    y = jnp.log1p(scaled) / jnp.log1p(1.0 / alpha)
+    y = jnp.sign(x) * y
+    return y
+
+
 def interpolate(x: jnp.ndarray, n_points: int) -> jnp.ndarray:
     return jax.vmap(
         lambda xi: jnp.interp(
             jnp.linspace(0, 1, n_points), jnp.linspace(0, 1, len(xi)), xi
         )
     )(x)
+
+
+def minmax_scale(x: jax.Array, min: jax.Array, max: jax.Array) -> jax.Array:
+    normed = (x - min) / (max - min + EPSILON)
+    # Do this to avoid floating point issues with jitting
+    return jnp.clip(normed, min=None, max=1.0)
 
 
 def log_stabilized_minmax_scale(x: jax.Array) -> jax.Array:
