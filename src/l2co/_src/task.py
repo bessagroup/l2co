@@ -79,34 +79,6 @@ class Task(eqx.Module):
         Convert the task to a dictionary representation.
     """
 
-    # def __init__(
-    #     self,
-    #     model: PyTree,
-    #     loss_fn: Callable,
-    #     pass_rng: bool = False,
-    #     dataset: DatasetDict | None = None,
-    #     has_aux: bool = False,
-    #     tag: dict[str, Any] | None = None,
-    # ):
-    # if tag is None:
-    #     tag = {}
-
-    # # Dataset
-    # if dataset is None:
-    #     self.dataset = {"dataset_path": None, "batch_size": None, "seed": None}
-    # else:
-    #     self.dataset = dataset.copy()
-    #     # resolve relative path
-    #     self.dataset["dataset_path"] = str(
-    #         Path(self.dataset["dataset_path"]).resolve()
-    #     )
-
-    # self.model = model
-    # self.pass_rng = pass_rng
-    # self.loss_fn = loss_fn
-    # self.has_aux = has_aux
-    # self.tag = tag
-
     @property
     def loaded_dataset(self) -> dict[str, Any] | None:
         if self.dataset.get("dataset_path") is None:
@@ -126,7 +98,9 @@ class Task(eqx.Module):
     def dimensionality(self) -> int:
         return sum(
             p.size
-            for p in jtu.tree_leaves(eqx.filter(self.model, eqx.is_inexact_array))
+            for p in jtu.tree_leaves(
+                eqx.filter(self.model, eqx.is_inexact_array)
+            )
         )
 
     @property
@@ -136,7 +110,9 @@ class Task(eqx.Module):
             if isinstance(value, list):
                 return tuple(make_hashable(v) for v in value)
             elif isinstance(value, dict):
-                return frozenset((k, make_hashable(v)) for k, v in value.items())
+                return frozenset(
+                    (k, make_hashable(v)) for k, v in value.items()
+                )
             return value  # Leave other types unchanged
 
         tag_hashable = {k: make_hashable(v) for k, v in self.tag.items()}
@@ -150,7 +126,9 @@ class Task(eqx.Module):
         return hashlib.sha256(str(t).encode()).hexdigest()[:16]
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any], filepath: str | None = None) -> Task:
+    def from_dict(
+        cls, data: dict[str, Any], filepath: str | None = None
+    ) -> Task:
         if "model" in data["model_path"]:
             try:
                 model = load_model(
@@ -159,18 +137,23 @@ class Task(eqx.Module):
                 )
             except FileNotFoundError:
                 new_path_model = (
-                    Path(filepath).parent / Path(data["model_path"]["model"]).name
+                    Path(filepath).parent
+                    / Path(data["model_path"]["model"]).name
                 )
                 new_path_shape = (
-                    Path(filepath).parent / Path(data["model_path"]["shape"]).name
+                    Path(filepath).parent
+                    / Path(data["model_path"]["shape"]).name
                 )
-                model = load_model(model_path=new_path_model, shape_path=new_path_shape)
+                model = load_model(
+                    model_path=new_path_model, shape_path=new_path_shape
+                )
         else:
             try:
                 model = load_jnparray(data["model_path"]["array"])
             except FileNotFoundError:
                 new_path_array = (
-                    Path(filepath).parent / Path(data["model_path"]["array"]).name
+                    Path(filepath).parent
+                    / Path(data["model_path"]["array"]).name
                 )
                 model = load_jnparray(new_path_array)
 
@@ -264,7 +247,9 @@ class Task(eqx.Module):
         return hash(self.tag_hashable)
 
     def __eq__(self, other):
-        return isinstance(other, Task) and self.tag_hashable == other.tag_hashable
+        return (
+            isinstance(other, Task) and self.tag_hashable == other.tag_hashable
+        )
 
 
 # =============================================================================

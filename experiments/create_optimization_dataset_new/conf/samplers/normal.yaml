@@ -1,1 +1,4 @@
-_target_: l2co.sampling.NormalWeightSampler
+_partial_: true
+_target_: l2co.sampling.normal_sampling
+mean: 0.0
+std: 1.0

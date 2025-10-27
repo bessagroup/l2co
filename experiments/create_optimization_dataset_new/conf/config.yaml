@@ -7,7 +7,7 @@ defaults:
 n_realizations: 25
 
 seed: 467
-mode: mpi
+mode: cluster
 
 log_level: 20
 
