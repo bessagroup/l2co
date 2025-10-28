@@ -27,6 +27,7 @@ dependencies = [
     "grain>=0.2.11",
     "jax",
     "jaxtyping>=0.3.2",
+    "netcdf4>=1.7.3",
     "opfunu",
     "scikit-learn>=1.7.1",
     "setuptools>=80.9.0",
