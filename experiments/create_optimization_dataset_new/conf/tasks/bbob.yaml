@@ -36,12 +36,12 @@ experimentdata:
       dimensionality:
         type: category
         categories: 
-          - 2
-          - 3
-          - 5
+          # - 2
+          # - 3
+          # - 5
           - 10
-          - 20
-          - 40
+          # - 20
+          # - 40
 task_kwargs:
   seed: ${seed}
 

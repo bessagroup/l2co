@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Iterable
 from copy import deepcopy
+from functools import partial
 from pathlib import Path
 from time import perf_counter
 from typing import Literal
@@ -42,6 +43,7 @@ from .naming import (
     BATCH,
     BUDGET,
     FEATURE,
+    FEVALS,
     OPT_CHOICE,
     OPT_HISTORY,
     OUTPUT_DIM,
@@ -51,7 +53,10 @@ from .naming import (
     PROBLEM,
     REALIZATION,
     SCHEDULE,
+    SEED,
     STAIRCASE,
+    SUCCESS,
+    TARGET,
     TASK_ID,
     TASK_LABELS,
     TRAJECTORY,
@@ -901,6 +906,15 @@ class DataLoader:
 
         return rtd(performance=p)
 
+    def ertd_profile(
+        self,
+        include_best: bool = False,
+        exclude_optimizer: str | None = None,
+    ) -> xr.DataArray:
+        p = scale_by_task(output_cummin(self.data[OUTPUT_MIN])).ffill(BUDGET)
+
+        return ertd(performance=p, fevals=self.data[FEVALS])
+
     def load(self):
         self.data.load()
 
@@ -1037,6 +1051,88 @@ def rtd(performance: xr.DataArray) -> xr.DataArray:
     """
 
     return (1.0 - performance).mean(PROBLEM)
+
+
+def ertd(performance: xr.DataArray, fevals: xr.DataArray) -> xr.DataArray:
+    targets = xr.DataArray(np.linspace(0.0, 1.0, 51), dims=TARGET)
+    solved = performance <= targets
+    success = solved.any(BUDGET)
+    first_solved = solved.argmax(BUDGET).where(
+        success, other=solved[BUDGET].argmax()
+    )
+
+    ds = xr.Dataset(
+        {
+            FEVALS: fevals.isel({BUDGET: first_solved}),
+            SUCCESS: success,
+        }
+    )
+
+    ert_multi = compute_ert_multi_seed(ds, n_seeds=50, n_picks=50)
+
+    budgets = xr.DataArray(
+        np.logspace(0, 6, 20, dtype=int),
+        dims="fevals",
+        coords={"fevals": np.logspace(0, 6, 20, dtype=int)},
+    )
+    ertd = (ert_multi <= budgets).mean([SEED, TASK_ID, OUTPUT_DIM, TARGET])
+
+    return ertd
+
+
+def compute_ert_group(ds: xr.Dataset, seed: int, n_picks: int) -> xr.DataArray:
+    rng = np.random.default_rng(seed)
+    n_realizations = int(ds[REALIZATION].max())
+    samples = np.concat(
+        [
+            rng.permutation(n_realizations + 1),
+            rng.integers(0, n_realizations + 1, size=n_picks - n_realizations),
+        ]
+    )
+
+    ds = ds.isel({PROBLEM: samples})
+    # Find index of first True along "problem"
+    first_true = ds[SUCCESS].argmax(PROBLEM)
+
+    # Handle case where there is no True at all
+    first_true = first_true.where(ds[SUCCESS].any(PROBLEM), other=-1)
+
+    # Coordinate index
+    idx = xr.DataArray(np.arange(ds.sizes[PROBLEM]), dims=PROBLEM)
+
+    # Mask up to first True
+    mask = (idx <= first_true).fillna(False)
+
+    # Sum fevals up to first True
+    ert = ds[FEVALS].where(mask, 0).sum(PROBLEM)
+
+    # If not any success, put NaN
+    ert = ert.where(ds[SUCCESS].any(PROBLEM))
+    return ert
+
+
+def compute_ert_multi_seed(
+    ds: xr.Dataset, n_seeds: int, n_picks: int
+) -> xr.DataArray:
+    """
+    Compute ERT across multiple random seeds and return an xarray
+    with dimensions (seed, taskID, ...).
+    """
+    # Create a version of compute_ert_group with n_picks fixed
+    compute_partial = partial(compute_ert_group, n_picks=n_picks)
+
+    # Map over seeds in a vectorized fashion
+    ert_list = [
+        ds.groupby(TASK_ID)
+        .map(compute_partial, seed=seed)
+        .expand_dims({SEED: [seed]})
+        for seed in np.arange(n_seeds)
+    ]
+
+    # Concatenate along the seed dimension
+    ert_all = xr.concat(ert_list, dim=SEED)
+
+    return ert_all
 
 
 # =============================================================================
