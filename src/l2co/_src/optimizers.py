@@ -91,6 +91,7 @@ def optax_fn(
             "loss": loss,  # shape (1,)
             "params": input_params,  # shape (dim,)
             "update_step": opt_hash,  # shape (1,)
+            "fevals": n_updates_per_iteration,
         }
 
         # Apply box constraints
@@ -192,6 +193,7 @@ def optax_extra_args_fn(
             "loss": loss,  # shape (1, 1)
             "params": input_params,  # shape (1, dim)
             "update_step": opt_hash,  # shape (1, 1)
+            "fevals": 1,
         }
 
         # Expand dimensions
@@ -264,11 +266,13 @@ def evosax_distribution_based_fn(
         )
 
         update_step = jnp.broadcast_to(opt_hash, loss.shape)
+        fevals = jnp.broadcast_to(popsize, loss.shape)
 
         history = {
             "loss": loss,
             "params": input_params,
             "update_step": update_step,
+            "fevals": fevals,
         }
 
         # Apply box constraints
@@ -351,11 +355,13 @@ def evosax_population_based_fn(
         )
 
         update_step = jnp.broadcast_to(opt_hash, loss.shape)
+        fevals = jnp.broadcast_to(popsize, loss.shape)
 
         history = {
             "loss": loss,
             "params": input_params,
             "update_step": update_step,
+            "fevals": fevals,
         }
 
         # Apply box constraints

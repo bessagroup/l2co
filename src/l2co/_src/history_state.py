@@ -18,6 +18,7 @@ from jaxtyping import PyTree
 
 from .naming import (
     BUDGET,
+    FEVALS,
     INPUT_DIM,
     INPUT_MEAN,
     OUTPUT_DIM,
@@ -42,6 +43,7 @@ class HistoryState(eqx.Module):
     output_mean: jax.Array  # shape: (n_iterations,)
     output_std: jax.Array  # shape: (n_iterations,)
     update_step: jax.Array  # shape: (n_iterations,)
+    fevals: jax.Array  # shape: (n_iterations,)
 
     @classmethod
     def init(cls, n_iterations: int, params: PyTree) -> HistoryState:
@@ -53,12 +55,14 @@ class HistoryState(eqx.Module):
         )
         nans_output = jnp.full((n_iterations,), jnp.nan)
         default_step_value = jnp.zeros((n_iterations,), dtype=jnp.uint32)
+        init_fevals = jnp.zeros((n_iterations,), dtype=jnp.uint32)
         return HistoryState(
             input_mean=nans_input,
             output_min=nans_output,
             output_mean=nans_output,
             output_std=nans_output,
             update_step=default_step_value,
+            fevals=init_fevals,
         )
 
     def add(self, history: dict[str, jax.Array]) -> HistoryState:
@@ -68,6 +72,7 @@ class HistoryState(eqx.Module):
         o_mean = jnp.mean(history["loss"], axis=1)  # shape (T,)
         o_std = jnp.std(history["loss"], axis=1)  # shape (T,)
         u_step = history["update_step"][:, 0].astype(jnp.uint32)
+        u_feval = history["fevals"][:, 0].astype(jnp.uint32)
 
         def roll_concat(old: jax.Array, new: jax.Array) -> jax.Array:
             combined = jnp.concatenate([old, new], axis=0)
@@ -79,11 +84,14 @@ class HistoryState(eqx.Module):
             output_mean=roll_concat(self.output_mean, o_mean),
             output_std=roll_concat(self.output_std, o_std),
             update_step=roll_concat(self.update_step, u_step),
+            fevals=roll_concat(self.fevals, u_feval),
         )
 
     def to_xarray(
         self, include_input_mean: bool = True, budget_steps: int | None = None
     ) -> xr.Dataset:
+        fevals_cumsum = jnp.cumsum(self.fevals)
+
         if include_input_mean:
             input_mean = xr.DataArray(
                 self.input_mean, dims=[BUDGET, INPUT_DIM]
@@ -105,11 +113,16 @@ class HistoryState(eqx.Module):
             self.update_step, dims=[BUDGET]
         ).expand_dims({OUTPUT_DIM: ["y"]})
 
+        fevals = xr.DataArray(fevals_cumsum, dims=[BUDGET]).expand_dims(
+            {OUTPUT_DIM: ["y"]}
+        )
+
         data_vars = {
             OUTPUT_MIN: output_min,
             OUTPUT_MEAN: output_mean,
             OUTPUT_STD: output_std,
             UPDATE_STEP: update_step,
+            FEVALS: fevals,
         }
         if include_input_mean:
             data_vars[INPUT_MEAN] = input_mean

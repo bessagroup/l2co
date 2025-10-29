@@ -1,4 +1,3 @@
-
 """
 Optimization execution module for L2CO optimization tasks.
 
@@ -60,17 +59,18 @@ from .update_state import UpdateState, new
 
 #                                                          Authorship & Credits
 # =============================================================================
-__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
-__credits__ = ['Martin van der Schelling']
-__status__ = 'Stable'
+__author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
+__credits__ = ["Martin van der Schelling"]
+__status__ = "Stable"
 # =============================================================================
 
 
 def initialize_optimizer(
-        optimizer: OptimizationStep,
-        task: Task,
-        bounded: tuple[float, float], *,
-        key: PRNGKeyArray
+    optimizer: OptimizationStep,
+    task: Task,
+    bounded: tuple[float, float],
+    *,
+    key: PRNGKeyArray,
 ) -> tuple[UpdateState, UpdateClass]:
     """
     Initialize an optimizer with the given parameters.
@@ -97,7 +97,8 @@ def initialize_optimizer(
         **optimizer.hyperparameters,
         task=task,
         opt_hash=optimizer.hash,
-        bounded=bounded)
+        bounded=bounded,
+    )
 
     update_state = UpdateState.init(
         params=eqx.filter(task.model, eqx.is_inexact_array),
@@ -108,12 +109,13 @@ def initialize_optimizer(
 
 
 def run_optimization(
-        update_state: UpdateState,
-        optimizer: UpdateClass,
-        sampler: Callable,
-        task: Task,
-        n_iterations: int,
-        key: PRNGKeyArray) -> HistoryState:
+    update_state: UpdateState,
+    optimizer: UpdateClass,
+    sampler: Callable,
+    task: Task,
+    n_iterations: int,
+    key: PRNGKeyArray,
+) -> HistoryState:
     """
     Run a single optimization process for a given task.
 
@@ -148,31 +150,38 @@ def run_optimization(
     opt_state = (optimizer.init(update_state, key),)
 
     # Create the initial sample of model parameters
-    update_state = new(update_state=update_state,
-                       task=task, sampler=sampler,
-                       key=key)
+    update_state = new(
+        update_state=update_state, task=task, sampler=sampler, key=key
+    )
 
     # Initialize the history state
     history_state = HistoryState.init(
-        n_iterations=n_iterations+1,
+        n_iterations=n_iterations + 1,
         params=eqx.filter(task.model, eqx.is_inexact_array),
     )
 
     # Evaluate the initial parameters
     init_params = jax.tree.map(lambda x: x[-1], update_state.last_params)
-    init_loss = jax.tree.map(
-        lambda x: x[-1], update_state.evaluate(task, key))
+    init_loss = jax.tree.map(lambda x: x[-1], update_state.evaluate(task, key))
 
     # Add initial parameters and loss to history
-    history_state = history_state.add({
-        'loss': jax.tree.map(
-            lambda x: jnp.expand_dims(x, (0, 1)), init_loss),
-        'update_step': jax.tree.map(
-            lambda x: jnp.expand_dims(x, (0, 1)), update_state.last_step),
-        'params': jax.tree.map(
-            lambda x: jnp.expand_dims(x, (0, 1)), init_params
-        )
-    })
+    history_state = history_state.add(
+        {
+            "loss": jax.tree.map(
+                lambda x: jnp.expand_dims(x, (0, 1)), init_loss
+            ),
+            "update_step": jax.tree.map(
+                lambda x: jnp.expand_dims(x, (0, 1)), update_state.last_step
+            ),
+            "params": jax.tree.map(
+                lambda x: jnp.expand_dims(x, (0, 1)), init_params
+            ),
+            "fevals": jax.tree.map(
+                lambda x: jnp.expand_dims(x, (0, 1)),
+                jnp.array(1),
+            ),
+        }
+    )
 
     # Main optimization loop
     update_state, opt_state, history_state = optimizer.step(
@@ -186,13 +195,14 @@ def run_optimization(
 
 
 def run_optimization_many_realizations(
-        update_state: UpdateState,
-        optimizer: UpdateClass,
-        sampler: Callable,
-        task: Task,
-        n_iterations: int,
-        n_realizations: int, *,
-        key: PRNGKeyArray
+    update_state: UpdateState,
+    optimizer: UpdateClass,
+    sampler: Callable,
+    task: Task,
+    n_iterations: int,
+    n_realizations: int,
+    *,
+    key: PRNGKeyArray,
 ) -> HistoryState:
     """
     Run optimization for multiple realizations using vectorized computation.
@@ -231,15 +241,17 @@ def run_optimization_many_realizations(
     key to ensure each realization uses a different random seed.
     """
 
-    return jax.vmap(run_optimization,
-                    in_axes=(None, None, None, None, None, 0))(
+    return jax.vmap(
+        run_optimization, in_axes=(None, None, None, None, None, 0)
+    )(
         update_state,
         optimizer,
         sampler,
         task,
         n_iterations,
-        jax.random.split(key, n_realizations)
+        jax.random.split(key, n_realizations),
     )
+
 
 # =============================================================================
 
@@ -300,16 +312,17 @@ class RunOptimization(DataGenerator):
     >>> result = runner.execute(experiment_sample)
     """
 
-    def __init__(self,
-                 sampler: Callable,
-                 budget_fn: Callable[[], int],
-                 seed: int,
-                 n_realizations: int = 1,
-                 bounded: tuple[float, float] | None = (None, None),
-                 clear_jax_cache: bool = True,
-                 verbose: bool = False,
-                 save_input_parameters: bool = False
-                 ):
+    def __init__(
+        self,
+        sampler: Callable,
+        budget_fn: Callable[[], int],
+        seed: int,
+        n_realizations: int = 1,
+        bounded: tuple[float, float] | None = (None, None),
+        clear_jax_cache: bool = True,
+        verbose: bool = False,
+        save_input_parameters: bool = False,
+    ):
         self.sampler = sampler
         self.budget_fn = budget_fn
         self.seed = seed
@@ -344,8 +357,8 @@ class RunOptimization(DataGenerator):
         call garbage collection after optimization to free memory.
         """
         es = experiment_sample.input_data
-        task: Task = es['task']
-        optimizer: OptimizationStep = es['optimizer schedule']
+        task: Task = es["task"]
+        optimizer: OptimizationStep = es["optimizer schedule"]
 
         experiment_sample = self.run_optimization(
             experiment_sample=experiment_sample,
@@ -361,10 +374,11 @@ class RunOptimization(DataGenerator):
         return experiment_sample
 
     def run_optimization(
-            self,
-            experiment_sample: ExperimentSample,
-            task: Task,
-            optimizer: OptimizationStep) -> ExperimentSample:
+        self,
+        experiment_sample: ExperimentSample,
+        task: Task,
+        optimizer: OptimizationStep,
+    ) -> ExperimentSample:
         """
         Run the optimization process with specified configuration.
 
@@ -401,10 +415,8 @@ class RunOptimization(DataGenerator):
         n_iterations = self.budget_fn(task=task)
 
         update_state, update_class = initialize_optimizer(
-            optimizer=optimizer,
-            task=task,
-            bounded=self.bounded,
-            key=key)
+            optimizer=optimizer, task=task, bounded=self.bounded, key=key
+        )
 
         history_state: HistoryState = run_optimization_many_realizations(
             update_state=update_state,
@@ -413,7 +425,8 @@ class RunOptimization(DataGenerator):
             task=task,
             n_iterations=n_iterations,
             n_realizations=self.n_realizations,
-            key=key)
+            key=key,
+        )
 
         data_xarr = history_state.to_xarray_realizations()
 
@@ -421,8 +434,8 @@ class RunOptimization(DataGenerator):
             data_xarr = data_xarr.drop_vars(INPUT_MEAN)
 
         experiment_sample.store(
-            name="loss history",
-            object=data_xarr, to_disk=True)
+            name="loss history", object=data_xarr, to_disk=True
+        )
 
         logger.info(
             f"Finished optimization task {task.name} ({task.dimensionality}D) "
