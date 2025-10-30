@@ -32,8 +32,10 @@ from ._typing import (
     InitFunction,
     InputParameters,
     LossFunction,
+    OptHistory,
     OptStates,
     StepFunction,
+    StopFunction,
 )
 from .history_state import HistoryState
 from .sampler import random_sampling
@@ -47,6 +49,91 @@ __author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
 __credits__ = ["Martin van der Schelling"]
 __status__ = "Stable"
 # =============================================================================
+
+
+#                                                                         Optax
+# =============================================================================
+class OptaxHistory(OptHistory):
+    loss: jax.Array
+    params: PyTree
+    grads: PyTree
+    update_step: jax.Array
+    fevals: jax.Array
+
+    @classmethod
+    def init(
+        cls, params: PyTree, popsize: int, last_step: int
+    ) -> OptaxHistory:
+        loss = jnp.full((popsize,), jnp.nan)
+        params = jax.tree.map(lambda p: jnp.full_like(p, jnp.nan), params)
+        grads = jax.tree.map(lambda p: jnp.full_like(p, jnp.nan), params)
+        update_step = jnp.full((popsize,), last_step)
+        fevals = jnp.zeros((popsize,), dtype=jnp.int32)
+
+        return cls(
+            loss=loss,
+            params=params,
+            grads=grads,
+            update_step=update_step,
+            fevals=fevals,
+        )
+
+    @classmethod
+    def from_init_sample(
+        cls, update_state: UpdateState, task: Task, key: PRNGKeyArray
+    ):
+        # Evaluate the initial parameters
+        init_params = jax.tree.map(lambda x: x[-1], update_state.last_params)
+        init_loss = jax.tree.map(
+            lambda x: x[-1], update_state.evaluate(task, key)
+        )
+
+        loss = jax.tree.map(lambda x: jnp.expand_dims(x, (0, 1)), init_loss)
+        params = jax.tree.map(
+            lambda x: jnp.expand_dims(x, (0, 1)), init_params
+        )
+        update_step = jax.tree.map(
+            lambda x: jnp.expand_dims(x, (0, 1)), update_state.last_step
+        )
+        fevals = jax.tree.map(
+            lambda x: jnp.expand_dims(x, (0, 1)), jnp.array(1)
+        )
+
+        return cls(
+            loss=loss,
+            params=params,
+            grads=jax.tree.map(lambda p: jnp.full_like(p, jnp.nan), params),
+            update_step=update_step,
+            fevals=fevals,
+        )
+
+    def update(self, history: OptaxHistory) -> OptaxHistory:
+        """Update the recent history with the current history."""
+
+        loss = jnp.concatenate([self.loss[1:], history.loss[None]], axis=0)
+        params = jax.tree.map(
+            lambda p, new: jnp.concatenate([p[1:], new[None]], axis=0),
+            self.params,
+            history.params,
+        )
+        grads = jax.tree.map(
+            lambda g, new: jnp.concatenate([g[1:], new[None]], axis=0),
+            self.grads,
+            history.grads,
+        )
+        update_step = jnp.concatenate(
+            [self.update_step[1:], history.update_step[None]], axis=0
+        )
+        fevals = jnp.concatenate(
+            [self.fevals[1:], history.fevals[None]], axis=0
+        )
+        return OptaxHistory(
+            loss=loss,
+            params=params,
+            grads=grads,
+            update_step=update_step,
+            fevals=fevals,
+        )
 
 
 def optax_fn(
@@ -87,12 +174,13 @@ def optax_fn(
         new_opt_states = eqx.tree_at(
             lambda t: t[opt_index], opt_states, new_opt_state
         )
-        history = {
-            "loss": loss,  # shape (1,)
-            "params": input_params,  # shape (dim,)
-            "update_step": opt_hash,  # shape (1,)
-            "fevals": n_updates_per_iteration,
-        }
+        history = OptaxHistory(
+            loss=loss,
+            params=input_params,
+            grads=grads,
+            update_step=opt_hash,
+            fevals=n_updates_per_iteration,
+        )
 
         # Apply box constraints
         new_params = jax.tree.map(lambda p: jnp.clip(p, *bounded), new_params)
@@ -105,7 +193,7 @@ def optax_fn(
         sample: dict,
         *args,
         **kwargs,
-    ) -> tuple[tuple[InputParameters, OptStates, PRNGKeyArray], dict]:
+    ) -> tuple[tuple[InputParameters, OptStates, PRNGKeyArray], OptaxHistory]:
         input_params, opt_states, key = carry
 
         input_params = jax.tree.map(
@@ -152,7 +240,7 @@ def optax_extra_args_fn(
         sample: dict,
         *args,
         **kwargs,
-    ) -> tuple[tuple[InputParameters, OptStates, PRNGKeyArray], dict]:
+    ) -> tuple[tuple[InputParameters, OptStates, PRNGKeyArray], OptaxHistory]:
         input_params, opt_states, key = carry
 
         input_params = jax.tree.map(
@@ -189,12 +277,20 @@ def optax_extra_args_fn(
             lambda t: t[opt_index], opt_states, new_opt_state
         )
 
-        history = {
-            "loss": loss,  # shape (1, 1)
-            "params": input_params,  # shape (1, dim)
-            "update_step": opt_hash,  # shape (1, 1)
-            "fevals": 1,
-        }
+        history = OptaxHistory(
+            loss=loss,
+            params=input_params,
+            grads=grads,
+            update_step=opt_hash,
+            fevals=1,
+        )
+
+        # history = {
+        #     "loss": loss,  # shape (1, 1)
+        #     "params": input_params,  # shape (1, dim)
+        #     "update_step": opt_hash,  # shape (1, 1)
+        #     "fevals": 1,
+        # }
 
         # Expand dimensions
         history = jax.tree.map(lambda x: jnp.expand_dims(x, 0), history)
@@ -206,6 +302,84 @@ def optax_extra_args_fn(
         return (new_params, new_opt_states, new_key), history
 
     return init_fn, step_fn
+
+
+#                                                                        EvoSax
+# =============================================================================
+
+
+class EvoSaxHistory(OptHistory):
+    loss: jax.Array
+    params: PyTree
+    update_step: jax.Array
+    fevals: jax.Array
+
+    @classmethod
+    def init(
+        self, params: PyTree, popsize: int, last_step: int
+    ) -> EvoSaxHistory:
+        loss = jnp.full((popsize,), jnp.nan)
+        params = jax.tree.map(lambda p: jnp.full_like(p, jnp.nan), params)
+        update_step = jnp.full((popsize,), last_step)
+        fevals = jnp.zeros((popsize,), dtype=jnp.int32)
+
+        return EvoSaxHistory(
+            loss=loss,
+            params=params,
+            update_step=update_step,
+            fevals=fevals,
+        )
+
+    @classmethod
+    def from_init_sample(
+        cls, update_state: UpdateState, task: Task, key: PRNGKeyArray
+    ):
+        # Evaluate the initial parameters
+        init_params = jax.tree.map(lambda x: x[-1], update_state.last_params)
+        init_loss = jax.tree.map(
+            lambda x: x[-1], update_state.evaluate(task, key)
+        )
+
+        loss = jax.tree.map(lambda x: jnp.expand_dims(x, (0, 1)), init_loss)
+        params = jax.tree.map(
+            lambda x: jnp.expand_dims(x, (0, 1)), init_params
+        )
+        update_step = jax.tree.map(
+            lambda x: jnp.expand_dims(x, (0, 1)), update_state.last_step
+        )
+        fevals = jax.tree.map(
+            lambda x: jnp.expand_dims(x, (0, 1)), jnp.array(1)
+        )
+
+        return cls(
+            loss=loss,
+            params=params,
+            update_step=update_step,
+            fevals=fevals,
+        )
+
+    def update(self, history: EvoSaxHistory) -> EvoSaxHistory:
+        """Update the recent history with the current history."""
+
+        loss = jnp.concatenate([self.loss[1:], history.loss[None]], axis=0)
+        params = jax.tree.map(
+            lambda p, new: jnp.concatenate([p[1:], new[None]], axis=0),
+            self.params,
+            history.params,
+        )
+
+        update_step = jnp.concatenate(
+            [self.update_step[1:], history.update_step[None]], axis=0
+        )
+        fevals = jnp.concatenate(
+            [self.fevals[1:], history.fevals[None]], axis=0
+        )
+        return EvoSaxHistory(
+            loss=loss,
+            params=params,
+            update_step=update_step,
+            fevals=fevals,
+        )
 
 
 def evosax_distribution_based_fn(
@@ -233,7 +407,7 @@ def evosax_distribution_based_fn(
         sample: dict,
         *args,
         **kwargs,
-    ) -> tuple[tuple[InputParameters, OptStates, PRNGKeyArray], dict]:
+    ) -> tuple[tuple[InputParameters, OptStates, PRNGKeyArray], EvoSaxHistory]:
         input_params, opt_states, key = carry
 
         new_key, rng_key = jr.split(key)
@@ -268,12 +442,12 @@ def evosax_distribution_based_fn(
         update_step = jnp.broadcast_to(opt_hash, loss.shape)
         fevals = jnp.broadcast_to(popsize, loss.shape)
 
-        history = {
-            "loss": loss,
-            "params": input_params,
-            "update_step": update_step,
-            "fevals": fevals,
-        }
+        history = EvoSaxHistory(
+            loss=loss,
+            params=input_params,
+            update_step=update_step,
+            fevals=fevals,
+        )
 
         # Apply box constraints
         new_params = jax.tree.map(lambda p: jnp.clip(p, *bounded), new_params)
@@ -322,7 +496,7 @@ def evosax_population_based_fn(
         sample: dict,
         *args,
         **kwargs,
-    ) -> tuple[tuple[InputParameters, OptStates, PRNGKeyArray], dict]:
+    ) -> tuple[tuple[InputParameters, OptStates, PRNGKeyArray], EvoSaxHistory]:
         input_params, opt_states, key = carry
 
         new_key, rng_key = jr.split(key)
@@ -357,12 +531,12 @@ def evosax_population_based_fn(
         update_step = jnp.broadcast_to(opt_hash, loss.shape)
         fevals = jnp.broadcast_to(popsize, loss.shape)
 
-        history = {
-            "loss": loss,
-            "params": input_params,
-            "update_step": update_step,
-            "fevals": fevals,
-        }
+        history = EvoSaxHistory(
+            loss=loss,
+            params=input_params,
+            update_step=update_step,
+            fevals=fevals,
+        )
 
         # Apply box constraints
         new_params = jax.tree.map(lambda p: jnp.clip(p, *bounded), new_params)
@@ -382,6 +556,8 @@ class UpdateClass(eqx.Module):
     popsize: int = eqx.field(static=True)
     index: int = eqx.field(static=True)
     hash: int  # = eqx.field(static=True)
+    opt_history_class: type[OptHistory] = eqx.field(static=True)
+    stop_fn: StopFunction = eqx.field(static=True, default=lambda _: False)
 
     @jax.jit
     def init(self, update_state: UpdateState, key: PRNGKeyArray) -> PyTree:
@@ -408,6 +584,9 @@ class UpdateClass(eqx.Module):
             update_state,
         )
 
+    def scan_step(self, carry, *args, **kwargs):
+        return self.step_fn(carry, sample={})
+
     def step(
         self,
         opt_states: tuple[PyTree],
@@ -422,9 +601,73 @@ class UpdateClass(eqx.Module):
             lambda x: x[-self.popsize :], update_state.last_params
         )
 
-        (_, opt_states, _), history = jax.lax.scan(
-            f=lambda carry, _: self.step_fn(carry, sample={}),
-            init=(params, opt_states, key),
+        window_size = 20
+
+        def scan_step(
+            carry: tuple[
+                PyTree, tuple[PyTree], PRNGKeyArray, jax.Array, OptHistory
+            ],
+            _,
+        ):
+            params, opt_states, key, done, recent_history = carry
+            stop_condition = self.stop_fn(recent_history)
+
+            done = done | stop_condition
+
+            def do_step(
+                carry: tuple[
+                    PyTree, tuple[PyTree], PRNGKeyArray, jax.Array, OptHistory
+                ],
+            ):
+                (params, opt_states, key, done, recent_history) = carry
+                new_carry, history = self.step_fn(
+                    (params, opt_states, key), sample={}
+                )
+
+                new_recent_history = recent_history.update(history)
+
+                return (*new_carry, done, new_recent_history), history
+
+            def skip_step(
+                carry: tuple[
+                    PyTree, tuple[PyTree], PRNGKeyArray, jax.Array, OptHistory
+                ],
+            ):
+                (params, opt_states, key, done, recent_history) = carry
+                dummy_history = recent_history.init(
+                    params, self.popsize, update_state.last_step
+                )
+
+                return (
+                    params,
+                    opt_states,
+                    key,
+                    done,
+                    recent_history,
+                ), dummy_history
+
+            (new_carry, history_entry) = jax.lax.cond(
+                done, skip_step, do_step, carry
+            )
+
+            return new_carry, history_entry
+
+        # Initialize moving history buffer with NaNs
+        recent_history_init = self.opt_history_class.init(
+            params=params,
+            popsize=self.popsize,
+            last_step=update_state.last_step,
+        )
+
+        recent_history_init = jax.tree.map(
+            lambda x: jnp.tile(x[None], (window_size, *([1] * x.ndim))),
+            recent_history_init,
+        )
+
+        init_done = jnp.array(False)
+        (_, opt_states, _, _, _), history = jax.lax.scan(
+            f=scan_step,
+            init=(params, opt_states, key, init_done, recent_history_init),
             xs=None,
             length=n_iterations + 1,
         )
@@ -488,6 +731,7 @@ def optax_update(
         popsize=popsize,
         index=opt_index,
         hash=opt_hash,
+        opt_history_class=OptaxHistory,
     )
 
 
@@ -523,6 +767,7 @@ def optax_update_extra_args(
         popsize=popsize,
         index=opt_index,
         hash=opt_hash,
+        opt_history_class=OptaxHistory,
     )
 
 
@@ -569,6 +814,7 @@ def evosax_distribution_update(
         popsize=popsize,
         index=opt_index,
         hash=opt_hash,
+        opt_history_class=EvoSaxHistory,
     )
 
 
@@ -615,6 +861,7 @@ def evosax_population_update(
         popsize=popsize,
         index=opt_index,
         hash=opt_hash,
+        opt_history_class=EvoSaxHistory,
     )
 
 

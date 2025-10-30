@@ -161,26 +161,10 @@ def run_optimization(
     )
 
     # Evaluate the initial parameters
-    init_params = jax.tree.map(lambda x: x[-1], update_state.last_params)
-    init_loss = jax.tree.map(lambda x: x[-1], update_state.evaluate(task, key))
-
-    # Add initial parameters and loss to history
     history_state = history_state.add(
-        {
-            "loss": jax.tree.map(
-                lambda x: jnp.expand_dims(x, (0, 1)), init_loss
-            ),
-            "update_step": jax.tree.map(
-                lambda x: jnp.expand_dims(x, (0, 1)), update_state.last_step
-            ),
-            "params": jax.tree.map(
-                lambda x: jnp.expand_dims(x, (0, 1)), init_params
-            ),
-            "fevals": jax.tree.map(
-                lambda x: jnp.expand_dims(x, (0, 1)),
-                jnp.array(1),
-            ),
-        }
+        optimizer.opt_history_class.from_init_sample(
+            update_state=update_state, task=task, key=key
+        )
     )
 
     # Main optimization loop

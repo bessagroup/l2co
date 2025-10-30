@@ -21,6 +21,7 @@ from jaxtyping import PRNGKeyArray, PyTree
 # Local
 from ._typing import InputParameters
 from .batching import batch_iter
+from .history_state import OptHistory
 from .task import Task
 from .tree_utils import combined_loss, get_best, tree_where
 
@@ -67,10 +68,10 @@ class UpdateState(eqx.Module):
 
     @classmethod
     def from_history(
-        cls, history: PyTree, memory_size: int, last_step: int
+        cls, history: OptHistory, memory_size: int, last_step: int
     ) -> UpdateState:
-        params = history["params"][-memory_size:]
-        losses = history["loss"][-memory_size:]
+        params = history.params[-memory_size:]
+        losses = history.loss[-memory_size:]
 
         # Get the best parameters and loss from the history
         best_params, best_loss = get_best(params, losses)
