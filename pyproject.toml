@@ -17,7 +17,7 @@ license = {text = "BSD-3-Clause"}
 
 requires-python = ">=3.10"
 dependencies = [
-    "bbob-jax>=0.4.0",
+    "bbob-jax>=0.6.0",
     "bottleneck>=1.5.0",
     "cloudpickle>=3.1.1",
     "dask>=2025.7.0",

@@ -84,7 +84,7 @@ wheels = [
 
 [[package]]
 name = "bbob-jax"
-version = "0.5.0"
+version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jax", version = "0.6.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -92,9 +92,9 @@ dependencies = [
     { name = "jaxtyping" },
     { name = "matplotlib" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/23/fb/87a6fd26c9fcfe36368bea0baeef7497297c5786fad64f813fdab698bb3c/bbob_jax-0.5.0.tar.gz", hash = "sha256:3bc37371499f78ef37b7764686f7c8c2cb3b0d36113d5e6e1e868ba4cf628a48", size = 13460, upload-time = "2025-10-27T11:15:39.126Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/27/f9/3faf33c2617e7e7f587996eb68a245a40eaa1b9fafaf94a314759d632831/bbob_jax-0.6.0.tar.gz", hash = "sha256:e8f89b06d1c590ca035fe8d89a2bb8f38e7bb5a7fd2c18adb00a904bdf3ce8c3", size = 13674, upload-time = "2025-10-31T14:33:21.152Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/90/6c/34304062ba50a849f2aaf5ee1973187deaf06d131d51fc4c8bc6f41e552c/bbob_jax-0.5.0-py3-none-any.whl", hash = "sha256:e1238b3244370399320aef45d98698ccb7703ba24a355caae4d5bdf41b17f287", size = 10492, upload-time = "2025-10-27T11:15:37.695Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/1d/505c82976c462571d3b152fe5715e7d24e5f4220cac351aeaa75d2f176d3/bbob_jax-0.6.0-py3-none-any.whl", hash = "sha256:33e3c841dcd957802bc79acfc36c4cb4e235554c67c609291d536c1ea31cb729", size = 10686, upload-time = "2025-10-31T14:33:20.384Z" },
 ]
 
 [[package]]
@@ -1357,7 +1357,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bbob-jax", specifier = ">=0.4.0" },
+    { name = "bbob-jax", specifier = ">=0.6.0" },
     { name = "bottleneck", specifier = ">=1.5.0" },
     { name = "cloudpickle", specifier = ">=3.1.1" },
     { name = "dask", specifier = ">=2025.7.0" },
