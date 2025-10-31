@@ -39,6 +39,11 @@ from ._typing import (
 )
 from .history_state import HistoryState
 from .sampler import random_sampling
+from .stopping_criteria import (
+    combined_stopping_criteria,
+    covariance_matrix_stopping_criteria,
+    gradient_based_stopping_criteria,
+)
 from .task import Task
 from .tree_utils import combined_loss
 from .update_state import SAMPLING_STEP, UpdateState, best, best_one
@@ -84,14 +89,15 @@ class OptaxHistory(OptHistory):
     ):
         # Evaluate the initial parameters
         init_params = jax.tree.map(lambda x: x[-1], update_state.last_params)
-        init_loss = jax.tree.map(
-            lambda x: x[-1], update_state.evaluate(task, key)
+        init_loss, init_grads = jax.tree.map(
+            lambda x: x[-1], update_state.evaluate_with_grads(task, key)
         )
 
         loss = jax.tree.map(lambda x: jnp.expand_dims(x, (0, 1)), init_loss)
         params = jax.tree.map(
             lambda x: jnp.expand_dims(x, (0, 1)), init_params
         )
+        grads = jax.tree.map(lambda x: jnp.expand_dims(x, (0, 1)), init_grads)
         update_step = jax.tree.map(
             lambda x: jnp.expand_dims(x, (0, 1)), update_state.last_step
         )
@@ -102,7 +108,7 @@ class OptaxHistory(OptHistory):
         return cls(
             loss=loss,
             params=params,
-            grads=jax.tree.map(lambda p: jnp.full_like(p, jnp.nan), params),
+            grads=grads,
             update_step=update_step,
             fevals=fevals,
         )
@@ -284,13 +290,6 @@ def optax_extra_args_fn(
             update_step=opt_hash,
             fevals=1,
         )
-
-        # history = {
-        #     "loss": loss,  # shape (1, 1)
-        #     "params": input_params,  # shape (1, dim)
-        #     "update_step": opt_hash,  # shape (1, 1)
-        #     "fevals": 1,
-        # }
 
         # Expand dimensions
         history = jax.tree.map(lambda x: jnp.expand_dims(x, 0), history)
@@ -557,7 +556,9 @@ class UpdateClass(eqx.Module):
     index: int = eqx.field(static=True)
     hash: int  # = eqx.field(static=True)
     opt_history_class: type[OptHistory] = eqx.field(static=True)
-    stop_fn: StopFunction = eqx.field(static=True, default=lambda _: False)
+    stop_fn: StopFunction = eqx.field(
+        static=True, default=lambda _, __, ___: False
+    )
 
     @jax.jit
     def init(self, update_state: UpdateState, key: PRNGKeyArray) -> PyTree:
@@ -610,7 +611,9 @@ class UpdateClass(eqx.Module):
             _,
         ):
             params, opt_states, key, done, recent_history = carry
-            stop_condition = self.stop_fn(recent_history)
+            stop_condition = self.stop_fn(
+                recent_history, opt_states, self.index
+            )
 
             done = done | stop_condition
 
@@ -635,7 +638,7 @@ class UpdateClass(eqx.Module):
             ):
                 (params, opt_states, key, done, recent_history) = carry
                 dummy_history = recent_history.init(
-                    params, self.popsize, update_state.last_step
+                    params, self.popsize, self.hash
                 )
 
                 return (
@@ -732,6 +735,7 @@ def optax_update(
         index=opt_index,
         hash=opt_hash,
         opt_history_class=OptaxHistory,
+        stop_fn=combined_stopping_criteria,
     )
 
 
@@ -768,6 +772,7 @@ def optax_update_extra_args(
         index=opt_index,
         hash=opt_hash,
         opt_history_class=OptaxHistory,
+        stop_fn=gradient_based_stopping_criteria,
     )
 
 
@@ -780,6 +785,7 @@ def evosax_distribution_update(
     opt_index: int = 0,
     n_optimizers: int = 1,
     sampler: Callable = random_sampling,
+    stop_fn: StopFunction = lambda _, __, ___: False,
     **hyperparameters,
 ) -> UpdateClass:
     params, static = eqx.partition(task.model, eqx.is_inexact_array)
@@ -815,6 +821,7 @@ def evosax_distribution_update(
         index=opt_index,
         hash=opt_hash,
         opt_history_class=EvoSaxHistory,
+        stop_fn=stop_fn,
     )
 
 
@@ -876,6 +883,7 @@ def cmaes_variable_popsize(
     optimizer = partial(
         evosax_distribution_update,
         optimizer=CMA_ES,
+        stop_fn=covariance_matrix_stopping_criteria,
     )
 
     if popsize is None:
@@ -908,6 +916,7 @@ def sepcmaes_variable_popsize(
     optimizer = partial(
         evosax_distribution_update,
         optimizer=Sep_CMA_ES,
+        stop_fn=covariance_matrix_stopping_criteria,
     )
 
     popsize = int(4 + 3 * jnp.log(d))

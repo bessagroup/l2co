@@ -98,6 +98,11 @@ class UpdateState(eqx.Module):
     def evaluate(self, task: Task, key: PRNGKeyArray) -> jax.Array:
         return evaluate(params=self.last_params, task=task, key=key)
 
+    def evaluate_with_grads(
+        self, task: Task, key: PRNGKeyArray
+    ) -> tuple[jax.Array, PyTree]:
+        return evaluate_with_grads(params=self.last_params, task=task, key=key)
+
 
 # =============================================================================
 
@@ -126,6 +131,46 @@ def evaluate(params: PyTree, task: Task, *, key: PRNGKeyArray) -> jax.Array:
             **next(data_iter),
         )
     )(params, **rng_sample)
+
+
+def evaluate_with_grads(
+    params: PyTree, task: Task, *, key: PRNGKeyArray
+) -> tuple[jax.Array, PyTree]:
+    _, static = eqx.partition(task.model, eqx.is_inexact_array)
+    n_samples = jax.tree_util.tree_leaves(params)[0].shape[0]
+
+    data_iter = batch_iter(
+        dataset=task.loaded_dataset,
+        n_evals=n_samples,
+        batch_size=task.batch_size,
+        key=task.dataset.get("seed", None),
+    )
+
+    if task.pass_rng:
+        rng_sample = {"key": jr.split(key, num=n_samples)}
+    else:
+        rng_sample = {}
+
+    # Define a single-sample loss function
+    def loss_fn_single(params_i, **rng_or_data):
+        return combined_loss(
+            params=params_i,
+            static=static,
+            loss_fn=task.loss_fn,
+            **rng_or_data,
+        )
+
+    # Compute both loss and gradient per sample
+    loss_and_grad_fn = jax.value_and_grad(loss_fn_single)
+
+    losses, grads = jax.vmap(lambda p, **rng: loss_and_grad_fn(p, **rng))(
+        params, **rng_sample, **next(data_iter)
+    )
+
+    return losses, grads
+
+
+# =============================================================================
 
 
 def new(

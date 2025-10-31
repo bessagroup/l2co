@@ -68,7 +68,7 @@ StepFunction = Callable[
     tuple[tuple[InputParameters, OptStates, PRNGKeyArray], dict],
 ]
 
-StopFunction = Callable[[OptHistory], bool]
+StopFunction = Callable[[OptHistory, OptStates, int], bool]
 
 InitFunction = Callable[[PyTree], OptaxOptState | EvoSaxState]
 

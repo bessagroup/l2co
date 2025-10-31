@@ -26,7 +26,9 @@ __status__ = "Stable"
 # =============================================================================
 
 
-def combined_loss(params, loss_fn, static: PyTree, **rng_sample: dict) -> jax.Array:
+def combined_loss(
+    params, loss_fn, static: PyTree, **rng_sample: dict
+) -> jax.Array:
     """
     Compute the combined loss for a given set of parameters.
 
@@ -214,7 +216,9 @@ def load_model(model_path: str, shape_path: str) -> eqx.Module:
     with open(_shape_path.with_suffix(".pkl"), "rb") as f:
         model_shape = cloudpickle.load(f)
 
-    model = eqx.tree_deserialise_leaves(_model_path.with_suffix(".eqx"), model_shape)
+    model = eqx.tree_deserialise_leaves(
+        _model_path.with_suffix(".eqx"), model_shape
+    )
 
     return model
 

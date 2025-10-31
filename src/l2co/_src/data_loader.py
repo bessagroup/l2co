@@ -912,8 +912,11 @@ class DataLoader:
         exclude_optimizer: str | None = None,
     ) -> xr.DataArray:
         p = scale_by_task(output_cummin(self.data[OUTPUT_MIN])).ffill(BUDGET)
+        dims = (
+            self.data[TASK_LABELS].sel({FEATURE: "dimensionality"}).astype(int)
+        )
 
-        return ertd(performance=p, fevals=self.data[FEVALS])
+        return ertd(performance=p, fevals=self.data[FEVALS], dims=dims)
 
     def load(self):
         self.data.load()
@@ -1053,7 +1056,9 @@ def rtd(performance: xr.DataArray) -> xr.DataArray:
     return (1.0 - performance).mean(PROBLEM)
 
 
-def ertd(performance: xr.DataArray, fevals: xr.DataArray) -> xr.DataArray:
+def ertd(
+    performance: xr.DataArray, fevals: xr.DataArray, dims: xr.DataArray
+) -> xr.DataArray:
     targets = xr.DataArray(np.linspace(0.0, 1.0, 51), dims=TARGET)
     solved = performance <= targets
     success = solved.any(BUDGET)
@@ -1065,15 +1070,19 @@ def ertd(performance: xr.DataArray, fevals: xr.DataArray) -> xr.DataArray:
         {
             FEVALS: fevals.isel({BUDGET: first_solved}),
             SUCCESS: success,
+            "dims": dims,
         }
     )
 
     ert_multi = compute_ert_multi_seed(ds, n_seeds=50, n_picks=50)
 
+    values = (np.logspace(0, 6, 100) ** 0.8).astype(int)
+    values = np.unique(values)
+
     budgets = xr.DataArray(
-        np.logspace(0, 6, 20, dtype=int),
-        dims="fevals",
-        coords={"fevals": np.logspace(0, 6, 20, dtype=int)},
+        values,
+        dims="log10(fevals/dim)",
+        coords={"log10(fevals/dim)": np.log10(values)},
     )
     ertd = (ert_multi <= budgets).mean([SEED, TASK_ID, OUTPUT_DIM, TARGET])
 
@@ -1108,6 +1117,9 @@ def compute_ert_group(ds: xr.Dataset, seed: int, n_picks: int) -> xr.DataArray:
 
     # If not any success, put NaN
     ert = ert.where(ds[SUCCESS].any(PROBLEM))
+
+    # Divide by the dimensionality of the problem
+    ert = ert / ds["dims"].mean(PROBLEM)
     return ert
 
 
