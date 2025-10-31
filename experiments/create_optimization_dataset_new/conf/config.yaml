@@ -1,5 +1,5 @@
 defaults:
-- tasks: bbob_single
+- tasks: bbob
 - budgets: based_on_dim
 - samplers: normal
 - optimizers: standard

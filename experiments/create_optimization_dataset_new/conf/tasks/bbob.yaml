@@ -36,15 +36,18 @@ experimentdata:
       dimensionality:
         type: category
         categories: 
-          # - 2
-          # - 3
-          # - 5
+          - 2
+          - 3
+          - 5
           - 10
-          # - 20
-          # - 40
-task_kwargs:
-  seed: ${seed}
+          - 20
+          - 40
+      seed:
+        type: int
+        low: 0
+        high: 15
 
+task_kwargs:
 
 data_generator:
   _target_: l2co._src.tasks.benchmark_task.create_bbob_task
