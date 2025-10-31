@@ -50,5 +50,7 @@ def covariance_matrix_stopping_criteria(
 ) -> bool:
     cov_matrix = opt_states[index].C
     cov_matrix = jnp.diag(cov_matrix) if cov_matrix.ndim == 1 else cov_matrix
+
+    has_nan = jnp.any(jnp.isnan(cov_matrix))
     max_eigenvalue = jnp.nanmax(jnp.linalg.eigvalsh(cov_matrix))
-    return max_eigenvalue < tol
+    return jnp.any(jnp.logical_or(has_nan, max_eigenvalue < tol))
