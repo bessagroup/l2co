@@ -1,7 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name="DataValidation"
 #SBATCH --partition=compute
-#SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --mem-per-cpu=2GB
 #SBATCH --time=01:00:00
