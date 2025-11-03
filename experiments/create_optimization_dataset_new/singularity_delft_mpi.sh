@@ -26,6 +26,7 @@ echo "======================================="
 
 # Load necessary modules
 
+module load 2025
 module load openmpi
 
 echo "======================================="
