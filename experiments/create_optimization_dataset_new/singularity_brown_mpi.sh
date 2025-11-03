@@ -38,7 +38,7 @@ module list 2>&1  # Redirect stderr to stdout to capture module list
 echo "======================================="
 
 export APPTAINER_BINDPATH="/oscar/home/$USER,/oscar/scratch/$USER,/oscar/data"
-CONTAINER=/users/mvander7/jax312.simg
+CONTAINER=/users/$USER/jax312.simg
 SCRIPT=main.py
 
 model_dir="${HOME}/scratch/train_model/"
@@ -53,7 +53,7 @@ echo " Execution Information"
 echo "======================================="
 echo "Project Folder:   $projectfolder"
 echo "Run Directory:    $run_dir"
-echo "Executing: mpirun -n $SLURM_NTASKS apptainer exec $CONTAINER python3 -u $SCRIPT ++hydra.run.dir=$run_dir ++model_dir=$model_dir ++project_dir=$project_dir $@" 
+echo "Executing: srun --mpi=pmix apptainer exec $CONTAINER python3 -u $SCRIPT ++hydra.run.dir=$run_dir ++model_dir=$model_dir ++project_dir=$project_dir $@" 
 echo "======================================="
 
 export JAX_PLATFORM_NAME=cpu
