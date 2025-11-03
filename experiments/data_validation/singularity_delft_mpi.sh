@@ -3,7 +3,7 @@
 #SBATCH --partition=compute
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --mem=16GB
+#SBATCH --mem-per-cpu=2GB
 #SBATCH --time=01:00:00
 #SBATCH --account=research-ME-mse
 
