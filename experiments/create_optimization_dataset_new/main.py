@@ -95,6 +95,17 @@ def create_experimentdata(config: DictConfig):
             config.tasks.experimentdata
         )
 
+        experiment_data_tasks = experiment_data_tasks.set_project_dir(
+            "./tasks"
+        )
+
+        experiment_data_tasks.domain.add_output(
+            name="task",
+            to_disk=True,
+            store_function=Task.save,
+            load_function=Task.load,
+        )
+
         sampler = Block.from_yaml(
             init_config=config.tasks.sampler,
             call_config=config.tasks.sampler_kwargs,
@@ -117,48 +128,51 @@ def create_experimentdata(config: DictConfig):
         )
 
     # Schedule
-    domain_schedule = Domain()
+    steps = [
+        {"optimizer": OptimizationStep.from_yaml(opt)}
+        for opt in config.optimizers
+    ]
 
-    domain_schedule.add_category(
+    domain_step = Domain()
+
+    domain_step.add_parameter(
         name="optimizer",
-        categories=[
-            OptimizationStep.from_yaml(opt) for opt in config.optimizers
-        ],
+        to_disk=True,
+        store_function=OptimizationStep.save,
+        load_function=OptimizationStep.load,
     )
 
-    experiment_data_schedules = grid().call(
-        data=ExperimentData(domain=domain_schedule)
+    experiment_data_schedules = ExperimentData(
+        domain=domain_step, input_data=steps, project_dir="./schedules"
     )
+
+    experiment_data_tasks.store()
+    experiment_data_schedules.store()
 
     # Grid sample tasks + schedules
     domain_grid_sampling = Domain()
 
-    _, df_task = experiment_data_tasks.to_pandas(keep_references=False)
-    df_optimizer, _ = experiment_data_schedules.to_pandas(
-        keep_references=False
+    _, df_task = experiment_data_tasks.to_pandas(keep_references=True)
+    df_optimizer, _ = experiment_data_schedules.to_pandas(keep_references=True)
+
+    ds_task = df_task["task"].apply(
+        lambda row: Path("../tasks/experiment_data") / row
+    )
+    ds_optimizer = df_optimizer["optimizer"].apply(
+        lambda row: Path("../schedules/experiment_data") / row
     )
 
     domain_grid_sampling.add_category(
-        name="task", categories=df_task["task"].to_list()
+        name="task", categories=ds_task.to_list()
     )
     domain_grid_sampling.add_category(
         name="optimizer schedule",
-        categories=df_optimizer["optimizer"].to_list(),
+        categories=ds_optimizer.to_list(),
     )
 
     experiment_data_combined = grid().call(
         data=ExperimentData(domain=domain_grid_sampling)
     )
-
-    # # if applicable, select a subset of all combinations
-    # if 'fraction_combinations' in config.schedules:
-    #     rng = np.random.default_rng(int(config.seed))
-    #     indices = rng.integers(
-    #         len(experiment_data_combined),
-    #         size=int(
-    #             len(experiment_data_combined)
-    #             * config.schedules.fraction_combinations))
-    #     experiment_data_combined = experiment_data_combined[indices]
 
     # Save everything
     domain_combined = Domain()
