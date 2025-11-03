@@ -37,7 +37,7 @@ export APPTAINER_BINDPATH="/scratch/$USER,/home/$USER"
 CONTAINER=/home/$USER/jax312.simg
 SCRIPT=main.py
 
-project_dir="/scatch/$USER/create_optimization_dataset_new/"
+project_dir="/scratch/$USER/create_optimization_dataset_new/"
 
 
 # Get project folder
