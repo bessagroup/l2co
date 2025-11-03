@@ -11,7 +11,7 @@ def gradient_based_stopping_criteria(
     index: int,
     grad_tol: float = 1e-3,
 ) -> bool:
-    grad_norms = jax.vmap(optax.tree.norm)(history.grads)
+    grad_norms = jax.vmap(optax.global_norm)(history.grads)
 
     return jnp.nanmean(grad_norms) < grad_tol
 
