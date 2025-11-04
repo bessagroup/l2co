@@ -651,6 +651,24 @@ class DataLoader:
             data=self.data.sel({PROBLEM: _problem_indices}),
         )
 
+    def select_feature(self, feature: dict) -> DataLoader:
+        mask = None
+        for feature_name, feature_value in feature.items():
+            # extract the 1D array for this feature
+            feature_data = self.task_labels.sel(
+                feature=feature_name, drop=True
+            )
+            if isinstance(feature_value, list | tuple | set):
+                current_mask = False
+                for val in feature_value:
+                    current_mask |= feature_data == val
+            else:
+                current_mask = feature_data == feature_value
+            mask = current_mask if mask is None else (mask & current_mask)
+
+        problems = feature_data[PROBLEM].where(mask, drop=True).astype(int)
+        return self.select_problems(problems)
+
     def isel(self, problems: Iterable[int]) -> DataLoader:
         """
         Select a subset of problems of the data loader.
@@ -1081,8 +1099,8 @@ def ertd(
 
     budgets = xr.DataArray(
         values,
-        dims="log10(fevals/dim)",
-        coords={"log10(fevals/dim)": np.log10(values)},
+        dims="fevals_per_dim",
+        coords={"fevals_per_dim": values},
     )
     ertd = (ert_multi <= budgets).mean([SEED, TASK_ID, OUTPUT_DIM, TARGET])
 

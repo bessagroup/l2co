@@ -35,6 +35,11 @@ dependencies = [
 ]
 
 [dependency-groups]
+app = [
+    "matplotlib>=3.10.7",
+    "panel>=1.8.2",
+    "scienceplots>=2.1.1",
+]
 dev = [
     "pytest>=8.4.1",
     "pytest-cov>=6.2.1",

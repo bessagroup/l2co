@@ -42,7 +42,6 @@ from time import time
 # Third-party
 import equinox as eqx
 import jax
-import jax.numpy as jnp
 import jax.random as jr
 from f3dasm import ExperimentSample
 from f3dasm.datageneration import DataGenerator
@@ -52,7 +51,7 @@ from jaxtyping import PRNGKeyArray
 from ._logging import logger
 from .history_state import HistoryState
 from .naming import INPUT_MEAN
-from .optimizers import OPTIMIZER_MAPPING, UpdateClass
+from .optimizers import OPTIMIZER_MAPPING, OptHistory, UpdateClass
 from .optimizerschedule import OptimizationStep
 from .task import Task
 from .update_state import UpdateState, new
@@ -162,7 +161,7 @@ def run_optimization(
 
     # Evaluate the initial parameters
     history_state = history_state.add(
-        optimizer.opt_history_class.from_init_sample(
+        OptHistory.from_init_sample(
             update_state=update_state, task=task, key=key
         )
     )

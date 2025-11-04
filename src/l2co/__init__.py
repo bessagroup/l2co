@@ -22,7 +22,7 @@ from l2co import plotting, sampling
 from l2co._src._logging import logger
 from l2co._src.data_loader import DataLoader, OptimizationDynamics
 from l2co._src.history_state import HistoryState
-from l2co._src.optimizers import OPTIMIZER_MAPPING, UpdateClass
+from l2co._src.optimizers import OPTIMIZER_MAPPING, OptHistory, UpdateClass
 from l2co._src.optimizerschedule import OptimizationSchedule, OptimizationStep
 from l2co._src.preprocessing import preprocessing_factory
 from l2co._src.run_optimization import RunOptimization
@@ -31,28 +31,29 @@ from l2co._src.update_state import UpdateState, new
 
 #                                                          Authorship & Credits
 # =============================================================================
-__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
-__credits__ = ['Martin van der Schelling']
-__status__ = 'Planning'
+__author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
+__credits__ = ["Martin van der Schelling"]
+__status__ = "Planning"
 # =============================================================================
 #
 # =============================================================================
 
 __all__ = [
-    'DataLoader',
-    'HistoryState',
-    'OPTIMIZER_MAPPING',
-    'UpdateClass',
-    'OptimizationSchedule',
-    'OptimizationDynamics',
-    'OptimizationStep',
-    'preprocessing_factory',
-    'RunOptimization',
-    'Task',
-    'UpdateState',
-    'new',
-    'plotting',
-    'sampling',
-    'tree_utils',
-    'logger',
+    "DataLoader",
+    "HistoryState",
+    "OPTIMIZER_MAPPING",
+    "UpdateClass",
+    "OptimizationSchedule",
+    "OptHistory",
+    "OptimizationDynamics",
+    "OptimizationStep",
+    "preprocessing_factory",
+    "RunOptimization",
+    "Task",
+    "UpdateState",
+    "new",
+    "plotting",
+    "sampling",
+    "tree_utils",
+    "logger",
 ]

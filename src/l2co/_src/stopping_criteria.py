@@ -2,11 +2,11 @@ import jax
 import jax.numpy as jnp
 import optax
 
-from ._typing import OptHistory, OptStates
+from ._typing import OptHistoryType, OptStates
 
 
 def gradient_based_stopping_criteria(
-    history: OptHistory,
+    history: OptHistoryType,
     opt_states: OptStates,
     index: int,
     grad_tol: float = 1e-3,
@@ -17,7 +17,7 @@ def gradient_based_stopping_criteria(
 
 
 def loss_based_stopping_criteria(
-    history: OptHistory,
+    history: OptHistoryType,
     opt_states: OptStates,
     index: int,
     loss_tol: float = 1e-6,
@@ -27,7 +27,7 @@ def loss_based_stopping_criteria(
 
 
 def combined_stopping_criteria(
-    history: OptHistory,
+    history: OptHistoryType,
     opt_states: OptStates,
     index: int,
     grad_tol: float = 1e-3,
@@ -43,7 +43,7 @@ def combined_stopping_criteria(
 
 
 def covariance_matrix_stopping_criteria(
-    history: OptHistory,
+    history: OptHistoryType,
     opt_states: OptStates,
     index: int,
     tol: float = 1e-12,

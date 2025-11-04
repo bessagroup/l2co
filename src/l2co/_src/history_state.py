@@ -18,7 +18,7 @@ import numpy as onp
 import xarray as xr
 from jaxtyping import PyTree
 
-from ._typing import OptHistory
+from ._typing import OptHistoryType
 from .naming import (
     BUDGET,
     FEVALS,
@@ -68,7 +68,7 @@ class HistoryState(eqx.Module):
             fevals=init_fevals,
         )
 
-    def add(self, history: OptHistory) -> HistoryState:
+    def add(self, history: OptHistoryType) -> HistoryState:
         # Compute statistics across P dimension for each time step
         i_mean = jax.tree.map(lambda x: jnp.mean(x, axis=1), history.params)
         o_min = jnp.min(history.loss, axis=1)  # shape (T,)

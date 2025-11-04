@@ -47,7 +47,7 @@ def main(config):
             if signal == "ready":
                 sleep(2)
                 process(config)
-    elif config.mode == "cluster":
+    elif config.mode in ["cluster", "sequential"]:
         pre_process(config)
         process(config)
 

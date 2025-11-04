@@ -31,16 +31,19 @@ __status__ = "Stable"
 # =============================================================================
 
 
-class OptHistory(eqx.Module):
+class OptHistoryType(eqx.Module):
     loss: eqx.AbstractVar[jax.Array]
     params: eqx.AbstractVar[PyTree]
     update_step: eqx.AbstractVar[jax.Array]
     fevals: eqx.AbstractVar[jax.Array]
+    grads: eqx.AbstractVar[PyTree]
     """Base class for optimizer history."""
 
     @classmethod
     @abstractmethod
-    def init(cls, params: PyTree, popsize: int, last_step: int) -> OptHistory:
+    def init(
+        cls, params: PyTree, popsize: int, last_step: int
+    ) -> OptHistoryType:
         """Initialize the history."""
         raise NotImplementedError
 
@@ -48,12 +51,12 @@ class OptHistory(eqx.Module):
     @abstractmethod
     def from_init_sample(
         cls, update_state, task: Task, key: PRNGKeyArray
-    ) -> OptHistory:
+    ) -> OptHistoryType:
         """Create history from initial sample."""
         raise NotImplementedError
 
     @abstractmethod
-    def update(self, history: OptHistory) -> OptHistory:
+    def update(self, history: OptHistoryType) -> OptHistoryType:
         """Update the recent history with the current history."""
         raise NotImplementedError
 
@@ -68,7 +71,7 @@ StepFunction = Callable[
     tuple[tuple[InputParameters, OptStates, PRNGKeyArray], dict],
 ]
 
-StopFunction = Callable[[OptHistory, OptStates, int], bool]
+StopFunction = Callable[[OptHistoryType, OptStates, int], bool]
 
 InitFunction = Callable[[PyTree], OptaxOptState | EvoSaxState]
 

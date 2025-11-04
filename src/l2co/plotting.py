@@ -14,6 +14,7 @@ from ._src.plotting import (
     plot_2d_loss_landscape_only,
     plot_2d_trajectories,
     plot_3d_loss_landscape_only,
+    plot_ertd_profile,
     plot_perf_profile,
     plot_pp,
     plot_rtd,
@@ -46,4 +47,5 @@ __all__ = [
     "change_colors_and_style",
     "plot_pp",
     "plot_rtd",
+    "plot_ertd_profile",
 ]

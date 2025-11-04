@@ -59,6 +59,7 @@ OPTIMIZER_COLORS = {
     "adam_learning_rate=0.01": "#1f77b4",
     "adam_learning_rate=0.1": "#17becf",
     "sepcmaes": "#ff7f0e",
+    "cmaes": "#ff7f0e",
     "lbfgsb": "#2ca02c",
     "pso": "#d62728",
     "sbs": "#7f7f7f",
@@ -70,6 +71,7 @@ OPTIMIZER_COLORS = {
 OPTIMIZER_LINESTYLES = {
     "adam": "-",
     "sepcmaes": "-",
+    "cmaes": "-",
     "lbfgsb": "-",
     "pso": "-",
     "sbs": "-",
@@ -182,6 +184,71 @@ def plot_rtd_profile(
     ax.set_xlabel("Function evaluations")
     ax.set_ylabel("Fraction of function, target pairs")
     ax.set_ylim(0.0, 1.0)
+    return fig, ax
+
+
+def plot_ertd_profile(
+    d: DataLoader,
+    ax: plt.Axes | None = None,
+    include_best: bool = False,
+    optimizers_to_plot: Iterable[str] | None = None,
+) -> tuple[plt.Figure, plt.Axes]:
+    """
+    Plot the run-time distribution for the given DataLoader.
+
+    Parameters
+    ----------
+    d: DataLoader
+        DataLoader instance
+    ax: plt.Axes, optional
+        Matplotlib axes
+    strategies: list of xr.DataArray, optional
+        List of strategies to plot, by default None
+    include_best: bool, optional
+        Include the best strategy in the plot, by default False
+    optimizers_to_plot: list of str, optional
+        List of optimizers to plot, by default None
+
+    Returns
+    -------
+    Tuple[plt.Figure, plt.Axes]
+        Matplotlib figure and axes
+
+    Notes
+    -----
+    If no axes are provided, a new figure is created.
+    """
+    _ertd = d.ertd_profile(include_best=include_best)
+
+    if ax is None:
+        fig, ax = plt.subplots(
+            1, 1, figsize=set_size(width="paper", subplots=(1, 1))
+        )
+    else:
+        fig = ax.get_figure()
+
+    if optimizers_to_plot is None:
+        for optimizer in _ertd[SCHEDULE]:
+            ax.plot(
+                _ertd.fevals_per_dim,
+                _ertd.sel({SCHEDULE: optimizer}),
+                label=optimizer.values,
+            )
+
+    else:
+        for optimizer in optimizers_to_plot:
+            ax.plot(
+                _ertd.fevals_per_dim,
+                _ertd.sel({SCHEDULE: optimizer}),
+                label=optimizer,
+            )
+
+    ax.legend()
+    ax.set_xscale("log")
+    ax.set_xlabel("Function evaluations / dimensionality)")
+    ax.set_ylabel("Fraction of function, target pairs")
+    ax.set_ylim(0.0, 1.0)
+    ax.set_xlim(10**0)
     return fig, ax
 
 
