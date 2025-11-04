@@ -17,14 +17,15 @@ from ._logging import logger
 
 #                                                          Authorship & Credits
 # =============================================================================
-__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
-__credits__ = ['Martin van der Schelling']
-__status__ = 'Stable'
+__author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
+__credits__ = ["Martin van der Schelling"]
+__status__ = "Stable"
 # =============================================================================
 
 
-def train_stage0_model(model: Pipeline, x: pd.DataFrame, y: jnp.ndarray
-                       ) -> Pipeline:
+def train_stage0_model(
+    model: Pipeline, x: pd.DataFrame, y: jnp.ndarray
+) -> Pipeline:
     """
     Train a stage 0 model.
 

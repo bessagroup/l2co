@@ -15,9 +15,9 @@ import jax.numpy as jnp
 
 #                                                          Authorship & Credits
 # =============================================================================
-__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
-__credits__ = ['Martin van der Schelling']
-__status__ = 'Stable'
+__author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
+__credits__ = ["Martin van der Schelling"]
+__status__ = "Stable"
 # =============================================================================
 
 
@@ -77,12 +77,17 @@ class NoneIterator:
     def __next__(self):
         return self.data
 
+
 # =============================================================================
 
 
-def batch_iter(dataset: dict[str, jnp.ndarray] | None,
-               n_evals: int, batch_size: int | None, *,
-               key: int | None) -> Iterator:
+def batch_iter(
+    dataset: dict[str, jnp.ndarray] | None,
+    n_evals: int,
+    batch_size: int | None,
+    *,
+    key: int | None,
+) -> Iterator:
     """
     Create an iterator for batching data.
 
@@ -114,8 +119,7 @@ def batch_iter(dataset: dict[str, jnp.ndarray] | None,
 
     if key is None:
         raise ValueError(
-            f"Key must be provided when dataset is not None"
-            f"{key=}, {dataset=}"
+            f"Key must be provided when dataset is not None{key=}, {dataset=}"
         )
 
     source = DictSource(dataset)
@@ -131,10 +135,13 @@ def batch_iter(dataset: dict[str, jnp.ndarray] | None,
         num_epochs=num_epochs,
         shard_options=grain.ShardOptions(shard_index=0, shard_count=1),
         shuffle=True,
-        seed=int(key))
+        seed=int(key),
+    )
 
-    return iter(grain.DataLoader(
-        data_source=source,
-        operations=[transformation],
-        sampler=index_sampler,
-    ))
+    return iter(
+        grain.DataLoader(
+            data_source=source,
+            operations=[transformation],
+            sampler=index_sampler,
+        )
+    )

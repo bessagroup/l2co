@@ -97,6 +97,7 @@ def initialize_optimizer(
         task=task,
         opt_hash=optimizer.hash,
         bounded=bounded,
+        stop_fn=optimizer.stopping_fn,
     )
 
     update_state = UpdateState.init(

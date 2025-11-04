@@ -23,9 +23,13 @@ from l2co._src._logging import logger
 from l2co._src.data_loader import DataLoader, OptimizationDynamics
 from l2co._src.history_state import HistoryState
 from l2co._src.optimizers import OPTIMIZER_MAPPING, OptHistory, UpdateClass
-from l2co._src.optimizerschedule import OptimizationSchedule, OptimizationStep
+from l2co._src.optimizerschedule import OptimizationStep
 from l2co._src.preprocessing import preprocessing_factory
 from l2co._src.run_optimization import RunOptimization
+from l2co._src.stopping_criteria import (
+    combined_stopping_criteria,
+    covariance_matrix_stopping_criteria,
+)
 from l2co._src.task import Task
 from l2co._src.update_state import UpdateState, new
 
@@ -43,7 +47,6 @@ __all__ = [
     "HistoryState",
     "OPTIMIZER_MAPPING",
     "UpdateClass",
-    "OptimizationSchedule",
     "OptHistory",
     "OptimizationDynamics",
     "OptimizationStep",
@@ -56,4 +59,6 @@ __all__ = [
     "sampling",
     "tree_utils",
     "logger",
+    "combined_stopping_criteria",
+    "covariance_matrix_stopping_criteria",
 ]

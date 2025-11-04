@@ -5,17 +5,14 @@ Module for determining the budget for optimization tasks.
 #                                                                       Modules
 # =============================================================================
 
-
-# Standard
-
 # Local
 from .task import Task
 
 #                                                          Authorship & Credits
 # =============================================================================
-__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
-__credits__ = ['Martin van der Schelling']
-__status__ = 'Stable'
+__author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
+__credits__ = ["Martin van der Schelling"]
+__status__ = "Stable"
 # =============================================================================
 
 
@@ -42,8 +39,7 @@ def fixed_budget(budget: int, **kwargs) -> int:
 
 
 def based_on_dimensionality(
-    task: Task, budget_per_dimension: int,
-    max_iterations: int | None = None
+    task: Task, budget_per_dimension: int, max_iterations: int | None = None
 ) -> int:
     """
     Calculate the budget based on the dimensionality of the task.

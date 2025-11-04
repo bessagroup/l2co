@@ -1,8 +1,26 @@
+"""
+Module for stopping criteria
+"""
+#                                                                       Modules
+# =============================================================================
+
+# Standard
+from collections.abc import Callable
+
+# Third-party
 import jax
 import jax.numpy as jnp
 import optax
 
+# Local
 from ._typing import OptHistoryType, OptStates
+
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
+__credits__ = ["Martin van der Schelling"]
+__status__ = "Stable"
+# =============================================================================
 
 
 def gradient_based_stopping_criteria(
@@ -54,3 +72,15 @@ def covariance_matrix_stopping_criteria(
     has_nan = jnp.any(jnp.isnan(cov_matrix))
     max_eigenvalue = jnp.nanmax(jnp.linalg.eigvalsh(cov_matrix))
     return jnp.any(jnp.logical_or(has_nan, max_eigenvalue < tol))
+
+
+# =============================================================================
+
+STOPPING_CRITERIA: dict[
+    str, Callable[[OptHistoryType, OptStates, int], bool]
+] = {
+    "covariance_matrix": covariance_matrix_stopping_criteria,
+    "combined": combined_stopping_criteria,
+    "gradient_based": gradient_based_stopping_criteria,
+    "loss_based": loss_based_stopping_criteria,
+}

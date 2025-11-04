@@ -487,10 +487,26 @@ class UpdateClass(eqx.Module):
     step_fn: StepFunction = eqx.field(static=True)
     popsize: int = eqx.field(static=True)
     index: int = eqx.field(static=True)
-    hash: int  # = eqx.field(static=True)
-    stop_fn: StopFunction = eqx.field(
-        static=True, default=lambda _, __, ___: False
-    )
+    hash: int
+    stop_fn: StopFunction = eqx.field(static=True)
+
+    def __init__(
+        self,
+        init_fn: Callable,
+        handshake_fn: Callable,
+        step_fn: Callable,
+        popsize: int,
+        index: int,
+        hash: int,
+        stop_fn: Callable | None = None,
+    ):
+        self.init_fn = init_fn
+        self.handshake_fn = handshake_fn
+        self.step_fn = step_fn
+        self.popsize = popsize
+        self.index = index
+        self.hash = hash
+        self.stop_fn = stop_fn or (lambda _, __, ___: False)
 
     @jax.jit
     def init(self, update_state: UpdateState, key: PRNGKeyArray) -> PyTree:
@@ -649,6 +665,7 @@ def optax_update(
     opt_index: int = 0,
     n_optimizers: int = 1,
     n_updates_per_iteration: int = 1,
+    stop_fn: StopFunction | None = None,
     **hyperparameters,
 ) -> UpdateClass:
     params, static = eqx.partition(task.model, eqx.is_inexact_array)
@@ -674,7 +691,7 @@ def optax_update(
         popsize=popsize,
         index=opt_index,
         hash=opt_hash,
-        stop_fn=combined_stopping_criteria,
+        stop_fn=stop_fn,
     )
 
 
@@ -686,6 +703,7 @@ def optax_update_extra_args(
     bounded: tuple[float, float] | None = None,
     opt_index: int = 0,
     n_optimizers: int = 1,
+    stop_fn: StopFunction | None = None,
     **hyperparameters,
 ) -> UpdateClass:
     params, static = eqx.partition(task.model, eqx.is_inexact_array)
@@ -710,7 +728,7 @@ def optax_update_extra_args(
         popsize=popsize,
         index=opt_index,
         hash=opt_hash,
-        stop_fn=gradient_based_stopping_criteria,
+        stop_fn=stop_fn,
     )
 
 
@@ -723,7 +741,7 @@ def evosax_distribution_update(
     opt_index: int = 0,
     n_optimizers: int = 1,
     sampler: Callable = random_sampling,
-    stop_fn: StopFunction = lambda _, __, ___: False,
+    stop_fn: StopFunction | None = None,
     **hyperparameters,
 ) -> UpdateClass:
     params, static = eqx.partition(task.model, eqx.is_inexact_array)
@@ -771,6 +789,7 @@ def evosax_population_update(
     opt_index: int = 0,
     n_optimizers: int = 1,
     sampler: Callable = random_sampling,
+    stop_fn: StopFunction | None = None,
     **hyperparameters,
 ) -> UpdateClass:
     params, static = eqx.partition(task.model, eqx.is_inexact_array)
@@ -805,6 +824,7 @@ def evosax_population_update(
         popsize=popsize,
         index=opt_index,
         hash=opt_hash,
+        stop_fn=stop_fn,
     )
 
 

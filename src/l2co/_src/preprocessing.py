@@ -25,14 +25,18 @@ from sklearn.preprocessing import OrdinalEncoder, StandardScaler
 
 #                                                          Authorship & Credits
 # =============================================================================
-__author__ = 'Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)'
-__credits__ = ['Martin van der Schelling']
-__status__ = 'Stable'
+__author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
+__credits__ = ["Martin van der Schelling"]
+__status__ = "Stable"
 # =============================================================================
 
-FEATURE_TYPES = {'convex': 'categorical', 'separable': 'categorical',
-                 'noise': 'categorical', 'dim': 'scaler',
-                 'differentiable': 'categorical'}
+FEATURE_TYPES = {
+    "convex": "categorical",
+    "separable": "categorical",
+    "noise": "categorical",
+    "dim": "scaler",
+    "differentiable": "categorical",
+}
 
 # =============================================================================
 
@@ -51,17 +55,17 @@ def transformer_factory(dtype: str) -> Pipeline:
     Pipeline
         A pipeline for preprocessing the data.
     """
-    if dtype == 'ordinal':
+    if dtype == "ordinal":
         return OrdinalEncoder(
-            handle_unknown='use_encoded_value',
-            unknown_value=np.nan
+            handle_unknown="use_encoded_value", unknown_value=np.nan
         )
 
-    elif dtype == 'scaler':
+    elif dtype == "scaler":
         return StandardScaler()
 
     else:
-        raise ValueError(f'Unknown dtype {dtype}')
+        raise ValueError(f"Unknown dtype {dtype}")
+
 
 # =============================================================================
 
@@ -99,16 +103,18 @@ class DataFrameColumnTransformer(BaseEstimator, TransformerMixin):
         """Fit the ColumnTransformer and store feature names."""
 
         filtered_feature_types = {
-            k: v for k, v in self.feature_types.items() if k in set(X.columns)}
+            k: v for k, v in self.feature_types.items() if k in set(X.columns)
+        }
 
         transformers = [
             (feature_name, transformer_factory(feature_type), [feature_name])
-            for feature_name, feature_type in filtered_feature_types.items()]
+            for feature_name, feature_type in filtered_feature_types.items()
+        ]
 
         self.column_transformer = ColumnTransformer(
-            transformers=transformers, remainder="drop",
+            transformers=transformers,
+            remainder="drop",
             force_int_remainder_cols=False,
-
         )
         self.column_transformer.fit(X, y)
         self.feature_names_out_ = self.get_feature_names_out(X)
@@ -118,8 +124,9 @@ class DataFrameColumnTransformer(BaseEstimator, TransformerMixin):
     def transform(self, X):
         """Transform and return a DataFrame with column names preserved."""
         transformed_array = self.column_transformer.transform(X)
-        return pd.DataFrame(transformed_array, columns=self.feature_names_out_,
-                            index=X.index)
+        return pd.DataFrame(
+            transformed_array, columns=self.feature_names_out_, index=X.index
+        )
 
     def get_feature_names_out(self, X):
         """Extracts feature names from the transformers."""
@@ -148,6 +155,9 @@ def preprocessing_factory(feature_types: dict) -> ColumnTransformer:
         A column transformer for preprocessing the data.
     """
     return DataFrameColumnTransformer(
-        [(feature_name, transformer_factory(feature_type), [feature_name])
-         for feature_name, feature_type in feature_types.items()],
-        remainder='drop')
+        [
+            (feature_name, transformer_factory(feature_type), [feature_name])
+            for feature_name, feature_type in feature_types.items()
+        ],
+        remainder="drop",
+    )

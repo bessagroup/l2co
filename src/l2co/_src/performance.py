@@ -89,13 +89,13 @@ def cap_value(data: xr.DataArray, cap: float = EPSILON) -> xr.DataArray:
     return data.where((data >= cap) | (data <= 0.0) | data.isnull(), other=cap)
 
 
-def min_custom(x: np.ndarray) -> np.ndarray:
+def min_custom(x: xr.DataArray) -> xr.DataArray:
     p = x - np.nanmin(x)
     eps = (np.where(p > 0.0, p, np.nanmax(p) + EPSILON)).min() + EPSILON
     x_log10 = np.log10(p + eps)
     # 5. Min-max scaling of the data
     x_min = np.nanmin(x_log10)
-    x_max = np.nanmax(x_log10, axis=0)
+    x_max = np.nanmax(x_log10)
     return (x_log10 - x_min) / (x_max - x_min + EPSILON)
 
 

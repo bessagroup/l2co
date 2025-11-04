@@ -1113,7 +1113,9 @@ def compute_ert_group(ds: xr.Dataset, seed: int, n_picks: int) -> xr.DataArray:
     samples = np.concat(
         [
             rng.permutation(n_realizations + 1),
-            rng.integers(0, n_realizations + 1, size=n_picks - n_realizations),
+            rng.integers(
+                0, n_realizations + 1, size=max(n_picks - n_realizations, 0)
+            ),
         ]
     )
 
