@@ -42,8 +42,10 @@ from sklearn.model_selection import train_test_split
 from .naming import (
     BATCH,
     BUDGET,
+    COST,
     FEATURE,
     FEVALS,
+    ITERATIONS,
     OPT_CHOICE,
     OPT_HISTORY,
     OUTPUT_DIM,
@@ -928,13 +930,26 @@ class DataLoader:
         self,
         include_best: bool = False,
         exclude_optimizer: str | None = None,
+        cost_metric: Literal["fevals", "iterations"] = "fevals",
     ) -> xr.DataArray:
         p = scale_by_task(output_cummin(self.data[OUTPUT_MIN])).ffill(BUDGET)
         dims = (
             self.data[TASK_LABELS].sel({FEATURE: "dimensionality"}).astype(int)
         )
 
-        return ertd(performance=p, fevals=self.data[FEVALS], dims=dims)
+        if cost_metric == "iterations":
+            cost_metric = ITERATIONS
+        elif cost_metric == "fevals":
+            cost_metric = FEVALS
+        else:
+            raise ValueError(
+                f"Unknown cost metric: {cost_metric}. "
+                f"Choose 'fevals' or 'iterations'."
+            )
+
+        return ertd(
+            performance=p, cost_measure=self.data[cost_metric], dims=dims
+        )
 
     def load(self):
         self.data.load()
@@ -1075,7 +1090,7 @@ def rtd(performance: xr.DataArray) -> xr.DataArray:
 
 
 def ertd(
-    performance: xr.DataArray, fevals: xr.DataArray, dims: xr.DataArray
+    performance: xr.DataArray, cost_measure: xr.DataArray, dims: xr.DataArray
 ) -> xr.DataArray:
     targets = xr.DataArray(np.linspace(0.0, 1.0, 51), dims=TARGET)
     solved = performance <= targets
@@ -1086,7 +1101,7 @@ def ertd(
 
     ds = xr.Dataset(
         {
-            FEVALS: fevals.isel({BUDGET: first_solved}),
+            COST: cost_measure.isel({BUDGET: first_solved}),
             SUCCESS: success,
             "dims": dims,
         }
@@ -1099,8 +1114,8 @@ def ertd(
 
     budgets = xr.DataArray(
         values,
-        dims="fevals_per_dim",
-        coords={"fevals_per_dim": values},
+        dims="cost_per_dim",
+        coords={"cost_per_dim": values},
     )
     ertd = (ert_multi <= budgets).mean([SEED, TASK_ID, OUTPUT_DIM, TARGET])
 
@@ -1132,8 +1147,8 @@ def compute_ert_group(ds: xr.Dataset, seed: int, n_picks: int) -> xr.DataArray:
     # Mask up to first True
     mask = (idx <= first_true).fillna(False)
 
-    # Sum fevals up to first True
-    ert = ds[FEVALS].where(mask, 0).sum(PROBLEM)
+    # Sum cost up to first True
+    ert = ds[COST].where(mask, 0).sum(PROBLEM)
 
     # If not any success, put NaN
     ert = ert.where(ds[SUCCESS].any(PROBLEM))

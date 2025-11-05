@@ -37,6 +37,7 @@ class OptHistoryType(eqx.Module):
     update_step: eqx.AbstractVar[jax.Array]
     fevals: eqx.AbstractVar[jax.Array]
     grads: eqx.AbstractVar[PyTree]
+    iterations: eqx.AbstractVar[jax.Array]
     """Base class for optimizer history."""
 
     @classmethod

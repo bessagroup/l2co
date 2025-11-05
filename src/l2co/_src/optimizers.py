@@ -65,6 +65,7 @@ class OptHistory(OptHistoryType):
     grads: PyTree
     update_step: jax.Array
     fevals: jax.Array
+    iterations: jax.Array
 
     @classmethod
     def init(cls, params: PyTree, popsize: int, last_step: int) -> OptHistory:
@@ -73,6 +74,7 @@ class OptHistory(OptHistoryType):
         grads = jax.tree.map(lambda p: jnp.full_like(p, jnp.nan), params)
         update_step = jnp.full((popsize,), last_step)
         fevals = jnp.zeros((popsize,), dtype=jnp.int32)
+        iterations = jnp.zeros((popsize,), dtype=jnp.int32)
 
         return cls(
             loss=loss,
@@ -80,6 +82,7 @@ class OptHistory(OptHistoryType):
             grads=grads,
             update_step=update_step,
             fevals=fevals,
+            iterations=iterations,
         )
 
     @classmethod
@@ -101,7 +104,10 @@ class OptHistory(OptHistoryType):
             lambda x: jnp.expand_dims(x, (0, 1)), update_state.last_step
         )
         fevals = jax.tree.map(
-            lambda x: jnp.expand_dims(x, (0, 1)), jnp.array(1)
+            lambda x: jnp.expand_dims(x, (0, 1)), jnp.array(0)
+        )
+        iterations = jax.tree.map(
+            lambda x: jnp.expand_dims(x, (0, 1)), jnp.array(0)
         )
 
         return cls(
@@ -110,6 +116,7 @@ class OptHistory(OptHistoryType):
             grads=grads,
             update_step=update_step,
             fevals=fevals,
+            iterations=iterations,
         )
 
     def update(self, history: OptHistory) -> OptHistory:
@@ -132,12 +139,17 @@ class OptHistory(OptHistoryType):
         fevals = jnp.concatenate(
             [self.fevals[1:], history.fevals[None]], axis=0
         )
+
+        iterations = jnp.concatenate(
+            [self.iterations[1:], history.iterations[None]], axis=0
+        )
         return OptHistory(
             loss=loss,
             params=params,
             grads=grads,
             update_step=update_step,
             fevals=fevals,
+            iterations=iterations,
         )
 
 
@@ -189,6 +201,7 @@ def optax_fn(
             grads=grads,
             update_step=opt_hash,
             fevals=n_updates_per_iteration,
+            iterations=1,
         )
 
         # Apply box constraints
@@ -292,6 +305,7 @@ def optax_extra_args_fn(
             grads=grads,
             update_step=opt_hash,
             fevals=1,
+            iterations=1,
         )
 
         # Expand dimensions
@@ -369,6 +383,7 @@ def evosax_distribution_based_fn(
 
         update_step = jnp.broadcast_to(opt_hash, loss.shape)
         fevals = jnp.broadcast_to(popsize, loss.shape)
+        iterations = jnp.broadcast_to(1, loss.shape)
         grads = jax.tree.map(lambda p: jnp.full_like(p, jnp.nan), input_params)
 
         history = OptHistory(
@@ -377,6 +392,7 @@ def evosax_distribution_based_fn(
             update_step=update_step,
             fevals=fevals,
             grads=grads,
+            iterations=iterations,
         )
 
         # Apply box constraints
@@ -460,6 +476,7 @@ def evosax_population_based_fn(
 
         update_step = jnp.broadcast_to(opt_hash, loss.shape)
         fevals = jnp.broadcast_to(popsize, loss.shape)
+        iterations = jnp.broadcast_to(1, loss.shape)
         grads = jax.tree.map(lambda p: jnp.full_like(p, jnp.nan), input_params)
 
         history = OptHistory(
@@ -468,6 +485,7 @@ def evosax_population_based_fn(
             update_step=update_step,
             fevals=fevals,
             grads=grads,
+            iterations=iterations,
         )
 
         # Apply box constraints
