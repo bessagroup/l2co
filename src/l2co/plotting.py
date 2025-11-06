@@ -14,6 +14,8 @@ from ._src.plotting import (
     plot_2d_loss_landscape_only,
     plot_2d_trajectories,
     plot_3d_loss_landscape_only,
+    plot_actions,
+    plot_ertd,
     plot_ertd_profile,
     plot_perf_profile,
     plot_pp,
@@ -38,6 +40,7 @@ __all__ = [
     "plot_perf_profile",
     "plot_rtd_profile",
     "plot_trajectories",
+    "plot_actions",
     "OPTIMIZER_COLORS",
     "OPTIMIZER_LINESTYLES",
     "format_plot",
@@ -47,5 +50,6 @@ __all__ = [
     "change_colors_and_style",
     "plot_pp",
     "plot_rtd",
+    "plot_ertd",
     "plot_ertd_profile",
 ]

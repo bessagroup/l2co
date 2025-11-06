@@ -26,7 +26,13 @@ import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
-from matplotlib.colors import LinearSegmentedColormap, LogNorm, SymLogNorm
+from matplotlib.colors import (
+    LinearSegmentedColormap,
+    ListedColormap,
+    LogNorm,
+    SymLogNorm,
+)
+from matplotlib.patches import Patch
 
 # Local
 from .data_loader import DataLoader, OptimizationDynamics
@@ -765,6 +771,68 @@ def plot_rtd(rtd: xr.DataArray, ax: plt.Axes | None = None):
     return fig, ax
 
 
+def plot_ertd(
+    ertd: xr.DataArray,
+    ax: plt.Axes | None = None,
+    cost_metric: Literal["fevals", "iterations"] = "fevals",
+) -> tuple[plt.Figure, plt.Axes]:
+    """
+    Plot the run-time distribution for the given DataLoader.
+
+    Parameters
+    ----------
+    d: DataLoader
+        DataLoader instance
+    ax: plt.Axes, optional
+        Matplotlib axes
+    strategies: list of xr.DataArray, optional
+        List of strategies to plot, by default None
+    include_best: bool, optional
+        Include the best strategy in the plot, by default False
+    optimizers_to_plot: list of str, optional
+        List of optimizers to plot, by default None
+
+    Returns
+    -------
+    Tuple[plt.Figure, plt.Axes]
+        Matplotlib figure and axes
+
+    Notes
+    -----
+    If no axes are provided, a new figure is created.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=set_size(width="paper", subplots=(1, 1)))
+    else:
+        fig = ax.get_figure()
+
+    x = ertd["cost_per_dim"]
+    for schedule in ertd[SCHEDULE].values:
+        color = OPTIMIZER_COLORS.get(schedule, "black")
+        linestyle = OPTIMIZER_LINESTYLES.get(schedule, "-")
+
+        y = ertd.sel({SCHEDULE: schedule})
+        ax.plot(
+            x,
+            y,
+            label=schedule,
+            color=color,
+            linestyle=linestyle,
+        )
+
+    ax.legend()
+    ax.set_xscale("log")
+
+    if cost_metric == "iterations":
+        ax.set_xlabel("Iterations / dimensionality)")
+    else:
+        ax.set_xlabel("Function evaluations / dimensionality)")
+    ax.set_ylabel("Fraction of function, target pairs")
+    ax.set_ylim(0.0, 1.0)
+    ax.set_xlim(10**0)
+    return fig, ax
+
+
 def plot_pp(pp: xr.DataArray, ax: plt.Axes | None = None):
     if ax is None:
         fig, ax = plt.subplots()
@@ -784,5 +852,61 @@ def plot_pp(pp: xr.DataArray, ax: plt.Axes | None = None):
     ax.set_ylabel("Performance profile")
     ax.set_ylim(0.0, 1.0)
     ax.legend()
+
+    return fig, ax
+
+
+def plot_actions(
+    update_step: xr.DataArray,
+    schedule: str,
+    optimizers: xr.DataArray,
+    ax: plt.Axes | None = None,
+):
+    if ax is None:
+        fig, ax = plt.subplots()
+    else:
+        fig = ax.get_figure()
+
+    y = update_step.isel({OUTPUT_DIM: 0}).sel({SCHEDULE: schedule}, drop=True)
+
+    schedules = optimizers.where(~optimizers.isin(["l2co", "random"]), drop=True)
+    t = (
+        update_step.isel({OUTPUT_DIM: 0, PROBLEM: 0, BUDGET: -1}, drop=True)
+        .sel({SCHEDULE: schedules})
+        .to_dict()
+    )
+    color_mapping = {
+        k: OPTIMIZER_COLORS[v] for k, v in zip(t["data"], t["coords"][SCHEDULE]["data"])
+    }
+    color_mapping.update({1: "white"})
+    values = np.unique(y.values.astype(int))
+    cmap = ListedColormap([color_mapping[v] for v in values])
+
+    _ = ax.pcolormesh(y.T, cmap=cmap)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_ylabel("Realizations")
+    ax.set_xlabel("Iterations")
+
+    handles = [
+        Patch(color=color_mapping[int(k)], label=name)
+        for k, name in zip(t["data"], t["coords"][SCHEDULE]["data"])
+    ]
+
+    # Optional: add the white color if you want to show it
+    handles.append(Patch(color="white", label="sampled"))
+
+    legend = ax.legend(
+        handles=handles,
+        title="Optimizers",
+        loc="upper right",  # position inside the axes
+        frameon=True,
+        framealpha=0.9,  # semi-transparent background
+        facecolor="white",
+        edgecolor="black",
+    )
+
+    # Make sure the legend box is entirely inside the plot
+    legend.get_frame().set_linewidth(0.8)
 
     return fig, ax
