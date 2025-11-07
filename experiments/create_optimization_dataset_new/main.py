@@ -1,5 +1,6 @@
 # Standard
 import socket
+from dataclasses import replace
 from pathlib import Path
 from time import sleep
 
@@ -114,9 +115,9 @@ def create_experimentdata(config: DictConfig):
         sampler.arm(experiment_data_tasks)
         experiment_data_tasks = sampler.call(data=experiment_data_tasks)
 
-        task_fn = datagenerator(output_names="task")(
-            instantiate(config.tasks.data_generator, _partial_=True)
-        )
+        task_fn = datagenerator(
+            output_names="task", domain=experiment_data_tasks.domain
+        )(instantiate(config.tasks.data_generator, _partial_=True))
 
         if config.tasks.task_kwargs is None:
             task_kwargs = {}
@@ -127,7 +128,8 @@ def create_experimentdata(config: DictConfig):
             data=experiment_data_tasks, **task_kwargs
         )
 
-    # Schedule
+        experiment_data_tasks.store()
+
     steps = [
         {"optimizer": OptimizationStep.from_yaml(opt)}
         for opt in config.optimizers
@@ -146,7 +148,6 @@ def create_experimentdata(config: DictConfig):
         domain=domain_step, input_data=steps, project_dir="./schedules"
     )
 
-    experiment_data_tasks.store()
     experiment_data_schedules.store()
 
     # Grid sample tasks + schedules
@@ -156,18 +157,24 @@ def create_experimentdata(config: DictConfig):
     df_optimizer, _ = experiment_data_schedules.to_pandas(keep_references=True)
 
     ds_task = df_task["task"].apply(
-        lambda row: Path("../tasks/experiment_data") / row
+        # lambda row: Path("../tasks/experiment_data") / row
+        lambda row: replace(
+            row, reference=Path("../tasks/experiment_data") / row.reference
+        )
     )
     ds_optimizer = df_optimizer["optimizer"].apply(
-        lambda row: Path("../schedules/experiment_data") / row
+        # lambda row: Path("../schedules/experiment_data") / row
+        lambda row: replace(
+            row, reference=Path("../schedules/experiment_data") / row.reference
+        )
     )
 
     domain_grid_sampling.add_category(
-        name="task", categories=ds_task.to_list()
+        name="task", categories=[s.reference for s in ds_task.to_list()]
     )
     domain_grid_sampling.add_category(
         name="optimizer schedule",
-        categories=ds_optimizer.to_list(),
+        categories=[s.reference for s in ds_optimizer.to_list()],
     )
 
     experiment_data_combined = grid().call(
@@ -197,8 +204,8 @@ def create_experimentdata(config: DictConfig):
 
     experiment_data_combined.domain = domain_combined
 
-    for id, es in experiment_data_combined:
-        es.store_experimentsample_references(idx=id)
+    # for id, es in experiment_data_combined:
+    #     es.store_experimentsample_references(experiment_data_combined.domain)
 
     experiment_data_combined.store()
 

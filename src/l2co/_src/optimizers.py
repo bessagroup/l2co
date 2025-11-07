@@ -37,6 +37,7 @@ from ._typing import (
     StepFunction,
     StopFunction,
 )
+from .handshake import SAMPLING_STEP, best, best_one, reset_opt_state
 from .history_state import HistoryState
 from .sampler import random_sampling
 from .stopping_criteria import (
@@ -46,7 +47,7 @@ from .stopping_criteria import (
 )
 from .task import Task
 from .tree_utils import combined_loss
-from .update_state import SAMPLING_STEP, UpdateState, best, best_one
+from .update_state import UpdateState
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -507,6 +508,7 @@ class UpdateClass(eqx.Module):
     index: int = eqx.field(static=True)
     hash: int
     stop_fn: StopFunction = eqx.field(static=True)
+    handshake_fn_opt_state: Callable = eqx.field(static=True)
 
     def __init__(
         self,
@@ -517,6 +519,7 @@ class UpdateClass(eqx.Module):
         index: int,
         hash: int,
         stop_fn: Callable | None = None,
+        handshake_fn_opt_state: Callable | None = None,
     ):
         self.init_fn = init_fn
         self.handshake_fn = handshake_fn
@@ -525,6 +528,9 @@ class UpdateClass(eqx.Module):
         self.index = index
         self.hash = hash
         self.stop_fn = stop_fn or (lambda _, __, ___: False)
+        self.handshake_fn_opt_state = handshake_fn_opt_state or (
+            lambda x, _, __, ___: x
+        )
 
     @jax.jit
     def init(self, update_state: UpdateState, key: PRNGKeyArray) -> PyTree:
@@ -551,6 +557,21 @@ class UpdateClass(eqx.Module):
             update_state,
         )
 
+    @jax.jit
+    def handshake_opt_state(
+        self,
+        opt_states: tuple[PyTree],
+        update_state: UpdateState,
+        key: PRNGKeyArray,
+    ) -> tuple[PyTree]:
+        new_opt_state = self.handshake_fn_opt_state(
+            opt_states[self.index],
+            update_state,
+            self,
+            key,
+        )
+        return eqx.tree_at(lambda t: t[self.index], opt_states, new_opt_state)
+
     def scan_step(self, carry, *args, **kwargs):
         return self.step_fn(carry, sample={})
 
@@ -563,6 +584,9 @@ class UpdateClass(eqx.Module):
         key: PRNGKeyArray,
     ) -> tuple[PyTree, UpdateState]:
         update_state = self.handshake(update_state=update_state, key=key)
+        opt_states = self.handshake_opt_state(
+            opt_states=opt_states, update_state=update_state, key=key
+        )
 
         params = jax.tree.map(
             lambda x: x[-self.popsize :], update_state.last_params
@@ -674,6 +698,9 @@ class UpdateClass(eqx.Module):
 # =============================================================================
 
 
+# =============================================================================
+
+
 def optax_update(
     task: Task,
     optimizer: optax.GradientTransformation,
@@ -684,6 +711,7 @@ def optax_update(
     n_optimizers: int = 1,
     n_updates_per_iteration: int = 1,
     stop_fn: StopFunction | None = None,
+    handshake_fn_opt_state: Callable | None = None,
     **hyperparameters,
 ) -> UpdateClass:
     params, static = eqx.partition(task.model, eqx.is_inexact_array)
@@ -710,6 +738,7 @@ def optax_update(
         index=opt_index,
         hash=opt_hash,
         stop_fn=stop_fn,
+        handshake_fn_opt_state=handshake_fn_opt_state,
     )
 
 
@@ -722,6 +751,7 @@ def optax_update_extra_args(
     opt_index: int = 0,
     n_optimizers: int = 1,
     stop_fn: StopFunction | None = None,
+    handshake_fn_opt_state: Callable | None = None,
     **hyperparameters,
 ) -> UpdateClass:
     params, static = eqx.partition(task.model, eqx.is_inexact_array)
@@ -747,6 +777,7 @@ def optax_update_extra_args(
         index=opt_index,
         hash=opt_hash,
         stop_fn=stop_fn,
+        handshake_fn_opt_state=handshake_fn_opt_state,
     )
 
 
@@ -760,6 +791,7 @@ def evosax_distribution_update(
     n_optimizers: int = 1,
     sampler: Callable = random_sampling,
     stop_fn: StopFunction | None = None,
+    handshake_fn_opt_state: Callable | None = None,
     **hyperparameters,
 ) -> UpdateClass:
     params, static = eqx.partition(task.model, eqx.is_inexact_array)
@@ -779,6 +811,7 @@ def evosax_distribution_update(
         opt_hash=opt_hash,
         opt_index=opt_index,
         n_optimizers=n_optimizers,
+        handshake_fn_opt_state=handshake_fn_opt_state,
     )
 
     handshake_fn = partial(
@@ -924,6 +957,9 @@ OPTIMIZER_MAPPING: dict[str, UpdateClass] = {
     "cmaes": cmaes_variable_popsize,
     "pso": pso_variable_popsize,
     "lbfgsb": partial(
-        optax_update_extra_args, optimizer=optax.lbfgs, popsize=1
+        optax_update_extra_args,
+        optimizer=optax.lbfgs,
+        popsize=1,
+        handshake_fn_opt_state=reset_opt_state,
     ),
 }

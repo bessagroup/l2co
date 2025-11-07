@@ -49,12 +49,13 @@ from jaxtyping import PRNGKeyArray
 
 # Local
 from ._logging import logger
+from .handshake import new
 from .history_state import HistoryState
 from .naming import INPUT_MEAN
 from .optimizers import OPTIMIZER_MAPPING, OptHistory, UpdateClass
 from .optimizerschedule import OptimizationStep
 from .task import Task
-from .update_state import UpdateState, new
+from .update_state import UpdateState
 
 #                                                          Authorship & Credits
 # =============================================================================
