@@ -40,11 +40,6 @@ from ._typing import (
 from .handshake import SAMPLING_STEP, best, best_one, reset_opt_state
 from .history_state import HistoryState
 from .sampler import random_sampling
-from .stopping_criteria import (
-    combined_stopping_criteria,
-    covariance_matrix_stopping_criteria,
-    gradient_based_stopping_criteria,
-)
 from .task import Task
 from .tree_utils import combined_loss
 from .update_state import UpdateState
@@ -527,9 +522,9 @@ class UpdateClass(eqx.Module):
         self.popsize = popsize
         self.index = index
         self.hash = hash
-        self.stop_fn = stop_fn or (lambda _, __, ___: False)
+        self.stop_fn = stop_fn or (lambda *_, **__: False)
         self.handshake_fn_opt_state = handshake_fn_opt_state or (
-            lambda x, _, __, ___: x
+            lambda opt_state, *_, **__,: opt_state
         )
 
     @jax.jit
@@ -541,19 +536,17 @@ class UpdateClass(eqx.Module):
     def handshake(
         self, update_state: UpdateState, key: PRNGKeyArray
     ) -> UpdateState:
-        case_id = jnp.where(
+        # Determine whether to skip handshake
+        do_handshake = jnp.logical_not(
             (update_state.last_step == SAMPLING_STEP)
-            | (update_state.last_step == self.hash),
-            0,
-            1,
+            | (update_state.last_step == self.hash)
         )
 
-        return jax.lax.switch(
-            case_id,
-            (
-                lambda s: s,
-                lambda s: self.handshake_fn(update_state=s, key=key),
-            ),
+        # Conditionally apply handshake
+        return jax.lax.cond(
+            do_handshake,
+            lambda s: self.handshake_fn(update_state=s, key=key),
+            lambda s: s,
             update_state,
         )
 
@@ -564,12 +557,26 @@ class UpdateClass(eqx.Module):
         update_state: UpdateState,
         key: PRNGKeyArray,
     ) -> tuple[PyTree]:
-        new_opt_state = self.handshake_fn_opt_state(
-            opt_states[self.index],
-            update_state,
-            self,
-            key,
+        # Determine whether to skip handshake
+        do_handshake = jnp.logical_not(
+            (update_state.last_step == SAMPLING_STEP)
+            | (update_state.last_step == self.hash)
         )
+
+        def apply_handshake(opt_state):
+            return self.handshake_fn_opt_state(
+                opt_state, update_state, self, key
+            )
+
+        # Use lax.cond for clearer, cheaper branching
+        new_opt_state = jax.lax.cond(
+            do_handshake,
+            apply_handshake,
+            lambda s: s,
+            opt_states[self.index],
+        )
+
+        # Update the tuple efficiently
         return eqx.tree_at(lambda t: t[self.index], opt_states, new_opt_state)
 
     def scan_step(self, carry, *args, **kwargs):
@@ -890,7 +897,6 @@ def cmaes_variable_popsize(
     optimizer = partial(
         evosax_distribution_update,
         optimizer=CMA_ES,
-        stop_fn=covariance_matrix_stopping_criteria,
     )
 
     if popsize is None:
@@ -923,7 +929,6 @@ def sepcmaes_variable_popsize(
     optimizer = partial(
         evosax_distribution_update,
         optimizer=Sep_CMA_ES,
-        stop_fn=covariance_matrix_stopping_criteria,
     )
 
     popsize = int(4 + 3 * jnp.log(d))
