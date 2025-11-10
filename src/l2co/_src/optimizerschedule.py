@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from copy import deepcopy
 from functools import partial
 from pathlib import Path

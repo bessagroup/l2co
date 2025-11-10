@@ -660,7 +660,6 @@ def plot_2d_trajectories(
             zip(colors, switching_iters, strict=False)
         ):
             prev = 0 if j == 0 else switching_iters[j - 1]
-            current
             x0 = r_i["input"].isel(
                 {
                     REALIZATION: realization,
@@ -912,7 +911,7 @@ def plot_actions(
     )
     color_mapping = {
         k: OPTIMIZER_COLORS[v]
-        for k, v in zip(t["data"], t["coords"][SCHEDULE]["data"])
+        for k, v in zip(t["data"], t["coords"][SCHEDULE]["data"], strict=False)
     }
     color_mapping.update({1: "white"})
     values = np.unique(y.values.astype(int))
@@ -930,7 +929,9 @@ def plot_actions(
 
     handles = [
         Patch(color=color_mapping[int(k)], label=name)
-        for k, name in zip(t["data"], t["coords"][SCHEDULE]["data"])
+        for k, name in zip(
+            t["data"], t["coords"][SCHEDULE]["data"], strict=True
+        )
     ]
 
     # Optional: add the white color if you want to show it

@@ -14,7 +14,6 @@ import opfunu
 import pandas as pd
 from f3dasm import Block, ExperimentData
 from opfunu import create_benchmark_loss_function
-from opfunu.cec_based import CecBenchmark
 
 # Local
 from ..task import Task

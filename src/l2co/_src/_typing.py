@@ -65,7 +65,7 @@ class OptHistoryType(eqx.Module):
 # =============================================================================
 
 InputParameters = PyTree
-OptStates = PyTree[Union[OptaxOptState, EvoSaxState]]
+OptStates = PyTree[Union[OptaxOptState, EvoSaxState]]  # noqa
 OptState = PyTree
 
 StepFunction = Callable[

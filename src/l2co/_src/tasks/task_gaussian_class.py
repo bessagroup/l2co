@@ -81,7 +81,7 @@ def generate_one_gaussian_dataset(
     return {"x": samples, "y": labels}
 
 
-# =========================================================================================
+# =============================================================================
 
 
 def save_dataset(dataset: dict[str, jnp.ndarray], path: str | Path):

@@ -8,8 +8,6 @@ Module for creating the history state.
 # Standard
 from __future__ import annotations
 
-from abc import abstractmethod
-
 # Third-party
 import equinox as eqx
 import jax

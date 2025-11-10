@@ -131,7 +131,7 @@ class DataFrameColumnTransformer(BaseEstimator, TransformerMixin):
     def get_feature_names_out(self, X):
         """Extracts feature names from the transformers."""
         feature_names = []
-        for name, transformer, cols in self.column_transformer.transformers_:
+        for _, transformer, cols in self.column_transformer.transformers_:
             if transformer == "passthrough":
                 feature_names.extend(cols)
             elif hasattr(transformer, "get_feature_names_out"):

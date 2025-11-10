@@ -32,16 +32,16 @@ from ._typing import (
     InitFunction,
     InputParameters,
     LossFunction,
-    OptHistoryType,
     OptStates,
     StepFunction,
     StopFunction,
 )
-from .handshake import SAMPLING_STEP, best, best_one, reset_opt_state
-from .history_state import HistoryState
+from .handshake import best, best_one, reset_opt_state
+from .opt_history import OptHistory
 from .sampler import random_sampling
 from .task import Task
 from .tree_utils import combined_loss
+from .update_class import UpdateClass
 from .update_state import UpdateState
 
 #                                                          Authorship & Credits
@@ -50,104 +50,6 @@ __author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
 __credits__ = ["Martin van der Schelling"]
 __status__ = "Stable"
 # =============================================================================
-
-#                                                                    OptHistory
-# =============================================================================
-
-
-class OptHistory(OptHistoryType):
-    loss: jax.Array
-    params: PyTree
-    grads: PyTree
-    update_step: jax.Array
-    fevals: jax.Array
-    iterations: jax.Array
-
-    @classmethod
-    def init(cls, params: PyTree, popsize: int, last_step: int) -> OptHistory:
-        loss = jnp.full((popsize,), jnp.nan)
-        params = jax.tree.map(lambda p: jnp.full_like(p, jnp.nan), params)
-        grads = jax.tree.map(lambda p: jnp.full_like(p, jnp.nan), params)
-        update_step = jnp.full((popsize,), last_step)
-        fevals = jnp.zeros((popsize,), dtype=jnp.int32)
-        iterations = jnp.zeros((popsize,), dtype=jnp.int32)
-
-        return cls(
-            loss=loss,
-            params=params,
-            grads=grads,
-            update_step=update_step,
-            fevals=fevals,
-            iterations=iterations,
-        )
-
-    @classmethod
-    def from_init_sample(
-        cls, update_state: UpdateState, task: Task, key: PRNGKeyArray
-    ):
-        # Evaluate the initial parameters
-        init_params = jax.tree.map(lambda x: x[-1], update_state.last_params)
-        init_loss, init_grads = jax.tree.map(
-            lambda x: x[-1], update_state.evaluate_with_grads(task, key)
-        )
-
-        loss = jax.tree.map(lambda x: jnp.expand_dims(x, (0, 1)), init_loss)
-        params = jax.tree.map(
-            lambda x: jnp.expand_dims(x, (0, 1)), init_params
-        )
-        grads = jax.tree.map(lambda x: jnp.expand_dims(x, (0, 1)), init_grads)
-        update_step = jax.tree.map(
-            lambda x: jnp.expand_dims(x, (0, 1)), update_state.last_step
-        )
-        fevals = jax.tree.map(
-            lambda x: jnp.expand_dims(x, (0, 1)), jnp.array(0)
-        )
-        iterations = jax.tree.map(
-            lambda x: jnp.expand_dims(x, (0, 1)), jnp.array(0)
-        )
-
-        return cls(
-            loss=loss,
-            params=params,
-            grads=grads,
-            update_step=update_step,
-            fevals=fevals,
-            iterations=iterations,
-        )
-
-    def update(self, history: OptHistory) -> OptHistory:
-        """Update the recent history with the current history."""
-
-        loss = jnp.concatenate([self.loss[1:], history.loss[None]], axis=0)
-        params = jax.tree.map(
-            lambda p, new: jnp.concatenate([p[1:], new[None]], axis=0),
-            self.params,
-            history.params,
-        )
-        grads = jax.tree.map(
-            lambda g, new: jnp.concatenate([g[1:], new[None]], axis=0),
-            self.grads,
-            history.grads,
-        )
-        update_step = jnp.concatenate(
-            [self.update_step[1:], history.update_step[None]], axis=0
-        )
-        fevals = jnp.concatenate(
-            [self.fevals[1:], history.fevals[None]], axis=0
-        )
-
-        iterations = jnp.concatenate(
-            [self.iterations[1:], history.iterations[None]], axis=0
-        )
-        return OptHistory(
-            loss=loss,
-            params=params,
-            grads=grads,
-            update_step=update_step,
-            fevals=fevals,
-            iterations=iterations,
-        )
-
 
 #                                                                         Optax
 # =============================================================================
@@ -495,219 +397,6 @@ def evosax_population_based_fn(
 # =============================================================================
 
 
-class UpdateClass(eqx.Module):
-    init_fn: InitFunction = eqx.field(static=True)
-    handshake_fn: Callable = eqx.field(static=True)
-    step_fn: StepFunction = eqx.field(static=True)
-    popsize: int = eqx.field(static=True)
-    index: int = eqx.field(static=True)
-    hash: int
-    stop_fn: StopFunction = eqx.field(static=True)
-    handshake_fn_opt_state: Callable = eqx.field(static=True)
-
-    def __init__(
-        self,
-        init_fn: Callable,
-        handshake_fn: Callable,
-        step_fn: Callable,
-        popsize: int,
-        index: int,
-        hash: int,
-        stop_fn: Callable | None = None,
-        handshake_fn_opt_state: Callable | None = None,
-    ):
-        self.init_fn = init_fn
-        self.handshake_fn = handshake_fn
-        self.step_fn = step_fn
-        self.popsize = popsize
-        self.index = index
-        self.hash = hash
-        self.stop_fn = stop_fn or (lambda *_, **__: False)
-        self.handshake_fn_opt_state = handshake_fn_opt_state or (
-            lambda opt_state, *_, **__,: opt_state
-        )
-
-    @jax.jit
-    def init(self, update_state: UpdateState, key: PRNGKeyArray) -> PyTree:
-        """Initialize the optimizer state."""
-        return self.init_fn(update_state, key)
-
-    @jax.jit
-    def handshake(
-        self, update_state: UpdateState, key: PRNGKeyArray
-    ) -> UpdateState:
-        # Determine whether to skip handshake
-        do_handshake = jnp.logical_not(
-            (update_state.last_step == SAMPLING_STEP)
-            | (update_state.last_step == self.hash)
-        )
-
-        # Conditionally apply handshake
-        return jax.lax.cond(
-            do_handshake,
-            lambda s: self.handshake_fn(update_state=s, key=key),
-            lambda s: s,
-            update_state,
-        )
-
-    @jax.jit
-    def handshake_opt_state(
-        self,
-        opt_states: tuple[PyTree],
-        update_state: UpdateState,
-        key: PRNGKeyArray,
-    ) -> tuple[PyTree]:
-        # Determine whether to skip handshake
-        do_handshake = jnp.logical_not(
-            (update_state.last_step == SAMPLING_STEP)
-            | (update_state.last_step == self.hash)
-        )
-
-        def apply_handshake(opt_state):
-            return self.handshake_fn_opt_state(
-                opt_state, update_state, self, key
-            )
-
-        # Use lax.cond for clearer, cheaper branching
-        new_opt_state = jax.lax.cond(
-            do_handshake,
-            apply_handshake,
-            lambda s: s,
-            opt_states[self.index],
-        )
-
-        # Update the tuple efficiently
-        return eqx.tree_at(lambda t: t[self.index], opt_states, new_opt_state)
-
-    def scan_step(self, carry, *args, **kwargs):
-        return self.step_fn(carry, sample={})
-
-    def step(
-        self,
-        opt_states: tuple[PyTree],
-        update_state: UpdateState,
-        history_state: HistoryState,
-        n_iterations: int,
-        key: PRNGKeyArray,
-    ) -> tuple[PyTree, UpdateState]:
-        update_state = self.handshake(update_state=update_state, key=key)
-        opt_states = self.handshake_opt_state(
-            opt_states=opt_states, update_state=update_state, key=key
-        )
-
-        params = jax.tree.map(
-            lambda x: x[-self.popsize :], update_state.last_params
-        )
-
-        window_size = 20
-
-        def scan_step(
-            carry: tuple[
-                PyTree, tuple[PyTree], PRNGKeyArray, jax.Array, OptHistory
-            ],
-            _,
-        ):
-            params, opt_states, key, done, recent_history = carry
-            stop_condition = self.stop_fn(
-                recent_history, opt_states, self.index
-            )
-
-            done = done | stop_condition
-
-            def do_step(
-                carry: tuple[
-                    PyTree,
-                    tuple[PyTree],
-                    PRNGKeyArray,
-                    jax.Array,
-                    OptHistory,
-                ],
-            ):
-                (params, opt_states, key, done, recent_history) = carry
-                new_carry, history = self.step_fn(
-                    (params, opt_states, key), sample={}
-                )
-
-                new_recent_history = recent_history.update(history)
-
-                return (*new_carry, done, new_recent_history), history
-
-            def skip_step(
-                carry: tuple[
-                    PyTree,
-                    tuple[PyTree],
-                    PRNGKeyArray,
-                    jax.Array,
-                    OptHistory,
-                ],
-            ):
-                (params, opt_states, key, done, recent_history) = carry
-                dummy_history = recent_history.init(
-                    params, self.popsize, self.hash
-                )
-
-                return (
-                    params,
-                    opt_states,
-                    key,
-                    done,
-                    recent_history,
-                ), dummy_history
-
-            (new_carry, history_entry) = jax.lax.cond(
-                done, skip_step, do_step, carry
-            )
-
-            return new_carry, history_entry
-
-        # Initialize moving history buffer with NaNs
-        recent_history_init = OptHistory.init(
-            params=params,
-            popsize=self.popsize,
-            last_step=update_state.last_step,
-        )
-
-        recent_history_init = jax.tree.map(
-            lambda x: jnp.tile(x[None], (window_size, *([1] * x.ndim))),
-            recent_history_init,
-        )
-
-        init_done = jnp.array(False)
-        (_, opt_states, _, _, _), history = jax.lax.scan(
-            f=scan_step,
-            init=(params, opt_states, key, init_done, recent_history_init),
-            xs=None,
-            length=n_iterations + 1,
-        )
-
-        # Remove first element for dim=0 history
-        history = jax.tree.map(lambda x: x[1:, :], history)
-
-        # flatten the first and second dimension of each key in history
-        history_flattened = jax.tree.map(
-            lambda x: x.reshape((x.shape[0] * x.shape[1],) + x.shape[2:]),
-            history,
-        )
-
-        final_update_state = UpdateState.from_history(
-            history=history_flattened,
-            memory_size=update_state.memory_size,
-            last_step=self.hash,
-        )
-
-        update_state = update_state.merge(final_update_state)
-
-        new_history_state = history_state.add(history)
-
-        return update_state, opt_states, new_history_state
-
-
-# =============================================================================
-
-
-# =============================================================================
-
-
 def optax_update(
     task: Task,
     optimizer: optax.GradientTransformation,
@@ -804,8 +493,6 @@ def evosax_distribution_update(
     params, static = eqx.partition(task.model, eqx.is_inexact_array)
 
     optimizer = optimizer(population_size=popsize, solution=params)
-    es_params = optimizer.default_params
-    es_params = es_params.replace(**hyperparameters)
 
     init_fn, step_fn = evosax_distribution_based_fn(
         static=static,
@@ -814,7 +501,7 @@ def evosax_distribution_update(
         bounded=bounded,
         pass_rng=task.pass_rng,
         popsize=popsize,
-        es_params=es_params,
+        es_params=optimizer.default_params.replace(**hyperparameters),
         opt_hash=opt_hash,
         opt_index=opt_index,
         n_optimizers=n_optimizers,
@@ -853,8 +540,6 @@ def evosax_population_update(
     params, static = eqx.partition(task.model, eqx.is_inexact_array)
 
     optimizer = optimizer(population_size=popsize, solution=params)
-    es_params = optimizer.default_params
-    es_params = es_params.replace(**hyperparameters)
 
     init_fn, step_fn = evosax_population_based_fn(
         static=static,
@@ -863,7 +548,7 @@ def evosax_population_update(
         bounded=bounded,
         pass_rng=task.pass_rng,
         popsize=popsize,
-        es_params=es_params,
+        es_params=optimizer.default_params.replace(**hyperparameters),
         opt_hash=opt_hash,
         opt_index=opt_index,
         n_optimizers=n_optimizers,
