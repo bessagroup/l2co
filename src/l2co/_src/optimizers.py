@@ -32,7 +32,6 @@ from ._typing import (
     InitFunction,
     InputParameters,
     LossFunction,
-    OptStates,
     StepFunction,
     StopFunction,
 )
@@ -62,8 +61,6 @@ def optax_fn(
     bounded: tuple[float, float],
     pass_rng: bool,
     opt_hash: int,
-    opt_index: int,
-    n_optimizers: int,
     n_updates_per_iteration: int,
     **kwargs,
 ) -> tuple[InitFunction, StepFunction]:
@@ -75,7 +72,7 @@ def optax_fn(
         return opt_state
 
     def _single_update(carry, _):
-        input_params, opt_states, sample, key = carry
+        input_params, opt_state, sample, key = carry
 
         model = eqx.combine(input_params, static)
         new_key, _ = jr.split(key)
@@ -87,12 +84,9 @@ def optax_fn(
 
         fn = partial(loss_fn, **sample, **rng_sample)
         loss, grads = eqx.filter_value_and_grad(fn)(model)
-        opt_state: OptaxState = opt_states[opt_index]
         updates, new_opt_state = optimizer.update(grads, opt_state)
         new_params = eqx.apply_updates(input_params, updates)
-        new_opt_states = eqx.tree_at(
-            lambda t: t[opt_index], opt_states, new_opt_state
-        )
+
         history = OptHistory(
             loss=loss,
             params=input_params,
@@ -105,24 +99,24 @@ def optax_fn(
         # Apply box constraints
         new_params = jax.tree.map(lambda p: jnp.clip(p, *bounded), new_params)
 
-        return (new_params, new_opt_states, sample, new_key), history
+        return (new_params, new_opt_state, sample, new_key), history
 
     @eqx.filter_jit
     def step_fn(
-        carry: tuple[InputParameters, OptStates, PRNGKeyArray],
+        carry: tuple[InputParameters, OptaxState, PRNGKeyArray],
         sample: dict,
         *args,
         **kwargs,
-    ) -> tuple[tuple[InputParameters, OptStates, PRNGKeyArray], OptHistory]:
-        input_params, opt_states, key = carry
+    ) -> tuple[tuple[InputParameters, OptaxState, PRNGKeyArray], OptHistory]:
+        input_params, opt_state, key = carry
 
         input_params = jax.tree.map(
             lambda x: jnp.squeeze(x, axis=0), input_params
         )
 
-        (new_params, new_opt_states, _, new_key), history = jax.lax.scan(
+        (new_params, new_opt_state, _, new_key), history = jax.lax.scan(
             f=_single_update,
-            init=(input_params, opt_states, sample, key),
+            init=(input_params, opt_state, sample, key),
             xs=None,
             length=n_updates_per_iteration,
         )
@@ -131,7 +125,7 @@ def optax_fn(
 
         new_params = jax.tree.map(lambda x: jnp.expand_dims(x, 0), new_params)
 
-        return (new_params, new_opt_states, new_key), history
+        return (new_params, new_opt_state, new_key), history
 
     return init_fn, step_fn
 
@@ -143,8 +137,6 @@ def optax_extra_args_fn(
     bounded: tuple[float, float],
     pass_rng: bool,
     opt_hash: int,
-    opt_index: int,
-    n_optimizers: int,
     **kwargs,
 ) -> tuple[InitFunction, StepFunction]:
     def init_fn(
@@ -156,12 +148,12 @@ def optax_extra_args_fn(
 
     @eqx.filter_jit
     def step_fn(
-        carry: tuple[InputParameters, OptStates, PRNGKeyArray],
+        carry: tuple[InputParameters, OptaxState, PRNGKeyArray],
         sample: dict,
         *args,
         **kwargs,
-    ) -> tuple[tuple[InputParameters, OptStates, PRNGKeyArray], OptHistory]:
-        input_params, opt_states, key = carry
+    ) -> tuple[tuple[InputParameters, OptaxState, PRNGKeyArray], OptHistory]:
+        input_params, opt_state, key = carry
 
         input_params = jax.tree.map(
             lambda x: jnp.squeeze(x, axis=0), input_params
@@ -177,7 +169,6 @@ def optax_extra_args_fn(
 
         fn = partial(loss_fn, **sample, **rng_sample)
 
-        opt_state: OptaxState = opt_states[opt_index]
         loss, grads = optax.value_and_grad_from_state(fn)(
             model, state=opt_state
         )
@@ -192,10 +183,6 @@ def optax_extra_args_fn(
         )
 
         new_params = eqx.apply_updates(input_params, updates)
-
-        new_opt_states = eqx.tree_at(
-            lambda t: t[opt_index], opt_states, new_opt_state
-        )
 
         history = OptHistory(
             loss=loss,
@@ -213,7 +200,7 @@ def optax_extra_args_fn(
 
         new_params = jax.tree.map(lambda x: jnp.expand_dims(x, 0), new_params)
 
-        return (new_params, new_opt_states, new_key), history
+        return (new_params, new_opt_state, new_key), history
 
     return init_fn, step_fn
 
@@ -231,8 +218,6 @@ def evosax_distribution_based_fn(
     popsize: int,
     es_params: Params,
     opt_hash: int,
-    opt_index: int,
-    n_optimizers: int,
     **kwargs,
 ) -> tuple[InitFunction, StepFunction]:
     def init_fn(
@@ -243,12 +228,12 @@ def evosax_distribution_based_fn(
 
     @eqx.filter_jit
     def step_fn(
-        carry: tuple[InputParameters, OptStates, PRNGKeyArray],
+        carry: tuple[InputParameters, EvoSaxState, PRNGKeyArray],
         sample: dict,
         *args,
         **kwargs,
-    ) -> tuple[tuple[InputParameters, OptStates, PRNGKeyArray], OptHistory]:
-        input_params, opt_states, key = carry
+    ) -> tuple[tuple[InputParameters, EvoSaxState, PRNGKeyArray], OptHistory]:
+        input_params, opt_state, key = carry
 
         new_key, rng_key = jr.split(key)
 
@@ -261,9 +246,7 @@ def evosax_distribution_based_fn(
             partial(combined_loss, static=static, loss_fn=loss_fn, **sample)
         )(input_params, **rng_sample)
 
-        opt_state: EvoSaxState = opt_states[opt_index]
-
-        opt_state, _ = optimizer.tell(
+        new_opt_state, _ = optimizer.tell(
             key=rng_key,
             population=input_params,
             fitness=loss,
@@ -271,12 +254,8 @@ def evosax_distribution_based_fn(
             params=es_params,
         )
 
-        new_params, opt_state = optimizer.ask(
-            key=rng_key, state=opt_state, params=es_params
-        )
-
-        new_opt_states = eqx.tree_at(
-            lambda t: t[opt_index], opt_states, opt_state
+        new_params, new_opt_state = optimizer.ask(
+            key=rng_key, state=new_opt_state, params=es_params
         )
 
         update_step = jnp.broadcast_to(opt_hash, loss.shape)
@@ -296,7 +275,7 @@ def evosax_distribution_based_fn(
         # Apply box constraints
         new_params = jax.tree.map(lambda p: jnp.clip(p, *bounded), new_params)
 
-        return (new_params, new_opt_states, new_key), history
+        return (new_params, new_opt_state, new_key), history
 
     return init_fn, step_fn
 
@@ -310,8 +289,6 @@ def evosax_population_based_fn(
     popsize: int,
     es_params: Params,
     opt_hash: int,
-    opt_index: int,
-    n_optimizers: int,
     **kwargs,
 ) -> tuple[InitFunction, StepFunction]:
     def init_fn(
@@ -336,12 +313,12 @@ def evosax_population_based_fn(
 
     @eqx.filter_jit
     def step_fn(
-        carry: tuple[InputParameters, OptStates, PRNGKeyArray],
+        carry: tuple[InputParameters, EvoSaxState, PRNGKeyArray],
         sample: dict,
         *args,
         **kwargs,
-    ) -> tuple[tuple[InputParameters, OptStates, PRNGKeyArray], OptHistory]:
-        input_params, opt_states, key = carry
+    ) -> tuple[tuple[InputParameters, EvoSaxState, PRNGKeyArray], OptHistory]:
+        input_params, opt_state, key = carry
 
         new_key, rng_key = jr.split(key)
 
@@ -354,9 +331,7 @@ def evosax_population_based_fn(
             partial(combined_loss, static=static, loss_fn=loss_fn, **sample)
         )(input_params, **rng_sample)
 
-        opt_state: EvoSaxState = opt_states[opt_index]
-
-        opt_state, _ = optimizer.tell(
+        new_opt_state, _ = optimizer.tell(
             key=rng_key,
             population=input_params,
             fitness=loss,
@@ -364,12 +339,8 @@ def evosax_population_based_fn(
             params=es_params,
         )
 
-        new_params, opt_state = optimizer.ask(
-            key=rng_key, state=opt_state, params=es_params
-        )
-
-        new_opt_states = eqx.tree_at(
-            lambda t: t[opt_index], opt_states, opt_state
+        new_params, new_opt_state = optimizer.ask(
+            key=rng_key, state=new_opt_state, params=es_params
         )
 
         update_step = jnp.broadcast_to(opt_hash, loss.shape)
@@ -389,7 +360,7 @@ def evosax_population_based_fn(
         # Apply box constraints
         new_params = jax.tree.map(lambda p: jnp.clip(p, *bounded), new_params)
 
-        return (new_params, new_opt_states, new_key), history
+        return (new_params, new_opt_state, new_key), history
 
     return init_fn, step_fn
 
@@ -403,8 +374,6 @@ def optax_update(
     opt_hash: int,
     popsize: int,
     bounded: tuple[float, float] | None = None,
-    opt_index: int = 0,
-    n_optimizers: int = 1,
     n_updates_per_iteration: int = 1,
     stop_fn: StopFunction | None = None,
     handshake_fn_opt_state: Callable | None = None,
@@ -419,8 +388,6 @@ def optax_update(
         bounded=bounded,
         pass_rng=task.pass_rng,
         opt_hash=opt_hash,
-        opt_index=opt_index,
-        n_optimizers=n_optimizers,
         n_updates_per_iteration=n_updates_per_iteration,
     )
 
@@ -431,7 +398,6 @@ def optax_update(
         handshake_fn=handshake_fn,
         step_fn=step_fn,
         popsize=popsize,
-        index=opt_index,
         hash=opt_hash,
         stop_fn=stop_fn,
         handshake_fn_opt_state=handshake_fn_opt_state,
@@ -444,8 +410,6 @@ def optax_update_extra_args(
     opt_hash: int,
     popsize: int,
     bounded: tuple[float, float] | None = None,
-    opt_index: int = 0,
-    n_optimizers: int = 1,
     stop_fn: StopFunction | None = None,
     handshake_fn_opt_state: Callable | None = None,
     **hyperparameters,
@@ -459,8 +423,6 @@ def optax_update_extra_args(
         bounded=bounded,
         pass_rng=task.pass_rng,
         opt_hash=opt_hash,
-        opt_index=opt_index,
-        n_optimizers=n_optimizers,
     )
 
     handshake_fn = best
@@ -470,7 +432,6 @@ def optax_update_extra_args(
         handshake_fn=handshake_fn,
         step_fn=step_fn,
         popsize=popsize,
-        index=opt_index,
         hash=opt_hash,
         stop_fn=stop_fn,
         handshake_fn_opt_state=handshake_fn_opt_state,
@@ -483,8 +444,6 @@ def evosax_distribution_update(
     opt_hash: int,
     popsize: int,
     bounded: tuple[float, float] | None = (None, None),
-    opt_index: int = 0,
-    n_optimizers: int = 1,
     sampler: Callable = random_sampling,
     stop_fn: StopFunction | None = None,
     handshake_fn_opt_state: Callable | None = None,
@@ -503,8 +462,6 @@ def evosax_distribution_update(
         popsize=popsize,
         es_params=optimizer.default_params.replace(**hyperparameters),
         opt_hash=opt_hash,
-        opt_index=opt_index,
-        n_optimizers=n_optimizers,
         handshake_fn_opt_state=handshake_fn_opt_state,
     )
 
@@ -519,7 +476,6 @@ def evosax_distribution_update(
         handshake_fn=handshake_fn,
         step_fn=step_fn,
         popsize=popsize,
-        index=opt_index,
         hash=opt_hash,
         stop_fn=stop_fn,
     )
@@ -531,8 +487,6 @@ def evosax_population_update(
     opt_hash: int,
     popsize: int,
     bounded: tuple[float, float] | None = (None, None),
-    opt_index: int = 0,
-    n_optimizers: int = 1,
     sampler: Callable = random_sampling,
     stop_fn: StopFunction | None = None,
     **hyperparameters,
@@ -550,8 +504,6 @@ def evosax_population_update(
         popsize=popsize,
         es_params=optimizer.default_params.replace(**hyperparameters),
         opt_hash=opt_hash,
-        opt_index=opt_index,
-        n_optimizers=n_optimizers,
     )
 
     handshake_fn = partial(
@@ -565,7 +517,6 @@ def evosax_population_update(
         handshake_fn=handshake_fn,
         step_fn=step_fn,
         popsize=popsize,
-        index=opt_index,
         hash=opt_hash,
         stop_fn=stop_fn,
     )

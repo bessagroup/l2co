@@ -148,7 +148,7 @@ def run_optimization(
     """
 
     # Initialize the optimizer state
-    opt_state = (optimizer.init(update_state, key),)
+    opt_state = optimizer.init(update_state=update_state, key=key)
 
     # Create the initial sample of model parameters
     update_state = new(
@@ -170,7 +170,7 @@ def run_optimization(
 
     # Main optimization loop
     update_state, opt_state, history_state = optimizer.step(
-        opt_states=opt_state,
+        opt_state=opt_state,
         update_state=update_state,
         history_state=history_state,
         n_iterations=n_iterations,

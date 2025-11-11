@@ -16,7 +16,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import PRNGKeyArray, PyTree
 
-from ._typing import InitFunction, OptStates, StepFunction, StopFunction
+from ._typing import InitFunction, StepFunction, StopFunction
 
 # Local
 from .handshake import SAMPLING_STEP
@@ -38,12 +38,11 @@ __status__ = "Stable"
 class UpdateClass(eqx.Module):
     init_fn: InitFunction = eqx.field(static=True)
     handshake_fn: Callable = eqx.field(static=True)
-    step_fn: StepFunction = eqx.field(static=True)
-    popsize: int = eqx.field(static=True)
-    index: int = eqx.field(static=True)
-    hash: int
-    stop_fn: StopFunction = eqx.field(static=True)
     handshake_fn_opt_state: Callable = eqx.field(static=True)
+    step_fn: StepFunction = eqx.field(static=True)
+    stop_fn: StopFunction = eqx.field(static=True)
+    popsize: int = eqx.field(static=True)
+    hash: int
 
     def __init__(
         self,
@@ -51,7 +50,6 @@ class UpdateClass(eqx.Module):
         handshake_fn: Callable,
         step_fn: Callable,
         popsize: int,
-        index: int,
         hash: int,
         stop_fn: Callable | None = None,
         handshake_fn_opt_state: Callable | None = None,
@@ -60,7 +58,6 @@ class UpdateClass(eqx.Module):
         self.handshake_fn = handshake_fn
         self.step_fn = step_fn
         self.popsize = popsize
-        self.index = index
         self.hash = hash
         self.stop_fn = stop_fn or (lambda *_, **__: False)
         self.handshake_fn_opt_state = handshake_fn_opt_state or (
@@ -74,9 +71,9 @@ class UpdateClass(eqx.Module):
     def handshake(
         self,
         update_state: UpdateState,
-        opt_states: OptStates,
+        opt_state: PyTree,
         key: PRNGKeyArray,
-    ) -> tuple[UpdateState, OptStates]:
+    ) -> tuple[UpdateState, PyTree]:
         # Determine whether to skip handshake
         do_handshake = jnp.logical_not(
             (update_state.last_step == SAMPLING_STEP)
@@ -101,26 +98,26 @@ class UpdateClass(eqx.Module):
                 key=key,
             ),
             lambda o: o,
-            opt_states[self.index],
+            opt_state,
         )
 
-        # Update the opt states tuple
-        new_opt_states = eqx.tree_at(
-            lambda t: t[self.index], opt_states, new_opt_state
-        )
+        # # Update the opt states tuple
+        # new_opt_states = eqx.tree_at(
+        #     lambda t: t[self.index], opt_state, new_opt_state
+        # )
 
-        return new_update_state, new_opt_states
+        return new_update_state, new_opt_state
 
     def step(
         self,
-        opt_states: tuple[PyTree],
+        opt_state: PyTree,
         update_state: UpdateState,
         history_state: HistoryState,
         n_iterations: int,
         key: PRNGKeyArray,
-    ) -> tuple[PyTree, UpdateState]:
-        update_state, opt_states = self.handshake(
-            update_state=update_state, opt_states=opt_states, key=key
+    ) -> tuple[UpdateState, PyTree, HistoryState]:
+        update_state, opt_state = self.handshake(
+            update_state=update_state, opt_state=opt_state, key=key
         )
 
         # Retrieve the last parameters from the update state
@@ -136,10 +133,8 @@ class UpdateClass(eqx.Module):
             ],
             _,
         ):
-            params, opt_states, key, done, recent_history = carry
-            stop_condition = self.stop_fn(
-                recent_history, opt_states, self.index
-            )
+            params, opt_state, key, done, recent_history = carry
+            stop_condition = self.stop_fn(recent_history, opt_state)
 
             done = done | stop_condition
 
@@ -152,9 +147,9 @@ class UpdateClass(eqx.Module):
                     OptHistory,
                 ],
             ):
-                (params, opt_states, key, done, recent_history) = carry
+                (params, opt_state, key, done, recent_history) = carry
                 new_carry, history = self.step_fn(
-                    (params, opt_states, key), sample={}
+                    (params, opt_state, key), sample={}
                 )
 
                 new_recent_history = recent_history.update(history)
@@ -170,14 +165,14 @@ class UpdateClass(eqx.Module):
                     OptHistory,
                 ],
             ):
-                (params, opt_states, key, done, recent_history) = carry
+                (params, opt_state, key, done, recent_history) = carry
                 dummy_history = recent_history.init(
                     params, self.popsize, self.hash
                 )
 
                 return (
                     params,
-                    opt_states,
+                    opt_state,
                     key,
                     done,
                     recent_history,
@@ -206,9 +201,9 @@ class UpdateClass(eqx.Module):
         init_done = jnp.array(False)
 
         # Run the optimization loop
-        (_, opt_states, _, _, _), history = jax.lax.scan(
+        (_, opt_state, _, _, _), history = jax.lax.scan(
             f=scan_step,
-            init=(params, opt_states, key, init_done, recent_history_init),
+            init=(params, opt_state, key, init_done, recent_history_init),
             xs=None,
             length=n_iterations + 1,
         )
@@ -235,7 +230,7 @@ class UpdateClass(eqx.Module):
         # Update history state
         new_history_state = history_state.add(history)
 
-        return update_state, opt_states, new_history_state
+        return update_state, opt_state, new_history_state
 
 
 # =============================================================================
