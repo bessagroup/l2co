@@ -49,7 +49,6 @@ from jaxtyping import PRNGKeyArray
 
 # Local
 from ._logging import logger
-from .handshake import new
 from .history_state import HistoryState
 from .naming import INPUT_MEAN
 from .optimizers import OPTIMIZER_MAPPING, OptHistory, UpdateClass
@@ -151,9 +150,7 @@ def run_optimization(
     opt_state = optimizer.init(update_state=update_state, key=key)
 
     # Create the initial sample of model parameters
-    update_state = new(
-        update_state=update_state, task=task, sampler=sampler, key=key
-    )
+    update_state = update_state.sample(task=task, sampler=sampler, key=key)
 
     # Initialize the history state
     history_state = HistoryState.init(

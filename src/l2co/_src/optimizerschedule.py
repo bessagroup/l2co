@@ -127,9 +127,11 @@ class OptimizationStep:
         if not self.stopping_criteria:
             return lambda *args, **kwargs: False
 
-        fn = STOPPING_CRITERIA[self.stopping_criteria.pop("type")]
+        stop_crit = deepcopy(self.stopping_criteria)
 
-        return partial(fn, **self.stopping_criteria)
+        fn = STOPPING_CRITERIA[stop_crit.pop("type")]
+
+        return partial(fn, **stop_crit)
 
     @classmethod
     def from_yaml(cls, config: dict[str, Any]) -> OptimizationStep:

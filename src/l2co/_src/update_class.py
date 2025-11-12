@@ -19,7 +19,6 @@ from jaxtyping import PRNGKeyArray, PyTree
 from ._typing import InitFunction, StepFunction, StopFunction
 
 # Local
-from .handshake import SAMPLING_STEP
 from .history_state import HistoryState
 from .opt_history import OptHistory
 from .update_state import UpdateState
@@ -37,8 +36,6 @@ __status__ = "Stable"
 
 class UpdateClass(eqx.Module):
     init_fn: InitFunction = eqx.field(static=True)
-    handshake_fn: Callable = eqx.field(static=True)
-    handshake_fn_opt_state: Callable = eqx.field(static=True)
     step_fn: StepFunction = eqx.field(static=True)
     stop_fn: StopFunction = eqx.field(static=True)
     popsize: int = eqx.field(static=True)
@@ -47,66 +44,20 @@ class UpdateClass(eqx.Module):
     def __init__(
         self,
         init_fn: Callable,
-        handshake_fn: Callable,
         step_fn: Callable,
         popsize: int,
         hash: int,
         stop_fn: Callable | None = None,
-        handshake_fn_opt_state: Callable | None = None,
     ):
         self.init_fn = init_fn
-        self.handshake_fn = handshake_fn
         self.step_fn = step_fn
         self.popsize = popsize
         self.hash = hash
         self.stop_fn = stop_fn or (lambda *_, **__: False)
-        self.handshake_fn_opt_state = handshake_fn_opt_state or (
-            lambda opt_state, *_, **__,: opt_state
-        )
 
     def init(self, update_state: UpdateState, key: PRNGKeyArray) -> PyTree:
         """Initialize the optimizer state."""
         return self.init_fn(update_state, key)
-
-    def handshake(
-        self,
-        update_state: UpdateState,
-        opt_state: PyTree,
-        key: PRNGKeyArray,
-    ) -> tuple[UpdateState, PyTree]:
-        # Determine whether to skip handshake
-        do_handshake = jnp.logical_not(
-            (update_state.last_step == SAMPLING_STEP)
-            | (update_state.last_step == self.hash)
-        )
-
-        # Conditionally perform handshake
-        new_update_state = jax.lax.cond(
-            do_handshake,
-            lambda s: self.handshake_fn(update_state=s, key=key),
-            lambda s: s,
-            update_state,
-        )
-
-        # Conditionally perform opt state handshake
-        new_opt_state = jax.lax.cond(
-            do_handshake,
-            lambda o: self.handshake_fn_opt_state(
-                opt_state=o,
-                update_state=update_state,
-                update_class=self,
-                key=key,
-            ),
-            lambda o: o,
-            opt_state,
-        )
-
-        # # Update the opt states tuple
-        # new_opt_states = eqx.tree_at(
-        #     lambda t: t[self.index], opt_state, new_opt_state
-        # )
-
-        return new_update_state, new_opt_state
 
     def step(
         self,
@@ -116,10 +67,6 @@ class UpdateClass(eqx.Module):
         n_iterations: int,
         key: PRNGKeyArray,
     ) -> tuple[UpdateState, PyTree, HistoryState]:
-        update_state, opt_state = self.handshake(
-            update_state=update_state, opt_state=opt_state, key=key
-        )
-
         # Retrieve the last parameters from the update state
         params = jax.tree.map(
             lambda x: x[-self.popsize :], update_state.last_params

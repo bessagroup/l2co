@@ -11,14 +11,13 @@ from abc import abstractmethod
 
 # Standard
 from collections.abc import Callable
-from typing import Any, Union
+from typing import Any
 
 import equinox as eqx
-import jax
 
 # Third-party
 from evosax.algorithms.base import State as EvoSaxState
-from jaxtyping import PRNGKeyArray, PyTree
+from jaxtyping import Array, Float, Int, PRNGKeyArray, PyTree
 from optax import OptState as OptaxOptState
 
 from .task import Task
@@ -32,12 +31,12 @@ __status__ = "Stable"
 
 
 class OptHistoryType(eqx.Module):
-    loss: eqx.AbstractVar[jax.Array]
-    params: eqx.AbstractVar[PyTree]
-    update_step: eqx.AbstractVar[jax.Array]
-    fevals: eqx.AbstractVar[jax.Array]
-    grads: eqx.AbstractVar[PyTree]
-    iterations: eqx.AbstractVar[jax.Array]
+    loss: eqx.AbstractVar[Float[Array, " popsize"]]
+    params: eqx.AbstractVar[Float[PyTree, " popsize dim"]]
+    grads: eqx.AbstractVar[Float[PyTree, " popsize dim"]]
+    update_step: eqx.AbstractVar[Int[Array, " popsize"]]
+    fevals: eqx.AbstractVar[Int[Array, " popsize"]]
+    iterations: eqx.AbstractVar[Int[Array, " popsize"]]
     """Base class for optimizer history."""
 
     @classmethod

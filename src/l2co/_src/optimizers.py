@@ -35,7 +35,6 @@ from ._typing import (
     StepFunction,
     StopFunction,
 )
-from .handshake import best, best_one, reset_opt_state
 from .opt_history import OptHistory
 from .sampler import random_sampling
 from .task import Task
@@ -376,7 +375,6 @@ def optax_update(
     bounded: tuple[float, float] | None = None,
     n_updates_per_iteration: int = 1,
     stop_fn: StopFunction | None = None,
-    handshake_fn_opt_state: Callable | None = None,
     **hyperparameters,
 ) -> UpdateClass:
     params, static = eqx.partition(task.model, eqx.is_inexact_array)
@@ -391,16 +389,12 @@ def optax_update(
         n_updates_per_iteration=n_updates_per_iteration,
     )
 
-    handshake_fn = best
-
     return UpdateClass(
         init_fn=init_fn,
-        handshake_fn=handshake_fn,
         step_fn=step_fn,
         popsize=popsize,
         hash=opt_hash,
         stop_fn=stop_fn,
-        handshake_fn_opt_state=handshake_fn_opt_state,
     )
 
 
@@ -411,7 +405,6 @@ def optax_update_extra_args(
     popsize: int,
     bounded: tuple[float, float] | None = None,
     stop_fn: StopFunction | None = None,
-    handshake_fn_opt_state: Callable | None = None,
     **hyperparameters,
 ) -> UpdateClass:
     params, static = eqx.partition(task.model, eqx.is_inexact_array)
@@ -425,16 +418,12 @@ def optax_update_extra_args(
         opt_hash=opt_hash,
     )
 
-    handshake_fn = best
-
     return UpdateClass(
         init_fn=init_fn,
-        handshake_fn=handshake_fn,
         step_fn=step_fn,
         popsize=popsize,
         hash=opt_hash,
         stop_fn=stop_fn,
-        handshake_fn_opt_state=handshake_fn_opt_state,
     )
 
 
@@ -446,7 +435,6 @@ def evosax_distribution_update(
     bounded: tuple[float, float] | None = (None, None),
     sampler: Callable = random_sampling,
     stop_fn: StopFunction | None = None,
-    handshake_fn_opt_state: Callable | None = None,
     **hyperparameters,
 ) -> UpdateClass:
     params, static = eqx.partition(task.model, eqx.is_inexact_array)
@@ -462,18 +450,10 @@ def evosax_distribution_update(
         popsize=popsize,
         es_params=optimizer.default_params.replace(**hyperparameters),
         opt_hash=opt_hash,
-        handshake_fn_opt_state=handshake_fn_opt_state,
-    )
-
-    handshake_fn = partial(
-        best_one,
-        task=task,
-        sampler=sampler,
     )
 
     return UpdateClass(
         init_fn=init_fn,
-        handshake_fn=handshake_fn,
         step_fn=step_fn,
         popsize=popsize,
         hash=opt_hash,
@@ -506,15 +486,8 @@ def evosax_population_update(
         opt_hash=opt_hash,
     )
 
-    handshake_fn = partial(
-        best_one,
-        task=task,
-        sampler=sampler,
-    )
-
     return UpdateClass(
         init_fn=init_fn,
-        handshake_fn=handshake_fn,
         step_fn=step_fn,
         popsize=popsize,
         hash=opt_hash,
@@ -601,6 +574,5 @@ OPTIMIZER_MAPPING: dict[str, UpdateClass] = {
         optax_update_extra_args,
         optimizer=optax.lbfgs,
         popsize=1,
-        handshake_fn_opt_state=reset_opt_state,
     ),
 }

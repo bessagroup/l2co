@@ -10,7 +10,7 @@ from __future__ import annotations
 # Third-party
 import jax
 import jax.numpy as jnp
-from jaxtyping import PRNGKeyArray, PyTree
+from jaxtyping import Array, Float, Int, PRNGKeyArray, PyTree
 
 from ._typing import OptHistoryType
 
@@ -30,12 +30,12 @@ __status__ = "Stable"
 
 
 class OptHistory(OptHistoryType):
-    loss: jax.Array
-    params: PyTree
-    grads: PyTree
-    update_step: jax.Array
-    fevals: jax.Array
-    iterations: jax.Array
+    loss: Float[Array, " popsize"]
+    params: Float[PyTree, " popsize dim"]
+    grads: Float[PyTree, " popsize dim"]
+    update_step: Int[Array, " popsize"]
+    fevals: Int[Array, " popsize"]
+    iterations: Int[Array, " popsize"]
 
     @classmethod
     def init(cls, params: PyTree, popsize: int, last_step: int) -> OptHistory:

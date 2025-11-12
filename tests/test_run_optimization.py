@@ -1,30 +1,49 @@
 from functools import partial
 
+import jax.random as jr
 import pytest
-import xarray as xr
+from bbob_jax import registry
 
 from l2co._src.budget import based_on_dimensionality
+from l2co._src.optimizerschedule import OptimizationStep
 from l2co._src.run_optimization import (
-    run_optimization_schedule_multiple_realizations,
+    RunOptimization,
+    initialize_optimizer,
+    run_optimization_many_realizations,
 )
+from l2co._src.tasks.benchmark_task import create_bbob_task
+from l2co.sampling import normal_sampling
 
-from . import OPTIMIZATION_SCHEDULES
+from . import OPTIMIZATION_STEPS
 
 # =============================================================================
 
 
-@pytest.mark.parametrize("bounded", [(0.0, 1.0), None], ids=["bounded_0_1", "bounded_none"])
-@pytest.mark.parametrize("optimization_schedule", OPTIMIZATION_SCHEDULES, ids=lambda s: f"optimizer_{s.steps[0].optimizer}")
-def test_optimization_schedules(benchmark_task, bounded, optimization_schedule):
-    res = run_optimization_schedule_multiple_realizations(
-        task=benchmark_task, optimization_schedule=optimization_schedule,
-        budget_fn=partial(based_on_dimensionality, budget_per_dimension=5),
-        seed=42,
-        partition_factor=1.0,
-        n_realizations=2,
-        include_input=False,
-        bounded=bounded,
-        sampler=None)
+@pytest.mark.parametrize("step", OPTIMIZATION_STEPS)
+@pytest.mark.parametrize("fn_name", ["sphere", "rastrigin"])
+@pytest.mark.parametrize("dim", [2, 5])
+def test_optimization_schedules(
+    step: OptimizationStep, fn_name: str, dim: int
+):
+    task = create_bbob_task(
+        fn_name=fn_name,
+        seed=0,
+        dimensionality=dim,
+    )
+    key = jr.key(0)
+    bounded = (None, None)
+    update_state, update_class = initialize_optimizer(
+        optimizer=step, task=task, bounded=bounded, key=key
+    )
 
-    assert res is not None
-    assert isinstance(res, xr.Dataset)
+    history_state = run_optimization_many_realizations(
+        update_state=update_state,
+        optimizer=update_class,
+        sampler=normal_sampling,
+        task=task,
+        n_iterations=5,
+        n_realizations=2,
+        key=key,
+    )
+
+    data_xarr = history_state.to_xarray_realizations()

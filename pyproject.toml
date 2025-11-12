@@ -52,6 +52,11 @@ dev = [
 line-length = 79
 
 [tool.ruff.lint]
+fixable = [
+    "I001",
+    "F401",
+    "UP"
+]
 select = [
     "E",   # pycodestyle errors
     "W",   # pycodestyle warnings
@@ -62,9 +67,12 @@ select = [
 ]
 ignore = [
     "E226",
+    "E402",
+    "E721",
     "E3",
     "E731",
     "C901",
+    "F722",
 ]
 
 exclude = [

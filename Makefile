@@ -38,21 +38,9 @@ html:
 	@echo "Build finished. The HTML pages are in $(BUILDDIR)/html."
 
 test:
-	pytest
+	uv run pytest
 	@echo
 	@echo "Test finished"
-
-test-smoke:
-	pytest -v -s -m smoke
-	@echo
-	@echo "Smoke test finished"
-	
-test-smoke-html:
-	pytest -v -s -m smoke --cov-report html
-	@echo
-	@echo "Smoke test finished. The coverage report HTML pages are in ./htmlcov/index.html"
-	xdg-open ./htmlcov/index.html
-	
 
 test-html:
 	pytest --cov-report html
@@ -66,14 +54,5 @@ build:
 	@echo "Building package"
 	python -m build
 	
-upload-testpypi:
-	make build
-	@echo "Uploading the package to Test PyPI via Twine ..."
-	twine upload -r testpypi $(PACKAGEDIR)/* --verbose
-
-upload:
-	@echo "Uploading the package to PyPI via Twine ..."
-	twine upload $(PACKAGEDIR)/* --verbose
-
 panel:
 	panel serve src/${PACKAGENAME}/app.py --dev --show

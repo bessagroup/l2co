@@ -14,7 +14,7 @@ import jax
 import jax.numpy as jnp
 import numpy as onp
 import xarray as xr
-from jaxtyping import PyTree
+from jaxtyping import Array, Float, Int, PyTree
 
 from ._typing import OptHistoryType
 from .naming import (
@@ -40,13 +40,13 @@ __status__ = "Stable"
 
 
 class HistoryState(eqx.Module):
-    input_mean: PyTree  # shape: (n_iterations, dim)
-    output_min: jax.Array  # shape: (n_iterations,)
-    output_mean: jax.Array  # shape: (n_iterations,)
-    output_std: jax.Array  # shape: (n_iterations,)
-    update_step: jax.Array  # shape: (n_iterations,)
-    fevals: jax.Array  # shape: (n_iterations,)
-    iterations: jax.Array  # shape: (n_iterations,)
+    input_mean: Float[Array, "n_iterations dim"]
+    output_min: Float[Array, " n_iterations"]
+    output_mean: Float[Array, " n_iterations"]
+    output_std: Float[Array, " n_iterations"]
+    update_step: Float[Array, " n_iterations"]
+    fevals: Int[Array, " n_iterations"]
+    iterations: Int[Array, " n_iterations"]
 
     @classmethod
     def init(cls, n_iterations: int, params: PyTree) -> HistoryState:

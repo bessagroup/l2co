@@ -21,7 +21,6 @@ import l2co._src.tree_utils as tree_utils
 from l2co import plotting, sampling
 from l2co._src._logging import logger
 from l2co._src.data_loader import DataLoader, OptimizationDynamics
-from l2co._src.handshake import new
 from l2co._src.history_state import HistoryState
 from l2co._src.optimizers import OPTIMIZER_MAPPING, OptHistory, UpdateClass
 from l2co._src.optimizerschedule import OptimizationStep
@@ -55,7 +54,6 @@ __all__ = [
     "RunOptimization",
     "Task",
     "UpdateState",
-    "new",
     "plotting",
     "sampling",
     "tree_utils",
