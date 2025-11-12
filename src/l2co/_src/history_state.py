@@ -16,7 +16,6 @@ import numpy as onp
 import xarray as xr
 from jaxtyping import Array, Float, Int, PyTree
 
-from ._typing import OptHistoryType
 from .naming import (
     BUDGET,
     FEVALS,
@@ -30,6 +29,7 @@ from .naming import (
     REALIZATION,
     UPDATE_STEP,
 )
+from .typing import OptHistoryType
 
 #                                                          Authorship & Credits
 # =============================================================================

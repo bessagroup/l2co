@@ -18,11 +18,12 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Float, Int, PRNGKeyArray, PyTree
 
-# Local
-from ._typing import InputParameters, OptHistoryType
 from .batching import batch_iter
 from .task import Task
 from .tree_utils import combined_loss, get_best, tree_where
+
+# Local
+from .typing import InputParameters, OptHistoryType
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -92,31 +93,12 @@ class UpdateState(eqx.Module):
         self, task: Task, sampler: Callable, key: PRNGKeyArray
     ) -> UpdateState:
         n_samples = self.memory_size
-        params, static = eqx.partition(task.model, eqx.is_inexact_array)
+        params, _ = eqx.partition(task.model, eqx.is_inexact_array)
 
         # Sample new parameters using the provided sampler
         new_params = sampler(key, params, n_samples)
 
-        data_iter = batch_iter(
-            dataset=task.loaded_dataset,
-            n_evals=n_samples,
-            batch_size=task.batch_size,
-            key=task.dataset.get("seed", None),
-        )
-
-        if task.pass_rng:
-            rng_sample = {"key": jr.split(key, num=n_samples)}
-        else:
-            rng_sample = {}
-
-        losses = jax.vmap(
-            partial(
-                combined_loss,
-                static=static,
-                loss_fn=task.loss_fn,
-                **next(data_iter),
-            )
-        )(new_params, **rng_sample)
+        losses = evaluate(params=new_params, task=task, key=key)
 
         best_params, best_loss = get_best(new_params, losses)
 

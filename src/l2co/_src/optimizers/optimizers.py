@@ -28,19 +28,19 @@ from jaxtyping import PRNGKeyArray, PyTree
 from optax import OptState as OptaxState
 
 # Local
-from ._typing import (
+from l2co._src.opt_history import OptHistory
+from l2co._src.sampler import random_sampling
+from l2co._src.task import Task
+from l2co._src.tree_utils import combined_loss
+from l2co._src.typing import (
     InitFunction,
     InputParameters,
     LossFunction,
     StepFunction,
     StopFunction,
 )
-from .opt_history import OptHistory
-from .sampler import random_sampling
-from .task import Task
-from .tree_utils import combined_loss
-from .update_class import UpdateClass
-from .update_state import UpdateState
+from l2co._src.update_class import UpdateClass
+from l2co._src.update_state import UpdateState
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -563,16 +563,28 @@ def adam_variable_updates(
     )
 
 
-OPTIMIZER_MAPPING: dict[str, UpdateClass] = {
-    "adam": partial(optax_update, optimizer=optax.adam, popsize=1),
-    "adam_variable_updates": adam_variable_updates,
-    "sgd": partial(optax_update, optimizer=optax.sgd, popsize=1),
-    "sepcmaes": sepcmaes_variable_popsize,
-    "cmaes": cmaes_variable_popsize,
-    "pso": pso_variable_popsize,
-    "lbfgsb": partial(
-        optax_update_extra_args,
-        optimizer=optax.lbfgs,
-        popsize=1,
-    ),
-}
+# =============================================================================
+
+
+def optimizer_mapping(name: str) -> UpdateClass:
+    match name:
+        case "adam":
+            return partial(optax_update, optimizer=optax.adam, popsize=1)
+        case "adam_variable_updates":
+            return adam_variable_updates
+        case "sgd":
+            return partial(optax_update, optimizer=optax.sgd, popsize=1)
+        case "sepcmaes":
+            return sepcmaes_variable_popsize
+        case "cmaes":
+            return cmaes_variable_popsize
+        case "pso":
+            return pso_variable_popsize
+        case "lbfgsb":
+            return partial(
+                optax_update_extra_args,
+                optimizer=optax.lbfgs,
+                popsize=1,
+            )
+        case _:
+            raise ValueError(f"Optimizer '{name}' not recognized.")

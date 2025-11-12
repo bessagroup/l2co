@@ -76,3 +76,5 @@ StopFunction = Callable[[OptHistoryType, PyTree, int], bool]
 InitFunction = Callable[[PyTree], OptaxOptState | EvoSaxState]
 
 LossFunction = Any
+
+BudgetFn = Callable[[Any], int]

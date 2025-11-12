@@ -15,7 +15,7 @@ import optax
 from jaxtyping import PyTree
 
 # Local
-from ._typing import OptHistoryType
+from .typing import OptHistoryType
 
 #                                                          Authorship & Credits
 # =============================================================================

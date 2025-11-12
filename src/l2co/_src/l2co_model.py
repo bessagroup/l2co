@@ -8,12 +8,12 @@ Module for creating the L2CO model.
 # Standard
 from __future__ import annotations
 
+import logging
+
 # Third-party
 import jax.numpy as jnp
 import pandas as pd
 from sklearn.pipeline import Pipeline
-
-from ._logging import logger
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -21,6 +21,10 @@ __author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
 __credits__ = ["Martin van der Schelling"]
 __status__ = "Stable"
 # =============================================================================
+
+logger = logging.getLogger(__name__)
+
+# ============================================================================
 
 
 def train_stage0_model(

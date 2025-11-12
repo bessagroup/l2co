@@ -36,6 +36,7 @@ management and data generation.
 
 # Standard
 import gc
+import logging
 from collections.abc import Callable
 from time import time
 
@@ -48,19 +49,24 @@ from f3dasm.datageneration import DataGenerator
 from jaxtyping import PRNGKeyArray
 
 # Local
-from ._logging import logger
-from .history_state import HistoryState
-from .naming import INPUT_MEAN
-from .optimizers import OPTIMIZER_MAPPING, OptHistory, UpdateClass
-from .optimizerschedule import OptimizationStep
-from .task import Task
-from .update_state import UpdateState
+from l2co._src.history_state import HistoryState
+from l2co._src.naming import INPUT_MEAN
+from l2co._src.opt_history import OptHistory
+from l2co._src.optimizers import optimizer_mapping
+from l2co._src.optimizerschedule import OptimizationStep
+from l2co._src.task import Task
+from l2co._src.update_class import UpdateClass
+from l2co._src.update_state import UpdateState
 
 #                                                          Authorship & Credits
 # =============================================================================
 __author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
 __credits__ = ["Martin van der Schelling"]
 __status__ = "Stable"
+# =============================================================================
+
+logger = logging.getLogger(__name__)
+
 # =============================================================================
 
 
@@ -92,7 +98,7 @@ def initialize_optimizer(
         A tuple containing the initialized update state and update class.
     """
 
-    update_class: UpdateClass = OPTIMIZER_MAPPING[optimizer.optimizer](
+    update_class: UpdateClass = optimizer_mapping(optimizer.optimizer)(
         **optimizer.hyperparameters,
         task=task,
         opt_hash=optimizer.hash,

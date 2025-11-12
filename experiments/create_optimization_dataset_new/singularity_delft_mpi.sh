@@ -53,11 +53,11 @@ echo " Execution Information"
 echo "======================================="
 echo "Project Folder:   $projectfolder"
 echo "Run Directory:    $run_dir"
-echo "Executing: srun --mpi=pmix apptainer exec $CONTAINER python3 -u $SCRIPT ++hydra.run.dir=$run_dir ++model_dir=$model_dir ++project_dir=$project_dir $@" 
+echo "Executing: srun --mpi=pmix apptainer exec $CONTAINER python3 -u $SCRIPT ++hydra.run.dir=$run_dir ++model_dir=$model_dir ++project_dir=$project_dir ++mode=mpi $@" 
 echo "======================================="
 
 export JAX_PLATFORM_NAME=cpu
 
 # Run the Python script with MPI
 # singularity exec $CONTAINER python3 -u $SCRIPT ++hydra.run.dir=$run_dir $@
-srun --mpi=pmix apptainer exec $CONTAINER python3 -u $SCRIPT ++hydra.run.dir=$run_dir ++model_dir=$model_dir ++project_dir=$project_dir $@
+srun --mpi=pmix apptainer exec $CONTAINER python3 -u $SCRIPT ++hydra.run.dir=$run_dir ++model_dir=$model_dir ++project_dir=$project_dir ++mode=mpi $@

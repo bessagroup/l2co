@@ -19,11 +19,11 @@ __credits__ = ["Martin van der Schelling"]
 __status__ = "Stable"
 # =============================================================================
 
-BUDGET_STEPS = 1000
+DEFAULT_BUDGET_STEPS = 1000
 
 
 def validation_fn(
-    x: xr.Dataset, budget_steps: int = BUDGET_STEPS
+    x: xr.Dataset, budget_steps: int = DEFAULT_BUDGET_STEPS
 ) -> xr.Dataset:
     x = x.assign_coords({BUDGET: np.linspace(0.0, 1.0, x[BUDGET].size)})
     x_interp = x.interp(

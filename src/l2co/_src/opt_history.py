@@ -1,5 +1,5 @@
 """
-Module for the update class.
+Module for the opt history.
 """
 
 #                                                                       Modules
@@ -12,10 +12,9 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float, Int, PRNGKeyArray, PyTree
 
-from ._typing import OptHistoryType
-
 # Local
 from .task import Task
+from .typing import OptHistoryType
 from .update_state import UpdateState
 
 #                                                          Authorship & Credits
@@ -23,9 +22,6 @@ from .update_state import UpdateState
 __author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
 __credits__ = ["Martin van der Schelling"]
 __status__ = "Stable"
-# =============================================================================
-
-
 # =============================================================================
 
 

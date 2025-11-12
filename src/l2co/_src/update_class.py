@@ -16,11 +16,10 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import PRNGKeyArray, PyTree
 
-from ._typing import InitFunction, StepFunction, StopFunction
-
 # Local
 from .history_state import HistoryState
 from .opt_history import OptHistory
+from .typing import InitFunction, StepFunction, StopFunction
 from .update_state import UpdateState
 
 #                                                          Authorship & Credits

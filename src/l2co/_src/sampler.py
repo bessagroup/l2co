@@ -12,7 +12,7 @@ import jax.random as jr
 from jaxtyping import PRNGKeyArray, PyTree
 
 # Local
-from ._typing import InputParameters
+from .typing import InputParameters
 
 #                                                          Authorship & Credits
 # =============================================================================

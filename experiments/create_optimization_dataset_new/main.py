@@ -1,4 +1,5 @@
 # Standard
+import logging
 import socket
 from dataclasses import replace
 from pathlib import Path
@@ -15,12 +16,12 @@ from mpi4py import MPI
 from omegaconf import DictConfig
 
 # Local
-from l2co import OptimizationStep, Task, logger
-from l2co._src.run_optimization import RunOptimization
+from l2co import OptimizationStep, RunOptimization, Task
 from l2co._src.tasks.continue_from_path import retrieve_tasks
 
 # =============================================================================
 
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 
@@ -32,7 +33,6 @@ def main(config):
         rank = comm.Get_rank()
         size = comm.Get_size()
 
-        logger.setLevel(config.log_level)
         f3dasm_logger.setLevel(config.log_level)
 
         f3dasm_logger.info(

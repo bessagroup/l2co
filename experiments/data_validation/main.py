@@ -1,25 +1,35 @@
-# import argparse
+# Standard
 import hashlib
 import json
+import logging
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 from typing import Any
 
+# Third-party
 import hydra
 import numpy as np
 import pandas as pd
 import xarray as xr
 from f3dasm import ExperimentData
 
-from l2co import logger as l2co_logger
-from l2co._src.naming import FEATURE, INPUT_DIM, REALIZATION, SCHEDULE, TASK_ID
-from l2co._src.optimizerschedule import OptimizationStep
-from l2co._src.task import Task
-from l2co._src.validation import validation_fn
+# Local
+from l2co import OptimizationStep, Task, validation_fn
+from l2co.naming import FEATURE, INPUT_DIM, REALIZATION, SCHEDULE, TASK_ID
+
+# =============================================================================
 
 OPTIMIZATION_DATA_SUFFIX = ".odata"
 OPTIMIZATION_SCHEDULE_SUFFIX = ".osched"
+
+
+# =============================================================================
+
+logger = logging.getLogger("l2co")
+
+
+# =============================================================================
 
 
 @hydra.main(config_path=".", config_name="config")
@@ -37,7 +47,7 @@ def main(config):
         (path / "entire_dataset").with_suffix(OPTIMIZATION_DATA_SUFFIX)
     )
 
-    l2co_logger.info(
+    logger.info(
         f"Entire dataset stored at {(path / 'entire_dataset').with_suffix(OPTIMIZATION_DATA_SUFFIX)}"
     )
 
@@ -51,12 +61,12 @@ def main(config):
             )
         )
 
-        l2co_logger.info(
+        logger.info(
             f"Entire dataset schedules stored at "
             f"{(path / 'entire_dataset_schedules').with_suffix(OPTIMIZATION_SCHEDULE_SUFFIX)}"
         )
 
-    l2co_logger.info("End of the program")
+    logger.info("End of the program")
 
 
 def create_entire_dataset(
@@ -291,7 +301,7 @@ def create_optimization_data(
     # Fill al nans with the placeholder path
     df: pd.DataFrame = df.fillna(placeholder_path)
 
-    l2co_logger.info("Starting opening the entire dataset")
+    logger.info("Starting opening the entire dataset")
 
     xarr_full = xr.open_mfdataset(
         df.to_numpy().tolist(),
@@ -311,7 +321,7 @@ def create_optimization_data(
     )
 
     # Open the whole thing:
-    l2co_logger.info("Opening the whole thing")
+    logger.info("Opening the whole thing")
 
     return xarr_full, placeholder_path
 
