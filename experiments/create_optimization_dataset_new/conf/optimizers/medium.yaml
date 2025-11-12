@@ -1,0 +1,16 @@
+- optimizer: sepcmaes
+  stopping_criteria:
+    type: covariance_matrix
+    tol: 1e-12
+- optimizer: adam
+  hyperparameters:
+    learning_rate: 1e-2
+  stopping_criteria:
+    type: combined
+    grad_tol: 1e-3
+    loss_tol: 1e-6
+- optimizer: lbfgsb
+  stopping_criteria:
+    type: combined
+    grad_tol: 1e-3
+    loss_tol: 1e-6
