@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Iterable
 from copy import deepcopy
+from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 from time import perf_counter
@@ -42,31 +43,28 @@ from sklearn.model_selection import train_test_split
 from .naming import (
     BATCH,
     BUDGET,
-    COST,
     FEATURE,
     FEVALS,
     ITERATIONS,
     OPT_CHOICE,
     OPT_HISTORY,
     OUTPUT_DIM,
-    OUTPUT_MEAN,
     OUTPUT_MIN,
     PERFORMANCE,
     PROBLEM,
     REALIZATION,
     SCHEDULE,
-    SEED,
     STAIRCASE,
-    SUCCESS,
-    TARGET,
     TASK_ID,
     TASK_LABELS,
     TRAJECTORY,
     UPDATE_STEP,
 )
 from .performance import (
+    ertd,
     output_cummin,
-    scale_by_problem,
+    performance_profile,
+    rtd,
     scale_by_problem_and_schedule,
     scale_by_task,
 )
@@ -90,6 +88,7 @@ PADDING_VALUE = 1.0
 # =============================================================================
 
 
+@dataclass
 class DataLoader:
     """
     Data loader for optimization dynamics in the L2CO framework.
@@ -109,36 +108,19 @@ class DataLoader:
         Labels of the optimization problems.
     """
 
-    def __init__(
-        self,
-        data: xr.Dataset,
-        task_labels: xr.DataArray,
-    ):
-        """
-        A data loader class for stage0 of the L2CO framework.
-
-        Parameters
-        ----------
-        data : xarray.Dataset
-            The raw optimization trajectories.
-        task_labels: pd.DataFrame
-            The labels of the optimization problems.
-        """
-        self.data = data
-        self.task_labels = task_labels
+    data: xr.Dataset
+    task_labels: xr.DataArray
 
     def __add__(self, __o: DataLoader) -> DataLoader:
         if __o is None:
             return self
 
-        data = xr.concat([self.data, __o.data], dim=PROBLEM)
-        task_labels = xr.concat(
-            [self.task_labels, __o.task_labels], dim=PROBLEM
-        )
-
-        return DataLoader(
-            data=data,
-            task_labels=task_labels,
+        return replace(
+            self,
+            data=xr.concat([self.data, __o.data], dim=PROBLEM),
+            task_labels=xr.concat(
+                [self.task_labels, __o.task_labels], dim=PROBLEM
+            ),
         )
 
     #                                                  Alternative Constructors
@@ -173,7 +155,7 @@ class DataLoader:
         ).T
 
         return cls(
-            data=data.sortby(SCHEDULE),
+            data=data,
             task_labels=task_labels,
         )
 
@@ -191,174 +173,195 @@ class DataLoader:
             )
         else:
             data = xr.open_dataset(_path)
-        # data = xr.open_dataset((_path / data_filename).with_suffix(".odata"))
         return cls.from_xarray(data=data)
 
-    #                                                     Storing and exporting
+    #                                                                 Exporting
     # =========================================================================
 
     def to_params(
-        self, t: float, t_start: float = 0.0, t_end: float = 1.0
-    ) -> xr.Dataset:
-        """
-        Generate parameters for optimization tasks within a specific
-        budget range.
+        self, t: int, cost_metric: Literal["fevals", "iterations"] = "fevals"
+    ):
+        # TODO: a 'nan' in the performance could either mean 'not solved yet'
+        # or 'stopped'. Distinguish these two cases!
 
-        Parameters
-        ----------
-        t : float
-            The budget to select.
-        t_start : float, optional
-            The starting budget, by default 0.0.
-        t_end : float, optional
-            The ending budget, by default 1.0.
+        # Scale the data
+        p = scale_by_task(output_cummin(self.data[OUTPUT_MIN])).ffill(BUDGET)
+        dims = self.task_labels.sel(
+            {FEATURE: "dimensionality"}, drop=True
+        ).astype(int)
 
-        Returns
-        -------
-        xr.Dataset
-            Dataset containing task parameters.
-        """
+        # Select the cost metric
+        match cost_metric:
+            case "iterations":
+                cost_measure = self.data[ITERATIONS]
+            case "fevals":
+                cost_measure = self.data[FEVALS]
+            case _:
+                raise ValueError(
+                    f"Unknown cost metric: {cost_metric}. "
+                    f"Choose 'fevals' or 'iterations'."
+                )
 
-        d_input = self.select_t(t_start=t_start, t=t, select_one_before=True)
-        d_output = self.select_t(t_start=t, t=t_end, select_one_before=False)
-
-        perf = output_cummin(
-            d_output.data.assign_coords(
-                {
-                    OPT_HISTORY: d_input.hash_opt_step,
-                    OPT_CHOICE: d_output.hash_opt_step,
-                }
-            )[OUTPUT_MIN]
-        ).ffill(BUDGET)
-
-        total = []
-
-        for fp in np.unique(perf[OPT_HISTORY]):
-            _perf = perf.where(perf[OPT_HISTORY] == fp)
-            total.append(scale_by_problem_and_schedule(_perf))
-
-        performance = xr.merge(total)[OUTPUT_MIN].isel(budget=-1, drop=True)
-
-        ds = xr.Dataset(
-            {
-                TASK_LABELS: self.task_labels,
-                TRAJECTORY: d_input.trajectory,
-                STAIRCASE: d_input.staircase,
-                UPDATE_STEP: d_input.data[UPDATE_STEP],
-                PERFORMANCE: performance,
-            }
+        _ertd = ertd(
+            performance=p,
+            dims=dims,
+            cost_measure=cost_measure,
+            cost_values=np.array([t]),
         )
 
-        new_params = ds.groupby(
-            (OPT_HISTORY, PROBLEM, OUTPUT_DIM), restore_coord_dims=True
-        ).first()
+        return _ertd.mean("cost_per_dim").sortby(TASK_ID)
 
-        def f(x, first_part, second_part):
-            # Create DataFrame
-            df = pd.DataFrame(
-                {
-                    OPT_HISTORY: first_part,
-                    OPT_CHOICE: second_part,
-                    PERFORMANCE: x,
-                }
-            )
+    # def to_params(
+    #     self, t: float, t_start: float = 0.0, t_end: float = 1.0
+    # ) -> xr.Dataset:
+    #     """
+    #     Generate parameters for optimization tasks within a specific
+    #     budget range.
 
-            # Pivot table: rows = y, columns = z, values = x
-            matrix = df.pivot_table(
-                index=OPT_HISTORY,
-                columns=OPT_CHOICE,
-                values=PERFORMANCE,
-                dropna=False,
-            )
+    #     Parameters
+    #     ----------
+    #     t : float
+    #         The budget to select.
+    #     t_start : float, optional
+    #         The starting budget, by default 0.0.
+    #     t_end : float, optional
+    #         The ending budget, by default 1.0.
 
-            # Convert to NumPy array (optional)
-            return matrix.to_numpy()
+    #     Returns
+    #     -------
+    #     xr.Dataset
+    #         Dataset containing task parameters.
+    #     """
 
-        new_params = new_params.assign_coords(
-            {OPT_CHOICE: np.unique(ds[OPT_CHOICE])}
-        )
+    #     d_input = self.select_t(t_start=t_start, t=t, select_one_before=True)
+    #     d_output = self.select_t(t_start=t, t=t_end, select_one_before=False)
 
-        new_params[PERFORMANCE] = xr.apply_ufunc(
-            f,
-            ds[PERFORMANCE],
-            ds[OPT_HISTORY],
-            ds[OPT_CHOICE],
-            input_core_dims=[[SCHEDULE], [SCHEDULE], [SCHEDULE]],
-            output_core_dims=[[OPT_HISTORY, OPT_CHOICE]],
-            vectorize=True,
-        )
+    #     perf = output_cummin(
+    #         d_output.data.assign_coords(
+    #             {
+    #                 OPT_HISTORY: d_input.hash_opt_step,
+    #                 OPT_CHOICE: d_output.hash_opt_step,
+    #             }
+    #         )[OUTPUT_MIN]
+    #     ).ffill(BUDGET)
 
-        # Transpose dims
-        desired_order = (PROBLEM, OUTPUT_DIM, OPT_HISTORY)
+    #     total = []
 
-        return new_params.map(
-            lambda var: var.transpose(
-                *[d for d in desired_order if d in var.dims],
-                *[d for d in var.dims if d not in desired_order],
-            )
-        )
+    #     for fp in np.unique(perf[OPT_HISTORY]):
+    #         _perf = perf.where(perf[OPT_HISTORY] == fp)
+    #         total.append(scale_by_problem_and_schedule(_perf))
 
-    def to_all_params(
-        self,
-        window_size: float,
-        budget_size: int | None = None,
-        include_last: bool = False,
-    ) -> xr.DataTree:
-        """
-        Generate parameters for all tasks over multiple budget windows.
+    #     performance = xr.merge(total)[OUTPUT_MIN].isel(budget=-1, drop=True)
 
-        Parameters
-        ----------
-        window_size : float
-            Size of each budget window.
-        budget_size : Optional[int], optional
-            Total budget size, by default None.
-        include_last : bool, optional
-            Whether to include the last window, by default False.
+    #     ds = xr.Dataset(
+    #         {
+    #             TASK_LABELS: self.task_labels,
+    #             TRAJECTORY: d_input.trajectory,
+    #             STAIRCASE: d_input.staircase,
+    #             UPDATE_STEP: d_input.data[UPDATE_STEP],
+    #             PERFORMANCE: performance,
+    #         }
+    #     )
 
-        Returns
-        -------
-        xr.DataTree
-            DataTree containing parameters for all tasks.
-        """
+    #     new_params = ds.groupby(
+    #         (OPT_HISTORY, PROBLEM, OUTPUT_DIM), restore_coord_dims=True
+    #     ).first()
 
-        if budget_size is None:
-            budget_size = self.data[BUDGET].size
+    #     def f(x, first_part, second_part):
+    #         # Create DataFrame
+    #         df = pd.DataFrame(
+    #             {
+    #                 OPT_HISTORY: first_part,
+    #                 OPT_CHOICE: second_part,
+    #                 PERFORMANCE: x,
+    #             }
+    #         )
 
-        if include_last:
-            window_end = 1.0 + window_size
-        else:
-            window_end = 1.0
+    #         # Pivot table: rows = y, columns = z, values = x
+    #         matrix = df.pivot_table(
+    #             index=OPT_HISTORY,
+    #             columns=OPT_CHOICE,
+    #             values=PERFORMANCE,
+    #             dropna=False,
+    #         )
 
-        _dict = {}
+    #         # Convert to NumPy array (optional)
+    #         return matrix.to_numpy()
 
-        for t in np.arange(window_size, window_end, window_size):
-            t_end = np.minimum(t + window_size, 1.0)
-            params = self.to_params(t_start=0.0, t=t, t_end=t_end)
-            params[BUDGET] = range(
-                budget_size - params[BUDGET].size, budget_size
-            )
+    #     new_params = new_params.assign_coords(
+    #         {OPT_CHOICE: np.unique(ds[OPT_CHOICE])}
+    #     )
 
-            params = params.reindex(
-                budget=range(budget_size), fill_value=PADDING_VALUE
-            )
+    #     new_params[PERFORMANCE] = xr.apply_ufunc(
+    #         f,
+    #         ds[PERFORMANCE],
+    #         ds[OPT_HISTORY],
+    #         ds[OPT_CHOICE],
+    #         input_core_dims=[[SCHEDULE], [SCHEDULE], [SCHEDULE]],
+    #         output_core_dims=[[OPT_HISTORY, OPT_CHOICE]],
+    #         vectorize=True,
+    #     )
 
-            params[UPDATE_STEP] = params[UPDATE_STEP].astype(str)
+    #     # Transpose dims
+    #     desired_order = (PROBLEM, OUTPUT_DIM, OPT_HISTORY)
 
-            _dict[f"{t:.2f}"] = params
+    #     return new_params.map(
+    #         lambda var: var.transpose(
+    #             *[d for d in desired_order if d in var.dims],
+    #             *[d for d in var.dims if d not in desired_order],
+    #         )
+    #     )
 
-        return xr.DataTree.from_dict(_dict)
+    # def to_all_params(
+    #     self,
+    #     window_size: float,
+    #     budget_size: int | None = None,
+    #     include_last: bool = False,
+    # ) -> xr.DataTree:
+    #     """
+    #     Generate parameters for all tasks over multiple budget windows.
 
-    @property
-    def hash_opt_step(self) -> xr.DataArray:
-        return xr.apply_ufunc(
-            lambda x: int(hashlib.sha256(x.tobytes()).hexdigest()[:8], 16)
-            % (2**31 - 1),
-            self.data[UPDATE_STEP],
-            input_core_dims=[[BUDGET]],
-            output_core_dims=[[]],
-            vectorize=True,
-        )
+    #     Parameters
+    #     ----------
+    #     window_size : float
+    #         Size of each budget window.
+    #     budget_size : Optional[int], optional
+    #         Total budget size, by default None.
+    #     include_last : bool, optional
+    #         Whether to include the last window, by default False.
+
+    #     Returns
+    #     -------
+    #     xr.DataTree
+    #         DataTree containing parameters for all tasks.
+    #     """
+
+    #     if budget_size is None:
+    #         budget_size = self.data[BUDGET].size
+
+    #     if include_last:
+    #         window_end = 1.0 + window_size
+    #     else:
+    #         window_end = 1.0
+
+    #     _dict = {}
+
+    #     for t in np.arange(window_size, window_end, window_size):
+    #         t_end = np.minimum(t + window_size, 1.0)
+    #         params = self.to_params(t_start=0.0, t=t, t_end=t_end)
+    #         params[BUDGET] = range(
+    #             budget_size - params[BUDGET].size, budget_size
+    #         )
+
+    #         params = params.reindex(
+    #             budget=range(budget_size), fill_value=PADDING_VALUE
+    #         )
+
+    #         params[UPDATE_STEP] = params[UPDATE_STEP].astype(str)
+
+    #         _dict[f"{t:.2f}"] = params
+
+    #     return xr.DataTree.from_dict(_dict)
 
     def to_spreadsheet(self, criteria: Literal["min", "mean"] = "min"):
         """
@@ -457,6 +460,17 @@ class DataLoader:
     # =========================================================================
 
     @property
+    def hash_opt_step(self) -> xr.DataArray:
+        return xr.apply_ufunc(
+            lambda x: int(hashlib.sha256(x.tobytes()).hexdigest()[:8], 16)
+            % (2**31 - 1),
+            self.data[UPDATE_STEP],
+            input_core_dims=[[BUDGET]],
+            output_core_dims=[[]],
+            vectorize=True,
+        )
+
+    @property
     def n_iterations(self) -> int:
         return self.data[BUDGET].size
 
@@ -499,76 +513,6 @@ class DataLoader:
             The optimizers coordinate.
         """
         return self.data[SCHEDULE]
-
-    @property
-    def staircase(self) -> xr.DataArray:
-        return scale_by_problem(output_cummin(self.data[OUTPUT_MIN])).ffill(
-            BUDGET
-        )
-
-    @property
-    def trajectory(self) -> xr.DataArray:
-        """
-        Returns the trajectory of the optimization process.
-
-        Returns
-        -------
-        xr.DataArray
-            Trajectory data.
-        """
-        trajectory = scale_by_problem(self.data[OUTPUT_MEAN])
-        return trajectory.transpose(SCHEDULE, OUTPUT_DIM, PROBLEM, BUDGET)
-
-    def _performance(
-        self, include_best: bool, exclude_optimizer: str | None = None
-    ) -> xr.DataArray:
-        """
-        Computes the performance of the optimizers.
-
-        Parameters
-        ----------
-        include_best : bool
-            Whether to include the best optimizer in the performance.
-        exclude_optimizer : str, optional
-            Name of the optimizer to exclude from the performance.
-
-        Returns
-        -------
-        xr.DataArray
-            Performance data.
-        """
-        t_start = perf_counter()
-        print("Triggered performance")
-
-        performance = scale_by_problem_and_schedule(
-            output_cummin(self.data[OUTPUT_MIN])
-        ).ffill(BUDGET)
-
-        if include_best:
-            sbs = calculate_sbs(
-                performance=performance, exclude_optimizer=exclude_optimizer
-            )
-            perf_sbs = (
-                performance.sel({SCHEDULE: sbs}, drop=True)
-                .reset_coords(SCHEDULE, drop=True)
-                .expand_dims({SCHEDULE: ["sbs"]})
-            )
-
-            vbs = calculate_vbs(
-                performance=performance, exclude_optimizer=exclude_optimizer
-            )
-
-            perf_vbs = (
-                performance.sel({SCHEDULE: vbs}, drop=True)
-                .reset_coords(SCHEDULE, drop=True)
-                .expand_dims({SCHEDULE: ["vbs"]})
-            )
-            performance = xr.merge([performance, perf_sbs, perf_vbs])[
-                OUTPUT_MIN
-            ]
-
-        print(f"Performance calculation took: {perf_counter() - t_start:0.2f}")
-        return performance
 
     @property
     def performance(self) -> xr.DataArray:
@@ -622,10 +566,7 @@ class DataLoader:
             dim=PROBLEM,
         )
 
-        return DataLoader(
-            task_labels=task_labels,
-            data=data,
-        )
+        return replace(self, data=data, task_labels=task_labels)
 
     def select_problems(self, problem_indices: xr.DataArray) -> DataLoader:
         """
@@ -690,9 +631,11 @@ class DataLoader:
         Selects on the problem dimension. Also sorts the problem indices on
         itemID.
         """
-        return DataLoader(
-            task_labels=self.task_labels.isel({PROBLEM: problems}),
+
+        return replace(
+            self,
             data=self.data.isel({PROBLEM: problems}),
+            task_labels=self.task_labels.isel({PROBLEM: problems}),
         )
 
     def train_test_split(
@@ -764,32 +707,13 @@ class DataLoader:
         else:
             t_prior = t_start
 
-        return DataLoader(
-            task_labels=self.task_labels,
+        return replace(
+            self,
             data=self.data.sel({BUDGET: slice(t_prior, t)}),
         )
 
     #                                                      Selecting optimizers
     # =========================================================================
-
-    def select_single_optimizers(self, squash: bool = False) -> DataLoader:
-        """
-        Select only the single optimizers.
-
-        Parameters
-        ----------
-        include_random_search : bool, optional
-            Whether to include the random search, by default False
-
-        Returns
-        -------
-        DataLoader
-            The data loader with only the single optimizers.
-        """
-        return self.select_optimizer(
-            optimizers=[o for o in self.optimizers.values if "+" not in o],
-            squash=squash,
-        )
 
     def select_optimizer(
         self, optimizers: Iterable[str] | str, squash: bool = False
@@ -823,50 +747,64 @@ class DataLoader:
         else:
             data = self.data.sel({SCHEDULE: optimizers})
 
-        return DataLoader(
-            task_labels=self.task_labels,
+        return replace(
+            self,
             data=data.sortby(SCHEDULE),
-        )
-
-    def query_optimizer(self, optimizer: str) -> DataLoader:
-        """
-        Filters the data for a specific optimizer.
-
-        Parameters
-        ----------
-        optimizer : str
-            Name of the optimizer to filter.
-
-        Returns
-        -------
-        DataLoader
-            A new DataLoader instance with filtered data.
-        """
-        filtered_optimizer = np.array(
-            [o for o in self.optimizers.values if o.startswith(optimizer)],
-            dtype=object,
-        )
-        data_selected = self.data.sel(
-            {SCHEDULE: filtered_optimizer}
-        ).assign_coords(
-            {
-                SCHEDULE: np.array(
-                    [
-                        o.split("+")[-1] if "+" in o else o
-                        for o in filtered_optimizer
-                    ],
-                    dtype=object,
-                )
-            }
-        )
-
-        return DataLoader(
-            task_labels=self.task_labels,
-            data=data_selected.sortby(SCHEDULE),
         )
 
     #                                                       Performance metrics
     # =========================================================================
+
+    def _performance(
+        self, include_best: bool, exclude_optimizer: str | None = None
+    ) -> xr.DataArray:
+        """
+        Computes the performance of the optimizers.
+
+        Parameters
+        ----------
+        include_best : bool
+            Whether to include the best optimizer in the performance.
+        exclude_optimizer : str, optional
+            Name of the optimizer to exclude from the performance.
+
+        Returns
+        -------
+        xr.DataArray
+            Performance data.
+        """
+        t_start = perf_counter()
+        print("Triggered performance")
+
+        performance = scale_by_problem_and_schedule(
+            output_cummin(self.data[OUTPUT_MIN])
+        ).ffill(BUDGET)
+
+        if include_best:
+            sbs = calculate_sbs(
+                performance=performance, exclude_optimizer=exclude_optimizer
+            )
+            perf_sbs = (
+                performance.sel({SCHEDULE: sbs}, drop=True)
+                .reset_coords(SCHEDULE, drop=True)
+                .expand_dims({SCHEDULE: ["sbs"]})
+            )
+
+            vbs = calculate_vbs(
+                performance=performance, exclude_optimizer=exclude_optimizer
+            )
+
+            perf_vbs = (
+                performance.sel({SCHEDULE: vbs}, drop=True)
+                .reset_coords(SCHEDULE, drop=True)
+                .expand_dims({SCHEDULE: ["vbs"]})
+            )
+            performance = xr.merge([performance, perf_sbs, perf_vbs])[
+                OUTPUT_MIN
+            ]
+
+        print(f"Performance calculation took: {perf_counter() - t_start:0.2f}")
+        return performance
 
     def performance_profile(
         self,
@@ -933,9 +871,9 @@ class DataLoader:
         cost_metric: Literal["fevals", "iterations"] = "fevals",
     ) -> xr.DataArray:
         p = scale_by_task(output_cummin(self.data[OUTPUT_MIN])).ffill(BUDGET)
-        dims = (
-            self.data[TASK_LABELS].sel({FEATURE: "dimensionality"}).astype(int)
-        )
+        dims = self.task_labels.sel(
+            {FEATURE: "dimensionality"}, drop=True
+        ).astype(int)
 
         if cost_metric == "iterations":
             cost_metric = ITERATIONS
@@ -947,31 +885,13 @@ class DataLoader:
                 f"Choose 'fevals' or 'iterations'."
             )
 
-        return ertd(
+        _ertd = ertd(
             performance=p, cost_measure=self.data[cost_metric], dims=dims
         )
+        return _ertd.mean(TASK_ID)
 
     def load(self):
         self.data.load()
-
-    def save(self, path: str):
-        _path = Path(path)
-
-        _path.mkdir(parents=True, exist_ok=True)
-
-        # Save optimization dynamics data
-        self.data.to_netcdf((_path / "entire_dataset").with_suffix(".nc"))
-
-        # Convert task_labels to a DataFrame and save as CSV
-        df_task_labels = pd.DataFrame(
-            self.task_labels.values,
-            index=self.task_labels.coords[TASK_ID].values,
-            columns=self.task_labels.coords[FEATURE].values,
-        )
-        df_task_labels = df_task_labels[
-            ~df_task_labels.index.duplicated(keep="first")
-        ]
-        df_task_labels.to_csv((_path / "labels").with_suffix(".csv"))
 
 
 def calculate_sbs(
@@ -1025,163 +945,6 @@ def calculate_best_solver(
 
 
 #                                                          OptimizationDynamics
-# =============================================================================
-
-
-def performance_profile(
-    performance: xr.DataArray, max_f_value: int = 2.0
-) -> xr.DataArray:
-    """
-    Create a performance profile for the given performance data.
-
-    Parameters
-    ----------
-    performance : xr.DataArray
-        Performance data for optimization problems.
-    max_f_value : int, optional
-        Maximum performance ratio, by default 2.0.
-
-    Returns
-    -------
-    xr.DataArray
-        Performance profile.
-    """
-
-    p = performance.isel({BUDGET: -1})
-    rij = (p + 1.0) / 1.0
-
-    ds_f = xr.Dataset(
-        {
-            "performance_profile": rij,
-            "relative_error": xr.DataArray(
-                np.logspace(np.log10(1.0), np.log10(max_f_value), 1000),
-                dims="relative_error",
-            ),
-        }
-    )
-
-    performance_profile = (
-        np.less_equal(ds_f, ds_f.relative_error + 1e-2)
-        .where(~ds_f.isnull(), np.nan)
-        .mean(dim=PROBLEM)["performance_profile"]
-    )
-
-    rel_error = (performance_profile["relative_error"] * 100) - 100
-
-    return performance_profile.assign_coords({"relative_error": rel_error})
-
-
-def rtd(performance: xr.DataArray) -> xr.DataArray:
-    """
-    Compute the runtime distribution (RTD) profile.
-
-    Parameters
-    ----------
-    performance : xr.DataArray
-        Performance data for optimization problems.
-
-    Returns
-    -------
-    xr.DataArray
-        RTD profile.
-    """
-
-    return (1.0 - performance).mean(PROBLEM)
-
-
-def ertd(
-    performance: xr.DataArray, cost_measure: xr.DataArray, dims: xr.DataArray
-) -> xr.DataArray:
-    targets = xr.DataArray(np.linspace(0.0, 1.0, 51), dims=TARGET)
-    solved = performance <= targets
-    success = solved.any(BUDGET)
-    first_solved = solved.argmax(BUDGET).where(
-        success, other=solved[BUDGET].argmax()
-    )
-
-    ds = xr.Dataset(
-        {
-            COST: cost_measure.isel({BUDGET: first_solved}),
-            SUCCESS: success,
-            "dims": dims,
-        }
-    )
-
-    ert_multi = compute_ert_multi_seed(ds, n_seeds=50, n_picks=50)
-
-    values = (np.logspace(0, 6, 100) ** 0.8).astype(int)
-    values = np.unique(values)
-
-    budgets = xr.DataArray(
-        values,
-        dims="cost_per_dim",
-        coords={"cost_per_dim": values},
-    )
-    ertd = (ert_multi <= budgets).mean([SEED, TASK_ID, OUTPUT_DIM, TARGET])
-
-    return ertd
-
-
-def compute_ert_group(ds: xr.Dataset, seed: int, n_picks: int) -> xr.DataArray:
-    rng = np.random.default_rng(seed)
-    n_realizations = int(ds[REALIZATION].max())
-    samples = np.concat(
-        [
-            rng.permutation(n_realizations + 1),
-            rng.integers(
-                0, n_realizations + 1, size=max(n_picks - n_realizations, 0)
-            ),
-        ]
-    )
-
-    ds = ds.isel({PROBLEM: samples})
-    # Find index of first True along "problem"
-    first_true = ds[SUCCESS].argmax(PROBLEM)
-
-    # Handle case where there is no True at all
-    first_true = first_true.where(ds[SUCCESS].any(PROBLEM), other=-1)
-
-    # Coordinate index
-    idx = xr.DataArray(np.arange(ds.sizes[PROBLEM]), dims=PROBLEM)
-
-    # Mask up to first True
-    mask = (idx <= first_true).fillna(False)
-
-    # Sum cost up to first True
-    ert = ds[COST].where(mask, 0).sum(PROBLEM)
-
-    # If not any success, put NaN
-    ert = ert.where(ds[SUCCESS].any(PROBLEM))
-
-    # Divide by the dimensionality of the problem
-    ert = ert / ds["dims"].mean(PROBLEM)
-    return ert
-
-
-def compute_ert_multi_seed(
-    ds: xr.Dataset, n_seeds: int, n_picks: int
-) -> xr.DataArray:
-    """
-    Compute ERT across multiple random seeds and return an xarray
-    with dimensions (seed, taskID, ...).
-    """
-    # Create a version of compute_ert_group with n_picks fixed
-    compute_partial = partial(compute_ert_group, n_picks=n_picks)
-
-    # Map over seeds in a vectorized fashion
-    ert_list = [
-        ds.groupby(TASK_ID)
-        .map(compute_partial, seed=seed)
-        .expand_dims({SEED: [seed]})
-        for seed in np.arange(n_seeds)
-    ]
-
-    # Concatenate along the seed dimension
-    ert_all = xr.concat(ert_list, dim=SEED)
-
-    return ert_all
-
-
 # =============================================================================
 
 
