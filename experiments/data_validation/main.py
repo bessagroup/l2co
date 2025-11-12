@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -110,12 +111,16 @@ def create_entire_dataset(
 
     # preceed every entry of df_output with experimentdata.project_dir
     df_input = df_input.map(
-        lambda x: experiment_data.project_dir / "experiment_data" / x,
+        lambda row: Path(experiment_data.project_dir)
+        / "experiment_data"
+        / row.reference,
         na_action="ignore",
     )
 
     df_output = df_output.map(
-        lambda x: experiment_data.project_dir / "experiment_data" / x,
+        lambda row: Path(experiment_data.project_dir)
+        / "experiment_data"
+        / row.reference,
         na_action="ignore",
     )
 
