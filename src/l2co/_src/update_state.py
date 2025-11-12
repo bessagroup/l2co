@@ -21,8 +21,6 @@ from jaxtyping import Array, Float, Int, PRNGKeyArray, PyTree
 from .batching import batch_iter
 from .task import Task
 from .tree_utils import combined_loss, get_best, tree_where
-
-# Local
 from .typing import InputParameters, OptHistoryType
 
 #                                                          Authorship & Credits
