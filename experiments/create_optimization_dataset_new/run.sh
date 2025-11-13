@@ -37,7 +37,7 @@ JOB_POST="job_post.sh"
 
 id_create=$(sbatch $JOB_CREATE | awk '{print $4}')
 
-id_run=$(sbatch --array=0-16 --dependency=afterok:$id_create --export=id_create=$id_create $JOB_RUN  ++project_job=$id_create | awk '{print $4}')
+id_run=$(sbatch --array=0-16%4 -o slurm-${id_create}.out  --dependency=afterok:$id_create --export=id_create=$id_create $JOB_RUN  ++project_job=$id_create | awk '{print $4}')
 
 id_post=$(sbatch --dependency=afterany:$id_run --export=id_create=$id_create $JOB_POST ++project_job=$id_create | awk '{print $4}')
 
