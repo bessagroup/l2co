@@ -4,8 +4,6 @@
 #SBATCH --time=00:30:00
 #SBATCH --account=default
 #SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
-#SBATCH -e arrayjob-%a.err
-#SBATCH -o arrayjob-%a.out
 
 echo $LD_LIBRARY_PATH
 unset LD_LIBRARY_PATH
@@ -49,10 +47,10 @@ echo " Execution Information"
 echo "======================================="
 echo "Project Folder:   $projectfolder"
 echo "Run Directory:    $run_dir"
-echo "Executing:srun apptainer exec $CONTAINER python3 -u $SCRIPT ++hydra.run.dir=$run_dir ++model_dir=$model_dir ++project_dir=$project_dir ++job_number=$SLURM_ARRAY_TASK_ID $@" 
+echo "Executing: apptainer exec $CONTAINER python3 -u $SCRIPT ++hydra.run.dir=$run_dir ++model_dir=$model_dir ++project_dir=$project_dir ++job_number=$SLURM_ARRAY_TASK_ID $@" 
 echo "======================================="
 
 export JAX_PLATFORM_NAME=cpu
 
 # Run the Python script with MPI
-srun apptainer exec $CONTAINER python3 -u $SCRIPT ++hydra.run.dir=$run_dir ++model_dir=$model_dir ++project_dir=$project_dir ++job_number=$SLURM_ARRAY_TASK_ID $@
+apptainer exec $CONTAINER python3 -u $SCRIPT ++hydra.run.dir=$run_dir ++model_dir=$model_dir ++project_dir=$project_dir ++job_number=$SLURM_ARRAY_TASK_ID $@
