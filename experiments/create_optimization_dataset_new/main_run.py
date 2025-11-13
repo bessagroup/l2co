@@ -47,7 +47,7 @@ def main(config):
             f"Project directory {project_dir} does not exist."
         )
 
-    logger.info(f"Loaded experiment_data from {project_dir}")
+    logger.debug(f"Loaded experiment_data from {project_dir}")
 
     experiment_data = ExperimentData.from_file(
         project_dir=project_dir,

@@ -51,6 +51,7 @@ echo "Executing: apptainer exec $CONTAINER python3 -u $SCRIPT ++hydra.run.dir=$r
 echo "======================================="
 
 export JAX_PLATFORM_NAME=cpu
+export JAX_LOG_LEVEL=error
 
 # Run the Python script with MPI
 apptainer exec $CONTAINER python3 -u $SCRIPT ++hydra.run.dir=$run_dir ++model_dir=$model_dir ++project_dir=$project_dir ++job_number=$SLURM_ARRAY_TASK_ID $@

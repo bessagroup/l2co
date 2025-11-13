@@ -37,7 +37,16 @@ JOB_POST="job_post.sh"
 
 id_create=$(sbatch $JOB_CREATE | awk '{print $4}')
 
-id_run=$(sbatch --array=0-16%4 -o "slurm-${id_create}.out"  --dependency=afterok:$id_create --export=id_create=$id_create $JOB_RUN  ++project_job=$id_create | awk '{print $4}')
+projectfolder=$(basename $(pwd))
+jobs_file="${HOME}/scratch/${projectfolder}/${id_create}/experiment_data/jobs.csv"
+
+# Count number of lines in jobs_file and subtract 2 (header + 0-indexing)
+num_jobs=$(($(wc -l < "$jobs_file") - 2))
+
+# echo number of jobs
+echo "Number of jobs to run: $num_jobs"
+
+id_run=$(sbatch --array=0-${num_jobs}%16 -o "slurm-${id_create}.out"  --dependency=afterok:$id_create --export=id_create=$id_create $JOB_RUN  ++project_job=$id_create | awk '{print $4}')
 
 id_post=$(sbatch -o "slurm-${id_create}.out" --dependency=afterany:$id_run --export=id_create=$id_create $JOB_POST ++project_job=$id_create | awk '{print $4}')
 
