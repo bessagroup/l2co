@@ -6,7 +6,7 @@
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
 #SBATCH --mem-per-cpu=2GB
-#SBATCH --account=mbessa-condo
+#SBATCH --account=default
 #SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
 
 echo $LD_LIBRARY_PATH

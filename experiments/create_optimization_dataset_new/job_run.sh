@@ -2,7 +2,7 @@
 #SBATCH --job-name="RunTaskOnSchedule"
 #SBATCH --partition=batch
 #SBATCH --time=00:30:00
-#SBATCH --account=mbessa-condo
+#SBATCH --account=default
 #SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
 #SBATCH -e arrayjob-%a.err
 #SBATCH -o arrayjob-%a.out
@@ -42,7 +42,7 @@ project_dir="${HOME}/scratch/create_optimization_dataset_new/"
 
 # Get project folder
 projectfolder=$(basename $(pwd))
-run_dir="${HOME}/scratch/${projectfolder}/${SLURM_JOB_ID}"
+run_dir="${HOME}/scratch/${projectfolder}/${id_create}"
 
 echo "======================================="
 echo " Execution Information"

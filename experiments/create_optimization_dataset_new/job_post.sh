@@ -6,7 +6,7 @@
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
 #SBATCH --mem-per-cpu=2GB
-#SBATCH --account=mbessa-condo
+#SBATCH --account=default
 #SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
 
 echo $LD_LIBRARY_PATH
@@ -44,7 +44,7 @@ project_dir="${HOME}/scratch/create_optimization_dataset_new/"
 
 # Get project folder
 projectfolder=$(basename $(pwd))
-run_dir="${HOME}/scratch/${projectfolder}/${SLURM_JOB_ID}"
+run_dir="${HOME}/scratch/${projectfolder}/${id_create}"
 
 echo "======================================="
 echo " Execution Information"

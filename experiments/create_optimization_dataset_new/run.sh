@@ -4,7 +4,7 @@
 #SBATCH --time=00:30:00
 #SBATCH --partition=batch
 #SBATCH -n 1
-#SBATCH --account=mbessa-condo
+#SBATCH --account=default
 
 echo $LD_LIBRARY_PATH
 unset LD_LIBRARY_PATH
@@ -30,23 +30,21 @@ echo "Loaded Modules:"
 module list 2>&1  # Redirect stderr to stdout to capture module list
 echo "======================================="
 
-JOB_CREATE="job_create"
-JOB_RUN="job_run"
-JOB_POST="job_post"
+JOB_CREATE="job_create.sh"
+JOB_RUN="job_run.sh"
+JOB_POST="job_post.sh"
 
-model_dir="${HOME}/scratch/train_model/"
-project_dir="${HOME}/scratch/create_optimization_dataset_new/"
 
-job_create=$(sbatch $JOB_CREATE | awk '{print $4}')
+id_create=$(sbatch $JOB_CREATE | awk '{print $4}')
 
-job_run=$(sbatch $JOB_CREATE --array=0-16 --afterok:$job_create ++project_job=$job_create | awk '{print $4}')
+id_run=$(sbatch --array=0-16 --dependency=afterok:$id_create --export=id_create=$id_create $JOB_RUN  ++project_job=$id_create | awk '{print $4}')
 
-job_post=$(sbatch $JOB_POST --afterany:$job_run ++project_job=$job_create | awk '{print $4}')
+id_post=$(sbatch --dependency=afterany:$id_run --export=id_create=$id_create $JOB_POST ++project_job=$id_create | awk '{print $4}')
 
 # Job ID table
 echo -e "\nCREATE DATASET\n------------------------------------------------------"
 echo -e "Job ID\t\t\tDescription\n------------------------------------------------------"
-echo -e "$job_run\tFirst Job: Creating the ExperimentData"
-echo -e "$job_post\tSecond Job: Running the experiments"
-echo -e "$job_post\tThird Job: Post-processing the experiments"
+echo -e "$id_create\tFirst Job: Creating the ExperimentData"
+echo -e "$id_run\tSecond Job: Running the experiments"
+echo -e "$id_post\tThird Job: Post-processing the experiments"
 echo -e "------------------------------------------------------"
