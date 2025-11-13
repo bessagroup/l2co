@@ -163,19 +163,19 @@ def create_entire_dataset(
     ).astype(str)
 
     # Schedules
-    o = {
-        name: json.dumps(schedule_dict)
-        for name, schedule_dict in step_dict.items()
-    }
+    # o = {
+    #     name: json.dumps(schedule_dict)
+    #     for name, schedule_dict in step_dict.items()
+    # }
 
-    xarr_opt_steps = xr.DataArray(
-        data=list(o.values()),
-        coords={SCHEDULE: list(o.keys())},
-        dims=SCHEDULE,
-        name="schedules",
-    )
+    # xarr_opt_steps = xr.DataArray(
+    #     data=list(o.values()),
+    #     coords={SCHEDULE: list(o.keys())},
+    #     dims=SCHEDULE,
+    #     name="schedules",
+    # )
 
-    opt_data["opt_steps"] = xarr_opt_steps
+    # opt_data["opt_steps"] = xarr_opt_steps
 
     if INPUT_DIM in opt_data.coords:
         opt_data = opt_data.drop(INPUT_DIM)

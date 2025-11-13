@@ -295,9 +295,6 @@ def ertd(
         success, other=solved[BUDGET].argmax()
     )
 
-    valid = (performance <= targets).any([TARGET, BUDGET])
-    missing = (~valid).groupby(TASK_ID).all()
-
     ds = xr.Dataset(
         {
             COST: cost_measure.isel({BUDGET: first_solved}),
@@ -317,7 +314,7 @@ def ertd(
     )
     ertd = (ert_multi <= budgets).mean([SEED, OUTPUT_DIM, TARGET])
 
-    return ertd.where(~missing.isel({OUTPUT_DIM: 0}, drop=True))
+    return ertd
 
 
 def compute_ert_group(ds: xr.Dataset, seed: int, n_picks: int) -> xr.DataArray:

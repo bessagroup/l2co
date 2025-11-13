@@ -24,7 +24,6 @@ import hashlib
 from collections.abc import Callable, Iterable
 from copy import deepcopy
 from dataclasses import dataclass, replace
-from functools import partial
 from pathlib import Path
 from time import perf_counter
 from typing import Literal
@@ -154,6 +153,11 @@ class DataLoader:
             output_dtypes=[object],
         ).T
 
+        # Remove variable features from data
+        data = data.drop_vars([TASK_LABELS, FEATURE])
+
+        # Remove unnecessary coordinates from data
+
         return cls(
             data=data,
             task_labels=task_labels,
@@ -181,9 +185,13 @@ class DataLoader:
     def to_params(
         self, t: int, cost_metric: Literal["fevals", "iterations"] = "fevals"
     ):
-        # TODO: a 'nan' in the performance could either mean 'not solved yet'
-        # or 'stopped'. Distinguish these two cases!
+        x = self.task_labels.groupby(TASK_ID).first().sortby(TASK_ID)
+        y = self.to_labels(t=t, cost_metric=cost_metric).sortby(TASK_ID)
+        return x, y
 
+    def to_labels(
+        self, t: int, cost_metric: Literal["fevals", "iterations"] = "fevals"
+    ):
         # Scale the data
         p = scale_by_task(output_cummin(self.data[OUTPUT_MIN])).ffill(BUDGET)
         dims = self.task_labels.sel(
@@ -209,159 +217,9 @@ class DataLoader:
             cost_values=np.array([t]),
         )
 
-        return _ertd.mean("cost_per_dim").sortby(TASK_ID)
+        _ertd = _ertd.where(self.valid_files.isel({OUTPUT_DIM: 0}, drop=True))
 
-    # def to_params(
-    #     self, t: float, t_start: float = 0.0, t_end: float = 1.0
-    # ) -> xr.Dataset:
-    #     """
-    #     Generate parameters for optimization tasks within a specific
-    #     budget range.
-
-    #     Parameters
-    #     ----------
-    #     t : float
-    #         The budget to select.
-    #     t_start : float, optional
-    #         The starting budget, by default 0.0.
-    #     t_end : float, optional
-    #         The ending budget, by default 1.0.
-
-    #     Returns
-    #     -------
-    #     xr.Dataset
-    #         Dataset containing task parameters.
-    #     """
-
-    #     d_input = self.select_t(t_start=t_start, t=t, select_one_before=True)
-    #     d_output = self.select_t(t_start=t, t=t_end, select_one_before=False)
-
-    #     perf = output_cummin(
-    #         d_output.data.assign_coords(
-    #             {
-    #                 OPT_HISTORY: d_input.hash_opt_step,
-    #                 OPT_CHOICE: d_output.hash_opt_step,
-    #             }
-    #         )[OUTPUT_MIN]
-    #     ).ffill(BUDGET)
-
-    #     total = []
-
-    #     for fp in np.unique(perf[OPT_HISTORY]):
-    #         _perf = perf.where(perf[OPT_HISTORY] == fp)
-    #         total.append(scale_by_problem_and_schedule(_perf))
-
-    #     performance = xr.merge(total)[OUTPUT_MIN].isel(budget=-1, drop=True)
-
-    #     ds = xr.Dataset(
-    #         {
-    #             TASK_LABELS: self.task_labels,
-    #             TRAJECTORY: d_input.trajectory,
-    #             STAIRCASE: d_input.staircase,
-    #             UPDATE_STEP: d_input.data[UPDATE_STEP],
-    #             PERFORMANCE: performance,
-    #         }
-    #     )
-
-    #     new_params = ds.groupby(
-    #         (OPT_HISTORY, PROBLEM, OUTPUT_DIM), restore_coord_dims=True
-    #     ).first()
-
-    #     def f(x, first_part, second_part):
-    #         # Create DataFrame
-    #         df = pd.DataFrame(
-    #             {
-    #                 OPT_HISTORY: first_part,
-    #                 OPT_CHOICE: second_part,
-    #                 PERFORMANCE: x,
-    #             }
-    #         )
-
-    #         # Pivot table: rows = y, columns = z, values = x
-    #         matrix = df.pivot_table(
-    #             index=OPT_HISTORY,
-    #             columns=OPT_CHOICE,
-    #             values=PERFORMANCE,
-    #             dropna=False,
-    #         )
-
-    #         # Convert to NumPy array (optional)
-    #         return matrix.to_numpy()
-
-    #     new_params = new_params.assign_coords(
-    #         {OPT_CHOICE: np.unique(ds[OPT_CHOICE])}
-    #     )
-
-    #     new_params[PERFORMANCE] = xr.apply_ufunc(
-    #         f,
-    #         ds[PERFORMANCE],
-    #         ds[OPT_HISTORY],
-    #         ds[OPT_CHOICE],
-    #         input_core_dims=[[SCHEDULE], [SCHEDULE], [SCHEDULE]],
-    #         output_core_dims=[[OPT_HISTORY, OPT_CHOICE]],
-    #         vectorize=True,
-    #     )
-
-    #     # Transpose dims
-    #     desired_order = (PROBLEM, OUTPUT_DIM, OPT_HISTORY)
-
-    #     return new_params.map(
-    #         lambda var: var.transpose(
-    #             *[d for d in desired_order if d in var.dims],
-    #             *[d for d in var.dims if d not in desired_order],
-    #         )
-    #     )
-
-    # def to_all_params(
-    #     self,
-    #     window_size: float,
-    #     budget_size: int | None = None,
-    #     include_last: bool = False,
-    # ) -> xr.DataTree:
-    #     """
-    #     Generate parameters for all tasks over multiple budget windows.
-
-    #     Parameters
-    #     ----------
-    #     window_size : float
-    #         Size of each budget window.
-    #     budget_size : Optional[int], optional
-    #         Total budget size, by default None.
-    #     include_last : bool, optional
-    #         Whether to include the last window, by default False.
-
-    #     Returns
-    #     -------
-    #     xr.DataTree
-    #         DataTree containing parameters for all tasks.
-    #     """
-
-    #     if budget_size is None:
-    #         budget_size = self.data[BUDGET].size
-
-    #     if include_last:
-    #         window_end = 1.0 + window_size
-    #     else:
-    #         window_end = 1.0
-
-    #     _dict = {}
-
-    #     for t in np.arange(window_size, window_end, window_size):
-    #         t_end = np.minimum(t + window_size, 1.0)
-    #         params = self.to_params(t_start=0.0, t=t, t_end=t_end)
-    #         params[BUDGET] = range(
-    #             budget_size - params[BUDGET].size, budget_size
-    #         )
-
-    #         params = params.reindex(
-    #             budget=range(budget_size), fill_value=PADDING_VALUE
-    #         )
-
-    #         params[UPDATE_STEP] = params[UPDATE_STEP].astype(str)
-
-    #         _dict[f"{t:.2f}"] = params
-
-    #     return xr.DataTree.from_dict(_dict)
+        return _ertd.mean("cost_per_dim")
 
     def to_spreadsheet(self, criteria: Literal["min", "mean"] = "min"):
         """
@@ -513,6 +371,21 @@ class DataLoader:
             The optimizers coordinate.
         """
         return self.data[SCHEDULE]
+
+    @property
+    def valid_files(self) -> xr.DataArray:
+        """
+        Returns a boolean array indicating valid files. It has coordinates
+        of TASK_ID, SCHEDULE and OUTPUT_DIM.
+
+        Returns
+        -------
+        xarray.DataArray
+            Boolean array indicating valid files.
+        """
+        return (
+            ~self.data[OUTPUT_MIN].isnull().all(BUDGET).groupby(TASK_ID).all()
+        )
 
     @property
     def performance(self) -> xr.DataArray:
@@ -888,6 +761,8 @@ class DataLoader:
         _ertd = ertd(
             performance=p, cost_measure=self.data[cost_metric], dims=dims
         )
+
+        _ertd = _ertd.where(self.valid_files.isel({OUTPUT_DIM: 0}, drop=True))
         return _ertd.mean(TASK_ID)
 
     def load(self):
