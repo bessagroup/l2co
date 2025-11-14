@@ -48,12 +48,11 @@ done
 
 # Count number of lines in jobs_file and subtract 2 (header + 0-indexing)
 num_jobs=$(($(wc -l < "$jobs_file") - 2))
+num_jobs=$(( num_jobs > 10000 ? 10000 : num_jobs ))
+
 
 # echo number of jobs
 echo "Number of jobs to run: $num_jobs"
-echo "num_jobs = $num_jobs"
-echo "array spec = 0-$(($num_jobs-1))%16"
-
 
 id_run=$(sbatch --array=0-$(($num_jobs-1))%16 -o "slurm-${id_create}.out"  --dependency=afterok:$id_create --export=id_create=$id_create $JOB_RUN  ++project_job=$id_create | awk '{print $4}')
 
