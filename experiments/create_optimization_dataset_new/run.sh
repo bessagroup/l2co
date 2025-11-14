@@ -40,6 +40,12 @@ id_create=$(sbatch $JOB_CREATE | awk '{print $4}')
 projectfolder=$(basename $(pwd))
 jobs_file="${HOME}/scratch/${projectfolder}/${id_create}/experiment_data/jobs.csv"
 
+echo "Waiting for jobs.csv..."
+while [ ! -f "$jobs_file" ]; do
+    sleep 5
+done
+
+
 # Count number of lines in jobs_file and subtract 2 (header + 0-indexing)
 num_jobs=$(($(wc -l < "$jobs_file") - 2))
 
