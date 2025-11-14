@@ -48,7 +48,7 @@ done
 
 # Count number of lines in jobs_file and subtract 2 (header + 0-indexing)
 num_jobs=$(($(wc -l < "$jobs_file") - 2))
-num_jobs=$(( num_jobs > 999 ? 999 : num_jobs ))
+num_jobs=$(( num_jobs > 900 ? 900 : num_jobs ))
 
 
 # echo number of jobs
