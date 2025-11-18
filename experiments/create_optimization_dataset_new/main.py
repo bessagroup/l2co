@@ -8,7 +8,6 @@ from time import sleep
 # Third-party
 import hydra
 from f3dasm import Block, ExperimentData, datagenerator
-from f3dasm import logger as f3dasm_logger
 from f3dasm.design import Domain, grid
 from hydra.utils import instantiate
 from jax.extend.backend import get_backend
@@ -22,6 +21,7 @@ from l2co._src.tasks.continue_from_path import retrieve_tasks
 # =============================================================================
 
 logger = logging.getLogger(__name__)
+f3dasm_logger = logging.getLogger("f3dasm")
 
 # =============================================================================
 
