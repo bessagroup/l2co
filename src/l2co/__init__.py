@@ -19,6 +19,8 @@ Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)
 
 # Local imports
 from l2co import naming, plotting, sampling
+from l2co._src import tree_utils
+from l2co._src.batching import BatchState
 from l2co._src.data_loader import DataLoader
 from l2co._src.history_state import HistoryState
 from l2co._src.opt_history import OptHistory
@@ -27,6 +29,7 @@ from l2co._src.optimizerschedule import OptimizationStep
 from l2co._src.preprocessing import preprocessing_factory
 from l2co._src.run_optimization import RunOptimization
 from l2co._src.task import Task
+from l2co._src.update_class import UpdateClass
 from l2co._src.update_state import UpdateState
 from l2co._src.validation import validation_fn
 
@@ -44,6 +47,7 @@ __all__ = [
     "RunOptimization",
     "Task",
     "UpdateState",
+    "BatchState",
     "OptHistory",
     "optimizer_mapping",
     "validation_fn",
@@ -51,4 +55,6 @@ __all__ = [
     "plotting",
     "sampling",
     "naming",
+    "UpdateClass",
+    "tree_utils",
 ]
