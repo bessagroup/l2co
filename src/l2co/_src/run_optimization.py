@@ -49,6 +49,7 @@ from f3dasm.datageneration import DataGenerator
 from jaxtyping import PRNGKeyArray
 
 # Local
+from l2co._src.batching import BatchState
 from l2co._src.history_state import HistoryState
 from l2co._src.naming import INPUT_MEAN
 from l2co._src.opt_history import OptHistory
@@ -171,11 +172,19 @@ def run_optimization(
         )
     )
 
+    # Initialize batch state
+    batch_state = BatchState.init(
+        dataset=task.loaded_dataset,
+        batch_size=task.batch_size,
+        key=key,
+    )
+
     # Main optimization loop
-    update_state, opt_state, history_state = optimizer.step(
+    update_state, opt_state, batch_state, history_state = optimizer.step(
         opt_state=opt_state,
         update_state=update_state,
         history_state=history_state,
+        batch_state=batch_state,
         n_iterations=n_iterations,
         key=key,
     )
@@ -416,10 +425,9 @@ class RunOptimization(DataGenerator):
             key=key,
         )
 
-        data_xarr = history_state.to_xarray_realizations()
-
-        if not self.save_input_parameters:
-            data_xarr = data_xarr.drop_vars(INPUT_MEAN)
+        data_xarr = history_state.to_xarray_realizations(
+            include_input_mean=self.save_input_parameters
+        )
 
         experiment_sample.store(
             name="loss history", object=data_xarr, to_disk=True

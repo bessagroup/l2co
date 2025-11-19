@@ -6,7 +6,13 @@ Submodule with sampling strategies
 # =============================================================================
 
 # Local
-from ._src.sampler import grid_sampling, normal_sampling, random_sampling
+from ._src.sampler import (
+    constant_sampling,
+    grid_sampling,
+    normal_sampling,
+    random_sampling,
+    xavier_sampling,
+)
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -21,4 +27,6 @@ __all__ = [
     "random_sampling",
     "grid_sampling",
     "normal_sampling",
+    "xavier_sampling",
+    "constant_sampling",
 ]

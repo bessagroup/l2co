@@ -17,6 +17,7 @@ import jax.numpy as jnp
 from jaxtyping import PRNGKeyArray, PyTree
 
 # Local
+from .batching import BatchState
 from .history_state import HistoryState
 from .opt_history import OptHistory
 from .typing import InitFunction, StepFunction, StopFunction
@@ -63,9 +64,10 @@ class UpdateClass(eqx.Module):
         opt_state: PyTree,
         update_state: UpdateState,
         history_state: HistoryState,
+        batch_state: BatchState,
         n_iterations: int,
         key: PRNGKeyArray,
-    ) -> tuple[UpdateState, PyTree, HistoryState]:
+    ) -> tuple[UpdateState, PyTree, BatchState, HistoryState]:
         # Retrieve the last parameters from the update state
         params = jax.tree.map(
             lambda x: x[-self.popsize :], update_state.last_params
@@ -75,11 +77,16 @@ class UpdateClass(eqx.Module):
 
         def scan_step(
             carry: tuple[
-                PyTree, tuple[PyTree], PRNGKeyArray, jax.Array, OptHistory
+                PyTree,
+                tuple[PyTree],
+                PRNGKeyArray,
+                BatchState,
+                jax.Array,
+                OptHistory,
             ],
             _,
         ):
-            params, opt_state, key, done, recent_history = carry
+            params, opt_state, key, batch_state, done, recent_history = carry
             stop_condition = self.stop_fn(recent_history, opt_state)
 
             done = done | stop_condition
@@ -89,29 +96,41 @@ class UpdateClass(eqx.Module):
                     PyTree,
                     tuple[PyTree],
                     PRNGKeyArray,
+                    BatchState,
                     jax.Array,
                     OptHistory,
                 ],
             ):
-                (params, opt_state, key, done, recent_history) = carry
+                (params, opt_state, key, batch_state, done, recent_history) = (
+                    carry
+                )
+                sample, batch_state = batch_state.next(key)
                 new_carry, history = self.step_fn(
-                    (params, opt_state, key), sample={}
+                    (params, opt_state, key), sample=sample
                 )
 
                 new_recent_history = recent_history.update(history)
 
-                return (*new_carry, done, new_recent_history), history
+                return (
+                    *new_carry,
+                    batch_state,
+                    done,
+                    new_recent_history,
+                ), history
 
             def skip_step(
                 carry: tuple[
                     PyTree,
                     tuple[PyTree],
                     PRNGKeyArray,
+                    BatchState,
                     jax.Array,
                     OptHistory,
                 ],
             ):
-                (params, opt_state, key, done, recent_history) = carry
+                (params, opt_state, key, batch_state, done, recent_history) = (
+                    carry
+                )
                 dummy_history = recent_history.init(
                     params, self.popsize, self.hash
                 )
@@ -120,6 +139,7 @@ class UpdateClass(eqx.Module):
                     params,
                     opt_state,
                     key,
+                    batch_state,
                     done,
                     recent_history,
                 ), dummy_history
@@ -147,9 +167,16 @@ class UpdateClass(eqx.Module):
         init_done = jnp.array(False)
 
         # Run the optimization loop
-        (_, opt_state, _, _, _), history = jax.lax.scan(
+        (_, opt_state, _, batch_state, _, _), history = jax.lax.scan(
             f=scan_step,
-            init=(params, opt_state, key, init_done, recent_history_init),
+            init=(
+                params,
+                opt_state,
+                key,
+                batch_state,
+                init_done,
+                recent_history_init,
+            ),
             xs=None,
             length=n_iterations + 1,
         )
@@ -176,7 +203,7 @@ class UpdateClass(eqx.Module):
         # Update history state
         new_history_state = history_state.add(history)
 
-        return update_state, opt_state, new_history_state
+        return update_state, opt_state, batch_state, new_history_state
 
 
 # =============================================================================

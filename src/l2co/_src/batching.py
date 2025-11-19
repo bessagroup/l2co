@@ -8,12 +8,8 @@ Module for batching data for optimization processes
 # Standard
 from __future__ import annotations
 
-import math
-from collections.abc import Iterator
-
 # Third-party
 import equinox as eqx
-import grain.python as grain
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -27,136 +23,7 @@ __status__ = "Stable"
 # =============================================================================
 
 
-class DictSource:
-    """
-    A data source wrapper for dictionary-based datasets.
-
-    Parameters
-    ----------
-    data : dict
-        Dictionary containing dataset arrays.
-
-    Methods
-    -------
-    __len__()
-        Returns the number of records in the dataset.
-    __getitem__(idx)
-        Retrieves a specific record by index.
-    """
-
-    def __init__(self, data):
-        self.data = data
-
-    def __len__(self):
-        return next(iter(self.data.values())).shape[0]
-
-    def __getitem__(self, idx):
-        return {k: v[idx] for k, v in self.data.items()}
-
-
-class NoneIterator:
-    """
-    An iterator that always returns the same data.
-
-    Parameters
-    ----------
-    data : Optional[Dict[str, jnp.ndarray]], optional
-        Data to return on each iteration, by default an empty dictionary.
-
-    Methods
-    -------
-    __iter__()
-        Returns the iterator itself.
-    __next__()
-        Returns the stored data.
-    """
-
-    def __init__(self, data: dict[str, jnp.ndarray] | None = None):
-        if data is None:
-            data = {}
-
-        self.data = data
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        return self.data
-
-
-# =============================================================================
-
-
-def batch_iter(
-    dataset: dict[str, jnp.ndarray] | None,
-    n_evals: int,
-    batch_size: int | None,
-    *,
-    key: int | None,
-) -> Iterator:
-    """
-    Create an iterator for batching data.
-
-    Parameters
-    ----------
-    dataset : Optional[Dict[str, jnp.ndarray]]
-        Dataset to batch, where each key corresponds to a feature.
-    n_evals : int
-        Number of evaluations to perform.
-    batch_size : Optional[int]
-        Size of each batch.
-    key : Optional[int]
-        Random seed for shuffling.
-
-    Returns
-    -------
-    Iterator
-        Iterator that yields batches of data.
-
-    Raises
-    ------
-    ValueError
-        If `key` is None when `dataset` is provided.
-    """
-
-    # Check if empty dictionary or None value
-    if not dataset or not batch_size:
-        return NoneIterator(dataset)
-
-    if key is None:
-        raise ValueError(
-            f"Key must be provided when dataset is not None{key=}, {dataset=}"
-        )
-
-    source = DictSource(dataset)
-
-    transformation = grain.Batch(batch_size=batch_size, drop_remainder=True)
-
-    num_records = len(source)
-    # Note: Add one since we are doing one scan more
-    num_epochs = math.ceil(((n_evals + 1) * batch_size) / num_records)
-
-    index_sampler = grain.IndexSampler(
-        num_records=num_records,
-        num_epochs=num_epochs,
-        shard_options=grain.ShardOptions(shard_index=0, shard_count=1),
-        shuffle=True,
-        seed=int(key),
-    )
-
-    return iter(
-        grain.DataLoader(
-            data_source=source,
-            operations=[transformation],
-            sampler=index_sampler,
-        )
-    )
-
-
-# =============================================================================
-
-
-class BatcherState(eqx.Module):
+class BatchState(eqx.Module):
     """State object for iterating over a dataset in fixed-size batches.
 
     This class maintains the permutation of dataset indices, the current
@@ -166,9 +33,6 @@ class BatcherState(eqx.Module):
 
     Attributes
     ----------
-    key : PRNGKeyArray
-        JAX pseudo-random number generator key used to (re)generate
-        permutations for wrap-around batches.
     perm : Int[Array, " N"]
         1D array containing a permutation of the dataset indices
         (shape: ``(dataset_size,)``). Determines the iteration order.
@@ -180,7 +44,7 @@ class BatcherState(eqx.Module):
     Class Methods
     -------------
     init(key, dataset_size, batch_size)
-        Construct an initial ``BatcherState`` with a fresh permutation and
+        Construct an initial ``BatchState`` with a fresh permutation and
         position set to zero.
 
     Properties
@@ -192,7 +56,7 @@ class BatcherState(eqx.Module):
     -------
     next_batch(dataset)
         Return a batch extracted from the PyTree ``dataset`` and the updated
-        ``BatcherState``. Wraps around and re-permutes when at end.
+        ``BatchState``. Wraps around and re-permutes when at end.
 
     Notes
     -----
@@ -204,54 +68,68 @@ class BatcherState(eqx.Module):
     Examples
     --------
     >>> key = jr.PRNGKey(0)
-    >>> state = BatcherState.init(key, dataset_size=10, batch_size=4)
+    >>> state = BatchState.init(key, dataset_size=10, batch_size=4)
     >>> data = jnp.arange(10)
     >>> batch, state = state.next_batch(data)
     >>> batch.shape
     (4,)
     """
 
-    key: PRNGKeyArray
     perm: Int[Array, " N"]
     pos: int
     batch_size: int = eqx.field(static=True)
+    dataset: PyTree
 
     @classmethod
-    def init(cls, key: PRNGKeyArray, dataset_size: int, batch_size: int):
-        """Initialize a ``BatcherState`` with a fresh permutation.
+    def init(
+        cls,
+        dataset: PyTree,
+        batch_size: int | None,
+        key: PRNGKeyArray,
+    ):
+        """Initialize a ``BatchState`` with a fresh permutation.
 
         Parameters
         ----------
+        dataset : PyTree
+            PyTree dataset from which to determine the dataset size.
+        batch_size : int | None
+            Number of items per batch.
         key : PRNGKeyArray
             PRNG key used to generate the initial permutation and to seed
             subsequent wrap-around permutations.
-        dataset_size : int
-            Total number of items in the dataset.
-        batch_size : int
-            Number of items per batch.
+
+        Notes
+        -----
+        If ``dataset_size`` is ``None``, it defaults to zero. If
+        ``batch_size`` is ``None``, it defaults to ``dataset_size``.
 
         Returns
         -------
-        BatcherState
+        BatchState
             New batching state with position set to zero and ``perm`` a
             random permutation of ``range(dataset_size)``.
 
         Examples
         --------
         >>> key = jr.PRNGKey(0)
-        >>> state = BatcherState.init(key, dataset_size=10, batch_size=4)
+        >>> state = BatchState.init(key, dataset_size=10, batch_size=4)
         >>> state.pos
         0
         """
+
+        dataset_size = jax.tree.leaves(dataset)[0].shape[0] if dataset else 0
+        batch_size = batch_size if batch_size is not None else dataset_size
+
         return cls(
-            key=key,
             perm=jr.permutation(key, dataset_size),
             pos=0,
             batch_size=batch_size,
+            dataset=dataset,
         )
 
     @property
-    def dataset_size(self):
+    def dataset_size(self) -> int:
         """Total number of samples in the dataset.
 
         Returns
@@ -261,19 +139,17 @@ class BatcherState(eqx.Module):
         """
         return self.perm.shape[0]
 
-    def next_batch(self, dataset: PyTree) -> tuple[PyTree, BatcherState]:
+    def next(self, key: PRNGKeyArray) -> tuple[PyTree, BatchState]:
         """Return a batch from a PyTree dataset and the updated state.
 
         Parameters
         ----------
-        dataset : PyTree
-            PyTree of arrays from which to take a batch. All leaves must be
-            indexable by a 1D integer array of indices and have leading
-            dimension equal to ``dataset_size``.
+        key : PRNGKeyArray
+            PRNG key used to generate a new permutation if wrap-around occurs.
 
         Returns
         -------
-        tuple[PyTree, BatcherState]
+        tuple[PyTree, BatchState]
             A tuple ``(batch, new_state)`` where ``batch`` mirrors the
             structure of ``dataset`` and each leaf has leading dimension
             ``batch_size``; ``new_state`` reflects the advanced position or a
@@ -287,7 +163,7 @@ class BatcherState(eqx.Module):
         Examples
         --------
         >>> key = jr.PRNGKey(0)
-        >>> state = BatcherState.init(key, dataset_size=10, batch_size=4)
+        >>> state = BatchState.init(key, dataset_size=10, batch_size=4)
         >>> data = {"x": jnp.arange(10)}
         >>> batch, state = state.next_batch(data)
         >>> jax.tree.map(lambda x: x.shape, batch)
@@ -297,14 +173,14 @@ class BatcherState(eqx.Module):
             (self.pos + self.batch_size) <= self.dataset_size,
             take_no_wrap,
             take_wrap,
-            self,
+            (self, key),
         )
         # Index into the PyTree
-        batch = jax.tree.map(lambda x: x[batch_idxs], dataset)
+        batch = jax.tree.map(lambda x: x[batch_idxs], self.dataset)
         return batch, new_state
 
 
-def take_no_wrap(state: BatcherState):
+def take_no_wrap(carry: tuple[BatchState, PRNGKeyArray]):
     """Return next batch indices without wrap-around.
 
     Extracts ``batch_size`` consecutive indices from ``state.perm`` starting
@@ -313,31 +189,34 @@ def take_no_wrap(state: BatcherState):
 
     Parameters
     ----------
-    state : BatcherState
+    state : BatchState
         Current batching state.
+    key : PRNGKeyArray
+        PRNG key used to generate a new permutation.
 
     Returns
     -------
-    tuple[BatcherState, jax.Array]
+    tuple[BatchState, jax.Array]
         A tuple ``(new_state, batch_idxs)`` where ``new_state`` has an
         advanced ``pos`` and ``batch_idxs`` is a 1D array of length
         ``batch_size`` containing dataset indices.
     """
+    state, _ = carry
     batch = jax.lax.dynamic_slice(
         state.perm,
         (state.pos,),
         (state.batch_size,),
     )
-    new_state = BatcherState(
-        key=state.key,
+    new_state = BatchState(
         perm=state.perm,
         pos=state.pos + state.batch_size,
         batch_size=state.batch_size,
+        dataset=state.dataset,
     )
     return new_state, batch
 
 
-def take_wrap(state: BatcherState):
+def take_wrap(carry: tuple[BatchState, PRNGKeyArray]):
     """Return next batch indices with wrap-around and re-permutation.
 
     When the remaining portion of ``state.perm`` is insufficient for a full
@@ -348,12 +227,14 @@ def take_wrap(state: BatcherState):
 
     Parameters
     ----------
-    state : BatcherState
+    state : BatchState
         Current batching state.
+    key : PRNGKeyArray
+        PRNG key used to generate a new permutation.
 
     Returns
     -------
-    tuple[BatcherState, jax.Array]
+    tuple[BatchState, jax.Array]
         A tuple ``(new_state, batch_idxs)`` where ``new_state`` contains the
         split key, a new permutation, and the position set to the number of
         wrapped elements; ``batch_idxs`` is a 1D array of length
@@ -364,6 +245,7 @@ def take_wrap(state: BatcherState):
     The returned indices are constructed by concatenating the remaining tail
     of ``state.perm`` with the head of the new permutation (conceptually).
     """
+    state, key = carry
     # Indices for current batch
     idx = jnp.arange(state.batch_size)
     mask = idx < (state.dataset_size - state.pos)
@@ -372,8 +254,7 @@ def take_wrap(state: BatcherState):
     raw = jax.lax.dynamic_slice(state.perm, (state.pos,), (state.batch_size,))
 
     # Generate new permutation for wrap-around
-    key1, key2 = jr.split(state.key)
-    new_perm = jr.permutation(key1, state.dataset_size)
+    new_perm = jr.permutation(key, state.dataset_size)
     second = jax.lax.dynamic_slice(new_perm, (0,), (state.batch_size,))
 
     # Combine slices using mask: first valid part from raw, rest from second
@@ -382,10 +263,10 @@ def take_wrap(state: BatcherState):
     # Compute new position in new permutation
     new_pos = state.batch_size - (state.dataset_size - state.pos)
 
-    new_state = BatcherState(
-        key=key2,
+    new_state = BatchState(
         perm=new_perm,
         pos=new_pos,
         batch_size=state.batch_size,
+        dataset=state.dataset,
     )
     return new_state, batch

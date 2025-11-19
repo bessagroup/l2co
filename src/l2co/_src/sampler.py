@@ -6,9 +6,12 @@ Module for samplers.
 # =============================================================================
 
 # Third party
+from collections.abc import Callable
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax.nn import initializers
 from jaxtyping import PRNGKeyArray, PyTree
 
 # Local
@@ -22,6 +25,23 @@ __status__ = "Stable"
 # =============================================================================
 
 
+def _sample(
+    init_fn: Callable[[PRNGKeyArray, tuple[int], type], PyTree],
+    n_samples: int,
+    key: PRNGKeyArray,
+    params: PyTree,
+) -> InputParameters:
+    keys = jax.random.split(key, len(jax.tree.leaves(params)))
+
+    def init_leaf(x: jax.Array, k: PRNGKeyArray) -> jax.Array:
+        return init_fn(k, (n_samples,) + x.shape, x.dtype)
+
+    return jax.tree.map(
+        init_leaf, params, jax.tree.unflatten(jax.tree.structure(params), keys)
+    )
+
+
+# =============================================================================
 def random_sampling(
     key: PRNGKeyArray,
     params: PyTree,
@@ -50,15 +70,16 @@ def random_sampling(
     InputParameters
         Randomly sampled parameters.
     """
-    return jax.tree.map(
-        lambda x: jr.uniform(
-            key,
-            shape=(n_samples,) + params.shape,
-            minval=lower_bound,
-            maxval=upper_bound,
-        ),
-        params,
+    random_samples = _sample(
+        init_fn=initializers.uniform(scale=upper_bound),
+        n_samples=n_samples,
+        key=key,
+        params=params,
     )
+    constant_samples = constant_sampling(
+        params=params, value=lower_bound, n_samples=n_samples
+    )
+    return jax.tree.map(lambda x, y: x + y, random_samples, constant_samples)
 
 
 def normal_sampling(
@@ -89,12 +110,77 @@ def normal_sampling(
     PyTree
         Randomly sampled parameters from a normal distribution.
     """
+    normal_samples = _sample(
+        init_fn=initializers.normal(stddev=std),
+        n_samples=n_samples,
+        key=key,
+        params=params,
+    )
 
-    def sample_fn(x):
-        shape = (n_samples,) + x.shape
-        return mean + std * jr.normal(key, shape)
+    constant_samples = constant_sampling(
+        params=params, value=mean, n_samples=n_samples
+    )
 
-    return jax.tree.map(sample_fn, params)
+    return jax.tree.map(lambda x, y: x + y, normal_samples, constant_samples)
+
+
+def xavier_sampling(
+    key: PRNGKeyArray,
+    params: PyTree,
+    n_samples: int,
+) -> InputParameters:
+    """
+    Perform Xavier normal sampling for a given PyTree of parameters.
+
+    Parameters
+    ----------
+    key : jax.random.PRNGKey
+        Random key for reproducibility.
+    params : PyTree
+        Parameters to sample (used for shape reference).
+    n_samples : int
+        Number of samples to generate.
+    Returns
+    -------
+    InputParameters
+        Randomly sampled parameters using Xavier normal initialization.
+    """
+    return _sample(
+        init_fn=initializers.xavier_normal(),
+        n_samples=n_samples,
+        key=key,
+        params=params,
+    )
+
+
+def constant_sampling(
+    params: PyTree,
+    value: float,
+    n_samples: int,
+) -> InputParameters:
+    """
+    Perform constant sampling for a given PyTree of parameters.
+
+    Parameters
+    ----------
+    params : PyTree
+        Parameters to sample (used for shape reference).
+    value : float
+        Constant value to fill the samples with.
+    n_samples : int
+        Number of samples to generate.
+
+    Returns
+    -------
+    InputParameters
+        Parameters filled with the constant value.
+    """
+    return _sample(
+        init_fn=initializers.constant(value),
+        n_samples=n_samples,
+        key=jr.key(0),
+        params=params,
+    )
 
 
 def grid_sampling(

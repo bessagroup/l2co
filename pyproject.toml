@@ -24,7 +24,6 @@ dependencies = [
     "equinox>=0.13.0",
     "evosax>=0.2.0",
     "f3dasm",
-    "grain>=0.2.11",
     "jax",
     "jaxtyping>=0.3.2",
     "netcdf4>=1.7.3",

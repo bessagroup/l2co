@@ -80,15 +80,14 @@ class Task(eqx.Module):
     """
 
     @property
-    def loaded_dataset(self) -> dict[str, Any] | None:
+    def loaded_dataset(self) -> dict[str, Any]:
         if self.dataset.get("dataset_path") is None:
-            return None
+            return dict()
         return load_dataset(self.dataset["dataset_path"])
 
     @property
     def batch_size(self) -> int | None:
         return self.dataset.get("batch_size", None)
-        # return self.dataset["batch_size"]
 
     @property
     def name(self) -> str:

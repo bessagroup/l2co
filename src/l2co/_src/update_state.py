@@ -18,7 +18,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Float, Int, PRNGKeyArray, PyTree
 
-from .batching import batch_iter
+from .batching import BatchState
 from .task import Task
 from .tree_utils import combined_loss, get_best, tree_where
 from .typing import InputParameters, OptHistoryType
@@ -73,7 +73,7 @@ class UpdateState(eqx.Module):
     def from_history(
         cls, history: OptHistoryType, memory_size: int, last_step: int
     ) -> UpdateState:
-        params = history.params[-memory_size:]
+        params = jax.tree.map(lambda x: x[-memory_size:], history.params)
         losses = history.loss[-memory_size:]
 
         # Get the best parameters and loss from the history
@@ -137,12 +137,11 @@ def evaluate(params: PyTree, task: Task, *, key: PRNGKeyArray) -> jax.Array:
     _, static = eqx.partition(task.model, eqx.is_inexact_array)
     n_samples = jax.tree_util.tree_leaves(params)[0].shape[0]
 
-    data_iter = batch_iter(
+    sample, _ = BatchState.init(
         dataset=task.loaded_dataset,
-        n_evals=n_samples,
         batch_size=task.batch_size,
-        key=task.dataset.get("seed", None),
-    )
+        key=key,
+    ).next(key)
 
     if task.pass_rng:
         rng_sample = {"key": jr.split(key, num=n_samples)}
@@ -154,7 +153,7 @@ def evaluate(params: PyTree, task: Task, *, key: PRNGKeyArray) -> jax.Array:
             combined_loss,
             static=static,
             loss_fn=task.loss_fn,
-            **next(data_iter),
+            **sample,
         )
     )(params, **rng_sample)
 
@@ -165,12 +164,11 @@ def evaluate_with_grads(
     _, static = eqx.partition(task.model, eqx.is_inexact_array)
     n_samples = jax.tree_util.tree_leaves(params)[0].shape[0]
 
-    data_iter = batch_iter(
+    sample, _ = BatchState.init(
         dataset=task.loaded_dataset,
-        n_evals=n_samples,
         batch_size=task.batch_size,
-        key=task.dataset.get("seed", None),
-    )
+        key=key,
+    ).next(key)
 
     if task.pass_rng:
         rng_sample = {"key": jr.split(key, num=n_samples)}
@@ -178,20 +176,19 @@ def evaluate_with_grads(
         rng_sample = {}
 
     # Define a single-sample loss function
-    def loss_fn_single(params_i, **rng_or_data):
+    def loss_fn_single(params):
         return combined_loss(
-            params=params_i,
+            params=params,
             static=static,
             loss_fn=task.loss_fn,
-            **rng_or_data,
+            **sample,
+            **rng_sample,
         )
 
     # Compute both loss and gradient per sample
     loss_and_grad_fn = jax.value_and_grad(loss_fn_single)
 
-    losses, grads = jax.vmap(lambda p, **rng: loss_and_grad_fn(p, **rng))(
-        params, **rng_sample, **next(data_iter)
-    )
+    losses, grads = jax.vmap(loss_and_grad_fn)(params)
 
     return losses, grads
 
@@ -208,12 +205,11 @@ def new(
     # Sample new parameters using the provided sampler
     new_params = sampler(key, params, n_samples)
 
-    data_iter = batch_iter(
+    sample, _ = BatchState.init(
         dataset=task.loaded_dataset,
-        n_evals=n_samples,
         batch_size=task.batch_size,
-        key=task.dataset.get("seed", None),
-    )
+        key=key,
+    ).next(key)
 
     if task.pass_rng:
         rng_sample = {"key": jr.split(key, num=n_samples)}
@@ -225,7 +221,7 @@ def new(
             combined_loss,
             static=static,
             loss_fn=task.loss_fn,
-            **next(data_iter),
+            **sample,
         )
     )(new_params, **rng_sample)
 
