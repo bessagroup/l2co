@@ -55,8 +55,5 @@ echo "Run Directory:    $run_dir"
 echo "Executing: apptainer exec --nv $CONTAINER python3 -u $SCRIPT ++hydra.run.dir=$run_dir ++model_dir=$model_dir ++project_dir=$project_dir ++mode=cluster $@" 
 echo "======================================="
 
-export JAX_PLATFORM_NAME=cpu
-
 # Run the Python script with MPI
-# singularity exec $CONTAINER python3 -u $SCRIPT ++hydra.run.dir=$run_dir $@
 apptainer exec --nv $CONTAINER python3 -u $SCRIPT ++hydra.run.dir=$run_dir ++model_dir=$model_dir ++project_dir=$project_dir ++mode=cluster $@

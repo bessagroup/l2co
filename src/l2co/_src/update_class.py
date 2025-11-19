@@ -148,7 +148,7 @@ class UpdateClass(eqx.Module):
                 done, skip_step, do_step, carry
             )
 
-            return new_carry, history_entry
+            return new_carry, jax.lax.stop_gradient(history_entry)
 
         # Initialize moving history buffer with NaNs
         recent_history_init = OptHistory.init(
