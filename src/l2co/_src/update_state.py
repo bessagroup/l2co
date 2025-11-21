@@ -66,7 +66,7 @@ class UpdateState(eqx.Module):
             best_params=params,
             last_loss=last_loss,
             best_loss=jnp.array([jnp.inf]),
-            last_step=jnp.array(0, dtype=jnp.uint32),
+            last_step=jnp.array(0, dtype=jnp.int32),
         )
 
     @classmethod
@@ -84,7 +84,7 @@ class UpdateState(eqx.Module):
             last_loss=losses,
             best_params=best_params,
             best_loss=best_loss,
-            last_step=jnp.array(last_step, dtype=jnp.uint32),
+            last_step=jnp.array(last_step, dtype=jnp.int32),
         )
 
     def sample(
@@ -105,7 +105,7 @@ class UpdateState(eqx.Module):
             last_loss=losses,
             best_params=best_params,
             best_loss=best_loss,
-            last_step=jnp.array(SAMPLING_STEP, dtype=jnp.uint32),
+            last_step=jnp.array(SAMPLING_STEP, dtype=jnp.int32),
         )
 
     def merge(self, other: UpdateState) -> UpdateState:
@@ -232,5 +232,5 @@ def new(
         last_loss=losses,
         best_params=best_params,
         best_loss=best_loss,
-        last_step=jnp.array(SAMPLING_STEP, dtype=jnp.uint32),
+        last_step=jnp.array(SAMPLING_STEP, dtype=jnp.int32),
     )

@@ -9,12 +9,15 @@ Module for the update class.
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 
 # Third-party
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax_tqdm import scan_tqdm
 from jaxtyping import PRNGKeyArray, PyTree
+from tqdm import tqdm
 
 # Local
 from .batching import BatchState
@@ -39,7 +42,7 @@ class UpdateClass(eqx.Module):
     step_fn: StepFunction = eqx.field(static=True)
     stop_fn: StopFunction = eqx.field(static=True)
     popsize: int = eqx.field(static=True)
-    hash: int
+    hash: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -65,8 +68,9 @@ class UpdateClass(eqx.Module):
         update_state: UpdateState,
         history_state: HistoryState,
         batch_state: BatchState,
-        n_iterations: int,
         key: PRNGKeyArray,
+        n_iterations: int,
+        verbose: bool,
     ) -> tuple[UpdateState, PyTree, BatchState, HistoryState]:
         # Retrieve the last parameters from the update state
         params = jax.tree.map(
@@ -74,81 +78,6 @@ class UpdateClass(eqx.Module):
         )
 
         window_size = 20
-
-        def scan_step(
-            carry: tuple[
-                PyTree,
-                tuple[PyTree],
-                PRNGKeyArray,
-                BatchState,
-                jax.Array,
-                OptHistory,
-            ],
-            _,
-        ):
-            params, opt_state, key, batch_state, done, recent_history = carry
-            stop_condition = self.stop_fn(recent_history, opt_state)
-
-            done = done | stop_condition
-
-            def do_step(
-                carry: tuple[
-                    PyTree,
-                    tuple[PyTree],
-                    PRNGKeyArray,
-                    BatchState,
-                    jax.Array,
-                    OptHistory,
-                ],
-            ):
-                (params, opt_state, key, batch_state, done, recent_history) = (
-                    carry
-                )
-                sample, batch_state = batch_state.next(key)
-                new_carry, history = self.step_fn(
-                    (params, opt_state, key), sample=sample
-                )
-
-                new_recent_history = recent_history.update(history)
-
-                return (
-                    *new_carry,
-                    batch_state,
-                    done,
-                    new_recent_history,
-                ), history
-
-            def skip_step(
-                carry: tuple[
-                    PyTree,
-                    tuple[PyTree],
-                    PRNGKeyArray,
-                    BatchState,
-                    jax.Array,
-                    OptHistory,
-                ],
-            ):
-                (params, opt_state, key, batch_state, done, recent_history) = (
-                    carry
-                )
-                dummy_history = recent_history.init(
-                    params, self.popsize, self.hash
-                )
-
-                return (
-                    params,
-                    opt_state,
-                    key,
-                    batch_state,
-                    done,
-                    recent_history,
-                ), dummy_history
-
-            (new_carry, history_entry) = jax.lax.cond(
-                done, skip_step, do_step, carry
-            )
-
-            return new_carry, jax.lax.stop_gradient(history_entry)
 
         # Initialize moving history buffer with NaNs
         recent_history_init = OptHistory.init(
@@ -167,9 +96,8 @@ class UpdateClass(eqx.Module):
         init_done = jnp.array(False)
 
         # Run the optimization loop
-        (_, opt_state, _, batch_state, _, _), history = jax.lax.scan(
-            f=scan_step,
-            init=(
+        (_, opt_state, _, batch_state, _, _), history = scan_loop(
+            carry=(
                 params,
                 opt_state,
                 key,
@@ -177,8 +105,14 @@ class UpdateClass(eqx.Module):
                 init_done,
                 recent_history_init,
             ),
-            xs=None,
-            length=n_iterations + 1,
+            scan_fn=partial(
+                scan_step,
+                stop_fn=self.stop_fn,
+                step_fn=self.step_fn,
+                popsize=self.popsize,
+            ),
+            n_iterations=n_iterations + 1,
+            verbose=verbose,
         )
 
         # Remove first element for dim=0 history
@@ -207,3 +141,119 @@ class UpdateClass(eqx.Module):
 
 
 # =============================================================================
+
+
+def do_step(
+    carry: tuple[
+        PyTree,
+        tuple[PyTree],
+        PRNGKeyArray,
+        BatchState,
+        jax.Array,
+        OptHistory,
+    ],
+    step_fn: StepFunction,
+):
+    (params, opt_state, key, batch_state, done, recent_history) = carry
+    sample, batch_state = batch_state.next(key)
+    new_carry, history = step_fn((params, opt_state, key), sample=sample)
+
+    new_recent_history = recent_history.update(history)
+
+    return (
+        *new_carry,
+        batch_state,
+        done,
+        new_recent_history,
+    ), history
+
+
+def skip_step(
+    carry: tuple[
+        PyTree,
+        tuple[PyTree],
+        PRNGKeyArray,
+        BatchState,
+        jax.Array,
+        OptHistory,
+    ],
+    popsize: int,
+):
+    (params, opt_state, key, batch_state, done, recent_history) = carry
+    dummy_history = recent_history.init(
+        params, popsize, recent_history.update_step[-1]
+    )
+
+    return (
+        params,
+        opt_state,
+        key,
+        batch_state,
+        done,
+        recent_history,
+    ), dummy_history
+
+
+# =============================================================================
+
+
+def scan_step(
+    carry: tuple[
+        PyTree,
+        tuple[PyTree],
+        PRNGKeyArray,
+        BatchState,
+        jax.Array,
+        OptHistory,
+    ],
+    xs,
+    stop_fn: StopFunction,
+    step_fn: StepFunction,
+    popsize: int,
+):
+    _, opt_state, _, _, done, recent_history = carry
+
+    (new_carry, history_entry) = jax.lax.cond(
+        done | stop_fn(recent_history, opt_state),
+        partial(skip_step, popsize=popsize),
+        partial(do_step, step_fn=step_fn),
+        carry,
+    )
+
+    return new_carry, jax.lax.stop_gradient(history_entry)
+
+
+# =============================================================================
+
+
+def scan_loop(carry, scan_fn, n_iterations: int, verbose: bool):
+    if verbose:
+        fn = scan_tqdm(n_iterations)(scan_fn)
+    else:
+        fn = scan_fn
+    # Run the optimization loop
+    return jax.lax.scan(
+        f=fn,
+        init=carry,
+        xs=jnp.arange(n_iterations),
+        length=n_iterations,
+    )
+
+
+def for_loop(carry, scan_fn, n_iterations: int):
+    jitted_scan_fn = jax.jit(scan_fn)
+    carry, history = jitted_scan_fn(carry, None)
+    buffer = jax.tree.map(
+        lambda x: jnp.tile(x[None], (n_iterations, *([1] * x.ndim))),
+        history,
+    )
+
+    # Run the optimization loop
+    for i in tqdm(range(1, n_iterations)):
+        carry, history = jitted_scan_fn(carry, None)
+        buffer = jax.tree.map(
+            lambda buf, new, i=i: buf.at[i].set(new),
+            buffer,
+            history,
+        )
+    return carry, buffer

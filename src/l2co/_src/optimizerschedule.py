@@ -17,8 +17,6 @@ from pathlib import Path
 from typing import Any
 
 # Third-party
-import jax.numpy as jnp
-
 # Local
 from .stopping_criteria import STOPPING_CRITERIA
 
@@ -82,10 +80,7 @@ class OptimizationStep:
     @property
     def hash(self) -> int:
         t = sorted(self.tag.items())
-        return jnp.array(
-            int(hashlib.sha256(str(t).encode()).hexdigest()[:8], 16),
-            dtype=jnp.uint32,
-        )
+        return int(hashlib.sha256(str(t).encode()).hexdigest()[:6], 16)  #:8
 
     @property
     def tag_hashable(self) -> tuple[tuple[str, Any]]:

@@ -12,8 +12,7 @@ from l2co._src.budget import based_on_dimensionality
 from l2co._src.optimizerschedule import OptimizationStep
 from l2co._src.run_optimization import (
     RunOptimization,
-    initialize_optimizer,
-    run_optimization_many_realizations,
+    run_optimization,
 )
 from l2co._src.tasks.benchmark_task import create_bbob_task
 from l2co._src.tasks.pde import create_pde_task
@@ -37,18 +36,16 @@ def run(
 ):
     if key is None:
         key = jr.key(0)
-    update_state, update_class = initialize_optimizer(
-        optimizer=optimizer, task=task, bounded=bounded, key=key
-    )
 
-    history_state = run_optimization_many_realizations(
-        update_state=update_state,
-        optimizer=update_class,
-        sampler=sampler,
+    history_state = run_optimization(
+        optimizer=optimizer,
         task=task,
-        n_iterations=5,
-        n_realizations=2,
+        sampler=sampler,
+        bounded=bounded,
+        n_iterations=n_iterations,
+        n_realizations=n_realizations,
         key=key,
+        verbose=False,
     )
 
     data_xarr = history_state.to_xarray_realizations(
@@ -97,4 +94,5 @@ def test_bbob(optimizer: OptimizationStep, fn_name: str, dim: int):
         optimizer=optimizer,
         task=task,
         sampler=normal_sampling,
+        include_input_mean=False,
     )

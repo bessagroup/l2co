@@ -35,6 +35,8 @@ management and data generation.
 # =============================================================================
 
 # Standard
+from __future__ import annotations
+
 import gc
 import logging
 from collections.abc import Callable
@@ -46,12 +48,11 @@ import jax
 import jax.random as jr
 from f3dasm import ExperimentSample
 from f3dasm.datageneration import DataGenerator
-from jaxtyping import PRNGKeyArray
+from jaxtyping import PRNGKeyArray, PyTree
 
 # Local
 from l2co._src.batching import BatchState
 from l2co._src.history_state import HistoryState
-from l2co._src.naming import INPUT_MEAN
 from l2co._src.opt_history import OptHistory
 from l2co._src.optimizers import optimizer_mapping
 from l2co._src.optimizerschedule import OptimizationStep
@@ -71,57 +72,209 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-def initialize_optimizer(
-    optimizer: OptimizationStep,
-    task: Task,
-    bounded: tuple[float, float],
-    *,
-    key: PRNGKeyArray,
-) -> tuple[UpdateState, UpdateClass]:
+class RunState(eqx.Module):
     """
-    Initialize an optimizer with the given parameters.
+    State container for running optimization processes.
+    This class encapsulates the state required to run optimization processes,
+    including the update state, history state, optimizer state, batch state,
+    and update class. It provides methods for initializing and running the
+    optimization process in a batched manner for multiple realizations.
 
     Parameters
     ----------
-    optimizer : OptimizationStep
-        The optimization step configuration containing optimizer type and
-        hyperparameters.
-    task : Task
-        The optimization task containing the model to be optimized.
-    bounded : Tuple[float, float]
-        The bounds for the optimization variables as (lower, upper).
-    key : PRNGKeyArray
-        JAX random key for stochastic operations.
-
-    Returns
-    -------
-    Tuple[UpdateState, UpdateClass]
-        A tuple containing the initialized update state and update class.
+    update_state : UpdateState
+        The current state of the optimizer updates.
+    history_state : HistoryState
+        The history of the optimization process.
+    opt_state : PyTree
+        The state of the optimizer.
+    batch_state : BatchState
+        The state of the data batching process.
+    update_class : UpdateClass
+        The class defining the optimizer update logic.
+    n_iterations : int
+        The number of optimization iterations to perform.
+    n_realizations : int
+        The number of independent optimization realizations to run.
     """
 
-    update_class: UpdateClass = optimizer_mapping(optimizer.optimizer)(
-        **optimizer.hyperparameters,
-        task=task,
-        opt_hash=optimizer.hash,
-        bounded=bounded,
-        stop_fn=optimizer.stopping_fn,
+    update_state: UpdateState
+    history_state: HistoryState
+    opt_state: PyTree
+    batch_state: BatchState
+    update_class: UpdateClass = eqx.field(static=True)
+    n_iterations: int = eqx.field(static=True)
+    n_realizations: int = eqx.field(static=True)
+
+    @classmethod
+    def init(
+        cls,
+        optimizer: OptimizationStep,
+        task: Task,
+        sampler: Callable,
+        bounded: tuple[float, float],
+        n_iterations: int,
+        n_realizations: int,
+        key: PRNGKeyArray,
+    ) -> RunState:
+        update_class: UpdateClass = optimizer_mapping(optimizer.optimizer)(
+            **optimizer.hyperparameters,
+            task=task,
+            opt_hash=optimizer.hash,
+            bounded=bounded,
+            stop_fn=optimizer.stopping_fn,
+        )
+        update_state = UpdateState.init(
+            params=eqx.filter(task.model, eqx.is_inexact_array),
+            memory_size=update_class.popsize,
+        )
+
+        # Initialize the optimizer state
+        opt_state = update_class.init(update_state=update_state, key=key)
+
+        # Initialize the history state
+        history_state = HistoryState.init(
+            n_iterations=n_iterations + 1,
+            params=eqx.filter(task.model, eqx.is_inexact_array),
+        )
+
+        # Initialize batch state
+        batch_state = BatchState.init(
+            dataset=task.loaded_dataset,
+            batch_size=task.batch_size,
+            key=key,
+        )
+
+        # Create the initial sample of model parameters
+        update_state = update_state.sample(task=task, sampler=sampler, key=key)
+
+        # Evaluate the initial parameters
+        history_state = history_state.add(
+            OptHistory.from_init_sample(
+                update_state=update_state, task=task, key=key
+            )
+        )
+        return cls(
+            update_state=update_state,
+            history_state=history_state,
+            opt_state=opt_state,
+            batch_state=batch_state,
+            update_class=update_class,
+            n_iterations=n_iterations,
+            n_realizations=n_realizations,
+        )
+
+    @classmethod
+    # @eqx.filter_jit
+    def batch_init(
+        cls,
+        optimizer: OptimizationStep,
+        task: Task,
+        sampler: Callable,
+        bounded: tuple[float, float],
+        n_iterations: int,
+        n_realizations: int,
+        *,
+        key: PRNGKeyArray,
+    ) -> RunState:
+        return jax.vmap(
+            cls.init, in_axes=(None, None, None, None, None, None, 0)
+        )(
+            optimizer,
+            task,
+            sampler,
+            bounded,
+            n_iterations,
+            n_realizations,
+            jr.split(key, n_realizations),
+        )
+
+    @eqx.filter_jit
+    def batch_run(
+        self,
+        key: PRNGKeyArray,
+        verbose: bool,
+    ) -> HistoryState:
+        # Main optimization loop
+        return jax.vmap(
+            run,
+            in_axes=(0, 0, 0, None, None, 0, None, None),
+        )(
+            self.opt_state,
+            self.update_state,
+            self.history_state,
+            self.batch_state,
+            self.update_class,
+            jr.split(key, self.n_realizations),
+            self.n_iterations,
+            verbose,
+        )
+
+
+def run(
+    opt_state: PyTree,
+    update_state: UpdateState,
+    history_state: HistoryState,
+    batch_state: BatchState,
+    update_class: UpdateClass,
+    key: PRNGKeyArray,
+    n_iterations: int,
+    verbose: bool,
+) -> HistoryState:
+    """
+    Run a single optimization process for a given task.
+    This function executes the main optimization loop, starting with an
+    initial parameter sample and iteratively improving the model parameters
+    using the specified optimizer.
+
+    Parameters
+    ----------
+    opt_state : PyTree
+        The state of the optimizer.
+    update_state : UpdateState
+        The current state of the optimizer updates.
+    history_state : HistoryState
+        The history of the optimization process.
+    batch_state : BatchState
+        The state of the data batching process.
+    update_class : UpdateClass
+        The class defining the optimizer update logic.
+    key : PRNGKeyArray
+        JAX random key for reproducibility.
+    n_iterations : int
+        Number of optimization iterations to perform.
+    verbose : bool
+        Whether to enable verbose logging during optimization.
+    Returns
+    -------
+    HistoryState
+        Complete history of the optimization process including parameters,
+        losses, and update steps.
+    """
+    # Main optimization loop
+    _, _, _, history_state = update_class.step(
+        opt_state=opt_state,
+        update_state=update_state,
+        history_state=history_state,
+        batch_state=batch_state,
+        key=key,
+        n_iterations=n_iterations,
+        verbose=verbose,
     )
 
-    update_state = UpdateState.init(
-        params=eqx.filter(task.model, eqx.is_inexact_array),
-        memory_size=update_class.popsize,
-    )
-
-    return update_state, update_class
+    return history_state
 
 
 def run_optimization(
-    update_state: UpdateState,
-    optimizer: UpdateClass,
-    sampler: Callable,
+    optimizer: OptimizationStep,
     task: Task,
+    sampler: Callable,
+    bounded: tuple[float, float],
     n_iterations: int,
+    n_realizations: int,
+    *,
     key: PRNGKeyArray,
+    verbose: bool,
 ) -> HistoryState:
     """
     Run a single optimization process for a given task.
@@ -132,19 +285,23 @@ def run_optimization(
 
     Parameters
     ----------
-    update_state : UpdateState
-        The current state of the optimization containing parameters and
-        memory.
-    optimizer : UpdateClass
-        The optimizer instance to use for parameter updates.
-    sampler : Callable
-        Function to generate initial parameter samples.
+    optimizer : OptimizationStep
+        The optimization step configuration containing optimizer type and
+        hyperparameters.
     task : Task
         The optimization task containing the model and objective function.
+    sampler : Callable
+        Sampler function for generating initial parameters.
+    bounded : tuple[float, float]
+        Bounds for the optimization variables as (lower, upper).
     n_iterations : int
         Number of optimization iterations to perform.
+    n_realizations : int
+        Number of independent optimization realizations to run.
     key : PRNGKeyArray
-        JAX random key for stochastic operations.
+        JAX random key for reproducibility.
+    verbose : bool
+        Whether to enable verbose logging during optimization.
 
     Returns
     -------
@@ -152,105 +309,17 @@ def run_optimization(
         Complete history of the optimization process including parameters,
         losses, and update steps.
     """
-
-    # Initialize the optimizer state
-    opt_state = optimizer.init(update_state=update_state, key=key)
-
-    # Create the initial sample of model parameters
-    update_state = update_state.sample(task=task, sampler=sampler, key=key)
-
-    # Initialize the history state
-    history_state = HistoryState.init(
-        n_iterations=n_iterations + 1,
-        params=eqx.filter(task.model, eqx.is_inexact_array),
-    )
-
-    # Evaluate the initial parameters
-    history_state = history_state.add(
-        OptHistory.from_init_sample(
-            update_state=update_state, task=task, key=key
-        )
-    )
-
-    # Initialize batch state
-    batch_state = BatchState.init(
-        dataset=task.loaded_dataset,
-        batch_size=task.batch_size,
-        key=key,
-    )
-
-    # Main optimization loop
-    update_state, opt_state, batch_state, history_state = optimizer.step(
-        opt_state=opt_state,
-        update_state=update_state,
-        history_state=history_state,
-        batch_state=batch_state,
+    run_state = RunState.batch_init(
+        optimizer=optimizer,
+        task=task,
+        sampler=sampler,
+        bounded=bounded,
         n_iterations=n_iterations,
+        n_realizations=n_realizations,
         key=key,
     )
-    return history_state
 
-
-def run_optimization_many_realizations(
-    update_state: UpdateState,
-    optimizer: UpdateClass,
-    sampler: Callable,
-    task: Task,
-    n_iterations: int,
-    n_realizations: int,
-    *,
-    key: PRNGKeyArray,
-) -> HistoryState:
-    """
-    Run optimization for multiple realizations using vectorized computation.
-
-    This function runs the optimization process multiple times with different
-    random seeds, enabling statistical analysis of the optimization
-    performance across multiple independent runs.
-
-    Parameters
-    ----------
-    update_state : UpdateState
-        The current state of the optimization containing parameters and
-        memory.
-    optimizer : UpdateClass
-        The optimizer instance to use for parameter updates.
-    sampler : Callable
-        Function to generate initial parameter samples.
-    task : Task
-        The optimization task containing the model and objective function.
-    n_iterations : int
-        Number of optimization iterations to perform.
-    n_realizations : int
-        Number of independent optimization runs to execute.
-    key : PRNGKeyArray
-        JAX random key for stochastic operations.
-
-    Returns
-    -------
-    HistoryState
-        Combined history state containing results from all realizations.
-
-    Notes
-    -----
-    This function uses JAX's vectorization (`vmap`) to efficiently run
-    multiple optimization realizations in parallel, splitting the random
-    key to ensure each realization uses a different random seed.
-    """
-
-    return jax.vmap(
-        run_optimization, in_axes=(None, None, None, None, None, 0)
-    )(
-        update_state,
-        optimizer,
-        sampler,
-        task,
-        n_iterations,
-        jax.random.split(key, n_realizations),
-    )
-
-
-# =============================================================================
+    return run_state.batch_run(key, verbose)
 
 
 class RunOptimization(DataGenerator):
@@ -411,18 +480,15 @@ class RunOptimization(DataGenerator):
 
         n_iterations = self.budget_fn(task=task)
 
-        update_state, update_class = initialize_optimizer(
-            optimizer=optimizer, task=task, bounded=self.bounded, key=key
-        )
-
-        history_state: HistoryState = run_optimization_many_realizations(
-            update_state=update_state,
-            optimizer=update_class,
-            sampler=self.sampler,
+        history_state = run_optimization(
+            optimizer=optimizer,
             task=task,
+            sampler=self.sampler,
+            bounded=self.bounded,
             n_iterations=n_iterations,
             n_realizations=self.n_realizations,
             key=key,
+            verbose=self.verbose,
         )
 
         data_xarr = history_state.to_xarray_realizations(

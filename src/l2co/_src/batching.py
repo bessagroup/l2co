@@ -76,9 +76,10 @@ class BatchState(eqx.Module):
     """
 
     perm: Int[Array, " N"]
-    pos: int
+    pos: Int[Array, ""]
     batch_size: int = eqx.field(static=True)
-    dataset: PyTree
+    dataset_size: int = eqx.field(static=True)
+    dataset: PyTree  # = eqx.field(static=True)
 
     @classmethod
     def init(
@@ -117,67 +118,39 @@ class BatchState(eqx.Module):
         >>> state.pos
         0
         """
-
         dataset_size = jax.tree.leaves(dataset)[0].shape[0] if dataset else 0
         batch_size = batch_size if batch_size is not None else dataset_size
 
         return cls(
             perm=jr.permutation(key, dataset_size),
-            pos=0,
+            pos=jnp.array(0, dtype=jnp.int32),
             batch_size=batch_size,
+            dataset_size=dataset_size,
             dataset=dataset,
         )
 
-    @property
-    def dataset_size(self) -> int:
-        """Total number of samples in the dataset.
-
-        Returns
-        -------
-        int
-            Size of the dataset, equal to ``perm.shape[0]``.
-        """
-        return self.perm.shape[0]
-
     def next(self, key: PRNGKeyArray) -> tuple[PyTree, BatchState]:
-        """Return a batch from a PyTree dataset and the updated state.
+        """Return a batch from a PyTree dataset and the updated state."""
 
-        Parameters
-        ----------
-        key : PRNGKeyArray
-            PRNG key used to generate a new permutation if wrap-around occurs.
+        # Compute the predicate
+        pred = (self.pos + self.batch_size) <= self.dataset_size
 
-        Returns
-        -------
-        tuple[PyTree, BatchState]
-            A tuple ``(batch, new_state)`` where ``batch`` mirrors the
-            structure of ``dataset`` and each leaf has leading dimension
-            ``batch_size``; ``new_state`` reflects the advanced position or a
-            re-permuted state on wrap-around.
+        # Helper function for a single state
+        def _next_single(s, k):
+            new_state, batch_idxs = jax.lax.cond(
+                (s.pos + s.batch_size) <= s.dataset_size,
+                take_no_wrap,
+                take_wrap,
+                (s, k),
+            )
+            batch = jax.tree.map(lambda x: x[batch_idxs], s.dataset)
+            return batch, new_state
 
-        Notes
-        -----
-        Uses ``jax.lax.cond`` to choose between no-wrap and wrap-around paths,
-        and ``jax.tree.map`` to index into the PyTree leaves.
-
-        Examples
-        --------
-        >>> key = jr.PRNGKey(0)
-        >>> state = BatchState.init(key, dataset_size=10, batch_size=4)
-        >>> data = {"x": jnp.arange(10)}
-        >>> batch, state = state.next_batch(data)
-        >>> jax.tree.map(lambda x: x.shape, batch)
-        {'x': (4,)}
-        """
-        new_state, batch_idxs = jax.lax.cond(
-            (self.pos + self.batch_size) <= self.dataset_size,
-            take_no_wrap,
-            take_wrap,
-            (self, key),
-        )
-        # Index into the PyTree
-        batch = jax.tree.map(lambda x: x[batch_idxs], self.dataset)
-        return batch, new_state
+        # Check if pred is scalar or batched
+        if pred.shape == ():  # scalar
+            return _next_single(self, key)
+        else:  # batched
+            return jax.vmap(_next_single, in_axes=(0, None))(self, key)
 
 
 def take_no_wrap(carry: tuple[BatchState, PRNGKeyArray]):
@@ -211,6 +184,7 @@ def take_no_wrap(carry: tuple[BatchState, PRNGKeyArray]):
         perm=state.perm,
         pos=state.pos + state.batch_size,
         batch_size=state.batch_size,
+        dataset_size=state.dataset_size,
         dataset=state.dataset,
     )
     return new_state, batch
@@ -267,6 +241,7 @@ def take_wrap(carry: tuple[BatchState, PRNGKeyArray]):
         perm=new_perm,
         pos=new_pos,
         batch_size=state.batch_size,
+        dataset_size=state.dataset_size,
         dataset=state.dataset,
     )
     return new_state, batch

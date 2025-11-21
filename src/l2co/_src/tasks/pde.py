@@ -59,7 +59,20 @@ def convection_pde_loss(
     # Also note that the model takes in both x and t as input
 
     def u(x, t):
-        return eqx.filter_vmap(model)(jnp.concatenate([x, t], axis=-1))
+        xt = jnp.concatenate([x, t], axis=-1)  # (N, 2) or (B, N, 2)
+        print(jnp.concatenate([x, t], axis=-1).shape)
+
+        # If batched (B, N, 2): vmap twice
+        if xt.ndim == 3:
+            print(model)
+            # vmap over B batch, then over spatial points N
+            return eqx.filter_vmap(eqx.filter_vmap(model))(xt)
+
+        # If not batched (N,2): vmap once
+        else:
+            return eqx.filter_vmap(model)(xt)
+
+        # return eqx.filter_vmap(model)(jnp.concatenate([x, t], axis=-1))
 
     # Compute predictions
     u_ic = u(x_ic, t_ic)

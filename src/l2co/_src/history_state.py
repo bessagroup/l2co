@@ -57,7 +57,7 @@ class HistoryState(eqx.Module):
             params,
         )
         nans_output = jnp.full((n_iterations,), jnp.nan)
-        default_step_value = jnp.zeros((n_iterations,), dtype=jnp.uint32)
+        default_step_value = jnp.zeros((n_iterations,), dtype=jnp.int32)
         init_fevals = jnp.zeros((n_iterations,), dtype=jnp.uint32)
         init_iterations = jnp.zeros((n_iterations,), dtype=jnp.uint32)
         return HistoryState(
@@ -76,7 +76,7 @@ class HistoryState(eqx.Module):
         o_min = jnp.min(history.loss, axis=1)  # shape (T,)
         o_mean = jnp.mean(history.loss, axis=1)  # shape (T,)
         o_std = jnp.std(history.loss, axis=1)  # shape (T,)
-        u_step = history.update_step[:, 0].astype(jnp.uint32)
+        u_step = history.update_step[:, 0].astype(jnp.int32)
         u_feval = history.fevals[:, 0].astype(jnp.uint32)
         u_iterations = history.iterations[:, 0].astype(jnp.uint32)
 

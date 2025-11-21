@@ -1,8 +1,8 @@
 defaults:
-- tasks: bbob_single
+- tasks: bbob
 - budgets: based_on_dim
 - samplers: normal
-- optimizers: standard
+- optimizers: medium
 
 n_realizations: 25
 
@@ -11,7 +11,7 @@ mode: cluster
 
 log_level: 20
 
-verbose: True
+verbose: False
 clear_jax_cache: True
 save_input_parameters: False
 
