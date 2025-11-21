@@ -22,7 +22,7 @@ data_generator:
   _partial_: True
 
 fn_name: sphere
-fn_dim: 2000
+fn_dim: 15
 
 schema:
   dimensionality: continuous

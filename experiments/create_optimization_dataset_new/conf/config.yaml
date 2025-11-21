@@ -1,10 +1,10 @@
 defaults:
-- tasks: bbob
-- budgets: based_on_dim
-- samplers: normal
-- optimizers: medium
+- tasks: pde
+- budgets: fixed_pde
+- samplers: xavier
+- optimizers: pde
 
-n_realizations: 25
+n_realizations: 1
 
 seed: 467
 mode: cluster
