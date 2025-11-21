@@ -137,11 +137,14 @@ def evaluate(params: PyTree, task: Task, *, key: PRNGKeyArray) -> jax.Array:
     _, static = eqx.partition(task.model, eqx.is_inexact_array)
     n_samples = jax.tree_util.tree_leaves(params)[0].shape[0]
 
-    sample, _ = BatchState.init(
+    batch_state = BatchState.init(
         dataset=task.loaded_dataset,
         batch_size=task.batch_size,
         key=key,
-    ).next(key)
+    )
+
+    batch_idxs, _ = batch_state.next(key)
+    sample = jax.tree.map(lambda x: x[batch_idxs], task.loaded_dataset)
 
     if task.pass_rng:
         rng_sample = {"key": jr.split(key, num=n_samples)}
@@ -164,11 +167,14 @@ def evaluate_with_grads(
     _, static = eqx.partition(task.model, eqx.is_inexact_array)
     n_samples = jax.tree_util.tree_leaves(params)[0].shape[0]
 
-    sample, _ = BatchState.init(
+    batch_state = BatchState.init(
         dataset=task.loaded_dataset,
         batch_size=task.batch_size,
         key=key,
-    ).next(key)
+    )
+
+    batch_idxs, _ = batch_state.next(key)
+    sample = jax.tree.map(lambda x: x[batch_idxs], task.loaded_dataset)
 
     if task.pass_rng:
         rng_sample = {"key": jr.split(key, num=n_samples)}
@@ -205,11 +211,14 @@ def new(
     # Sample new parameters using the provided sampler
     new_params = sampler(key, params, n_samples)
 
-    sample, _ = BatchState.init(
+    batch_state = BatchState.init(
         dataset=task.loaded_dataset,
         batch_size=task.batch_size,
         key=key,
-    ).next(key)
+    )
+
+    batch_idxs, _ = batch_state.next(key)
+    sample = jax.tree.map(lambda x: x[batch_idxs], task.loaded_dataset)
 
     if task.pass_rng:
         rng_sample = {"key": jr.split(key, num=n_samples)}

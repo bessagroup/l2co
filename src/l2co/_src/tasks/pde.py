@@ -41,6 +41,19 @@ def mse(x: Array, y: Array) -> Array:
     return jnp.mean((x - y) ** 2)
 
 
+def u_(x: jax.Array, t: jax.Array, model: eqx.Module):
+    xt = jnp.concatenate([x, t], axis=-1)  # (N, 2) or (B, N, 2)
+
+    # If batched (B, N, 2): vmap twice
+    if xt.ndim == 3:
+        # vmap over B batch, then over spatial points N
+        return eqx.filter_vmap(eqx.filter_vmap(model))(xt)
+
+    # If not batched (N,2): vmap once
+    else:
+        return eqx.filter_vmap(model)(xt)
+
+
 def convection_pde_loss(
     model: PyTree,
     x_res: Array,
@@ -58,21 +71,7 @@ def convection_pde_loss(
     # Vectorize the model, since it processes only one point
     # Also note that the model takes in both x and t as input
 
-    def u(x, t):
-        xt = jnp.concatenate([x, t], axis=-1)  # (N, 2) or (B, N, 2)
-        print(jnp.concatenate([x, t], axis=-1).shape)
-
-        # If batched (B, N, 2): vmap twice
-        if xt.ndim == 3:
-            print(model)
-            # vmap over B batch, then over spatial points N
-            return eqx.filter_vmap(eqx.filter_vmap(model))(xt)
-
-        # If not batched (N,2): vmap once
-        else:
-            return eqx.filter_vmap(model)(xt)
-
-        # return eqx.filter_vmap(model)(jnp.concatenate([x, t], axis=-1))
+    u = partial(u_, model=model)
 
     # Compute predictions
     u_ic = u(x_ic, t_ic)
@@ -118,8 +117,7 @@ def reaction_pde_loss(
     rho: float,
 ) -> jnp.ndarray:
     # Vectorize the model
-    def u(x, t):
-        return eqx.filter_vmap(model)(jnp.concatenate([x, t], axis=-1))
+    u = partial(u_, model=model)
 
     # Compute predictions
     u_ic = u(x_ic, t_ic)
@@ -164,9 +162,7 @@ def wave_pde_loss(
     loss_fn_ic_dt: Callable[[Array, Array], Array],
     beta: float,
 ) -> jnp.ndarray:
-    # Vectorize the model
-    def u(x, t):
-        return eqx.filter_vmap(model)(jnp.concatenate([x, t], axis=-1))
+    u = partial(u_, model=model)
 
     # Compute predictions
     u_ic = u(x_ic, t_ic)

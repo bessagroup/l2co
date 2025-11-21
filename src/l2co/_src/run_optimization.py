@@ -193,18 +193,20 @@ class RunState(eqx.Module):
     def batch_run(
         self,
         key: PRNGKeyArray,
+        dataset: dict[str, jax.Array],
         verbose: bool,
     ) -> HistoryState:
         # Main optimization loop
         return jax.vmap(
             run,
-            in_axes=(0, 0, 0, None, None, 0, None, None),
+            in_axes=(0, 0, 0, None, None, None, 0, None, None),
         )(
             self.opt_state,
             self.update_state,
             self.history_state,
             self.batch_state,
             self.update_class,
+            dataset,
             jr.split(key, self.n_realizations),
             self.n_iterations,
             verbose,
@@ -217,6 +219,7 @@ def run(
     history_state: HistoryState,
     batch_state: BatchState,
     update_class: UpdateClass,
+    dataset: dict[str, jax.Array],
     key: PRNGKeyArray,
     n_iterations: int,
     verbose: bool,
@@ -257,6 +260,7 @@ def run(
         update_state=update_state,
         history_state=history_state,
         batch_state=batch_state,
+        dataset=dataset,
         key=key,
         n_iterations=n_iterations,
         verbose=verbose,
@@ -319,7 +323,7 @@ def run_optimization(
         key=key,
     )
 
-    return run_state.batch_run(key, verbose)
+    return run_state.batch_run(key, task.loaded_dataset, verbose)
 
 
 class RunOptimization(DataGenerator):

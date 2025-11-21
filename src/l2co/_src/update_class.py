@@ -68,6 +68,7 @@ class UpdateClass(eqx.Module):
         update_state: UpdateState,
         history_state: HistoryState,
         batch_state: BatchState,
+        dataset: dict[str, jax.Array],
         key: PRNGKeyArray,
         n_iterations: int,
         verbose: bool,
@@ -110,6 +111,7 @@ class UpdateClass(eqx.Module):
                 stop_fn=self.stop_fn,
                 step_fn=self.step_fn,
                 popsize=self.popsize,
+                dataset=dataset,
             ),
             n_iterations=n_iterations + 1,
             verbose=verbose,
@@ -153,9 +155,11 @@ def do_step(
         OptHistory,
     ],
     step_fn: StepFunction,
+    dataset: dict[str, jax.Array],
 ):
     (params, opt_state, key, batch_state, done, recent_history) = carry
-    sample, batch_state = batch_state.next(key)
+    batch_idxs, batch_state = batch_state.next(key)
+    sample = jax.tree.map(lambda x: x[batch_idxs], dataset)
     new_carry, history = step_fn((params, opt_state, key), sample=sample)
 
     new_recent_history = recent_history.update(history)
@@ -210,13 +214,14 @@ def scan_step(
     stop_fn: StopFunction,
     step_fn: StepFunction,
     popsize: int,
+    dataset: dict[str, jax.Array],
 ):
     _, opt_state, _, _, done, recent_history = carry
 
     (new_carry, history_entry) = jax.lax.cond(
         done | stop_fn(recent_history, opt_state),
         partial(skip_step, popsize=popsize),
-        partial(do_step, step_fn=step_fn),
+        partial(do_step, step_fn=step_fn, dataset=dataset),
         carry,
     )
 

@@ -40,6 +40,8 @@ class BatchState(eqx.Module):
         Current position (start index) inside ``perm`` for the next batch.
     batch_size : int
         Number of samples per batch. Static field (not traced).
+    dataset_size : int
+        Total number of samples in the dataset. Static field (not traced).
 
     Class Methods
     -------------
@@ -79,7 +81,6 @@ class BatchState(eqx.Module):
     pos: Int[Array, ""]
     batch_size: int = eqx.field(static=True)
     dataset_size: int = eqx.field(static=True)
-    dataset: PyTree  # = eqx.field(static=True)
 
     @classmethod
     def init(
@@ -126,31 +127,44 @@ class BatchState(eqx.Module):
             pos=jnp.array(0, dtype=jnp.int32),
             batch_size=batch_size,
             dataset_size=dataset_size,
-            dataset=dataset,
         )
 
-    def next(self, key: PRNGKeyArray) -> tuple[PyTree, BatchState]:
-        """Return a batch from a PyTree dataset and the updated state."""
+    def next(self, key: PRNGKeyArray) -> tuple[Int[Array, " N"], BatchState]:
+        """Return a batch from a PyTree dataset and the updated state.
+
+        Parameters
+        ----------
+        key : PRNGKeyArray
+            PRNG key used to generate a new permutation if wrap-around
+            occurs.
+
+        Returns
+        -------
+        tuple[Int[Array, " N"], BatchState]
+            A tuple ``(batch_idxs, new_state)`` where ``batch_idxs`` is a
+            1D array of length ``batch_size`` containing dataset indices,
+            and ``new_state`` is the updated ``BatchState``.
+        """
 
         # Compute the predicate
         pred = (self.pos + self.batch_size) <= self.dataset_size
-
-        # Helper function for a single state
-        def _next_single(s, k):
-            new_state, batch_idxs = jax.lax.cond(
-                (s.pos + s.batch_size) <= s.dataset_size,
-                take_no_wrap,
-                take_wrap,
-                (s, k),
-            )
-            batch = jax.tree.map(lambda x: x[batch_idxs], s.dataset)
-            return batch, new_state
 
         # Check if pred is scalar or batched
         if pred.shape == ():  # scalar
             return _next_single(self, key)
         else:  # batched
             return jax.vmap(_next_single, in_axes=(0, None))(self, key)
+
+
+# Helper function for a single state
+def _next_single(s: BatchState, k: PRNGKeyArray):
+    new_state, batch_idxs = jax.lax.cond(
+        (s.pos + s.batch_size) <= s.dataset_size,
+        take_no_wrap,
+        take_wrap,
+        (s, k),
+    )
+    return batch_idxs, new_state
 
 
 def take_no_wrap(carry: tuple[BatchState, PRNGKeyArray]):
@@ -185,7 +199,6 @@ def take_no_wrap(carry: tuple[BatchState, PRNGKeyArray]):
         pos=state.pos + state.batch_size,
         batch_size=state.batch_size,
         dataset_size=state.dataset_size,
-        dataset=state.dataset,
     )
     return new_state, batch
 
@@ -242,6 +255,5 @@ def take_wrap(carry: tuple[BatchState, PRNGKeyArray]):
         pos=new_pos,
         batch_size=state.batch_size,
         dataset_size=state.dataset_size,
-        dataset=state.dataset,
     )
     return new_state, batch
