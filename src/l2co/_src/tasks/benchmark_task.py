@@ -159,7 +159,7 @@ def create_bbob_task(fn_name: str, seed: int, dimensionality: int) -> Task:
         function_bounds=jnp.tile(jnp.array([-5.0, 5.0]), (dimensionality, 2)),
     )
     loss_fn = fn_scale_input(
-        partial(bbob_jax.registry[fn_name], key=jr.key(seed))
+        bbob_jax.registry[fn_name](ndim=dimensionality, key=jr.key(seed)),
     )
     model = jnp.zeros(dimensionality)
     tag = bbob_jax.function_characteristics[fn_name].copy()
