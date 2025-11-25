@@ -9,7 +9,6 @@ Module for optimizers.
 from __future__ import annotations
 
 from collections.abc import Callable
-from functools import partial
 
 # Third-party
 import equinox as eqx
@@ -24,6 +23,7 @@ from evosax.algorithms.distribution_based.base import (
     DistributionBasedAlgorithm,
 )
 from evosax.algorithms.population_based.base import PopulationBasedAlgorithm
+from jax.tree_util import Partial
 from jaxtyping import PRNGKeyArray, PyTree
 from optax import OptState as OptaxState
 
@@ -31,7 +31,7 @@ from optax import OptState as OptaxState
 from l2co._src.opt_history import OptHistory
 from l2co._src.sampler import random_sampling
 from l2co._src.task import Task
-from l2co._src.tree_utils import combined_loss
+from l2co._src.tree_utils import vmapped_loss
 from l2co._src.typing import (
     InitFunction,
     InputParameters,
@@ -64,13 +64,21 @@ def optax_fn(
     **kwargs,
 ) -> tuple[InitFunction, StepFunction]:
     def init_fn(
-        update_state: UpdateState, key: PRNGKeyArray = None, **sample
+        update_state: UpdateState, key: PRNGKeyArray | None = None
     ) -> OptaxState:
         params = jax.tree.map(lambda x: x[-1], update_state.last_params)
         opt_state = optimizer.init(params)
         return opt_state
 
-    def _single_update(carry, _):
+    def _single_update(
+        carry: tuple[
+            InputParameters, OptaxState, dict[str, jax.Array], PRNGKeyArray
+        ],
+        _,
+    ) -> tuple[
+        tuple[InputParameters, OptaxState, dict[str, jax.Array], PRNGKeyArray],
+        OptHistory,
+    ]:
         input_params, opt_state, sample, key = carry
 
         model = eqx.combine(input_params, static)
@@ -81,7 +89,7 @@ def optax_fn(
         else:
             rng_sample = {}
 
-        fn = partial(loss_fn, **sample, **rng_sample)
+        fn = Partial(loss_fn, **sample, **rng_sample)
         loss, grads = eqx.filter_value_and_grad(fn)(model)
         updates, new_opt_state = optimizer.update(grads, opt_state)
         new_params = eqx.apply_updates(input_params, updates)
@@ -166,7 +174,7 @@ def optax_extra_args_fn(
         else:
             rng_sample = {}
 
-        fn = partial(loss_fn, **sample, **rng_sample)
+        fn = Partial(loss_fn, **sample, **rng_sample)
 
         loss, grads = optax.value_and_grad_from_state(fn)(
             model, state=opt_state
@@ -236,14 +244,7 @@ def evosax_distribution_based_fn(
 
         new_key, rng_key = jr.split(key)
 
-        if pass_rng:
-            rng_sample = {"key": jr.split(new_key, num=popsize)}
-        else:
-            rng_sample = {}
-
-        loss = jax.vmap(
-            partial(combined_loss, static=static, loss_fn=loss_fn, **sample)
-        )(input_params, **rng_sample)
+        loss = vmapped_loss(eqx.combine(input_params, static), loss_fn, sample)
 
         new_opt_state, _ = optimizer.tell(
             key=rng_key,
@@ -297,14 +298,7 @@ def evosax_population_based_fn(
             lambda x: x[-popsize:], update_state.last_params
         )
 
-        if pass_rng:
-            rng_sample = {"key": jr.split(key, num=popsize)}
-        else:
-            rng_sample = {}
-
-        loss = jax.vmap(
-            partial(combined_loss, static=static, loss_fn=loss_fn, **sample)
-        )(population, **rng_sample)
+        loss = vmapped_loss(eqx.combine(population, static), loss_fn, sample)
 
         return optimizer.init(
             key=key, population=population, fitness=loss, params=es_params
@@ -321,14 +315,7 @@ def evosax_population_based_fn(
 
         new_key, rng_key = jr.split(key)
 
-        if pass_rng:
-            rng_sample = {"key": jr.split(new_key, num=popsize)}
-        else:
-            rng_sample = {}
-
-        loss = jax.vmap(
-            partial(combined_loss, static=static, loss_fn=loss_fn, **sample)
-        )(input_params, **rng_sample)
+        loss = vmapped_loss(eqx.combine(input_params, static), loss_fn, sample)
 
         new_opt_state, _ = optimizer.tell(
             key=rng_key,
@@ -503,7 +490,7 @@ def cmaes_variable_popsize(
 ) -> UpdateClass:
     d = task.dimensionality
 
-    optimizer = partial(
+    optimizer = Partial(
         evosax_distribution_update,
         optimizer=CMA_ES,
     )
@@ -519,7 +506,7 @@ def pso_variable_popsize(
 ) -> UpdateClass:
     d = task.dimensionality
 
-    optimizer = partial(
+    optimizer = Partial(
         evosax_population_update,
         optimizer=PSO,
     )
@@ -535,7 +522,7 @@ def sepcmaes_variable_popsize(
 ) -> UpdateClass:
     d = task.dimensionality
 
-    optimizer = partial(
+    optimizer = Partial(
         evosax_distribution_update,
         optimizer=Sep_CMA_ES,
     )
@@ -550,7 +537,7 @@ def adam_variable_updates(
 ):
     d = task.dimensionality
 
-    optimizer = partial(
+    optimizer = Partial(
         optax_update,
         optimizer=optax.adam,
         popsize=1,
@@ -569,11 +556,11 @@ def adam_variable_updates(
 def optimizer_mapping(name: str) -> UpdateClass:
     match name:
         case "adam":
-            return partial(optax_update, optimizer=optax.adam, popsize=1)
+            return Partial(optax_update, optimizer=optax.adam, popsize=1)
         case "adam_variable_updates":
             return adam_variable_updates
         case "sgd":
-            return partial(optax_update, optimizer=optax.sgd, popsize=1)
+            return Partial(optax_update, optimizer=optax.sgd, popsize=1)
         case "sepcmaes":
             return sepcmaes_variable_popsize
         case "cmaes":
@@ -581,7 +568,7 @@ def optimizer_mapping(name: str) -> UpdateClass:
         case "pso":
             return pso_variable_popsize
         case "lbfgsb":
-            return partial(
+            return Partial(
                 optax_update_extra_args,
                 optimizer=optax.lbfgs,
                 popsize=1,

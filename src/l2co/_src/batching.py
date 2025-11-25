@@ -129,6 +129,28 @@ class BatchState(eqx.Module):
             dataset_size=dataset_size,
         )
 
+    @eqx.filter_jit
+    def reset(self, key: PRNGKeyArray) -> BatchState:
+        """Reset the batching state to initial conditions.
+
+        Parameters
+        ----------
+        key : PRNGKeyArray
+            PRNG key used to generate the initial permutation.
+
+        Returns
+        -------
+        BatchState
+            New batching state with position set to zero and ``perm`` a
+            random permutation of ``range(dataset_size)``.
+        """
+        return BatchState(
+            perm=jr.permutation(key, self.dataset_size),
+            pos=jnp.array(0, dtype=jnp.int32),
+            batch_size=self.batch_size,
+            dataset_size=self.dataset_size,
+        )
+
     def next(self, key: PRNGKeyArray) -> tuple[Int[Array, " N"], BatchState]:
         """Return a batch from a PyTree dataset and the updated state.
 

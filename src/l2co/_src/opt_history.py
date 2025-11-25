@@ -7,6 +7,8 @@ Module for the opt history.
 
 from __future__ import annotations
 
+import equinox as eqx
+
 # Third-party
 import jax
 import jax.numpy as jnp
@@ -52,6 +54,7 @@ class OptHistory(OptHistoryType):
         )
 
     @classmethod
+    @eqx.filter_jit
     def from_init_sample(
         cls, update_state: UpdateState, task: Task, key: PRNGKeyArray
     ):

@@ -30,6 +30,7 @@ from .naming import (
     UPDATE_STEP,
 )
 from .typing import OptHistoryType
+from .update_state import UpdateState
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -52,24 +53,63 @@ class HistoryState(eqx.Module):
     def init(cls, n_iterations: int, params: PyTree) -> HistoryState:
         nans_input = jax.tree.map(
             lambda p: jnp.full(
-                (n_iterations, *p.shape), jnp.nan, dtype=p.dtype
+                (n_iterations, *p.shape), jnp.nan, dtype=jnp.float32
             ),
             params,
         )
-        nans_output = jnp.full((n_iterations,), jnp.nan)
-        default_step_value = jnp.zeros((n_iterations,), dtype=jnp.int32)
-        init_fevals = jnp.zeros((n_iterations,), dtype=jnp.uint32)
-        init_iterations = jnp.zeros((n_iterations,), dtype=jnp.uint32)
-        return HistoryState(
+        nans_output = jnp.full((n_iterations,), jnp.nan, dtype=jnp.float32)
+        zeros_int32 = jnp.zeros((n_iterations,), dtype=jnp.int32)
+        zeros_u32 = jnp.zeros((n_iterations,), dtype=jnp.uint32)
+
+        return cls(
             input_mean=nans_input,
             output_min=nans_output,
             output_mean=nans_output,
             output_std=nans_output,
-            update_step=default_step_value,
-            fevals=init_fevals,
-            iterations=init_iterations,
+            update_step=zeros_int32,
+            fevals=zeros_u32,
+            iterations=zeros_u32,
         )
 
+    @eqx.filter_jit
+    def reset(self, update_state: UpdateState) -> HistoryState:
+        nans_input = jax.tree.map(
+            lambda p: jnp.full_like(p, jnp.nan, dtype=jnp.float32),
+            self.input_mean,
+        )
+
+        nans_output = jnp.full_like(
+            self.output_min, jnp.nan, dtype=jnp.float32
+        )
+        zeros_int32 = jnp.zeros(self.update_step.shape, dtype=jnp.int32)
+        zeros_u32 = jnp.zeros(self.fevals.shape, dtype=jnp.uint32)
+
+        mean_params = jax.tree.map(
+            lambda x: jnp.mean(x, axis=0), update_state.last_params
+        )
+        input_mean = jax.tree.map(
+            lambda x, y: x.at[-1].set(y), nans_input, mean_params
+        )
+
+        output_min = nans_output.at[-1].set(update_state.last_loss.min())
+        output_mean = nans_output.at[-1].set(update_state.last_loss.mean())
+        output_std = nans_output.at[-1].set(update_state.last_loss.std())
+
+        update_step = zeros_int32.at[-1].set(update_state.last_step)
+        fevals = zeros_u32.at[-1].set(1)
+        iterations = zeros_u32.at[-1].set(1)
+
+        return HistoryState(
+            input_mean=input_mean,
+            output_min=output_min,
+            output_mean=output_mean,
+            output_std=output_std,
+            update_step=update_step,
+            fevals=fevals,
+            iterations=iterations,
+        )
+
+    @eqx.filter_jit
     def add(self, history: OptHistoryType) -> HistoryState:
         # Compute statistics across P dimension for each time step
         i_mean = jax.tree.map(lambda x: jnp.mean(x, axis=1), history.params)

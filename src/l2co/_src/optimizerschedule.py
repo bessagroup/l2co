@@ -12,9 +12,10 @@ import hashlib
 import json
 from collections.abc import Callable
 from copy import deepcopy
-from functools import partial
 from pathlib import Path
 from typing import Any
+
+from jax.tree_util import Partial
 
 # Third-party
 # Local
@@ -126,7 +127,7 @@ class OptimizationStep:
 
         fn = STOPPING_CRITERIA[stop_crit.pop("type")]
 
-        return partial(fn, **stop_crit)
+        return Partial(fn, **stop_crit)
 
     @classmethod
     def from_yaml(cls, config: dict[str, Any]) -> OptimizationStep:

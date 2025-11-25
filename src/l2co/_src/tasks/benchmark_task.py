@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 # Standard
-from functools import partial
-
 import bbob_jax
 import jax
 

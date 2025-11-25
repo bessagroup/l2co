@@ -6,6 +6,7 @@ Module for pytree utilities.
 # =============================================================================
 
 # Standard
+from collections.abc import Callable
 from pathlib import Path
 
 # Third-party
@@ -26,29 +27,30 @@ __status__ = "Stable"
 # =============================================================================
 
 
-def combined_loss(
-    params, loss_fn, static: PyTree, **rng_sample: dict
-) -> jax.Array:
+def combined_loss(model: PyTree, loss_fn: Callable, sample: dict) -> jax.Array:
     """
     Compute the combined loss for a given set of parameters.
 
     Parameters
     ----------
-    params : PyTree
-        The parameters to evaluate the loss for.
+    model : PyTree
+        The model parameters.
     loss_fn : Callable
         The loss function to compute the loss.
-    static : PyTree
-        Static parameters to combine with the input parameters.
-    rng_sample : dict
-        Random samples used in the loss computation.
+    sample : dict
+        Sample data for loss computation.
 
     Returns
     -------
     jax.Array
         The computed loss.
     """
-    return loss_fn(eqx.combine(params, static), **rng_sample)
+    return loss_fn(model, **sample)
+
+
+vmapped_loss = eqx.filter_vmap(
+    eqx.filter_jit(combined_loss), in_axes=(0, None, None)
+)
 
 
 def ffill(x: jnp.ndarray) -> jnp.ndarray:
@@ -166,7 +168,7 @@ def get_best(params: PyTree, losses: jax.Array):
     # params: shape = (n_iters*popsize, dim)
     # losses: shape = (n_iters*popsize, 1)
     idx = jnp.argmin(losses)
-    best_params = jax.tree.map(lambda x: x[idx][None], params)
+    best_params = jax.tree.map(lambda x: x[idx], params)
     best_loss = losses[idx]
     return best_params, best_loss
 
