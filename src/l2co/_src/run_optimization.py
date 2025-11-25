@@ -53,7 +53,6 @@ from jaxtyping import PRNGKeyArray, PyTree
 # Local
 from l2co._src.batching import BatchState
 from l2co._src.history_state import HistoryState
-from l2co._src.opt_history import OptHistory
 from l2co._src.optimizers import optimizer_mapping
 from l2co._src.optimizerschedule import OptimizationStep
 from l2co._src.task import Task
