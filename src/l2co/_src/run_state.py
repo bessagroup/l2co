@@ -114,9 +114,17 @@ def reset(
 ) -> RunState:
     batch_state = run_state.batch_state.reset(key=key)
 
+    _, static = eqx.partition(task.model, eqx.is_inexact_array)
+
     update_state = run_state.update_state.reset().sample(
-        task=task, sampler=sampler, key=key
+        batch_state=batch_state,
+        static=static,
+        dataset=task.loaded_dataset,
+        loss_fn=task.loss_fn,
+        sampler=sampler,
+        key=key,
     )
+
     history_state = run_state.history_state.reset(update_state)
     opt_state = run_state.update_class.init(update_state=update_state, key=key)
 

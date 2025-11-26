@@ -92,22 +92,24 @@ class UpdateState(eqx.Module):
 
     @eqx.filter_jit
     def sample(
-        self, task: Task, sampler: Callable, key: PRNGKeyArray
+        self,
+        batch_state: BatchState,
+        static: PyTree,
+        dataset: dict[str, jax.Array],
+        loss_fn: Callable,
+        sampler: Callable,
+        key: PRNGKeyArray,
     ) -> UpdateState:
         n_samples = self.memory_size
-        _, static = eqx.partition(task.model, eqx.is_inexact_array)
 
         # Sample new parameters using the provided sampler
         new_params = sampler(key, self.best_params, n_samples)
 
-        batch_state = BatchState.init(
-            dataset=task.loaded_dataset, batch_size=task.batch_size, key=key
-        )
         losses = evaluate(
             eqx.combine(new_params, static),
             batch_state,
-            task.loaded_dataset,
-            task.loss_fn,
+            dataset,
+            loss_fn,
             key,
         )
 
