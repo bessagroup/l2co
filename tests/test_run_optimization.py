@@ -12,7 +12,7 @@ from l2co._src.budget import based_on_dimensionality
 from l2co._src.optimizerschedule import OptimizationStep
 from l2co._src.run_optimization import (
     RunOptimization,
-    run_optimization,
+    RolloutWrapper,
 )
 from l2co._src.tasks.benchmark_task import create_bbob_task
 from l2co._src.tasks.pde import create_pde_task
@@ -37,15 +37,18 @@ def run(
     if key is None:
         key = jr.key(0)
 
-    history_state = run_optimization(
+    rollout_wrapper = RolloutWrapper.init(
         optimizer=optimizer,
         task=task,
         sampler=sampler,
-        bounded=bounded,
         n_iterations=n_iterations,
+        key=key,
+        bounded=bounded,
+    )
+
+    history_state = rollout_wrapper.batch_evaluate(
         n_realizations=n_realizations,
         key=key,
-        verbose=False,
     )
 
     data_xarr = history_state.to_xarray_realizations(

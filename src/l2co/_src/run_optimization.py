@@ -53,7 +53,10 @@ from jaxtyping import PRNGKeyArray
 # Local
 from l2co._src.history_state import HistoryState
 from l2co._src.optimizerschedule import OptimizationStep
-from l2co._src.run_state import RunState, batch_reset, batch_run
+from l2co._src.run_state import (
+    RunState,
+    batch_evaluate,
+)
 from l2co._src.task import Task
 
 #                                                          Authorship & Credits
@@ -68,65 +71,46 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-def run_optimization(
-    optimizer: OptimizationStep,
-    task: Task,
-    sampler: Callable,
-    bounded: tuple[float, float],
-    n_iterations: int,
-    n_realizations: int,
-    *,
-    key: PRNGKeyArray,
-    verbose: bool,
-) -> HistoryState:
-    """
-    Run a single optimization process for a given task.
+class RolloutWrapper(eqx.Module):
+    run_state: RunState
+    sampler: Callable
+    task: Task
+    verbose: bool
 
-    This function executes the main optimization loop, starting with an
-    initial parameter sample and iteratively improving the model parameters
-    using the specified optimizer.
+    @classmethod
+    def init(
+        cls,
+        optimizer: OptimizationStep,
+        task: Task,
+        sampler: Callable,
+        n_iterations: int,
+        key: PRNGKeyArray,
+        bounded: tuple[float, float] = (None, None),
+        verbose: float = False,
+    ) -> RolloutWrapper:
+        run_state = RunState.init(
+            optimizer=optimizer,
+            task=task,
+            bounded=bounded,
+            max_iterations=n_iterations,
+            key=key,
+        )
+        return cls(
+            run_state=run_state, task=task, sampler=sampler, verbose=verbose
+        )
 
-    Parameters
-    ----------
-    optimizer : OptimizationStep
-        The optimization step configuration containing optimizer type and
-        hyperparameters.
-    task : Task
-        The optimization task containing the model and objective function.
-    sampler : Callable
-        Sampler function for generating initial parameters.
-    bounded : tuple[float, float]
-        Bounds for the optimization variables as (lower, upper).
-    n_iterations : int
-        Number of optimization iterations to perform.
-    n_realizations : int
-        Number of independent optimization realizations to run.
-    key : PRNGKeyArray
-        JAX random key for reproducibility.
-    verbose : bool
-        Whether to enable verbose logging during optimization.
-
-    Returns
-    -------
-    HistoryState
-        Complete history of the optimization process including parameters,
-        losses, and update steps.
-    """
-    run_state = RunState.init(
-        optimizer=optimizer,
-        task=task,
-        bounded=bounded,
-        max_iterations=n_iterations,
-        key=key,
-    )
-
-    run_state = batch_reset(
-        run_state, task, sampler, jr.split(key, n_realizations)
-    )
-
-    return batch_run(
-        run_state, task.loaded_dataset, n_iterations, key, verbose
-    )
+    def batch_evaluate(
+        self,
+        key: PRNGKeyArray,
+        n_realizations: int = 1,
+    ) -> HistoryState:
+        return batch_evaluate(
+            self.run_state,
+            self.task,
+            self.sampler,
+            jr.split(key, n_realizations),
+            self.verbose,
+        )
 
 
 class RunOptimization(DataGenerator):
@@ -287,15 +271,19 @@ class RunOptimization(DataGenerator):
 
         n_iterations = self.budget_fn(task=task)
 
-        history_state = run_optimization(
+        rollout_wrapper = RolloutWrapper.init(
             optimizer=optimizer,
             task=task,
             sampler=self.sampler,
-            bounded=self.bounded,
             n_iterations=n_iterations,
-            n_realizations=self.n_realizations,
             key=key,
+            bounded=self.bounded,
             verbose=self.verbose,
+        )
+
+        history_state = rollout_wrapper.batch_evaluate(
+            key=key,
+            n_realizations=self.n_realizations,
         )
 
         data_xarr = history_state.to_xarray_realizations(

@@ -161,6 +161,24 @@ def run(
     return history_state
 
 
+@eqx.filter_jit
+def evaluate(
+    run_state: RunState,
+    task: Task,
+    sampler: Callable,
+    key: PRNGKeyArray,
+    verbose: bool,
+) -> HistoryState:
+    run_state = reset(run_state, task=task, sampler=sampler, key=key)
+    return run(
+        run_state=run_state,
+        dataset=task.loaded_dataset,
+        n_iterations=run_state.max_iterations,
+        key=key,
+        verbose=verbose,
+    )
+
+
 batch_reset = eqx.filter_vmap(
     reset,
     in_axes=(None, None, None, 0),
@@ -169,4 +187,9 @@ batch_reset = eqx.filter_vmap(
 batch_run = eqx.filter_vmap(
     run,
     in_axes=(0, None, None, None, None),
+)
+
+batch_evaluate = eqx.filter_vmap(
+    evaluate,
+    in_axes=(None, None, None, 0, None),
 )
