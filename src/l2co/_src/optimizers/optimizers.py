@@ -282,7 +282,8 @@ def evosax_distribution_based_fn(
     **kwargs,
 ) -> tuple[InitFunction, StepFunction]:
     """
-    Creates initialization and step functions for EvoSax distribution-based optimizers.
+    Creates initialization and step functions for EvoSax distribution-based
+    optimizers.
 
     Parameters
     ----------
@@ -376,7 +377,8 @@ def evosax_population_based_fn(
     **kwargs,
 ) -> tuple[InitFunction, StepFunction]:
     """
-    Creates initialization and step functions for EvoSax population-based optimizers.
+    Creates initialization and step functions for EvoSax population-based
+    optimizers.
 
     Parameters
     ----------
@@ -709,7 +711,8 @@ def cmaes_variable_popsize(
     task: Task, popsize: int | None = None, **kwargs
 ) -> UpdateClass:
     """
-    Creates a CMA-ES optimizer with variable population size based on dimensionality.
+    Creates a CMA-ES optimizer with variable population size based
+    on dimensionality.
 
     Parameters
     ----------
@@ -742,7 +745,8 @@ def pso_variable_popsize(
     task: Task, popsize: int | None = None, **kwargs
 ) -> UpdateClass:
     """
-    Creates a PSO optimizer with variable population size based on dimensionality.
+    Creates a PSO optimizer with variable population size based
+    on dimensionality.
 
     Parameters
     ----------
@@ -775,7 +779,8 @@ def sepcmaes_variable_popsize(
     task: Task, popsize: int | None = None, **kwargs
 ) -> UpdateClass:
     """
-    Creates a Sep-CMA-ES optimizer with variable population size based on dimensionality.
+    Creates a Sep-CMA-ES optimizer with variable population size based
+    on dimensionality.
 
     Parameters
     ----------
@@ -807,7 +812,8 @@ def adam_variable_updates(
     task: Task, n_updates_per_iteration: int | None = None, **kwargs
 ):
     """
-    Creates an Adam optimizer with variable number of updates per iteration based on dimensionality.
+    Creates an Adam optimizer with variable number of updates per iteration
+    based on dimensionality.
 
     Parameters
     ----------
