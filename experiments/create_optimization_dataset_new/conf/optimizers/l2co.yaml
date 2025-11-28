@@ -3,4 +3,5 @@
     n_switches: 5
     l2co_path: ${path}
     model_dir: ${model_dir}
+    train: True
 

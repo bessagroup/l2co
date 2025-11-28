@@ -1,0 +1,30 @@
+sampler:
+  _target_: f3dasm.create_sampler
+  sampler: "grid"
+sampler_kwargs:
+
+experimentdata:
+  domain:
+    input:
+      fn_name:
+        type: category
+        categories:
+          - ${......fn_name}
+      dimensionality:
+        type: category
+        categories:
+          - ${......fn_dim}
+task_kwargs:
+  seed: ${seed}
+
+data_generator:
+  _target_: l2co._src.tasks.benchmark_task.create_bbob_task
+  _partial_: True
+
+fn_name: sphere
+fn_dim: 15
+
+schema:
+  dimensionality: continuous
+  separable: categorical
+  unimodal: categorical

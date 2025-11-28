@@ -1,165 +1,206 @@
-from typing import Callable
+"""
+Module for samplers.
+"""
 
-import equinox as eqx
-import jax.nn as jnn
+#                                                                       Modules
+# =============================================================================
+
+# Third party
+from collections.abc import Callable
+
+import jax
 import jax.numpy as jnp
-import jax.random as jrd
-import jax.tree as jt
-import jax.tree_util as jtu
-from f3dasm import Block, ExperimentData
-from jaxtyping import PyTree
+import jax.random as jr
+from jax.nn import initializers
+from jaxtyping import PRNGKeyArray, PyTree
 
+# Local
+from .typing import InputParameters
+
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
+__credits__ = ["Martin van der Schelling"]
+__status__ = "Stable"
 # =============================================================================
 
-SAMPLER_HASH = '0000000000000000'
+
+def _sample(
+    init_fn: Callable[[PRNGKeyArray, tuple[int], type], PyTree],
+    n_samples: int,
+    key: PRNGKeyArray,
+    params: PyTree,
+) -> InputParameters:
+    keys = jax.random.split(key, len(jax.tree.leaves(params)))
+
+    def init_leaf(x: jax.Array, k: PRNGKeyArray) -> jax.Array:
+        return init_fn(k, (n_samples,) + x.shape, x.dtype)
+
+    return jax.tree.map(
+        init_leaf, params, jax.tree.unflatten(jax.tree.structure(params), keys)
+    )
+
 
 # =============================================================================
+def random_sampling(
+    key: PRNGKeyArray,
+    params: PyTree,
+    n_samples: int,
+    lower_bound: float = 0.0,
+    upper_bound: float = 1.0,
+) -> InputParameters:
+    """
+    Perform random sampling within the specified bounds.
+
+    Parameters
+    ----------
+    key : jax.random.PRNGKey
+        Random key for reproducibility.
+    params : PyTree
+        Parameters to sample.
+    n_samples : int
+        Number of samples to generate.
+    lower_bound : float, optional
+        Lower bound for sampling, by default 0.0.
+    upper_bound : float, optional
+        Upper bound for sampling, by default 1.0.
+
+    Returns
+    -------
+    InputParameters
+        Randomly sampled parameters.
+    """
+    random_samples = _sample(
+        init_fn=initializers.uniform(scale=upper_bound),
+        n_samples=n_samples,
+        key=key,
+        params=params,
+    )
+    constant_samples = constant_sampling(
+        params=params, value=lower_bound, n_samples=n_samples
+    )
+    return jax.tree.map(lambda x, y: x + y, random_samples, constant_samples)
 
 
-class RandomWeightSampler(Block):
-    def __init__(self,
-                 lower_bound: float = 0.0,
-                 upper_bound: float = 1.0):
-        self.lower_bound = lower_bound
-        self.upper_bound = upper_bound
-
-    def call(self, data: ExperimentData, model: PyTree, num_samples: int,
-             seed: int,
-             **kwargs) -> ExperimentData:
-
-        params, static = eqx.partition(model, eqx.is_inexact_array)
-        sample_list_input, sample_list_output = [], []
-        key = jrd.key(seed)
-
-        for _ in range(num_samples):
-            _, key = jrd.split(key)
-            sample = jt.map(lambda x: jrd.uniform(
-                key=key, shape=x.shape, minval=self.lower_bound,
-                maxval=self.upper_bound), params)
-
-            sample_list_input.append({'x': eqx.combine(sample, static)})
-            sample_list_output.append({'opt_step': SAMPLER_HASH})
-
-        experiment_data = ExperimentData(
-            domain=data.domain, input_data=sample_list_input,
-            output_data=sample_list_output,
-            project_dir=data.project_dir)
-
-        return experiment_data.mark_all('open')
-
-
-class NormalWeightSampler(Block):
-    def call(self, data: ExperimentData, model: PyTree,
-             num_samples: int, seed: int, **kwargs) -> ExperimentData:
-        params, static = eqx.partition(model, eqx.is_inexact_array)
-        sample_list = []
-        key = jrd.key(seed)
-        for _ in range(num_samples):
-            _, key = jrd.split(key)
-            sample = jt.map(lambda x: jrd.normal(
-                key, shape=x.shape), params)
-
-            sample_list.append({'x': eqx.combine(sample, static)})
-
-        return ExperimentData(domain=data.domain, input_data=sample_list,
-                              project_dir=data.project_dir)
-
-
-class GridWeightSampler(Block):
-    def __init__(self, stepsize: float,
-                 lower_bound: float, upper_bound: float):
-        self.stepsize = stepsize
-        self.lower_bound = lower_bound
-        self.upper_bound = upper_bound
-
-        self.num_points = max(
-            2, int(round((self.upper_bound - self.lower_bound) / self.stepsize)
-                   ) + 1)
-
-    def generate_grid(self, params):
-        """Generate a grid of values for each parameter ensuring lower
-        & upper bounds are included."""
-        grid_params = []
-        for param in jtu.tree_leaves(params):
-            if param.ndim == 0:  # Scalar parameter
-                grid = jnp.linspace(
-                    self.lower_bound, self.upper_bound,
-                    num=self.num_points)
-            else:  # Tensor parameter
-                grid = jnp.meshgrid(
-                    *[jnp.linspace(
-                        self.lower_bound, self.upper_bound,
-                        num=self.num_points)] * param.size)
-                # Reshape into parameter shape
-                grid = jnp.stack(grid, axis=-1).reshape((-1,) + param.shape)
-            grid_params.append(grid)
-        return jtu.tree_unflatten(jtu.tree_structure(params), grid_params)
-
-    def call(self, data: ExperimentData, model: PyTree,
-             **kwargs) -> ExperimentData:
-        params, static = eqx.partition(model, eqx.is_inexact_array)
-
-        # Generate the grid of sampled parameter values
-        grid_samples = self.generate_grid(params)
-
-        sample_list = [{'x': eqx.combine(sample, static)}
-                       for sample in grid_samples]
-
-        output_list = [{'opt_step': SAMPLER_HASH}
-                       for _ in range(len(sample_list))]
-
-        data = ExperimentData(domain=data.domain, input_data=sample_list,
-                              output_data=output_list,
-                              project_dir=data.project_dir)
-
-        return data.mark_all('open')
-
-
-class XavierNormalWeightSampler:
-    def call(self, data: ExperimentData, model: PyTree,
-             num_samples: int, seed: int, **kwargs) -> ExperimentData:
-        def is_linear(x):
-            return isinstance(x, eqx.nn.Linear)
-
-        params, static = eqx.partition(model, eqx.is_inexact_array)
-
-        sample_list = []
-
-        key = jrd.key(seed)
-
-        for _ in range(num_samples):
-            _, key = jrd.split(key)
-            wkey, bkey = jrd.split(key)
-            params = init_part(
-                params=params,
-                filter_fn=lambda m: [x.weight for x in jt.leaves(
-                    m, is_leaf=is_linear)
-                    if is_linear(x)],
-                init_fn=jnn.initializers.xavier_normal(),
-                key=wkey)
-            params = init_part(
-                params=params,
-                filter_fn=lambda m: [x.bias for x in jt.leaves(
-                    m, is_leaf=is_linear)
-                    if is_linear(x)],
-                init_fn=jnn.initializers.zeros,
-                key=bkey)
-
-            # Append the sample to the sample list
-            sample_list.append({'x': eqx.combine(params, static)})
-
-        # Return the ExperimentData with the updated domain and sampled data
-        return ExperimentData(domain=data.domain, input_data=sample_list,
-                              project_dir=data.project_dir)
-
-
-def init_part(
-    params: PyTree, filter_fn: Callable, init_fn: jnn.initializers.Initializer,
-    *, key=jrd.PRNGKey
+def normal_sampling(
+    key: PRNGKeyArray,
+    params: PyTree,
+    n_samples: int,
+    mean: float = 0.0,
+    std: float = 1.0,
 ) -> PyTree:
-    w = filter_fn(params)
-    new_w = [
-        init_fn(subkey, weight.shape, weight.dtype)
-        for weight, subkey in zip(w, jrd.split(key, len(w)))
-    ]
-    return eqx.tree_at(filter_fn, params, new_w)
+    """
+    Perform normal (Gaussian) sampling for a given PyTree of parameters.
+
+    Parameters
+    ----------
+    key : jax.random.PRNGKey
+        Random key for reproducibility.
+    params : PyTree
+        Parameters to sample (used for shape reference).
+    n_samples : int
+        Number of samples to generate.
+    mean : float, optional
+        Mean of the normal distribution, by default 0.0.
+    std : float, optional
+        Standard deviation of the normal distribution, by default 1.0.
+
+    Returns
+    -------
+    PyTree
+        Randomly sampled parameters from a normal distribution.
+    """
+    normal_samples = _sample(
+        init_fn=initializers.normal(stddev=std),
+        n_samples=n_samples,
+        key=key,
+        params=params,
+    )
+
+    constant_samples = constant_sampling(
+        params=params, value=mean, n_samples=n_samples
+    )
+
+    return jax.tree.map(lambda x, y: x + y, normal_samples, constant_samples)
+
+
+def xavier_sampling(
+    key: PRNGKeyArray,
+    params: PyTree,
+    n_samples: int,
+) -> InputParameters:
+    """
+    Perform Xavier normal sampling for a given PyTree of parameters.
+
+    Parameters
+    ----------
+    key : jax.random.PRNGKey
+        Random key for reproducibility.
+    params : PyTree
+        Parameters to sample (used for shape reference).
+    n_samples : int
+        Number of samples to generate.
+    Returns
+    -------
+    InputParameters
+        Randomly sampled parameters using Xavier normal initialization.
+    """
+    return _sample(
+        init_fn=initializers.xavier_normal(),
+        n_samples=n_samples,
+        key=key,
+        params=params,
+    )
+
+
+def constant_sampling(
+    params: PyTree,
+    value: float,
+    n_samples: int,
+) -> InputParameters:
+    """
+    Perform constant sampling for a given PyTree of parameters.
+
+    Parameters
+    ----------
+    params : PyTree
+        Parameters to sample (used for shape reference).
+    value : float
+        Constant value to fill the samples with.
+    n_samples : int
+        Number of samples to generate.
+
+    Returns
+    -------
+    InputParameters
+        Parameters filled with the constant value.
+    """
+    return _sample(
+        init_fn=initializers.constant(value),
+        n_samples=n_samples,
+        key=jr.key(0),
+        params=params,
+    )
+
+
+def grid_sampling(
+    params: PyTree,
+    n_points_per_dim: int,
+    lower_bound: float = 0.0,
+    upper_bound: float = 1.0,
+) -> InputParameters:
+    grid_params = []
+    for param in jax.tree_util.tree_leaves(params):
+        if param.ndim == 0:  # Scalar parameter
+            grid = jnp.linspace(lower_bound, upper_bound, num=n_points_per_dim)
+        else:  # Tensor parameter
+            grid = jnp.meshgrid(
+                *[jnp.linspace(lower_bound, upper_bound, num=n_points_per_dim)]
+                * param.size
+            )
+            # Reshape into parameter shape
+            grid = jnp.stack(grid, axis=-1).reshape((-1,) + param.shape)
+        grid_params.append(grid)
+    return jax.tree_util.tree_unflatten(
+        jax.tree_util.tree_structure(params), grid_params
+    )

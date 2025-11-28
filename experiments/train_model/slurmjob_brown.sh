@@ -58,5 +58,5 @@ echo "Run Directory:    $run_dir"
 echo "Executing: mpirun python main.py ++hydra.run.dir=$run_dir $@"
 echo "======================================="
 
-# Run the Python script with MPI
+# Run the Python script
 python main.py ++hydra.run.dir=$run_dir ++opt_dir=$opt_dir "$@"

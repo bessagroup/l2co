@@ -1,39 +1,90 @@
-from __future__ import annotations
+"""
+Module for optimizer schedules.
+"""
+
+#                                                                       Modules
+# =============================================================================
 
 # Standard
+from __future__ import annotations
+
 import hashlib
 import json
+from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Optional
+from typing import Any
+
+from jax.tree_util import Partial
 
 # Third-party
-import numpy as np
+# Local
+from .stopping_criteria import STOPPING_CRITERIA
 
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
+__credits__ = ["Martin van der Schelling"]
+__status__ = "Stable"
 # =============================================================================
 
 
 class OptimizationStep:
-    def __init__(self, optimizer: str,
-                 hyperparameters: Optional[Dict[str, Any]] = None):
+    """Configuration for an optimization step.
 
+    This class defines the optimizer, its hyperparameters, and stopping
+    criteria for a single optimization step in a schedule.
+
+    Parameters
+    ----------
+    optimizer : str
+        Name of the optimizer to use.
+    stopping_criteria : dict[str, Any] | None, optional
+        Dictionary defining stopping criteria configuration, by default None.
+    hyperparameters : dict[str, Any] | None, optional
+        Dictionary of optimizer hyperparameters, by default None.
+
+    Attributes
+    ----------
+    optimizer : str
+        Name of the optimizer.
+    hyperparameters : dict[str, Any]
+        Optimizer hyperparameters.
+    stopping_criteria : dict[str, Any]
+        Stopping criteria configuration.
+    tag : dict[str, Any]
+        Tag containing optimizer name and hyperparameters.
+    """
+
+    def __init__(
+        self,
+        optimizer: str,
+        stopping_criteria: dict[str, Any] | None = None,
+        hyperparameters: dict[str, Any] | None = None,
+    ):
         if hyperparameters is None:
             hyperparameters = {}
 
+        if stopping_criteria is None:
+            stopping_criteria = {}
+
         self.optimizer = optimizer
         self.hyperparameters = dict(hyperparameters)
-        self.tag = {'opt_name': self.name, **hyperparameters}
+        self.stopping_criteria = dict(stopping_criteria)
+        self.tag = {"opt_name": self.name, **hyperparameters}
 
     def __repr__(self):
         return (
             f"Optimizer: {self.optimizer}, "
-            f"Hyperparameters: {self.hyperparameters}"
+            f"Hyperparameters: {self.hyperparameters}, "
+            f"Stopping criteria: {self.stopping_criteria}"
         )
 
     def __str__(self):
         return (
             f"Optimizer: {self.optimizer}\n"
             f"  Hyperparameters: {self.hyperparameters}\n"
+            f"  Stopping criteria: {self.stopping_criteria}\n"
         )
 
     def __eq__(self, other):
@@ -45,230 +96,209 @@ class OptimizationStep:
         )
 
     def __hash__(self):
-        tag_hashable = tuple(sorted(self.tag.items())) if isinstance(
-            self.tag, dict) else None
+        tag_hashable = (
+            tuple(sorted(self.tag.items()))
+            if isinstance(self.tag, dict)
+            else None
+        )
 
         return hash(tag_hashable)
 
     @property
     def hash(self) -> int:
+        """Generate a hash value for this optimization step.
+
+        Returns
+        -------
+        int
+            Hash value based on the tag.
+        """
         t = sorted(self.tag.items())
-        return int(hashlib.sha256(str(t).encode()).hexdigest()[:8], 16)
-
-    @property
-    def name(self) -> str:
-        hyperparameters = '_'.join(
-            [f"{k}={v}" for k, v in self.hyperparameters.items()])
-
-        _name = f"{self.optimizer}_{hyperparameters}"
-
-        # Trim any leading/trailing underscores
-        return _name.strip('_')
-
-    @property
-    def popsize(self) -> int:
-        return self.hyperparameters.get('popsize', 1)
-
-    @classmethod
-    def from_yaml(cls, config: Dict[str, Any]) -> OptimizationStep:
-        if 'hyperparameters' not in config:
-            return cls(optimizer=config['optimizer'])
-        else:
-            return cls(optimizer=config['optimizer'],
-                       hyperparameters=config['hyperparameters'])
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            'optimizer': self.optimizer,
-            'hyperparameters': self.hyperparameters,
-        }
-
-    def save_to_json(self, filepath: Path | str):
-        with open(Path(filepath).with_suffix('.json'), 'w') as f:
-            json.dump(self.to_dict(), f, indent=4)
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> OptimizationStep:
-        return cls(
-            optimizer=data['optimizer'],
-            hyperparameters=data.get('hyperparameters'),
-        )
-
-    def copy(self) -> OptimizationStep:
-        return deepcopy(self)
-
-# =============================================================================
-
-
-class OptimizationSchedule:
-    def __init__(self, steps: OptimizationStep | list[OptimizationStep],
-                 budgets: float | list[float]):
-        if isinstance(steps, OptimizationStep):
-            steps = [steps]
-
-        if isinstance(budgets, (float, int)):
-            budgets = [budgets]
-
-        self.steps = [step.copy() for step in steps]
-
-        names = [step.name for step in steps]
-        self.name = names[0] if all(name == names[0]
-                                    for name in names) else '+'.join(names)
-
-        self.tag = {'opt_name': self.name,
-                    'steps': [step.tag for step in steps],
-                    'budgets': budgets}
-        self.budgets = budgets
-
-    def __lt__(self, __o: OptimizationSchedule) -> bool:
-        return self.name < __o.name
+        return int(hashlib.sha256(str(t).encode()).hexdigest()[:6], 16)  #:8
 
     @property
     def tag_hashable(self) -> tuple[tuple[str, Any]]:
+        """Create a hashable representation of the tag.
+
+        Returns
+        -------
+        tuple[tuple[str, Any]]
+            Hashable frozenset of tag items.
+        """
+
         def make_hashable(value):
             """Recursively convert lists to tuples and dicts to frozensets."""
             if isinstance(value, list):
                 return tuple(make_hashable(v) for v in value)
             elif isinstance(value, dict):
                 return frozenset(
-                    (k, make_hashable(v)) for k, v in value.items())
+                    (k, make_hashable(v)) for k, v in value.items()
+                )
             return value  # Leave other types unchanged
 
-        tag_hashable = {k: make_hashable(v) for k, v in self.tag.items()}
+        tag_hashable = {
+            "opt_name": make_hashable(self.name),
+            "hyperparameters": make_hashable(self.hyperparameters),
+        }
 
         # Use frozenset for order independence
         return frozenset(tag_hashable.items())
 
     @property
-    def hash(self) -> str:
-        return hashlib.sha256(str(self.tag_hashable).encode()).hexdigest()[:16]
+    def name(self) -> str:
+        """Generate a descriptive name for this optimization step.
 
-    def __iter__(self) -> Iterator[OptimizationStep]:
-        return iter(self.steps)
-
-    def __repr__(self):
-        return (
-            f"OptimizationSchedule(tag={self.name}, "
-            f"steps={self.steps}), "
-            f"budgets={self.budgets}"
+        Returns
+        -------
+        str
+            Name combining optimizer and hyperparameters.
+        """
+        hyperparameters = "_".join(
+            [f"{k}={v}" for k, v in self.hyperparameters.items()]
         )
 
-    def __str__(self):
-        step_details = "\n".join(
-            [f"Step {i+1}:\n{step}" for i, step in enumerate(self.steps)])
-        return (f"Optimization Schedule ({self.name}):\n{step_details}\n "
-                f"- budgets: {self.budgets}")
+        _name = f"{self.optimizer}_{hyperparameters}"
 
-    def __eq__(self, other):
-        if not isinstance(other, OptimizationSchedule):
-            return False
-        return (self.tag == other.tag
-                and self.steps == other.steps
-                and self.budgets == other.budgets)
+        # Trim any leading/trailing underscores
+        return _name.strip("_")
 
-    def __hash__(self):
-        return hash(self.tag_hashable)
+    @property
+    def popsize(self) -> int:
+        """Get the population size from hyperparameters.
 
-    def __len__(self):
-        return len(self.steps)
+        Returns
+        -------
+        int
+            Population size, defaults to 1 if not specified.
+        """
+        return self.hyperparameters.get("popsize", 1)
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            # 'tag': self.tag,
-            'steps': [step.to_dict() for step in self.steps],
-            'budgets': self.budgets,
-        }
+    @property
+    def stopping_fn(self) -> Callable:
+        """Create a stopping function from the stopping criteria.
+
+        Returns
+        -------
+        Callable
+            Stopping function with configured parameters.
+        """
+        if not self.stopping_criteria:
+            return lambda *args, **kwargs: False
+
+        stop_crit = deepcopy(self.stopping_criteria)
+
+        fn = STOPPING_CRITERIA[stop_crit.pop("type")]
+
+        return Partial(fn, **stop_crit)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> OptimizationSchedule:
-        steps = [OptimizationStep.from_dict(
-            step_data) for step_data in data['steps']]
-        return cls(steps=steps, budgets=data['budgets'])
+    def from_yaml(cls, config: dict[str, Any]) -> OptimizationStep:
+        """Create an OptimizationStep from a YAML configuration.
 
-    @classmethod
-    def from_json_string(cls, json_string: str) -> OptimizationSchedule:
-        data = json.loads(json_string)
-        return cls.from_dict(data)
+        Parameters
+        ----------
+        config : dict[str, Any]
+            Configuration dictionary from YAML.
 
-    def save_to_json(self, filepath: Path | str):
-        with open(Path(filepath).with_suffix('.json'), 'w') as f:
-            json.dump(self.to_dict(), f, indent=4)
+        Returns
+        -------
+        OptimizationStep
+            New optimization step instance.
+        """
+        return cls(
+            optimizer=config["optimizer"],
+            hyperparameters=config.get("hyperparameters", None),
+            stopping_criteria=config.get("stopping_criteria", None),
+        )
 
     @staticmethod
-    def save(object: OptimizationSchedule, path: str) -> str:
+    def save(object: OptimizationStep, path: str) -> str:
+        """Save an OptimizationStep to a JSON file.
+
+        Parameters
+        ----------
+        object : OptimizationStep
+            Optimization step to save.
+        path : str
+            File path to save to.
+
+        Returns
+        -------
+        str
+            Path to saved JSON file.
+        """
         object.save_to_json(path)
-        return Path(path).with_suffix('.json')
+        return Path(path).with_suffix(".json")
 
     @classmethod
-    def load(cls, filepath: str) -> OptimizationSchedule:
-        with open(filepath, 'r') as f:
+    def load(cls, filepath: str) -> OptimizationStep:
+        """Load an OptimizationStep from a JSON file.
+
+        Parameters
+        ----------
+        filepath : str
+            Path to JSON file.
+
+        Returns
+        -------
+        OptimizationStep
+            Loaded optimization step instance.
+        """
+        with open(filepath) as f:
             data = json.load(f)
         return cls.from_dict(data)
 
-    def copy(self) -> OptimizationSchedule:
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to a dictionary representation.
+
+        Returns
+        -------
+        dict[str, Any]
+            Dictionary containing optimizer configuration.
+        """
+        return {
+            "optimizer": self.optimizer,
+            "hyperparameters": self.hyperparameters,
+            "stopping_criteria": self.stopping_criteria,
+        }
+
+    def save_to_json(self, filepath: Path | str):
+        """Save this optimization step to a JSON file.
+
+        Parameters
+        ----------
+        filepath : Path | str
+            Path to save the JSON file.
+        """
+        with open(Path(filepath).with_suffix(".json"), "w") as f:
+            json.dump(self.to_dict(), f, indent=4)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> OptimizationStep:
+        """Create an OptimizationStep from a dictionary.
+
+        Parameters
+        ----------
+        data : dict[str, Any]
+            Dictionary containing optimizer configuration.
+
+        Returns
+        -------
+        OptimizationStep
+            New optimization step instance.
+        """
+        return cls(
+            optimizer=data["optimizer"],
+            hyperparameters=data.get("hyperparameters"),
+            stopping_criteria=data.get("stopping_criteria"),
+        )
+
+    def copy(self) -> OptimizationStep:
+        """Create a deep copy of this optimization step.
+
+        Returns
+        -------
+        OptimizationStep
+            Deep copy of this instance.
+        """
         return deepcopy(self)
-
-
-def get_combination(optimizer_1: OptimizationStep,
-                    optimizer_2: OptimizationStep,
-                    switch: float) -> OptimizationSchedule:
-
-    # create copies
-    optimizer_1 = optimizer_1.copy()
-    optimizer_2 = optimizer_2.copy()
-
-    if optimizer_1 == optimizer_2:
-        steps = [optimizer_1]
-        budgets = 1.0
-    else:
-        steps = [optimizer_1, optimizer_2]
-        budgets = [switch, 1-switch]
-
-    return OptimizationSchedule(steps=steps, budgets=budgets)
-
-
-def get_combination_5(optimizer_1: OptimizationStep,
-                      optimizer_2: OptimizationStep,
-                      optimizer_3: OptimizationStep,
-                      optimizer_4: OptimizationStep,
-                      optimizer_5: OptimizationStep,
-                      budgets: Iterable[float]) -> OptimizationSchedule:
-    # create copies
-    optimizer_1 = optimizer_1.copy()
-    optimizer_2 = optimizer_2.copy()
-    optimizer_3 = optimizer_3.copy()
-    optimizer_4 = optimizer_4.copy()
-    optimizer_5 = optimizer_5.copy()
-
-    return OptimizationSchedule(
-        steps=[optimizer_1, optimizer_2,
-               optimizer_3, optimizer_4, optimizer_5],
-        budgets=list(budgets)
-    )
-
-
-def step_n_iterations(n_iterations: int, budgets: List[int]) -> List[int]:
-    allocations = np.floor(np.array(budgets) * n_iterations)
-    remainder = n_iterations - np.sum(allocations)
-    allocations[-1] += remainder
-    return list(allocations.astype(int))
-
-
-def step_n_iterations_equal(n_iterations: int,
-                            n_switches: int) -> List[int]:
-    base_value = n_iterations // n_switches  # Integer division
-    remainder = n_iterations % n_switches    # Remainder
-
-    result = [base_value] * n_switches
-    result[-1] += remainder  # Add remainder to the last entry
-
-    return result
-
-
-def get_single(optimizer_1: OptimizationStep) -> OptimizationSchedule:
-    # create copies
-    optimizer_1 = optimizer_1.copy()
-
-    steps = [optimizer_1]
-
-    return OptimizationSchedule(steps=steps, budgets=1.)

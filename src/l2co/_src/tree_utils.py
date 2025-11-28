@@ -1,177 +1,420 @@
+"""
+Module for pytree utilities.
+"""
+
+#                                                                       Modules
+# =============================================================================
+
 # Standard
-import json
-from typing import List
+from collections.abc import Callable
+from pathlib import Path
 
 # Third-party
+import cloudpickle
+import equinox as eqx
 import jax
 import jax.numpy as jnp
-import numpy as onp
-import xarray as xr
-from f3dasm import ExperimentData
 from jaxtyping import PyTree
 
 # Local
-from .naming import BUDGET, INPUT_DIM, OUTPUT_DIM, UPDATE_STEP
-from .optimizerschedule import OptimizationSchedule
+from .performance import EPSILON
 
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
+__credits__ = ["Martin van der Schelling"]
+__status__ = "Stable"
 # =============================================================================
 
 
-def experimentdata_to_xarray(data: ExperimentData,
-                             popsizes: List[int],
-                             budgets: List[float] | float,
-                             n_iterations: int,
-                             include_input: bool = False) -> xr.Dataset:
+def combined_loss(model: PyTree, loss_fn: Callable, sample: dict) -> jax.Array:
     """
-    Convert ExperimentData to an xarray.Dataset.
+    Compute the combined loss for a given set of parameters.
 
     Parameters
     ----------
-    data : ExperimentData
-        The experiment data to convert.
-    popsizes : list of int
-        List of population sizes used in the experiment.
-    budgets : list of float or float
-        List of budgets or a single budget value.
-    n_iterations : int
-        Number of iterations in the experiment.
-    include_input : bool, optional
-        Whether to include input data in the dataset, by default False.
+    model : PyTree
+        The model parameters.
+    loss_fn : Callable
+        The loss function to compute the loss.
+    sample : dict
+        Sample data for loss computation.
 
     Returns
     -------
-    xarray.Dataset
-        The converted dataset.
+    jax.Array
+        The computed loss.
     """
-    y_arr = jnp.vstack([es.output_data['y']
-                        for _, es in data]).T
-
-    opt_step_arr = onp.vstack([es.output_data['opt_step']
-                               for _, es in data]).T
-
-    y = xr.DataArray(
-        y_arr,
-        dims=[OUTPUT_DIM, BUDGET],
-        coords={OUTPUT_DIM: ['y']})
-
-    optimizer = xr.DataArray(
-        opt_step_arr,
-        dims=[OUTPUT_DIM, BUDGET],
-        coords={OUTPUT_DIM: ['y']})
-
-    if include_input:
-        x_arr = jnp.vstack([es.input_data['x']
-                            for _, es in data]).T
-
-        x = xr.DataArray(
-            x_arr,
-            dims=[INPUT_DIM, BUDGET],
-            coords={INPUT_DIM: [f"x{i}" for i in range(x_arr.shape[0])]})
-
-        ds = xr.Dataset({'input': x,
-                         'output': y,
-                         UPDATE_STEP: optimizer,
-                         })
-
-    else:
-        ds = xr.Dataset({
-            'output': y,
-            UPDATE_STEP: optimizer,
-        })
-
-    ds.attrs['popsizes'] = popsizes
-    ds.attrs['budgets'] = budgets
-    ds.attrs['n_iterations'] = n_iterations
-    return ds
+    return loss_fn(model, **sample)
 
 
-def schedule_to_xarray(data: OptimizationSchedule) -> xr.DataArray:
-    """
-    Convert an OptimizationSchedule to an xarray.DataArray.
+vmapped_loss = eqx.filter_vmap(
+    eqx.filter_jit(combined_loss), in_axes=(0, None, None)
+)
+
+
+def ffill(x: jnp.ndarray) -> jnp.ndarray:
+    """Forward fill NaN values in array.
 
     Parameters
     ----------
-    data : OptimizationSchedule
-        The optimization schedule to convert.
+    x : jnp.ndarray
+        Input array with potential NaN values.
 
     Returns
     -------
-    xarray.DataArray
-        The converted data array.
+    jnp.ndarray
+        Array with NaN values forward filled.
     """
-    x = xr.DataArray(
-        [json.dumps(data.to_dict())],
-        dims=['schedule']
-    )
-    return x
+
+    def scan_fn(carry, xi):
+        carry = jnp.where(jnp.isnan(xi), carry, xi)
+        return carry, carry
+
+    _, filled = jax.lax.scan(scan_fn, jnp.nan, x)
+    return filled
 
 
-def tree_flatten_population_dim(params: PyTree) -> PyTree:
+def bfill(x: jnp.ndarray) -> jnp.ndarray:
+    """Backward fill NaN values in array.
+
+    Parameters
+    ----------
+    x : jnp.ndarray
+        Input array with potential NaN values.
+
+    Returns
+    -------
+    jnp.ndarray
+        Array with NaN values backward filled.
     """
-    Flatten the population dimension of a PyTree.
+    return jnp.flip(ffill(jnp.flip(x)))
+
+
+def signlog1p(x: jnp.ndarray) -> jnp.ndarray:
+    """Apply signed log1p transformation.
+
+    Parameters
+    ----------
+    x : jnp.ndarray
+        Input array.
+
+    Returns
+    -------
+    jnp.ndarray
+        Transformed array with sign(x) * log1p(|x|).
+    """
+    return jnp.sign(x) * jnp.log1p(jnp.abs(x))
+
+
+def signed_softlog(x: jax.Array, alpha: float = EPSILON) -> jax.Array:
+    """Apply signed soft logarithm transformation.
+
+    Parameters
+    ----------
+    x : jax.Array
+        Input array.
+    alpha : float, optional
+        Scaling parameter, by default EPSILON.
+
+    Returns
+    -------
+    jax.Array
+        Transformed array with signed soft log.
+    """
+    scaled = jnp.abs(x) / alpha
+    y = jnp.log1p(scaled) / jnp.log1p(1.0 / alpha)
+    y = jnp.sign(x) * y
+    return y
+
+
+def interpolate(x: jnp.ndarray, n_points: int) -> jnp.ndarray:
+    """Interpolate array to specified number of points.
+
+    Parameters
+    ----------
+    x : jnp.ndarray
+        Input array to interpolate.
+    n_points : int
+        Target number of points.
+
+    Returns
+    -------
+    jnp.ndarray
+        Interpolated array with n_points elements.
+    """
+    return jax.vmap(
+        lambda xi: jnp.interp(
+            jnp.linspace(0, 1, n_points), jnp.linspace(0, 1, len(xi)), xi
+        )
+    )(x)
+
+
+def minmax_scale(x: jax.Array, min: jax.Array, max: jax.Array) -> jax.Array:
+    """Scale array using min-max normalization.
+
+    Parameters
+    ----------
+    x : jax.Array
+        Input array to scale.
+    min : jax.Array
+        Minimum value for scaling.
+    max : jax.Array
+        Maximum value for scaling.
+
+    Returns
+    -------
+    jax.Array
+        Scaled array in range [0, 1].
+    """
+    normed = (x - min) / (max - min + EPSILON)
+    # Do this to avoid floating point issues with jitting
+    return jnp.clip(normed, min=None, max=1.0)
+
+
+def log_stabilized_minmax_scale(x: jax.Array) -> jax.Array:
+    """Apply log-stabilized min-max scaling.
+
+    Parameters
+    ----------
+    x : jax.Array
+        Input array to scale.
+
+    Returns
+    -------
+    jax.Array
+        Log-stabilized scaled array in range [0, 1].
+    """
+    p = x - jnp.min(x)
+
+    # Only take positive entries for epsilon computation
+    pos_vals = jnp.where(p > 0, p, jnp.inf)
+    eps = jnp.min(pos_vals)
+    eps = jnp.where(jnp.isinf(eps), EPSILON, eps) + EPSILON
+
+    x_log10 = jnp.log10(p + eps)
+    x_min = jnp.min(x_log10)
+    x_max = jnp.max(x_log10)
+
+    normed = (x_log10 - x_min) / (x_max - x_min + EPSILON)
+
+    # Do this to avoid floating point issues with jitting
+    return jnp.clip(normed, 0.0, 1.0)
+
+
+def log_stabilized_minmax_scale_with_global_min(
+    x: jax.Array, global_min: jax.Array
+) -> jax.Array:
+    """Apply log-stabilized min-max scaling with global minimum reference.
+
+    Parameters
+    ----------
+    x : jax.Array
+        Input array to scale.
+    global_min : jax.Array
+        Global minimum value for reference.
+
+    Returns
+    -------
+    jax.Array
+        Log-stabilized scaled array in range [0, 1].
+    """
+    shift = jnp.minimum(jnp.min(x), global_min)
+    p = x - shift
+
+    # Only take positive entries for epsilon computation
+    pos_vals = jnp.where(p > 0, p, jnp.inf)
+    eps = jnp.min(pos_vals)
+    eps = jnp.where(jnp.isinf(eps), EPSILON, eps) + EPSILON
+
+    x_log10 = jnp.log10(p + eps)
+
+    # x_min = jnp.min(x_log10)
+    x_min = jnp.log10(global_min - shift + EPSILON)
+    x_max = jnp.max(x_log10)
+
+    normed = (x_log10 - x_min) / (x_max - x_min + EPSILON)
+
+    # Do this to avoid floating point issues with jitting
+    return jnp.clip(normed, 0.0, 1.0)
+
+
+def output_cummin(x: jax.Array) -> jax.Array:
+    """
+    Compute the cumulative minimum along the first axis.
+
+    Parameters
+    ----------
+    x : jax.Array
+        Input array.
+
+    Returns
+    -------
+    jax.Array
+        Array with cumulative minimum values.
+    """
+    return jax.lax.cummin(x, axis=0)
+
+
+def get_best(params: PyTree, losses: jax.Array):
+    """
+    Retrieve the best parameters and corresponding loss.
 
     Parameters
     ----------
     params : PyTree
-        The PyTree with a population dimension to flatten.
+        Parameter tree with shape (n_iters * popsize, dim).
+    losses : jax.Array
+        Loss array with shape (n_iters * popsize, 1).
+
+    Returns
+    -------
+    Tuple[PyTree, jax.Array]
+        Best parameters and corresponding loss.
+    """
+    # params: shape = (n_iters*popsize, dim)
+    # losses: shape = (n_iters*popsize, 1)
+    idx = jnp.argmin(losses)
+    best_params = jax.tree.map(lambda x: x[idx], params)
+    best_loss = losses[idx]
+    return best_params, best_loss
+
+
+def tree_where(pred, true, false):
+    """
+    Apply a conditional operation to a PyTree.
+
+    Parameters
+    ----------
+    pred : jax.Array
+        Boolean array for the condition.
+    true : PyTree
+        PyTree to use when the condition is True.
+    false : PyTree
+        PyTree to use when the condition is False.
 
     Returns
     -------
     PyTree
-        The PyTree with the population dimension flattened.
+        Resulting PyTree after applying the condition.
     """
-    def flatten_fn(x):
-        # Get the shape of the parameter
-        shape = x.shape
-        # Assuming the shape is (batch_size, population_dim, *other_dims)
-        batch_size, population_dim, *other_dims = shape
-        # Reshape to (batch_size * population_dim, *other_dims)
-        return x.reshape((batch_size * population_dim, *other_dims))
 
-    # Apply flatten_fn to each element of the parameter tree
-    return jax.tree_util.tree_map(flatten_fn, params)
+    def keep(a, b):
+        return jnp.where(pred, a, b)
+
+    return jax.tree.map(keep, true, false)
 
 
-def tree_to_dict_list(tree: PyTree, name: str) -> list[dict[str, PyTree]]:
-    """
-    Convert a PyTree into a list of dictionaries.
+#                                                  Loading and saving functions
+# =============================================================================
+
+
+def save_model(model, path: str | Path) -> None:
+    """Save model to disk using cloudpickle and equinox serialization.
 
     Parameters
     ----------
-    tree : PyTree
-        The PyTree to convert.
-    name : str
-        The key name to use in the dictionaries.
-
-    Returns
-    -------
-    list of dict
-        A list of dictionaries representing the PyTree.
+    model : eqx.Module
+        Model to save.
+    path : str | Path
+        Path to save the model files.
     """
-    num_models = jax.tree_util.tree_leaves(
-        tree)[0].shape[0]  # Get the batch size
+    _path = Path(path)
+    model_shape = eqx.filter_eval_shape(lambda x: model, None)
 
-    return [{name:
-             jax.tree_util.tree_map(lambda param: param[i], tree)}
-            for i in range(num_models)]
+    with open(_path.with_suffix(".pkl"), "wb") as f:
+        cloudpickle.dump(model_shape, f)
+
+    eqx.tree_serialise_leaves(_path.with_suffix(".eqx"), model)
 
 
-def dict_list_to_tree(dict_list: list[dict[str, PyTree]], name: str) -> PyTree:
-    """
-    Convert a list of dictionaries into a PyTree.
+def load_model(model_path: str, shape_path: str) -> eqx.Module:
+    """Load model from disk.
 
     Parameters
     ----------
-    dict_list : list of dict
-        The list of dictionaries to convert.
-    name : str
-        The key name to extract from the dictionaries.
+    model_path : str
+        Path to the model weights file (.eqx).
+    shape_path : str
+        Path to the model shape file (.pkl).
 
     Returns
     -------
-    PyTree
-        The resulting PyTree.
+    eqx.Module
+        Loaded model.
     """
-    return jax.tree_util.tree_map(
-        lambda *params: jax.numpy.stack(params, axis=0),
-        *[d[name] for d in dict_list])
+    _model_path = Path(model_path)
+    _shape_path = Path(shape_path)
+    with open(_shape_path.with_suffix(".pkl"), "rb") as f:
+        model_shape = cloudpickle.load(f)
+
+    model = eqx.tree_deserialise_leaves(
+        _model_path.with_suffix(".eqx"), model_shape
+    )
+
+    return model
+
+
+def load_jnparray(path: str | Path) -> jnp.ndarray:
+    """Load JAX numpy array from disk.
+
+    Parameters
+    ----------
+    path : str | Path
+        Path to the numpy file.
+
+    Returns
+    -------
+    jnp.ndarray
+        Loaded array (flattened).
+    """
+    # TODO: investigate this flatten behaviour
+    return jnp.load(Path(path)).flatten()
+
+
+def save_jnparray(model, path: str | Path) -> None:
+    """Save JAX numpy array to disk.
+
+    Parameters
+    ----------
+    model : jnp.ndarray
+        Array to save.
+    path : str | Path
+        Path to save the array.
+    """
+    jnp.save(path, model)
+
+
+def save_dataset(dataset: dict[str, jnp.ndarray], path: str | Path):
+    """Save dataset dictionary to disk as npz file.
+
+    Parameters
+    ----------
+    dataset : dict[str, jnp.ndarray]
+        Dataset dictionary to save.
+    path : str | Path
+        Path to save the dataset.
+    """
+    _path = Path(path)
+    _path.parent.mkdir(parents=True, exist_ok=True)
+
+    jnp.savez(path, **dataset)
+
+
+def load_dataset(path: str | Path | None) -> dict[str, jnp.ndarray]:
+    """Load dataset from npz file.
+
+    Parameters
+    ----------
+    path : str | Path | None
+        Path to the dataset file. If None, returns empty dict.
+
+    Returns
+    -------
+    dict[str, jnp.ndarray]
+        Loaded dataset dictionary.
+    """
+    if path is None:
+        return {}
+    loaded_data = jnp.load(Path(path).with_suffix(".npz"))
+    return {k: jnp.array(v) for k, v in loaded_data.items()}

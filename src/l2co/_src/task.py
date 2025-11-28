@@ -1,137 +1,177 @@
-from __future__ import annotations
+"""
+Module for the task abstraction.
+"""
+
+#                                                                       Modules
+# =============================================================================
 
 # Standard
+from __future__ import annotations
+
 import hashlib
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, TypedDict
+from typing import Any, TypedDict
 
 # Third-party
 import cloudpickle
 import equinox as eqx
-import jax.numpy as jnp
 import jax.tree_util as jtu
 from jaxtyping import PyTree
 
+# Local
+from .tree_utils import (
+    load_dataset,
+    load_jnparray,
+    load_model,
+    save_jnparray,
+    save_model,
+)
+
+#                                                          Authorship & Credits
 # =============================================================================
-
-
-def save_dataset(dataset: Dict[str, jnp.ndarray], path: str | Path):
-    _path = Path(path)
-    _path.parent.mkdir(parents=True, exist_ok=True)
-
-    jnp.savez(path, **dataset)
-
-
-def load_dataset(path: Optional[str | Path]) -> Dict[str, jnp.ndarray]:
-    if path is None:
-        return {}
-    loaded_data = jnp.load(Path(path).with_suffix('.npz'))
-    return {k: jnp.array(v) for k, v in loaded_data.items()}
-
-# =============================================================================
-
-
-def save_model(model, path: str | Path) -> None:
-    _path = Path(path)
-    model_shape = eqx.filter_eval_shape(lambda x: model, None)
-
-    with open(_path.with_suffix('.pkl'), 'wb') as f:
-        cloudpickle.dump(model_shape, f)
-
-    eqx.tree_serialise_leaves(_path.with_suffix('.eqx'), model)
-
-
-def load_model(model_path: str, shape_path: str) -> eqx.Module:
-    _model_path = Path(model_path)
-    _shape_path = Path(shape_path)
-    with open(_shape_path.with_suffix('.pkl'), 'rb') as f:
-        model_shape = cloudpickle.load(f)
-
-    model = eqx.tree_deserialise_leaves(
-        _model_path.with_suffix('.eqx'), model_shape)
-
-    return model
-
-
-def load_jnparray(path: str | Path) -> jnp.ndarray:
-    return jnp.load(Path(path)).flatten()
-
-
-def save_jnparray(model, path: str | Path) -> None:
-    jnp.save(path, model)
-
+__author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
+__credits__ = ["Martin van der Schelling"]
+__status__ = "Stable"
 # =============================================================================
 
 
 class DatasetDict(TypedDict):
+    """
+    Dictionary describing a dataset configuration.
+
+    Attributes
+    ----------
+    dataset_path : str
+        Path to the dataset file.
+    batch_size : int
+        Batch size for loading the dataset.
+    seed : int
+        Random seed for dataset operations.
+    """
+
     dataset_path: str
     batch_size: int
     seed: int
 
 
-TagDict = Dict[str, Any]
-
 # =============================================================================
 
 
-class Task:
-    def __init__(
-        self,
-        model: PyTree,
-        loss_fn: Callable,
-        pass_rng: bool = False,
-        dataset: Optional[DatasetDict] = None,
-        has_aux: bool = False,
-        tag: Optional[Dict[str, Any]] = None,
-    ):
-        if tag is None:
-            tag = {}
+class Task(eqx.Module):
+    """
+    Represents an optimization task.
 
-        # Dataset
-        if dataset is None:
-            self.dataset = {'dataset_path': None,
-                            'batch_size': None, 'seed': None}
-        else:
-            self.dataset = dataset.copy()
-            # resolve relative path
-            self.dataset['dataset_path'] = str(Path(
-                self.dataset['dataset_path']).resolve())
+    Attributes
+    ----------
+    model : PyTree
+        The model used for the task.
+    loss_fn : Callable
+        The loss function for the task.
+    pass_rng : bool
+        Whether to pass a random key to the loss function.
+    has_aux : bool
+        Whether the loss function returns auxiliary outputs.
+    dataset : DatasetDict
+        Dataset information.
+    tag : dict[str, Any]
+        Metadata tags for the task.
+    """
 
-        self.model = model
-        self.pass_rng = pass_rng
-        self.loss_fn = loss_fn
-        self.has_aux = has_aux
-        self.tag = tag
+    model: PyTree
+    loss_fn: Callable = eqx.field(static=True)
+    pass_rng: bool = eqx.field(static=True, default=False)
+    has_aux: bool = eqx.field(static=True, default=False)
+    dataset: DatasetDict = eqx.field(default_factory=dict, static=True)
+    tag: dict[str, Any] = eqx.field(default_factory=dict, static=True)
 
     @property
-    def loaded_dataset(self) -> Dict[str, Any] | None:
-        return load_dataset(self.dataset['dataset_path'])
+    def loaded_dataset(self) -> dict[str, Any]:
+        """
+        Loads the dataset specified in the task.
+
+        Returns
+        -------
+        dict[str, Any]
+            Loaded dataset or empty dict if no path is specified.
+        """
+        if self.dataset.get("dataset_path") is None:
+            return dict()
+        return load_dataset(self.dataset["dataset_path"])
 
     @property
     def batch_size(self) -> int | None:
-        return self.dataset['batch_size']
+        """
+        Returns the batch size for the dataset.
+
+        Returns
+        -------
+        int or None
+            Batch size if specified, else None.
+        """
+        return self.dataset.get("batch_size", None)
 
     @property
     def name(self) -> str:
-        return self.tag.get('task_name', '')
+        """
+        Returns the name of the task.
+
+        Returns
+        -------
+        str
+            Task name if specified, else empty string.
+        """
+        return self.tag.get("task_name", "")
 
     @property
     def dimensionality(self) -> int:
+        """
+        Returns the total number of parameters in the model.
+
+        Returns
+        -------
+        int
+            Dimensionality of the model.
+        """
         return sum(
-            p.size for p in jtu.tree_leaves(
-                eqx.filter(self.model, eqx.is_inexact_array))
+            p.size
+            for p in jtu.tree_leaves(
+                eqx.filter(self.model, eqx.is_inexact_array)
+            )
         )
 
     @property
     def tag_hashable(self) -> tuple[tuple[str, Any]]:
+        """
+        Returns a hashable representation of the tag dictionary.
+
+        Returns
+        -------
+        frozenset
+            Hashable version of the tag dictionary.
+        """
+
         def make_hashable(value):
-            """Recursively convert lists to tuples and dicts to frozensets."""
+            """
+            Recursively convert lists to tuples and dicts to frozensets.
+
+            Parameters
+            ----------
+            value : Any
+                Value to convert.
+
+            Returns
+            -------
+            Any
+                Hashable value.
+            """
             if isinstance(value, list):
                 return tuple(make_hashable(v) for v in value)
             elif isinstance(value, dict):
-                return frozenset((k, make_hashable(v))
-                                 for k, v in value.items())
+                return frozenset(
+                    (k, make_hashable(v)) for k, v in value.items()
+                )
             return value  # Leave other types unchanged
 
         tag_hashable = {k: make_hashable(v) for k, v in self.tag.items()}
@@ -141,107 +181,229 @@ class Task:
 
     @property
     def hash(self) -> str:
+        """
+        Returns a short SHA256 hash of the tag.
+
+        Returns
+        -------
+        str
+            16-character hash string.
+        """
         t = sorted(self.tag_hashable)
         return hashlib.sha256(str(t).encode()).hexdigest()[:16]
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any],
-                  filepath: Optional[str] = None) -> Task:
+    def from_dict(
+        cls, data: dict[str, Any], filepath: str | None = None
+    ) -> Task:
+        """
+        Create a Task instance from a dictionary.
 
-        if 'model' in data['model_path']:
+        Parameters
+        ----------
+        data : dict[str, Any]
+            Dictionary containing task data.
+        filepath : str or None, optional
+            Path to resolve model files, by default None.
+
+        Returns
+        -------
+        Task
+            Instantiated Task object.
+        """
+        if "model" in data["model_path"]:
             try:
-                model = load_model(model_path=data['model_path']['model'],
-                                   shape_path=data['model_path']['shape'])
+                model = load_model(
+                    model_path=data["model_path"]["model"],
+                    shape_path=data["model_path"]["shape"],
+                )
             except FileNotFoundError:
-                new_path_model = Path(filepath).parent / \
-                    Path(data['model_path']['model']).name
-                new_path_shape = Path(filepath).parent / \
-                    Path(data['model_path']['shape']).name
-                model = load_model(model_path=new_path_model,
-                                   shape_path=new_path_shape)
+                new_path_model = (
+                    Path(filepath).parent
+                    / Path(data["model_path"]["model"]).name
+                )
+                new_path_shape = (
+                    Path(filepath).parent
+                    / Path(data["model_path"]["shape"]).name
+                )
+                model = load_model(
+                    model_path=new_path_model, shape_path=new_path_shape
+                )
         else:
             try:
-                model = load_jnparray(data['model_path']['array'])
+                model = load_jnparray(data["model_path"]["array"])
             except FileNotFoundError:
-                new_path_array = Path(filepath).parent / \
-                    Path(data['model_path']['array']).name
+                new_path_array = (
+                    Path(filepath).parent
+                    / Path(data["model_path"]["array"]).name
+                )
                 model = load_jnparray(new_path_array)
 
         # Loss function is loaded with pickle from a hex string
-        loss_fn = cloudpickle.loads(
-            bytes.fromhex(data['loss_fn']))
+        loss_fn = cloudpickle.loads(bytes.fromhex(data["loss_fn"]))
 
-        dataset = data.get('dataset', None)
-        tag = data.get('tag', None)
-        has_aux = data['has_aux']
-        pass_rng = data['pass_rng']
-        return cls(model=model, pass_rng=pass_rng, loss_fn=loss_fn,
-                   dataset=dataset, has_aux=has_aux, tag=tag)
+        dataset = data.get("dataset", {})
+
+        if dataset is None:
+            dataset = {}
+
+        tag = data.get("tag", {})
+        has_aux = data["has_aux"]
+        pass_rng = data["pass_rng"]
+        return cls(
+            model=model,
+            pass_rng=pass_rng,
+            loss_fn=loss_fn,
+            dataset=dataset,
+            has_aux=has_aux,
+            tag=tag,
+        )
 
     def save_to_json(self, filepath: Path):
-        with open(filepath.with_suffix('.json'), 'w') as f:
+        """
+        Save the task to a JSON file.
+
+        Parameters
+        ----------
+        filepath : Path
+            Path to save the JSON file.
+        """
+        with open(filepath.with_suffix(".json"), "w") as f:
             json.dump(self.to_dict(filepath), f, indent=4)
 
     @staticmethod
     def save(object: Task, path: str) -> str:
-        object.save_to_json(Path(path))
-        return Path(path).with_suffix('.json')
+        """
+        Save a Task object to a JSON file.
 
-    def to_dict(self, path: Path) -> str:
+        Parameters
+        ----------
+        object : Task
+            Task object to save.
+        path : str
+            Path to save the JSON file.
+
+        Returns
+        -------
+        str
+            Path to the saved JSON file.
+        """
+        object.save_to_json(Path(path))
+        return Path(path).with_suffix(".json")
+
+    def to_dict(self, path: Path) -> dict:
+        """
+        Convert the task to a dictionary representation for serialization.
+
+        Parameters
+        ----------
+        path : Path
+            Path used for saving model files.
+
+        Returns
+        -------
+        dict
+            Dictionary representation of the task.
+        """
         path = path.resolve()  # Ensure absolute path
 
         # if model is eqx.Module, save as eqx.Module
         if isinstance(self.model, eqx.Module):
             save_model(self.model, path)
-            model_path = {'model': str(path.with_suffix('.eqx').resolve()),
-                          'shape': str(path.with_suffix('.pkl').resolve())}
+            model_path = {
+                "model": str(path.with_suffix(".eqx").resolve()),
+                "shape": str(path.with_suffix(".pkl").resolve()),
+            }
         else:
             save_jnparray(self.model, path)
-            model_path = {'array': str(path.with_suffix('.npy').resolve())}
+            model_path = {"array": str(path.with_suffix(".npy").resolve())}
 
         loss_fn = cloudpickle.dumps(self.loss_fn).hex()
 
-        if self.dataset['dataset_path'] is None:
+        if self.dataset.get("dataset_path") is None:
             dataset = None
-
         else:
             dataset = self.dataset.copy()
-            dataset['dataset_path'] = str(
-                Path(self.dataset['dataset_path']))
+            dataset["dataset_path"] = str(Path(self.dataset["dataset_path"]))
 
         return {
-            'model_path': model_path,
-            'loss_fn': loss_fn,
-            'pass_rng': self.pass_rng,
-            'dataset': dataset,
-            'tag': self.tag,
-            'has_aux': self.has_aux
+            "model_path": model_path,
+            "loss_fn": loss_fn,
+            "pass_rng": self.pass_rng,
+            "dataset": dataset,
+            "tag": self.tag,
+            "has_aux": self.has_aux,
         }
 
     @classmethod
     def load(cls, filepath: str) -> Task:
-        with open(filepath, 'r') as f:
+        """
+        Load a task from a JSON file.
+
+        Parameters
+        ----------
+        filepath : str
+            Path to the JSON file.
+
+        Returns
+        -------
+        Task
+            The loaded task.
+        """
+        with open(filepath) as f:
             data = json.load(f)
         return cls.from_dict(data, filepath)
 
     def __repr__(self):
-        return (
-            f"Task(tag={self.tag}"
-        )
+        """
+        Returns a string representation of the Task object.
+
+        Returns
+        -------
+        str
+            String representation.
+        """
+        return f"Task(tag={self.tag})"
 
     def __str__(self):
-        return (
-            f"Task:\n"
-            f"  Tag: {self.tag}\n"
-        )
+        """
+        Returns a formatted string describing the Task.
+
+        Returns
+        -------
+        str
+            Formatted string.
+        """
+        return f"Task:\n  Tag: {self.tag}\n"
 
     def __hash__(self):
+        """
+        Returns the hash of the Task object.
+
+        Returns
+        -------
+        int
+            Hash value.
+        """
         return hash(self.tag_hashable)
 
     def __eq__(self, other):
-        if not isinstance(other, Task):
-            return False
-        return self.tag == other.tag
+        """
+        Checks equality with another Task object.
+
+        Parameters
+        ----------
+        other : Any
+            Object to compare.
+
+        Returns
+        -------
+        bool
+            True if equal, False otherwise.
+        """
+        return (
+            isinstance(other, Task) and self.tag_hashable == other.tag_hashable
+        )
 
 
 # =============================================================================

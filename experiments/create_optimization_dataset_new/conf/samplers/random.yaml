@@ -1,3 +1,4 @@
-_target_: l2co.sampling.RandomWeightSampler
+_partial_: true
+_target_: l2co.sampling.random_sampling
 lower_bound: ${tasks.bounded.lower_bound}
 upper_bound: ${tasks.bounded.upper_bound}

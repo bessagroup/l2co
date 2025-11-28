@@ -1,272 +1,227 @@
+"""
+Optimization execution module for L2CO optimization tasks.
+
+This module provides functions and classes for executing optimization tasks
+with configurable parameters, supporting both single and multiple realization
+runs. It includes utilities for initializing optimizers, running optimization
+loops, and managing optimization history.
+
+The main components include:
+- Functions for optimizer initialization and optimization execution
+- Support for vectorized multiple realizations using JAX
+- Data generator class for integration with f3dasm framework
+- History tracking and result storage
+
+Classes
+-------
+RunOptimizationSimple : DataGenerator
+    Main class for executing optimization tasks with configurable parameters.
+
+Functions
+---------
+initialize_optimizer : Initialize an optimizer with given parameters
+run_optimization : Execute a single optimization process
+run_optimization_many_realizations : Run multiple optimization realizations
+
+Notes
+-----
+This module heavily relies on JAX for efficient computation and vectorization,
+particularly for running multiple optimization realizations in parallel. The
+implementation is designed to work with the f3dasm framework for experiment
+management and data generation.
+"""
+
+#                                                                       Modules
+# =============================================================================
+
 # Standard
+from __future__ import annotations
+
 import gc
-import json
-from pathlib import Path
+import logging
+from collections.abc import Callable
 from time import time
-from typing import Callable, Dict, Iterator, List, Optional, Tuple, Type
 
 # Third-party
 import equinox as eqx
 import jax
-import xarray as xr
-from f3dasm import Block, ExperimentData, ExperimentSample
+import jax.random as jr
+from f3dasm import ExperimentSample
 from f3dasm.datageneration import DataGenerator
-from f3dasm.design import Domain
+from jaxtyping import PRNGKeyArray
 
 # Local
-from ._logging import logger
-from .batching import NoneIterator, batch_iter
-from .data_loader import OptimizationDynamics
-from .l2co_model import L2CO_model
-from .naming import REALIZATION
-from .optimizers import OPT_MAPPING, EvaluateModel, UpdateStep
-from .optimizerschedule import (OptimizationSchedule, OptimizationStep,
-                                step_n_iterations, step_n_iterations_equal)
-from .sampler import NormalWeightSampler, RandomWeightSampler
-from .task import Task
-from .tree_utils import experimentdata_to_xarray, schedule_to_xarray
-from .validation import validation_fn
+from l2co._src.history_state import HistoryState
+from l2co._src.optimizerschedule import OptimizationStep
+from l2co._src.run_state import (
+    RunState,
+    batch_evaluate,
+)
+from l2co._src.task import Task
 
-#                                                                Evaluate Block
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
+__credits__ = ["Martin van der Schelling"]
+__status__ = "Stable"
+# =============================================================================
+
+logger = logging.getLogger(__name__)
+
 # =============================================================================
 
 
-# =============================================================================
+class RolloutWrapper(eqx.Module):
+    run_state: RunState
+    sampler: Callable
+    task: Task
+    verbose: bool
 
-
-def run_optimization_schedule_multiple_realizations(
+    @classmethod
+    def init(
+        cls,
+        optimizer: OptimizationStep,
         task: Task,
-        optimization_schedule: OptimizationSchedule,
-        budget_fn: Callable[[], int],
-        seed: int,
-        partition_factor: float,
-        n_realizations: int = 1,
-        include_input: bool = False,
-        bounded: Optional[Tuple[float, float]] = None,
-        sampler: Optional[Block] = None,
-        verbose: bool = False,
-        use_scan: Optional[bool] = None,
-        track_params: bool = False,
-) -> xr.Dataset:
-    results_list: List[xr.DataArray] = []
-
-    n_iterations: int = int(budget_fn(task=task) * partition_factor)
-
-    if sampler is None:
-        if bounded is None:
-            sampler = NormalWeightSampler()
-        else:
-            sampler = RandomWeightSampler(
-                lower_bound=bounded[0],
-                upper_bound=bounded[1])
-
-    for s in range(n_realizations):
-
-        data, popsizes = run_optimization_schedule(
-            task=task,
-            optimization_schedule=optimization_schedule,
-            n_iterations=n_iterations,
-            seed=seed + s,
-            bounded=bounded,
-            sampler=sampler,
-            include_input=track_params,
-            verbose=verbose,
-            use_scan=use_scan,
-        )
-
-        results_list.append(experimentdata_to_xarray(
-            data=data,
-            popsizes=popsizes,
-            budgets=optimization_schedule.budgets,
-            n_iterations=n_iterations,
-            include_input=include_input,
-        ))
-
-    # results = xr.concat(results_list, dim='realization')
-    results = xr.concat(results_list, dim=xr.DataArray(
-        range(n_realizations), dims=REALIZATION))
-
-    return results
-
-
-def run_optimization_schedule(
-        task: Task,
-        optimization_schedule: OptimizationSchedule,
+        sampler: Callable,
         n_iterations: int,
-        seed: int,
-        bounded: Optional[Tuple[float, float]],
-        sampler: Block,
-        include_input: bool,
-        verbose: bool,
-        use_scan: Optional[bool],
-) -> Tuple[ExperimentData, List[int]]:
-
-    # Create the ExperimentData object
-    domain = Domain()
-    domain.add_parameter(name='x')
-    domain.add_output(name='y')
-    domain.add_output(name='opt_step')
-    data = ExperimentData(domain=domain)
-
-    # Sample one initial solution
-    sampler.arm(data=data)
-    data = sampler.call(data=data, model=task.model, num_samples=1, seed=seed)
-
-    # Evaluate the model to get the initial loss
-    data_generator = EvaluateModel(task=task, seed=seed)
-    data_generator.arm(data)
-    data = data_generator.call(data=data)
-
-    loaded_dataset = task.loaded_dataset
-    popsizes = []
-    previous_step = 'sampler'
-    optimizer_dict: Dict[OptimizationStep, UpdateStep] = {}
-
-    for i, (step, step_iterations) in enumerate(zip(
-        optimization_schedule,
-        step_n_iterations(
-            n_iterations=n_iterations,
-            budgets=optimization_schedule.budgets))):
-
-        learning_data = batch_iter(
-            dataset=loaded_dataset, n_evals=step_iterations,
-            batch_size=task.batch_size, key=seed)
-
-        if step in optimizer_dict:
-            update_step = optimizer_dict[step]
-        else:
-            update_step = OPT_MAPPING[step.optimizer](
-                **step.hyperparameters, seed=seed,
-                bounded=bounded,
-                include_input=include_input,
-                opt_hash=step.hash,
-                task=task,
-                verbose=verbose,
-            )
-
-            optimizer_dict[step] = update_step
-
-        # Check if we have to use scan or not
-        if use_scan is None:
-            _use_scan = True if isinstance(
-                learning_data, NoneIterator) else False
-        else:
-            _use_scan = use_scan
-
-        data = run_optimization(
+        key: PRNGKeyArray,
+        bounded: tuple[float, float] = (None, None),
+        verbose: float = False,
+    ) -> RolloutWrapper:
+        run_state = RunState.init(
+            optimizer=optimizer,
             task=task,
-            update_step=update_step,
-            previous_step=previous_step,
-            sampler=sampler,
-            n_iterations=step_iterations,
-            learning_data=learning_data,
-            use_scan=_use_scan,
-            seed=seed + i + 1,
-            data=data,
-
+            bounded=bounded,
+            max_iterations=n_iterations,
+            key=key,
+        )
+        return cls(
+            run_state=run_state, task=task, sampler=sampler, verbose=verbose
         )
 
-        popsizes.append(update_step.popsize)
-        previous_step = update_step
-
-    return data, popsizes
-
-
-def run_optimization(
-    task: Task,
-    update_step: UpdateStep,
-    previous_step: Optional[UpdateStep],
-    sampler: Block,
-    n_iterations: int,
-    learning_data: Iterator | NoneIterator,
-    use_scan: bool,
-    seed: int,
-    data: Optional[ExperimentData] = None,
-) -> ExperimentData:
-
-    # If no data is given, create data
-    if data is None:
-        domain = Domain()
-        domain.add_parameter(name='x')
-        domain.add_output(name='y')
-        domain.add_output(name='opt_step')
-        data = ExperimentData(domain=domain)
-
-    # Arm update step
-    update_step.arm(data=data, previous_step=previous_step, sampler=sampler,
-                    seed=seed)
-
-    iterates = update_step.call(
-        data=data, n_iterations=n_iterations,
-        data_iter=learning_data,
-        use_scan=use_scan)
-
-    # If the optimizer created new x0 samples, include them but remove the
-    # last iterate to keep it even
-    if update_step.has_created_flag:
-        data += iterates[:-update_step.popsize]
-    # If not, remove the x0 samples
-    else:
-        data += iterates[update_step.popsize:]
-
-    logger.debug(f"Optimization finished with {n_iterations} evaluations")
-
-    return data
+    def batch_evaluate(
+        self,
+        key: PRNGKeyArray,
+        n_realizations: int = 1,
+    ) -> HistoryState:
+        return batch_evaluate(
+            self.run_state,
+            self.task,
+            self.sampler,
+            jr.split(key, n_realizations),
+            self.verbose,
+        )
 
 
 class RunOptimization(DataGenerator):
-    def __init__(self,
-                 budget_fn: Callable[[], int],
-                 n_realizations: int,
-                 partition_factor: float,
-                 seed: int,
-                 bounded: Optional[Tuple[float, float]] = None,
-                 include_input: bool = False,
-                 clear_jax_cache: bool = True,
-                 sampler_cls: Optional[Type[Block]] = None,
-                 verbose: bool = False,
-                 use_scan: Optional[bool] = None,
-                 track_params: bool = False
-                 ):
+    """
+    Data generator class for running optimization tasks.
+
+    This class provides a framework for executing optimization tasks with
+    configurable parameters including sampling strategies, budget functions,
+    and multiple realizations for statistical analysis.
+
+    Parameters
+    ----------
+    sampler : Callable
+        Sampler function for generating initial parameters.
+    budget_fn : Callable[[], int]
+        Function to determine the optimization budget (number of iterations)
+        for the task.
+    seed : int
+        Random seed for reproducibility across optimization runs.
+    n_realizations : int, optional
+        Number of independent optimization realizations to run, by default 1.
+    bounded : Optional[Tuple[float, float]], optional
+        Bounds for the optimization variables as (lower, upper), by default
+        (None, None).
+    clear_jax_cache : bool, optional
+        Whether to clear the JAX cache after execution to free memory, by
+        default True.
+    verbose : bool, optional
+        Whether to enable verbose logging during optimization, by default
+        False.
+    save_input_parameters : bool, optional
+        Whether to save the history of input parameters in the output
+        xarray, by default False.
+
+    Methods
+    -------
+    execute(experiment_sample)
+        Execute the optimization task for a given experiment sample.
+    run_optimization(experiment_sample, task, optimizer)
+        Run the optimization process with specified configuration.
+
+    Examples
+    --------
+    >>> import jax.random as jr
+    >>> from l2co._src.sampling import uniform_sampler
+    >>>
+    >>> # Create a simple optimization runner
+    >>> runner = RunOptimizationSimple(
+    ...     sampler=uniform_sampler,
+    ...     budget_fn=lambda task: 100,
+    ...     seed=42,
+    ...     n_realizations=5
+    ... )
+    >>>
+    >>> # Execute optimization on an experiment sample
+    >>> result = runner.execute(experiment_sample)
+    """
+
+    def __init__(
+        self,
+        sampler: Callable,
+        budget_fn: Callable[[], int],
+        seed: int,
+        n_realizations: int = 1,
+        bounded: tuple[float, float] | None = (None, None),
+        clear_jax_cache: bool = True,
+        verbose: bool = False,
+        save_input_parameters: bool = False,
+    ):
+        self.sampler = sampler
         self.budget_fn = budget_fn
-        self.bounded = bounded
-        self.n_realizations = n_realizations
-        self.partition_factor = partition_factor
-        self.include_input = include_input
-        self.clear_jax_cache = clear_jax_cache
         self.seed = seed
+        self.n_realizations = n_realizations
+        self.bounded = bounded
+        self.clear_jax_cache = clear_jax_cache
         self.verbose = verbose
-        self.sampler_cls = sampler_cls
-        self.use_scan = use_scan
-        self.track_params = track_params
+        self.save_input_parameters = save_input_parameters
 
     def execute(self, experiment_sample: ExperimentSample) -> ExperimentSample:
+        """
+        Execute the optimization task for a given experiment sample.
+
+        This method extracts the task and optimizer schedule from the
+        experiment sample and runs the optimization process, storing the
+        results back into the experiment sample.
+
+        Parameters
+        ----------
+        experiment_sample : ExperimentSample
+            The experiment sample containing task and optimizer configuration
+            in the input_data.
+
+        Returns
+        -------
+        ExperimentSample
+            The updated experiment sample with optimization results stored.
+
+        Notes
+        -----
+        If clear_jax_cache is True, this method will clear JAX caches and
+        call garbage collection after optimization to free memory.
+        """
         es = experiment_sample.input_data
-        task: Task = es['task']
-        schedule: OptimizationSchedule = es['optimizer schedule']
+        task: Task = es["task"]
+        optimizer: OptimizationStep = es["optimizer schedule"]
 
-        if schedule.name.startswith('l2co'):
-            n_switches = schedule.steps[0].hyperparameters['n_switches']
-            l2co_path = Path(schedule.steps[0].
-                             hyperparameters['model_dir']) / str(
-                schedule.steps[0].hyperparameters['l2co_path']) / 'model'
-
-            trained_l2co_model = L2CO_model.load(l2co_path)
-
-            experiment_sample = self.run_optimization_l2co(
-                experiment_sample=experiment_sample,
-                task=task,
-                trained_l2co_model=trained_l2co_model,
-                seed=self.seed,
-                n_switches=n_switches,
-            )
-
-        else:
-            experiment_sample = self.run_optimization(
-                experiment_sample=experiment_sample,
-                task=task,
-                schedule=schedule,
-            )
+        experiment_sample = self.run_optimization(
+            experiment_sample=experiment_sample,
+            task=task,
+            optimizer=optimizer,
+        )
 
         if self.clear_jax_cache:
             eqx.clear_caches()
@@ -276,252 +231,75 @@ class RunOptimization(DataGenerator):
         return experiment_sample
 
     def run_optimization(
-            self, experiment_sample: ExperimentSample, task: Task,
-            schedule: OptimizationSchedule) -> ExperimentSample:
+        self,
+        experiment_sample: ExperimentSample,
+        task: Task,
+        optimizer: OptimizationStep,
+    ) -> ExperimentSample:
+        """
+        Run the optimization process with specified configuration.
+
+        This method performs the core optimization logic including
+        initializing the optimizer, running optimization iterations,
+        and storing the results.
+
+        Parameters
+        ----------
+        experiment_sample : ExperimentSample
+            The experiment sample to store results in.
+        task : Task
+            The optimization task containing the model and objective function.
+        optimizer : OptimizationStep
+            The optimization step configuration containing optimizer type and
+            hyperparameters.
+
+        Returns
+        -------
+        ExperimentSample
+            The updated experiment sample with optimization results stored
+            as an xarray dataset.
+
+        Notes
+        -----
+        The optimization history is stored as 'loss history' in the
+        experiment sample's output data. If save_input_parameters is False,
+        the input parameters are excluded from the stored data to save space.
+        """
         t1 = time()
-        data_xarr = run_optimization_schedule_multiple_realizations(
+
+        key = jr.key(self.seed)
+
+        n_iterations = self.budget_fn(task=task)
+
+        rollout_wrapper = RolloutWrapper.init(
+            optimizer=optimizer,
             task=task,
-            optimization_schedule=schedule,
-            budget_fn=self.budget_fn,
-            seed=self.seed,
-            partition_factor=self.partition_factor,
-            n_realizations=self.n_realizations,
-            include_input=self.include_input,
+            sampler=self.sampler,
+            n_iterations=n_iterations,
+            key=key,
             bounded=self.bounded,
-            sampler=self.sampler_cls,
             verbose=self.verbose,
-            use_scan=self.use_scan,
-            track_params=self.track_params
+        )
+
+        history_state = rollout_wrapper.batch_evaluate(
+            key=key,
+            n_realizations=self.n_realizations,
+        )
+
+        data_xarr = history_state.to_xarray_realizations(
+            include_input_mean=self.save_input_parameters
         )
 
         experiment_sample.store(
-            name='loss history',
-            object=data_xarr, to_disk=True)
+            name="loss history", object=data_xarr, to_disk=True
+        )
 
-        logger.info((
-            f"Finished optimization task {task.name} with {schedule.name} with"
-            f" {int(self.budget_fn(task=task) * self.partition_factor)} "
+        logger.info(
+            f"Finished optimization task {task.name} ({task.dimensionality}D) "
+            f"with {optimizer.name} for"
+            f" {n_iterations} "
             f"iterations for {self.n_realizations} realizations"
             f" (took {time() - t1:.2f} seconds)"
-        ))
+        )
 
         return experiment_sample
-
-    def run_optimization_l2co(
-        self, experiment_sample: ExperimentSample,
-            task: Task, trained_l2co_model: L2CO_model,
-            n_switches: int) -> ExperimentSample:
-        t1 = time()
-        data_xarr, schedule_xarr = \
-            run_optimization_no_schedule_multiple_realizations(
-                task=task,
-                budget_fn=self.budget_fn,
-                partition_factor=self.partition_factor,
-                seed=self.seed,
-                trained_l2co_model=trained_l2co_model,
-                n_switches=n_switches,
-                n_realizations=self.n_realizations,
-                include_input=self.include_input,
-                bounded=self.bounded,
-                sampler=self.sampler_cls,
-                verbose=self.verbose,
-                use_scan=self.use_scan,
-                track_params=self.track_params,
-            )
-
-        experiment_sample.store(
-            name='loss history',
-            object=data_xarr, to_disk=True)
-
-        experiment_sample.store(
-            name='l2co schedules',
-            object=schedule_xarr,
-            to_disk=True)
-
-        logger.info((
-            f"Finished L2CO optimization: task {task.name} with"
-            f" {int(self.budget_fn(task=task) * self.partition_factor)} "
-            f"iterations for {self.n_realizations} realizations"
-            f" (took {time() - t1:.2f} seconds)"
-        ))
-
-        return experiment_sample
-
-# =============================================================================
-
-
-def run_optimization_no_schedule_multiple_realizations(
-        task: Task,
-        budget_fn: Callable[[], int],
-        partition_factor: float,
-        seed: int,
-        trained_l2co_model: L2CO_model,
-        n_switches: int = 1,
-        n_realizations: int = 1,
-        include_input: bool = False,
-        bounded: Optional[Tuple[float, float]] = None,
-        sampler: Optional[Block] = None,
-        verbose: bool = False,
-        use_scan: Optional[bool] = None,
-        track_params: bool = False
-) -> Tuple[xr.DataArray, List[OptimizationSchedule]]:
-    schedules_list: List[xr.DataArray] = []
-    results_list: List[xr.DataArray] = []
-
-    n_iterations: int = int(budget_fn(task=task) * partition_factor)
-
-    for s in range(n_realizations):
-        if sampler is None:
-            if bounded is None:
-                sampler = NormalWeightSampler()
-            else:
-                sampler = RandomWeightSampler(
-                    lower_bound=bounded[0],
-                    upper_bound=bounded[1])
-
-        data, schedule, popsizes = run_optimization_no_schedule(
-            trained_l2co_model=trained_l2co_model,
-            seed=seed + s,
-            bounded=bounded,
-            sampler=sampler,
-            task=task,
-            n_switches=n_switches,
-            n_iterations=n_iterations,
-            include_input=track_params,
-            verbose=verbose,
-            use_scan=use_scan,
-        )
-
-        ds = experimentdata_to_xarray(
-            data=data,
-            popsizes=popsizes,
-            budgets=schedule.budgets,
-            n_iterations=n_iterations,
-            include_input=include_input)
-
-        results_list.append(validation_fn(ds))
-
-        schedules_list.append(schedule_to_xarray(
-            data=schedule))
-
-    results = xr.concat(results_list, dim=REALIZATION)
-    schedules = xr.concat(schedules_list, dim=REALIZATION)
-
-    return results, schedules
-
-
-def run_optimization_no_schedule(
-        task: Task,
-        trained_l2co_model: L2CO_model,
-        n_switches: int,
-        n_iterations: int,
-        seed: int,
-        bounded: Optional[Tuple[float, float]],
-        sampler: Block,
-        include_input: bool,
-        verbose: bool,
-        use_scan: Optional[bool],
-) -> Tuple[ExperimentData, OptimizationSchedule, List[int]]:
-
-    budgets = step_n_iterations_equal(
-        n_iterations=n_iterations, n_switches=n_switches)
-
-    # Start with empty ExperimentData
-    data = None
-
-    step_list = []
-    # Create first optimization dynamics
-    optimization_dynamics = OptimizationDynamics.from_task_and_run(
-        task=task
-    )
-
-    # Predict the first optimizer
-    step: OptimizationStep = trained_l2co_model.predict(
-        data=optimization_dynamics)[0]
-
-    logger.debug(
-        f"[window 0/{n_switches}] Predicted optimizer: {step.optimizer}")
-
-    previous_step = None
-    step_list.append(step)
-    loaded_dataset = task.loaded_dataset
-    popsizes = []
-
-    for s, n_iterations_per_switch in enumerate(budgets):
-
-        learning_data = batch_iter(
-            dataset=loaded_dataset, n_evals=n_iterations_per_switch,
-            batch_size=task.batch_size, key=seed)
-
-        if use_scan is None:
-            _use_scan = True if isinstance(
-                learning_data, NoneIterator) else False
-        else:
-            _use_scan = use_scan
-
-        if previous_step is None or previous_step.optimizer != step.optimizer:
-            update_step = OPT_MAPPING[step.optimizer](
-                **step.hyperparameters, seed=seed,
-                bounded=bounded,
-                include_input=include_input,
-                pass_rng=task.pass_rng,
-                task=task,
-                verbose=verbose)
-
-        data = run_optimization(
-            task=task,
-            update_step=update_step,
-            previous_step=previous_step,
-            sampler=sampler,
-            n_iterations=n_iterations_per_switch,
-            learning_data=learning_data,
-            use_scan=_use_scan,
-            seed=seed,
-            data=data,
-        )
-
-        # Append population size
-        popsizes.append(update_step.popsize)
-
-        if s == n_switches - 1:
-            break
-
-        previous_step = step.copy()
-
-        optimization_dynamics = OptimizationDynamics.from_task_and_run(
-            task=task,
-            previous_step=previous_step,
-            data=data[-(n_iterations_per_switch*update_step.popsize):],
-        )
-
-        step: OptimizationStep = trained_l2co_model.predict(
-            data=optimization_dynamics)[0]
-
-        logger.debug(
-            f"[window {s}/{n_switches}] Predicted optimizer: {step.optimizer}")
-
-        step_list.append(step)
-
-    schedule = OptimizationSchedule(
-        steps=step_list, budgets=[1/n_switches]*n_switches)
-
-    logger.debug(
-        f"Optimization finished with {n_iterations_per_switch*n_switches}"
-        f"iterations!")
-
-    return data, schedule, popsizes
-
-
-def save_schedules(object: List[OptimizationSchedule], path: str):
-    _path = Path(path)
-    with open(_path.with_suffix('.json'), "w") as f:
-        json.dump([s.to_dict() for s in object], f)
-
-    return _path.with_suffix('.json')
-
-
-def load_schedules(filepath: str) -> List[OptimizationSchedule]:
-    with open(filepath, "r") as f:
-        schedules = json.load(f)
-
-    return [OptimizationSchedule.from_dict(s) for s in schedules]

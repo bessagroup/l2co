@@ -1,8 +1,8 @@
 # Standard
+from collections.abc import Callable
 from copy import deepcopy
 from functools import partial
 from pathlib import Path
-from typing import Callable, Dict, Tuple
 
 # Third-party
 import equinox as eqx
@@ -23,28 +23,55 @@ from .models import mlp
 
 
 def mse(x: Array, y: Array) -> Array:
+    """
+    Compute the mean squared error between two arrays.
+
+    Parameters
+    ----------
+    x : Array
+        Predicted values.
+    y : Array
+        Ground truth values.
+
+    Returns
+    -------
+    Array
+        Mean squared error.
+    """
     return jnp.mean((x - y) ** 2)
 
 
-def convection_pde_loss(
-        model: PyTree,
-        x_res: Array,
-        x_ic: Array,
-        x_bc_left: Array,
-        x_bc_right: Array,
-        t_res: Array,
-        t_ic: Array,
-        t_bc: Array,
-        loss_fn_res: Callable[[Array, Array], Array],
-        loss_fn_bc: Callable[[Array, Array], Array],
-        loss_fn_ic: Callable[[Array, Array], Array],
-        beta: float) -> jnp.ndarray:
+def u_(x: jax.Array, t: jax.Array, model: eqx.Module):
+    xt = jnp.concatenate([x, t], axis=-1)  # (N, 2) or (B, N, 2)
 
+    # If batched (B, N, 2): vmap twice
+    if xt.ndim == 3:
+        # vmap over B batch, then over spatial points N
+        return eqx.filter_vmap(eqx.filter_vmap(model))(xt)
+
+    # If not batched (N,2): vmap once
+    else:
+        return eqx.filter_vmap(model)(xt)
+
+
+def convection_pde_loss(
+    model: PyTree,
+    x_res: Array,
+    x_ic: Array,
+    x_bc_left: Array,
+    x_bc_right: Array,
+    t_res: Array,
+    t_ic: Array,
+    t_bc: Array,
+    loss_fn_res: Callable[[Array, Array], Array],
+    loss_fn_bc: Callable[[Array, Array], Array],
+    loss_fn_ic: Callable[[Array, Array], Array],
+    beta: float,
+) -> jnp.ndarray:
     # Vectorize the model, since it processes only one point
     # Also note that the model takes in both x and t as input
 
-    def u(x, t):
-        return eqx.filter_vmap(model)(jnp.concatenate([x, t], axis=-1))
+    u = partial(u_, model=model)
 
     # Compute predictions
     u_ic = u(x_ic, t_ic)
@@ -53,8 +80,9 @@ def convection_pde_loss(
     u_bc_right = u(x_bc_right, t_bc)
 
     # Compute first-order derivatives using jacobian reverse mode
-    du_dxt = jax.jacrev(lambda x, t: u(x, t).sum(),
-                        argnums=(0, 1))  # Computes [∂u/∂x, ∂u/∂t]
+    du_dxt = jax.jacrev(
+        lambda x, t: u(x, t).sum(), argnums=(0, 1)
+    )  # Computes [∂u/∂x, ∂u/∂t]
 
     u_x, u_t = du_dxt(x_res, t_res)
 
@@ -73,23 +101,23 @@ def convection_pde_loss(
 
 # =============================================================================
 
-def reaction_pde_loss(
-        model: PyTree,
-        x_res: Array,
-        x_ic: Array,
-        x_bc_left: Array,
-        x_bc_right: Array,
-        t_res: Array,
-        t_ic: Array,
-        t_bc: Array,
-        loss_fn_res: Callable[[Array, Array], Array],
-        loss_fn_bc: Callable[[Array, Array], Array],
-        loss_fn_ic: Callable[[Array, Array], Array],
-        rho: float) -> jnp.ndarray:
 
+def reaction_pde_loss(
+    model: PyTree,
+    x_res: Array,
+    x_ic: Array,
+    x_bc_left: Array,
+    x_bc_right: Array,
+    t_res: Array,
+    t_ic: Array,
+    t_bc: Array,
+    loss_fn_res: Callable[[Array, Array], Array],
+    loss_fn_bc: Callable[[Array, Array], Array],
+    loss_fn_ic: Callable[[Array, Array], Array],
+    rho: float,
+) -> jnp.ndarray:
     # Vectorize the model
-    def u(x, t):
-        return eqx.filter_vmap(model)(jnp.concatenate([x, t], axis=-1))
+    u = partial(u_, model=model)
 
     # Compute predictions
     u_ic = u(x_ic, t_ic)
@@ -111,7 +139,8 @@ def reaction_pde_loss(
 
     # IC loss: u(x, 0) = exp(-((x - π)^2) / (2 * (π/4)^2))
     loss_ic = loss_fn_ic(
-        u_ic, jnp.exp(-((x_ic - jnp.pi)**2) / (2 * (jnp.pi / 4)**2)))
+        u_ic, jnp.exp(-((x_ic - jnp.pi) ** 2) / (2 * (jnp.pi / 4) ** 2))
+    )
 
     # Combine losses
     total_loss = loss_res + loss_bc + loss_ic
@@ -119,23 +148,21 @@ def reaction_pde_loss(
 
 
 def wave_pde_loss(
-        model: PyTree,
-        x_res: Array,
-        x_ic: Array,
-        x_bc_left: Array,
-        x_bc_right: Array,
-        t_res: Array,
-        t_ic: Array,
-        t_bc: Array,
-        loss_fn_res: Callable[[Array, Array], Array],
-        loss_fn_bc: Callable[[Array, Array], Array],
-        loss_fn_ic: Callable[[Array, Array], Array],
-        loss_fn_ic_dt: Callable[[Array, Array], Array],
-        beta: float) -> jnp.ndarray:
-
-    # Vectorize the model
-    def u(x, t):
-        return eqx.filter_vmap(model)(jnp.concatenate([x, t], axis=-1))
+    model: PyTree,
+    x_res: Array,
+    x_ic: Array,
+    x_bc_left: Array,
+    x_bc_right: Array,
+    t_res: Array,
+    t_ic: Array,
+    t_bc: Array,
+    loss_fn_res: Callable[[Array, Array], Array],
+    loss_fn_bc: Callable[[Array, Array], Array],
+    loss_fn_ic: Callable[[Array, Array], Array],
+    loss_fn_ic_dt: Callable[[Array, Array], Array],
+    beta: float,
+) -> jnp.ndarray:
+    u = partial(u_, model=model)
 
     # Compute predictions
     u_ic = u(x_ic, t_ic)
@@ -160,8 +187,8 @@ def wave_pde_loss(
 
     # IC loss: u(x, 0) = sin(πx) + (1/2) sin(βπx)
     loss_ic = loss_fn_ic(
-        u_ic,
-        jnp.sin(jnp.pi * x_ic) + 0.5 * jnp.sin(beta * jnp.pi * x_ic))
+        u_ic, jnp.sin(jnp.pi * x_ic) + 0.5 * jnp.sin(beta * jnp.pi * x_ic)
+    )
 
     # Initial velocity condition: du/dt(x,0) = 0
 
@@ -173,17 +200,50 @@ def wave_pde_loss(
 
 
 def create_points_dataset(
-        x_range: Tuple[float], t_range: Tuple[float],
-        xgrid_resolution: int, tgrid_resolution: int,
-        num_ic_points: int, num_bc_points: int,
-        num_res_points: int, *, key: jnp.ndarray) -> Dict[str, jnp.ndarray]:
+    x_range: tuple[float],
+    t_range: tuple[float],
+    xgrid_resolution: int,
+    tgrid_resolution: int,
+    num_ic_points: int,
+    num_bc_points: int,
+    num_res_points: int,
+    *,
+    key: jnp.ndarray,
+) -> dict[str, jnp.ndarray]:
+    """
+    Create a dataset of points for PDE tasks.
 
+    Parameters
+    ----------
+    x_range : Tuple[float]
+        Range of x values.
+    t_range : Tuple[float]
+        Range of t values.
+    xgrid_resolution : int
+        Resolution of the x grid.
+    tgrid_resolution : int
+        Resolution of the t grid.
+    num_ic_points : int
+        Number of initial condition points.
+    num_bc_points : int
+        Number of boundary condition points.
+    num_res_points : int
+        Number of residual points.
+    key : jnp.ndarray
+        Random key for reproducibility.
+
+    Returns
+    -------
+    Dict[str, jnp.ndarray]
+        Dictionary containing the generated points.
+    """
     x_res_grid = jnp.linspace(x_range[0], x_range[1], xgrid_resolution)
     t_res_grid = jnp.linspace(t_range[0], t_range[1], tgrid_resolution)
 
     total_points = xgrid_resolution * tgrid_resolution
-    indices_res = jr.choice(key, a=total_points,
-                            shape=(num_res_points,), replace=False)
+    indices_res = jr.choice(
+        key, a=total_points, shape=(num_res_points,), replace=False
+    )
 
     t_indices = indices_res // xgrid_resolution
     x_indices = indices_res % xgrid_resolution
@@ -212,7 +272,7 @@ def create_points_dataset(
     }
 
 
-def save_dataset(dataset: Dict[str, jnp.ndarray], path: str | Path):
+def save_dataset(dataset: dict[str, jnp.ndarray], path: str | Path):
     _path = Path(path)
     _path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -220,86 +280,149 @@ def save_dataset(dataset: Dict[str, jnp.ndarray], path: str | Path):
 
 
 def create_pde_task(
-        pde_task_name: str,
-        seed: int,
-        dataset_path: str,
-        x_range: Tuple[float, float],
-        t_range: Tuple[float, float],
-        xgrid_resolution: int,
-        tgrid_resolution: int,
-        num_ic_points: int,
-        num_bc_points: int,
-        num_res_points: int,
-        hidden_size: int,
-        beta: float = jnp.nan,
-        rho: float = jnp.nan) -> Task:
+    pde_task_name: str,
+    seed: int,
+    dataset_path: str,
+    x_range: tuple[float, float],
+    t_range: tuple[float, float],
+    xgrid_resolution: int,
+    tgrid_resolution: int,
+    num_ic_points: int,
+    num_bc_points: int,
+    num_res_points: int,
+    hidden_size: int,
+    beta: float = jnp.nan,
+    rho: float = jnp.nan,
+) -> Task:
+    """
+    Create a PDE task for optimization.
+
+    Parameters
+    ----------
+    pde_task_name : str
+        Name of the PDE task (e.g., 'convection', 'reaction', 'wave').
+    seed : int
+        Random seed for reproducibility.
+    dataset_path : str
+        Path to save the generated dataset.
+    x_range : Tuple[float, float]
+        Range of x values for the PDE.
+    t_range : Tuple[float, float]
+        Range of t values for the PDE.
+    xgrid_resolution : int
+        Resolution of the x grid.
+    tgrid_resolution : int
+        Resolution of the t grid.
+    num_ic_points : int
+        Number of initial condition points.
+    num_bc_points : int
+        Number of boundary condition points.
+    num_res_points : int
+        Number of residual points.
+    hidden_size : int
+        Hidden size of the neural network model.
+    beta : float, optional
+        Parameter for the convection or wave PDE, by default jnp.nan.
+    rho : float, optional
+        Parameter for the reaction PDE, by default jnp.nan.
+
+    Returns
+    -------
+    Task
+        The created PDE task.
+    """
     tag = {}
 
-    _path = Path(dataset_path + f'_{seed}').with_suffix('.npz')
+    _path = Path(dataset_path + f"_{seed}").with_suffix(".npz")
 
     key = jr.key(int(seed))
 
     model_key, dataset_key = jr.split(key)
 
-    tag['task_name'] = pde_task_name
+    tag["task_name"] = pde_task_name
 
-    if pde_task_name == 'convection':
-        tag['beta'] = beta
+    if pde_task_name == "convection":
+        tag["beta"] = beta
 
-        loss_fn = partial(convection_pde_loss, loss_fn_res=mse,
-                          loss_fn_bc=mse, loss_fn_ic=mse, beta=beta)
-        tag['loss_fn'] = 'convection_pde_loss'
+        loss_fn = partial(
+            convection_pde_loss,
+            loss_fn_res=mse,
+            loss_fn_bc=mse,
+            loss_fn_ic=mse,
+            beta=beta,
+        )
+        tag["loss_fn"] = "convection_pde_loss"
 
-    elif pde_task_name == 'reaction':
-        tag['rho'] = rho
+    elif pde_task_name == "reaction":
+        tag["rho"] = rho
 
-        loss_fn = partial(reaction_pde_loss, loss_fn_res=mse,
-                          loss_fn_bc=mse, loss_fn_ic=mse, rho=rho)
-        tag['loss_fn'] = 'reaction_pde_loss'
+        loss_fn = partial(
+            reaction_pde_loss,
+            loss_fn_res=mse,
+            loss_fn_bc=mse,
+            loss_fn_ic=mse,
+            rho=rho,
+        )
+        tag["loss_fn"] = "reaction_pde_loss"
 
-    elif pde_task_name == 'wave':
-        tag['beta'] = beta
+    elif pde_task_name == "wave":
+        tag["beta"] = beta
 
-        loss_fn = partial(wave_pde_loss, loss_fn_res=mse,
-                          loss_fn_bc=mse, loss_fn_ic=mse,
-                          loss_fn_ic_dt=mse, beta=beta)
-        tag['loss_fn'] = 'wave_pde_loss'
+        loss_fn = partial(
+            wave_pde_loss,
+            loss_fn_res=mse,
+            loss_fn_bc=mse,
+            loss_fn_ic=mse,
+            loss_fn_ic_dt=mse,
+            beta=beta,
+        )
+        tag["loss_fn"] = "wave_pde_loss"
 
     model, model_tags = mlp(
-        in_size=2, out_size=1, hidden_size=hidden_size,
-        num_layers=3, hidden_activation=jax.nn.tanh,
-        key=model_key)
+        in_size=2,
+        out_size=1,
+        hidden_size=hidden_size,
+        num_layers=3,
+        hidden_activation=jax.nn.tanh,
+        key=model_key,
+    )
 
     # Count trainable parameters
-    num_params = sum(p.size for p in jtu.tree_leaves(
-        model) if isinstance(p, jnp.ndarray))
+    num_params = sum(
+        p.size for p in jtu.tree_leaves(model) if isinstance(p, jnp.ndarray)
+    )
     tag["dimensionality"] = num_params
 
     if not _path.exists():
         dataset = create_points_dataset(
-            x_range=x_range, t_range=t_range,
+            x_range=x_range,
+            t_range=t_range,
             xgrid_resolution=xgrid_resolution,
             tgrid_resolution=tgrid_resolution,
             num_ic_points=num_ic_points,
             num_bc_points=num_bc_points,
             num_res_points=num_res_points,
-            key=key)
+            key=key,
+        )
         save_dataset(dataset, _path)
 
     return Task(
         model=model,
         loss_fn=loss_fn,
-        dataset={'dataset_path': _path,
-                 'batch_size': None,
-                 'seed': seed},
-        tag=tag
+        dataset={"dataset_path": _path, "batch_size": None, "seed": seed},
+        tag=tag,
     )
 
 
 class PDETaskSampler(Block):
-    def __init__(self, num_ic_points: int = 257, num_bc_points: int = 101,
-                 num_res_points: int = 10000, xgrid_resolution: int = 255,
-                 tgrid_resolution: int = 101):
+    def __init__(
+        self,
+        num_ic_points: int = 257,
+        num_bc_points: int = 101,
+        num_res_points: int = 10000,
+        xgrid_resolution: int = 255,
+        tgrid_resolution: int = 101,
+    ):
         self.num_ic_points = num_ic_points
         self.num_bc_points = num_bc_points
         self.num_res_points = num_res_points
@@ -307,23 +430,31 @@ class PDETaskSampler(Block):
         self.tgrid_resolution = tgrid_resolution
 
         self.convection_task = dict(
-            pde_task_name='convection',
-            dataset_path='./data/convection',
-            x_range=(0., 2. * jnp.pi), t_range=(0., 1.),
-            beta=40)
+            pde_task_name="convection",
+            dataset_path="./data/convection",
+            x_range=(0.0, 2.0 * jnp.pi),
+            t_range=(0.0, 1.0),
+            beta=40,
+        )
 
-        self.reaction_task = dict(pde_task_name='reaction',
-                                  dataset_path='./data/reaction',
-                                  x_range=(0., 2. * jnp.pi), t_range=(0., 1.),
-                                  rho=5)
+        self.reaction_task = dict(
+            pde_task_name="reaction",
+            dataset_path="./data/reaction",
+            x_range=(0.0, 2.0 * jnp.pi),
+            t_range=(0.0, 1.0),
+            rho=5,
+        )
 
-        self.wave_task = dict(pde_task_name='wave',
-                              dataset_path='./data/wave',
-                              x_range=(0., 1.), t_range=(0., 1.),
-                              beta=5)
+        self.wave_task = dict(
+            pde_task_name="wave",
+            dataset_path="./data/wave",
+            x_range=(0.0, 1.0),
+            t_range=(0.0, 1.0),
+            beta=5,
+        )
 
     def call(self, data: ExperimentData, seed: int) -> ExperimentData:
-        hidden_size = data.domain.input_space['hidden_size'].categories
+        hidden_size = data.domain.input_space["hidden_size"].categories
 
         task_list = []
 
@@ -338,25 +469,33 @@ class PDETaskSampler(Block):
                         num_ic_points=self.num_ic_points,
                         num_bc_points=self.num_bc_points,
                         num_res_points=self.num_res_points,
-                        hidden_size=h
+                        hidden_size=h,
                     )
                 )
                 task_list.append(t)
 
         domain = Domain()
-        domain.add_parameter('pde_task_name')
-        domain.add_parameter('seed')
-        domain.add_parameter('dataset_path')
-        domain.add_parameter('hidden_size')
-        domain.add_parameter('x_range')
-        domain.add_parameter('t_range')
-        domain.add_parameter('xgrid_resolution')
-        domain.add_parameter('tgrid_resolution')
-        domain.add_parameter('num_ic_points')
-        domain.add_parameter('num_bc_points')
-        domain.add_parameter('num_res_points')
-        domain.add_parameter('beta')
-        domain.add_parameter('rho')
+        domain.add_parameter("pde_task_name")
+        domain.add_parameter("seed")
+        domain.add_parameter("dataset_path")
+        domain.add_parameter("hidden_size")
+        domain.add_parameter("x_range")
+        domain.add_parameter("t_range")
+        domain.add_parameter("xgrid_resolution")
+        domain.add_parameter("tgrid_resolution")
+        domain.add_parameter("num_ic_points")
+        domain.add_parameter("num_bc_points")
+        domain.add_parameter("num_res_points")
+        domain.add_parameter("beta")
+        domain.add_parameter("rho")
 
-        return ExperimentData(domain=domain, input_data=task_list,
-                              project_dir=data.project_dir)
+        domain.add_output(
+            name="task",
+            to_disk=True,
+            store_function=Task.save,
+            load_function=Task.load,
+        )
+
+        return ExperimentData(
+            domain=domain, input_data=task_list, project_dir=data.project_dir
+        )

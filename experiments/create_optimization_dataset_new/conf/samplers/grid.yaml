@@ -1,4 +1,4 @@
-_target_: l2co.sampling.GridWeightSampler
-stepsize: 0.01
+_target_: l2co.sampling.grid_sampling
+n_points_per_dim: 100
 lower_bound: ${tasks.bounded.lower_bound}
 upper_bound: ${tasks.bounded.upper_bound}

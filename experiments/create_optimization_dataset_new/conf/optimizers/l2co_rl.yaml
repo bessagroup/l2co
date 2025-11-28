@@ -1,0 +1,14 @@
+- optimizer: l2co
+  hyperparameters:
+    l2co_path: ${path}
+    model_dir: ${model_dir}
+    train: True
+- optimizer: l2co_random
+  hyperparameters:
+    l2co_path: "100/random"
+    model_dir: ${model_dir}
+    train: False
+- optimizer: sepcmaes
+- optimizer: adam
+  hyperparameters:
+    learning_rate: 1e-2

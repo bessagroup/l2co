@@ -1,1 +1,2 @@
-_target_: l2co.sampling.XavierNormalWeightSampler
+_partial_: true
+_target_: l2co.sampling.xavier_sampling

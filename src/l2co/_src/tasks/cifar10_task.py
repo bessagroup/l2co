@@ -2,7 +2,6 @@ import pickle
 import tarfile
 import urllib.request
 from pathlib import Path
-from typing import Dict
 
 # Third-party
 import jax.numpy as jnp
@@ -33,8 +32,8 @@ def download_cifar10():
     for i in range(1, 6):  # CIFAR-10 has 5 training batches
         batch_file = cifar_path / f"data_batch_{i}"
         # batch_file = os.path.join(cifar_path, f"data_batch_{i}")
-        with open(batch_file, 'rb') as fo:
-            batch = pickle.load(fo, encoding='bytes')
+        with open(batch_file, "rb") as fo:
+            batch = pickle.load(fo, encoding="bytes")
 
         # Append data and labels
         data_dict[b"data"].append(batch[b"data"])
@@ -48,16 +47,17 @@ def download_cifar10():
     # Convert labels to NumPy array
     data_dict[b"labels"] = np.array(data_dict[b"labels"])
 
-    data_dict[b"data"] = data_dict[b"data"].reshape(
-        (-1, 3, 32, 32)).transpose(0, 2, 3, 1)
+    data_dict[b"data"] = (
+        data_dict[b"data"].reshape((-1, 3, 32, 32)).transpose(0, 2, 3, 1)
+    )
 
     # # Remove cifar_path folder
     # cifar_path.rmdir()
 
-    return {'x': data_dict[b"data"], 'y': data_dict[b"labels"]}
+    return {"x": data_dict[b"data"], "y": data_dict[b"labels"]}
 
 
-def save_dataset(dataset: Dict[str, jnp.ndarray], path: str | Path):
+def save_dataset(dataset: dict[str, jnp.ndarray], path: str | Path):
     _path = Path(path)
     _path.parent.mkdir(parents=True, exist_ok=True)
 

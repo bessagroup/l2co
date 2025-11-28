@@ -1,19 +1,19 @@
 defaults:
-- tasks: gaussian_classification
-- schedules: single
-- budgets: based_on_dim
-- samplers: normal
-- optimizers: standard
+- tasks: spirals
+- budgets: fixed
+- samplers: xavier
+- optimizers: pde
 
-n_realizations: 1
+n_realizations: 5
 
 seed: 467
-mode: mpi
+mode: cluster
 
 log_level: 20
 
-verbose: True
-include_input: False
+verbose: False
+clear_jax_cache: True
+save_input_parameters: False
 
 path:
 model_dir: /home/martin/Documents/GitHub/L2CO/experiments/train_model/outputs

@@ -9,7 +9,7 @@ experimentdata:
       fn_name:
         type: category
         categories: [
-          'schwefel',
+          'levy',
           ]
       dimensionality:
         type: category

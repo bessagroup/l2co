@@ -7,10 +7,9 @@ The `main.py` script orchestrates the creation of a dataset for training and eva
 
 1. **Configuration Loading**: Reads the experiment configuration using Hydra, which defines tasks, optimizers, schedules, budgets, and samplers.
 2. **Task Generation**: Creates optimization tasks based on the specified configuration, including sampling parameters and generating task instances.
-3. **Schedules Generation**: Defines how the optimization algorithms are scheduled, including the combination of optimizers and their execution order.
-4. **Optimization Execution**: Runs the optimization schedules on the generated tasks, using the defined optimizers and budgets.
-5. **Data Collection**: Collects and stores the results of the optimization process, including input parameters, outputs, and metadata.
-6. **Output Management**: Saves the results as NetCDF files within the `outputs/` directory, ensuring reproducibility and traceability.
+3. **Optimization Execution**: Runs the optimization schedules on the generated tasks, using the defined optimizers and budgets.
+4. **Data Collection**: Collects and stores the results of the optimization process, including input parameters, outputs, and metadata.
+5. **Output Management**: Saves the results as NetCDF files within the `outputs/` directory, ensuring reproducibility and traceability.
 
 The script supports execution on local machines and HPC clusters, making it versatile for various computational setups.
 
@@ -20,7 +19,6 @@ In order to run the script, we need to define the components of the experiment i
 
 - `tasks`: Defines the optimization tasks to be solved.
 - `optimizers`: Defines the optimization algorithms to be used in the experiment.
-- `schedules`: Defines how the optimization algorithms are scheduled during the optimization process.
 - `budgets`: Defines the budget for each optimization task.
 - `samplers`: Defines how the initial input parameters of the optimization tasks are sampled.
 
@@ -71,22 +69,6 @@ The following optimizer configurations are available:
 - `pde.yaml`: Optimizers tailored for PDE tasks.
 - `l2co.yaml`: L2CO optimizer configuration.
 
-### Schedules
-
-The configurations in the `conf/schedules/` folder define how the optimization algorithms are scheduled during the optimization process. Each configuration specifies how the optimizers are combined and when to switch between them.
-
-| Name              | Description                                                                                                   |
-|-------------------|---------------------------------------------------------------------------------------------------------------|
-| `data_generator`  | Defines how the schedule is generated from the `schedules`.                                                   |
-| `schedules`       | A list of schedules to be used in the experiment. You can mention `${optimizers}` to use the optimizers defined in the `optimizers` configuration. |
-| `partition_factor`| Defines the fraction of all the schedules to be executed. If the fraction is less than `1.0`, the chosen schedules are sampled randomly. |
-| `track_params`    | Indicates whether to track the input parameters of the optimization algorithms during the optimization process. If `False`, only the output of the optimization algorithms is tracked during execution of the schedule. |
-
-The following schedule configurations are available:
-- `single.yaml`: Single optimizer schedules.
-- `combination.yaml`: Combination of two optimizers with a switch point.
-- `l2co.yaml`: Schedules for the L2CO optimizer.
-
 ### Budgets
 
 The configurations in the `conf/budgets/` folder define how the budget for each optimization task is determined. Each configuration specifies a budget strategy that can be used to limit the number of iterations or evaluations for each task.
@@ -100,7 +82,7 @@ The following budget configurations are available:
 
 ### Samplers
 
-The configurations in the `conf/samplers/` folder define how the initial input parameters ($x_0$) of the optimization tasks are sampled. Each configuration specifies a sampling strategy that can be used to generate the parameters for the optimization tasks.
+The configurations in the `conf/samplers/` folder define how the initial input parameters ($x_0$) of the optimization tasks are sampled if you solve the tasks for multiple realizations (different initial conditions $x_0$). Each configuration specifies a sampling strategy that can be used to generate the input parameters for the optimization tasks.
 
 Each configuration is a `functools.partial` function: a key with a `_partial_: True` and `_target_: <your function>` tag so that the configuration can be instantiated with [`hydra.instantiate`](https://hydra.cc/docs/advanced/instantiate_objects/overview/).
 
@@ -114,7 +96,6 @@ The following sampler configurations are available:
 ### Default Configuration
 The default configuration is defined in `conf/config.yaml`:
 - Task: `gaussian_classification`
-- Schedule: `single`
 - Budget: `based_on_dim`
 - Sampler: `normal`
 - Optimizers: `standard`
@@ -215,7 +196,6 @@ The `defaults` section specifies the default configurations for tasks, schedules
 | Name         | Type   | Description |
 |--------------|--------|-------------|
 | `tasks`      | `str`  | Specifies the task configuration to use (e.g., `gaussian_classification`, `benchmark`, etc.). |
-| `schedules`  | `str`  | Specifies the schedule configuration to use (e.g., `single`, `combination`, `l2co`). |
 | `budgets`    | `str`  | Specifies the budget configuration to use (e.g., `fixed`, `fixed_pde`, `based_on_dim`). |
 | `samplers`   | `str`  | Specifies the sampler configuration to use (e.g., `random`, `grid`, `normal`, `xavier`). |
 | `optimizers` | `str`  | Specifies the optimizer configuration to use (e.g., `standard`, `small`, `pde`, `l2co`). |
@@ -228,7 +208,8 @@ The `defaults` section specifies the default configurations for tasks, schedules
 | `mode`           | `str`   | Execution mode (`mpi`, `sequential`, or `cluster`). |
 | `log_level`      | `int`   | Logging level (e.g., `10` for DEBUG, `20` for INFO). |
 | `verbose`        | `bool`  | Whether to enable verbose logging. |
-| `include_input`  | `bool`  | Whether to include input data in the output files. |
+| `clear_jax_cache`| `bool`  | Whether to clear the JAX cache after running each experiment. |
+| `save_input_parameters`  | `bool`  | Whether to include the input parameters in the NetCDF files. |
 
 #### Paths
 | Name          | Type   | Description |

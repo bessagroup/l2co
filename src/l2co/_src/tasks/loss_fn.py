@@ -13,15 +13,17 @@ def mse_loss_fn(model: PyTree, x: jnp.ndarray, y: jnp.ndarray):
 
 
 def mean_categorical_cross_entropy_loss_fn(
-        model: PyTree, x: jnp.ndarray, y: jnp.ndarray):
+    model: PyTree, x: jnp.ndarray, y: jnp.ndarray
+):
     y_pred = jax.vmap(model)(x)
     return optax.losses.softmax_cross_entropy_with_integer_labels(
-        y_pred, y).mean()
+        y_pred, y
+    ).mean()
 
 
 def mean_categorical_cross_entropy_loss_fn_l2(
-        model: PyTree, x: jnp.ndarray, y: jnp.ndarray,
-        l2_lambda: float = 0.005):
+    model: PyTree, x: jnp.ndarray, y: jnp.ndarray, l2_lambda: float = 0.005
+):
     """
     Computes mean categorical cross-entropy loss with L2 regularization.
 
@@ -36,11 +38,13 @@ def mean_categorical_cross_entropy_loss_fn_l2(
     """
     y_pred = jax.vmap(model)(x)
     loss = optax.losses.softmax_cross_entropy_with_integer_labels(
-        y_pred, y).mean()
+        y_pred, y
+    ).mean()
 
     # Compute L2 regularization term
-    l2_penalty = sum(jnp.sum(jnp.square(p))
-                     for p in jax.tree_util.tree_leaves(model))
+    l2_penalty = sum(
+        jnp.sum(jnp.square(p)) for p in jax.tree_util.tree_leaves(model)
+    )
     loss += l2_lambda * l2_penalty
 
     return loss

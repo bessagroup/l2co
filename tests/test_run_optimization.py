@@ -1,29 +1,101 @@
 from functools import partial
 
+import jax.random as jr
 import pytest
-import xarray as xr
+import jax.numpy as jnp
+from jaxtyping import PRNGKeyArray
+from typing import Callable
+from bbob_jax import registry
+from pathlib import Path
 
 from l2co._src.budget import based_on_dimensionality
-from l2co._src.run_optimization import \
-    run_optimization_schedule_multiple_realizations
+from l2co._src.optimizerschedule import OptimizationStep
+from l2co._src.run_optimization import (
+    RunOptimization,
+    RolloutWrapper,
+)
+from l2co._src.tasks.benchmark_task import create_bbob_task
+from l2co._src.tasks.pde import create_pde_task
+from l2co.sampling import normal_sampling
+from l2co import Task
 
-from . import OPTIMIZATION_SCHEDULES
+from . import OPTIMIZATION_STEPS
 
 # =============================================================================
 
 
-@pytest.mark.parametrize("bounded", [(0.0, 1.0), None], ids=["bounded_0_1", "bounded_none"])
-@pytest.mark.parametrize("optimization_schedule", OPTIMIZATION_SCHEDULES, ids=lambda s: f"optimizer_{s.steps[0].optimizer}")
-def test_optimization_schedules(benchmark_task, bounded, optimization_schedule):
-    res = run_optimization_schedule_multiple_realizations(
-        task=benchmark_task, optimization_schedule=optimization_schedule,
-        budget_fn=partial(based_on_dimensionality, budget_per_dimension=5),
-        seed=42,
-        partition_factor=1.0,
-        n_realizations=2,
-        include_input=False,
-        bounded=bounded,
-        sampler=None)
+def run(
+    optimizer: OptimizationStep,
+    task: Task,
+    sampler: Callable,
+    n_iterations: int = 5,
+    n_realizations: int = 2,
+    key: PRNGKeyArray | None = None,
+    bounded: tuple[float | None, float | None] = (None, None),
+    include_input_mean: bool = True,
+):
+    if key is None:
+        key = jr.key(0)
 
-    assert res is not None
-    assert isinstance(res, xr.Dataset)
+    rollout_wrapper = RolloutWrapper.init(
+        optimizer=optimizer,
+        task=task,
+        sampler=sampler,
+        n_iterations=n_iterations,
+        key=key,
+        bounded=bounded,
+    )
+
+    history_state = rollout_wrapper.batch_evaluate(
+        n_realizations=n_realizations,
+        key=key,
+    )
+
+    data_xarr = history_state.to_xarray_realizations(
+        include_input_mean=include_input_mean
+    )
+
+
+# =============================================================================
+
+
+@pytest.mark.parametrize("optimizer", OPTIMIZATION_STEPS)
+def test_pde(optimizer: OptimizationStep, tmp_path: Path):
+    task = create_pde_task(
+        pde_task_name="convection",
+        seed=0,
+        dataset_path=str(tmp_path),
+        x_range=(0.0, 2.0 * jnp.pi),
+        t_range=(0.0, 1.0),
+        beta=40,
+        xgrid_resolution=255,
+        tgrid_resolution=101,
+        num_ic_points=257,
+        num_bc_points=101,
+        num_res_points=10000,
+        hidden_size=32,
+    )
+
+    run(
+        optimizer=optimizer,
+        task=task,
+        sampler=normal_sampling,
+        include_input_mean=False,
+    )
+
+
+@pytest.mark.parametrize("optimizer", OPTIMIZATION_STEPS)
+@pytest.mark.parametrize("fn_name", ["sphere", "rastrigin"])
+@pytest.mark.parametrize("dim", [2, 5])
+def test_bbob(optimizer: OptimizationStep, fn_name: str, dim: int):
+    task = create_bbob_task(
+        fn_name=fn_name,
+        seed=0,
+        dimensionality=dim,
+    )
+    run(
+        optimizer=optimizer,
+        task=task,
+        sampler=normal_sampling,
+        include_input_mean=False,
+    )
