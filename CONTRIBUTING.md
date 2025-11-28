@@ -25,3 +25,30 @@ Any contribution to this project should follow two main steps:
     
 Please refer to the several sources available on how to contribute to a GitHub repository (Step 2) (e.g., [source 1](https://www.dataschool.io/how-to-contribute-on-github/), [source 2](https://dev.to/codesphere/how-to-start-contributing-to-open-source-projects-on-github-534n)).
 
+## Testing your contribution
+
+Before submitting your Pull Request, make sure to verify your contribution by running the following commands:
+
+1. **Lint the code:**
+   ```bash
+   make lint
+   ```
+
+2. **Test the code:**
+   ```bash
+   make test
+   ```
+
+3. **Build the documentation:**
+   ```bash
+   make docs
+   ```
+
+4. **Build the package:**
+   ```bash
+   make build
+   ```
+
+Ensure all commands complete successfully without errors before submitting your Pull Request.
+
+> Note: These tests are also run whenever a pull request is created, as part of the continuous integration (CI) process.
