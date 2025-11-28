@@ -175,7 +175,8 @@ def optax_extra_args_fn(
     **kwargs,
 ) -> tuple[InitFunction, StepFunction]:
     """
-    Creates initialization and step functions for Optax optimizers with extra arguments.
+    Creates initialization and step functions for Optax optimizers with extra
+    arguments.
 
     Parameters
     ----------
