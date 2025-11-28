@@ -30,4 +30,4 @@ pip install -e '.[dev,docs,tests,app]'
 
 > For detailed instructions on how to develop on this package, please refer to the Contributing Guide on the [GitHub repository](https://github.com/bessagroup/l2co).
 
-After installation, start by looking at the [Getting Started Guide](usage.md).
+After installation, start by looking at the [Getting Started Guide](usage.ipynb).

@@ -35,6 +35,11 @@ This package includes 3 experiments that demonstrate the capabilities of the pac
 | [`data_validation`](https://github.com/bessagroup/L2CO/tree/main/experiments/data_validation) | Scripts that validate the optimization data created in `create_optimization_dataset_new`. | Stable |
 | [`train_model`](https://github.com/bessagroup/L2CO/tree/main/experiments/train_model) | Trains the L2CO model using the generated dataset. | Stable |
 
+## Getting started
+
+- You can find the installation instructions in the [Installation Guide](installation.md).
+- After installation, start by looking at the [Getting Started Guide](usage.ipynb).
+
 ## Community Support
 
 * If you find any **issues, bugs or problems** within this repository, please use the [GitHub issue tracker](https://github.com/bessagroup/l2co/issues) to report them.

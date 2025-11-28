@@ -65,7 +65,7 @@ pip install -e '.[dev,docs,tests,app]'
 
 > For detailed instructions on how to develop on this package, please refer to the [Contributing Guide](CONTRIBUTING.md).
 
-After installation, start by looking at the [Getting Started Guide](./docs/usage.md).
+After installation, start by looking at the [Getting Started Guide](./docs/usage.ipynb).
 
 ## Experiments
 
