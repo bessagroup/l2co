@@ -1216,7 +1216,6 @@ dependencies = [
     { name = "jax-tqdm" },
     { name = "jaxtyping" },
     { name = "netcdf4" },
-    { name = "opfunu" },
     { name = "scikit-learn" },
     { name = "setuptools" },
     { name = "tqdm" },
@@ -1264,7 +1263,6 @@ requires-dist = [
     { name = "mkdocstrings", marker = "extra == 'docs'", specifier = ">=1.0.0" },
     { name = "mkdocstrings-python", marker = "extra == 'docs'", specifier = ">=2.0.0" },
     { name = "netcdf4", specifier = ">=1.7.3" },
-    { name = "opfunu", editable = "../opfunu" },
     { name = "panel", marker = "extra == 'app'", specifier = ">=1.8.2" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.5.0" },
     { name = "pymdown-extensions", marker = "extra == 'docs'", specifier = ">=10.17.2" },
@@ -1274,7 +1272,7 @@ requires-dist = [
     { name = "setuptools", specifier = ">=80.9.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
 ]
-provides-extras = ["app", "dev", "tests", "docs"]
+provides-extras = ["app", "dev", "docs", "tests"]
 
 [[package]]
 name = "linkify-it-py"
@@ -1999,18 +1997,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/09/48/6388f1bb9da707110
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e3/94/1843518e420fa3ed6919835845df698c7e27e183cb997394e4a670973a65/omegaconf-2.3.0-py3-none-any.whl", hash = "sha256:7b4df175cdb08ba400f45cae3bdcae7ba8365db4d165fc65fd04b050ab63b46b", size = 79500, upload-time = "2022-12-08T20:59:19.686Z" },
 ]
-
-[[package]]
-name = "opfunu"
-version = "1.1.0"
-source = { editable = "../opfunu" }
-dependencies = [
-    { name = "jax", version = "0.6.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "jax", version = "0.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "jax" }]
 
 [[package]]
 name = "opt-einsum"

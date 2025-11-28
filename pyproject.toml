@@ -16,7 +16,6 @@ dependencies = [
   "jax-tqdm>=0.4.0",
   "jaxtyping>=0.3.2",
   "netcdf4>=1.7.3",
-  "opfunu",
   "scikit-learn>=1.7.1",
   "setuptools>=80.9.0",
   "tqdm>=4.67.1"
@@ -99,4 +98,3 @@ package = true
 
 [tool.uv.sources]
 f3dasm = {editable = true, path = "../f3dasm"}
-opfunu = {editable = true, path = "../opfunu"}

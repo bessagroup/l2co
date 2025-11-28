@@ -44,6 +44,8 @@ Before submitting your Pull Request, make sure to verify your contribution by ru
    make docs
    ```
 
+> Note: In order to show the documentation on your browser locally, you can run `make docs-serve`.
+
 4. **Build the package:**
    ```bash
    make build

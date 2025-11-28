@@ -7,11 +7,8 @@ import jax
 # Third-party
 import jax.numpy as jnp
 import jax.random as jr
-import numpy as np
-import opfunu
 import pandas as pd
 from f3dasm import Block, ExperimentData
-from opfunu import create_benchmark_loss_function
 
 # Local
 from ..task import Task
@@ -23,7 +20,6 @@ __credits__ = ["Martin van der Schelling"]
 __status__ = "Planning"
 # =============================================================================
 
-opfunu.np = np
 
 # =============================================================================
 
@@ -76,56 +72,6 @@ class CEC2019Sampler(Block):
         )
 
         return ExperimentData(domain=data.domain, input_data=df)
-
-
-def create_benchmark_task(
-    fn_name: str,
-    seed: int,
-    noise: float,
-    dimensionality: int,
-    offset: bool = True,
-    scale_output: bool = True,
-    grad_noise: float = 0.0,
-) -> Task:
-    """
-    Create a benchmark task for optimization.
-
-    Parameters
-    ----------
-    fn_name : str
-        Name of the benchmark function.
-    seed : int
-        Random seed for reproducibility.
-    noise : float
-        Noise level for the benchmark function.
-    dimensionality : int
-        Dimensionality of the input space.
-    offset : bool, optional
-        Whether to apply an offset to the function, by default True.
-    scale_output : bool, optional
-        Whether to scale the output, by default True.
-    grad_noise : float, optional
-        Gradient noise level, by default 0.0.
-
-    Returns
-    -------
-    Task
-        The created benchmark task.
-    """
-    pass_rng = True if noise > 0.0 else False
-
-    model, loss_fn, tag = create_benchmark_loss_function(
-        fn_name=str(fn_name),
-        seed=int(seed),
-        scale_bounds=jnp.tile(jnp.array([0.0, 1.0]), (dimensionality, 1)),
-        dimensionality=int(dimensionality),
-        noise=float(noise),
-        offset=offset,
-        scale_output=scale_output,
-        grad_noise=float(noise),
-    )
-
-    return Task(model=model, pass_rng=pass_rng, loss_fn=loss_fn, tag=tag)
 
 
 def scale_input(domain_bounds: jax.Array, function_bounds: jax.Array):
