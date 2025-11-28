@@ -1,7 +1,9 @@
-Learning to Choose Optimizers (L2CO)
-------------------------------------
+# Learning to Choose Optimizers (l2co)
 
-***
+<div align="center">
+  <img src="img/logo.png" alt="BBOB functions 3D overview" width="50%">
+</div>
+
 [![GitHub license](https://img.shields.io/badge/license-BSD-blue)](https://github.com/bessagroup/l2co)
 
 
@@ -55,7 +57,7 @@ pip install -e .
 
 ### Installation instructions for developers
 
-To install the package for development (or for building the sphinx documentation), install the development dependencies after normal installation:
+To install the package for development (or for building the mkdocs documentation), install the development dependencies after normal installation:
 
 ```bash
 pip install -e '.[dev,docs,tests,app]'

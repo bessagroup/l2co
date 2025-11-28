@@ -1,5 +1,9 @@
 # Learning to Choose Optimizers (L2CO)
 
+<div align="center">
+  <img src="img/logo.png" alt="BBOB functions 3D overview" width="50%">
+</div>
+
 [View on GitHub](https://github.com/bessagroup/l2co)
 
 ## Summary
