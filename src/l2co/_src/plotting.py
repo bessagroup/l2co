@@ -100,6 +100,7 @@ def set_size(width, fraction=1, subplots=(1, 1)):
             Fraction of the width which you wish the figure to occupy
     subplots: array-like, optional
             The number of rows and columns of subplots.
+
     Returns
     -------
     fig_dim: tuple
@@ -211,12 +212,13 @@ def plot_ertd_profile(
         DataLoader instance
     ax: plt.Axes, optional
         Matplotlib axes
-    strategies: list of xr.DataArray, optional
-        List of strategies to plot, by default None
     include_best: bool, optional
         Include the best strategy in the plot, by default False
     optimizers_to_plot: list of str, optional
         List of optimizers to plot, by default None
+    cost_metric: str, optional
+        Cost metric to use for the x-axis, either 'fevals' or 'iterations',
+        by default 'fevals'
 
     Returns
     -------
@@ -282,6 +284,8 @@ def plot_perf_profile(
         Matplotlib axes
     strategies: list of xr.DataArray, optional
         List of strategies to plot, by default None
+    include_best: bool, optional
+        Include the best strategy in the plot, by default False
 
     Returns
     -------
@@ -324,6 +328,28 @@ def plot_trajectories(
     seed: int | None = None,
     idx: Iterable[int] = None,
 ) -> tuple[plt.Figure, np.ndarray]:
+    """
+    Plot the trajectories of the optimization dynamics for a given optimizer.
+
+    Parameters
+    ----------
+    optimization_dynamics: OptimizationDynamics
+        The optimization dynamics containing the trajectories.
+    optimizer: str
+        The optimizer for which to plot the trajectories.
+    n_rows: int, optional
+        Number of rows in the plot grid, by default 10.
+    n_columns: int, optional
+        Number of columns in the plot grid, by default 10.
+    seed: int, optional
+        Random seed for selecting trajectories, by default None.
+    idx: Iterable[int], optional
+        Indices of the trajectories to plot, by default None.
+    Returns
+    -------
+    tuple[plt.Figure, np.ndarray]
+        The figure and axes containing the plotted trajectories.
+    """
     X_traj = optimization_dynamics._X_trajectory.isel({SCHEDULE: 0}).T
     Y = optimization_dynamics._Y.isel({OUTPUT_DIM: 0}).T
 
@@ -379,7 +405,7 @@ def plot_trajectories(
 
 def plot_quadric_curve(
     y: np.ndarray,
-    coeffs,
+    coeffs: tuple[float, float, float, float, float, float],
     color: str,
     ax: plt.Axes | None = None,
     res: int = 500,
@@ -387,9 +413,23 @@ def plot_quadric_curve(
     """
     Plots the original points and the fitted quadratic curve.
 
-    Args:
-    - points: numpy array of shape (n, 2), the data points.
-    - coeffs: numpy array of shape (6,), the coefficients of the quadric curve.
+    Parameters
+    ----------
+    y: np.ndarray
+        The y-values of the original points.
+    coeffs: tuple[float, float, float, float, float, float]
+        Coefficients of the quadratic curve in the form (A, B, C, D, E, F).
+    color: str
+        Color for the original points.
+    ax: plt.Axes, optional
+        Matplotlib axes to plot on, if None, a new figure is created.
+    res: int, optional
+        Resolution for the grid, by default 500.
+
+    Returns
+    -------
+    None
+        The function modifies the provided axes or creates a new plot.
     """
     if ax is None:
         _, ax = plt.subplots()
@@ -459,12 +499,23 @@ def format_plot(
     """
     Format a plot with consistent styling.
 
-    Parameters:
-    ax (matplotlib.axes.Axes): The axes object to format.
-    xlim_right (float): The right limit for the x-axis.
-    ylabel (str): The label for the y-axis.
-    xlabel (str): The label for the x-axis.
-    title (str): The title of the plot.
+    Parameters
+    ----------
+    ax: plt.Axes
+        The axes to format.
+    xlim_right: int
+        The right limit for the x-axis.
+    ylabel: str
+        The label for the y-axis.
+    xlabel: str
+        The label for the x-axis.
+    title: str
+        The title of the plot.
+
+    Returns
+    -------
+    None
+        The function modifies the provided axes in place.
     """
     ax.set_ylim(0, 1)
     ax.set_xlim(0, xlim_right)  # Ensure x-axis starts at 0
@@ -516,6 +567,36 @@ def plot_2d_loss_landscape_only(
     ax=None,
     colorbar: bool = True,
 ):
+    """
+    Plot a 2D loss landscape for a given task.
+
+    Parameters
+    ----------
+    task : Task
+        The optimization task containing the model and evaluation function.
+    plot_resolution : int, optional
+        Resolution of the interpolated grid for plotting, by default 100.
+    stepsize : float, optional
+        Step size for grid sampling, by default 0.033.
+    seed : int, optional
+        Random seed for evaluation, by default 0.
+    ax : plt.Axes, optional
+        Matplotlib axes to plot on. If None, creates a new figure,
+        by default None.
+    colorbar : bool, optional
+        Whether to display a colorbar, by default True.
+
+    Returns
+    -------
+    tuple[plt.Figure, plt.Axes]
+        The matplotlib figure and axes containing the plot.
+
+    Notes
+    -----
+    The function uses logarithmic normalization to better visualize loss
+    landscapes with large dynamic ranges. The loss values are shifted to
+    be positive before applying log normalization.
+    """
     params, static = eqx.partition(task.model, eqx.is_inexact_array)
     samples = grid_sampling(
         params=params,
@@ -570,6 +651,35 @@ def plot_3d_loss_landscape_only(
     seed: int = 0,
     ax=None,
 ):
+    """
+    Plot a 3D loss landscape for a given task.
+
+    Parameters
+    ----------
+    task : Task
+        The optimization task containing the model and evaluation function.
+    plot_resolution : int, optional
+        Resolution of the interpolated grid for plotting, by default 100.
+    stepsize : float, optional
+        Step size for grid sampling, by default 0.033.
+    seed : int, optional
+        Random seed for evaluation, by default 0.
+    ax : plt.Axes, optional
+        Matplotlib 3D axes to plot on. If None, creates a new figure,
+        by default None.
+
+    Returns
+    -------
+    tuple[plt.Figure, plt.Axes, np.ndarray] or plt.Axes
+        If ax is None, returns (figure, axes, original_Z_values).
+        If ax is provided, returns the axes only.
+
+    Notes
+    -----
+    The function uses logarithmic normalization to better visualize loss
+    landscapes with large dynamic ranges. The loss values are shifted to
+    be positive before applying log normalization.
+    """
     params, static = eqx.partition(task.model, eqx.is_inexact_array)
     samples = grid_sampling(
         params=params,
@@ -625,6 +735,32 @@ def plot_3d_loss_landscape_only(
 def plot_2d_trajectories(
     raw_results_list: list[xr.DataArray], task: Task, realization: int
 ):
+    """
+    Plot 2D optimization trajectories overlaid on loss landscapes.
+
+    Parameters
+    ----------
+    raw_results_list : list[xr.DataArray]
+        List of optimization results as xarray DataArrays, each containing
+        'input' and 'output' variables with dimensions for realizations,
+        input dimensions, output dimensions, and budget.
+    task : Task
+        The optimization task used to generate the loss landscape.
+    realization : int
+        Index of the realization to plot.
+
+    Returns
+    -------
+    plt.Figure
+        The matplotlib figure containing all trajectory plots.
+
+    Notes
+    -----
+    The function creates a grid of subplots (up to 3 columns) where each
+    subplot shows a different optimization result. Switching points
+    between different optimizer configurations are indicated by different
+    colors.
+    """
     # Get the default color cycle
     prop_cycle = plt.rcParams["axes.prop_cycle"]
     colors = prop_cycle.by_key()["color"]
@@ -695,6 +831,29 @@ def plot_2d_trajectories(
 
 
 def make_trajectory_animation(task, data, ax):
+    """
+    Create an animation of optimization trajectory on a 2D loss landscape.
+
+    Parameters
+    ----------
+    task : Task
+        The optimization task containing the model and evaluation function.
+    data : np.ndarray
+        Array of shape (n_steps, 2) containing the (x, y) coordinates of the
+        optimization trajectory.
+    ax : plt.Axes
+        Matplotlib axes to plot on.
+
+    Returns
+    -------
+    matplotlib.animation.FuncAnimation
+        Animation object showing the trajectory evolving over time.
+
+    Notes
+    -----
+    The animation shows points being added sequentially to visualize the
+    optimization path. The interval between frames is 200ms.
+    """
     fig, ax = plot_2d_loss_landscape_only(task=task, ax=ax, colorbar=False)
     scatter = ax.scatter([], [], c="#CC3311", s=20)
 
@@ -714,6 +873,30 @@ def make_trajectory_animation(task, data, ax):
 
 
 def make_3d_trajectory_animation(task, data, loss):
+    """
+    Create an animation of optimization trajectory on a 3D loss landscape.
+
+    Parameters
+    ----------
+    task : Task
+        The optimization task containing the model and evaluation function.
+    data : np.ndarray
+        Array of shape (n_steps, 2) containing the (x, y) coordinates of the
+        optimization trajectory.
+    loss : np.ndarray
+        Array of shape (n_steps,) containing the loss values at each point.
+
+    Returns
+    -------
+    matplotlib.animation.FuncAnimation
+        Animation object showing the 3D trajectory evolving over time.
+
+    Notes
+    -----
+    The animation shows points being added sequentially in 3D space to
+    visualize the optimization path. The view is initialized at
+    elevation=45, azimuth=-75. The interval between frames is 200ms.
+    """
     fig, ax, Z = plot_3d_loss_landscape_only(task=task)
     ax.view_init(elev=45, azim=-75)  # rotate the view
 
@@ -755,6 +938,25 @@ def make_3d_trajectory_animation(task, data, loss):
 
 
 def change_colors_and_style(ax: plt.Axes):
+    """
+    Apply consistent colors and line styles to optimizer plots.
+
+    Parameters
+    ----------
+    ax : plt.Axes
+        The matplotlib axes containing lines to be styled.
+
+    Returns
+    -------
+    plt.Axes
+        The modified axes with updated line colors and styles.
+
+    Notes
+    -----
+    This function applies predefined colors and line styles from the
+    OPTIMIZER_COLORS and OPTIMIZER_LINESTYLES dictionaries based on
+    line labels. The legend is also updated to reflect the new styling.
+    """
     # Customize lines afterwards
     for line in ax.get_lines():
         label = line.get_label()  # this is the hue value
@@ -779,6 +981,29 @@ def change_colors_and_style(ax: plt.Axes):
 
 
 def plot_rtd(rtd: xr.DataArray, ax: plt.Axes | None = None):
+    """
+    Plot run-time distribution curves for multiple optimizers.
+
+    Parameters
+    ----------
+    rtd : xr.DataArray
+        DataArray containing run-time distribution data with dimensions
+        for schedule (optimizer) and budget.
+    ax : plt.Axes, optional
+        Matplotlib axes to plot on. If None, creates a new figure,
+        by default None.
+
+    Returns
+    -------
+    tuple[plt.Figure, plt.Axes]
+        The matplotlib figure and axes containing the plot.
+
+    Notes
+    -----
+    The plot shows the fraction of problems solved as a function of budget
+    for each optimizer. Colors and line styles are determined by the
+    OPTIMIZER_COLORS and OPTIMIZER_LINESTYLES dictionaries.
+    """
     if ax is None:
         fig, ax = plt.subplots()
     else:
@@ -807,29 +1032,30 @@ def plot_ertd(
     cost_metric: Literal["fevals", "iterations"] = "fevals",
 ) -> tuple[plt.Figure, plt.Axes]:
     """
-    Plot the run-time distribution for the given DataLoader.
+    Plot the expected run-time distribution for multiple optimizers.
 
     Parameters
     ----------
-    d: DataLoader
-        DataLoader instance
-    ax: plt.Axes, optional
-        Matplotlib axes
-    strategies: list of xr.DataArray, optional
-        List of strategies to plot, by default None
-    include_best: bool, optional
-        Include the best strategy in the plot, by default False
-    optimizers_to_plot: list of str, optional
-        List of optimizers to plot, by default None
+    ertd : xr.DataArray
+        DataArray containing expected run-time distribution data with
+        dimensions for schedule (optimizer) and a 'cost_per_dim' coordinate.
+    ax : plt.Axes, optional
+        Matplotlib axes to plot on. If None, creates a new figure,
+        by default None.
+    cost_metric : {'fevals', 'iterations'}, optional
+        Cost metric to display on x-axis, by default 'fevals'.
 
     Returns
     -------
-    Tuple[plt.Figure, plt.Axes]
-        Matplotlib figure and axes
+    tuple[plt.Figure, plt.Axes]
+        The matplotlib figure and axes containing the plot.
 
     Notes
     -----
-    If no axes are provided, a new figure is created.
+    The plot shows the fraction of function-target pairs solved as a function
+    of normalized cost (function evaluations or iterations per dimensionality).
+    The x-axis uses logarithmic scaling. Colors and line styles are determined
+    by the OPTIMIZER_COLORS and OPTIMIZER_LINESTYLES dictionaries.
     """
     if ax is None:
         fig, ax = plt.subplots(
@@ -866,6 +1092,29 @@ def plot_ertd(
 
 
 def plot_pp(pp: xr.DataArray, ax: plt.Axes | None = None):
+    """
+    Plot performance profile curves for multiple optimizers.
+
+    Parameters
+    ----------
+    pp : xr.DataArray
+        DataArray containing performance profile data with dimensions
+        for schedule (optimizer) and a 'relative_error' coordinate.
+    ax : plt.Axes, optional
+        Matplotlib axes to plot on. If None, creates a new figure,
+        by default None.
+
+    Returns
+    -------
+    tuple[plt.Figure, plt.Axes]
+        The matplotlib figure and axes containing the plot.
+
+    Notes
+    -----
+    The plot shows the fraction of problems solved within a given relative
+    error threshold for each optimizer. Colors and line styles are determined
+    by the OPTIMIZER_COLORS and OPTIMIZER_LINESTYLES dictionaries.
+    """
     if ax is None:
         fig, ax = plt.subplots()
     else:
@@ -894,6 +1143,34 @@ def plot_actions(
     optimizers: xr.DataArray,
     ax: plt.Axes | None = None,
 ):
+    """
+    Plot optimizer selection actions over iterations and realizations.
+
+    Parameters
+    ----------
+    update_step : xr.DataArray
+        DataArray containing optimizer actions at each update step with
+        dimensions for schedule, problem, budget, and output dimension.
+    schedule : str
+        Name of the schedule to plot.
+    optimizers : xr.DataArray
+        DataArray containing optimizer names.
+    ax : plt.Axes, optional
+        Matplotlib axes to plot on. If None, creates a new figure,
+        by default None.
+
+    Returns
+    -------
+    tuple[plt.Figure, plt.Axes]
+        The matplotlib figure and axes containing the plot.
+
+    Notes
+    -----
+    This function creates a heatmap showing which optimizer was selected
+    at each iteration for each realization. Colors are assigned based on
+    the OPTIMIZER_COLORS dictionary, with white indicating sampled/random
+    selection.
+    """
     if ax is None:
         fig, ax = plt.subplots()
     else:

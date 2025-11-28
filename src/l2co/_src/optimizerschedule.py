@@ -30,6 +30,32 @@ __status__ = "Stable"
 
 
 class OptimizationStep:
+    """Configuration for an optimization step.
+
+    This class defines the optimizer, its hyperparameters, and stopping
+    criteria for a single optimization step in a schedule.
+
+    Parameters
+    ----------
+    optimizer : str
+        Name of the optimizer to use.
+    stopping_criteria : dict[str, Any] | None, optional
+        Dictionary defining stopping criteria configuration, by default None.
+    hyperparameters : dict[str, Any] | None, optional
+        Dictionary of optimizer hyperparameters, by default None.
+
+    Attributes
+    ----------
+    optimizer : str
+        Name of the optimizer.
+    hyperparameters : dict[str, Any]
+        Optimizer hyperparameters.
+    stopping_criteria : dict[str, Any]
+        Stopping criteria configuration.
+    tag : dict[str, Any]
+        Tag containing optimizer name and hyperparameters.
+    """
+
     def __init__(
         self,
         optimizer: str,
@@ -80,11 +106,26 @@ class OptimizationStep:
 
     @property
     def hash(self) -> int:
+        """Generate a hash value for this optimization step.
+
+        Returns
+        -------
+        int
+            Hash value based on the tag.
+        """
         t = sorted(self.tag.items())
         return int(hashlib.sha256(str(t).encode()).hexdigest()[:6], 16)  #:8
 
     @property
     def tag_hashable(self) -> tuple[tuple[str, Any]]:
+        """Create a hashable representation of the tag.
+
+        Returns
+        -------
+        tuple[tuple[str, Any]]
+            Hashable frozenset of tag items.
+        """
+
         def make_hashable(value):
             """Recursively convert lists to tuples and dicts to frozensets."""
             if isinstance(value, list):
@@ -105,6 +146,13 @@ class OptimizationStep:
 
     @property
     def name(self) -> str:
+        """Generate a descriptive name for this optimization step.
+
+        Returns
+        -------
+        str
+            Name combining optimizer and hyperparameters.
+        """
         hyperparameters = "_".join(
             [f"{k}={v}" for k, v in self.hyperparameters.items()]
         )
@@ -116,10 +164,24 @@ class OptimizationStep:
 
     @property
     def popsize(self) -> int:
+        """Get the population size from hyperparameters.
+
+        Returns
+        -------
+        int
+            Population size, defaults to 1 if not specified.
+        """
         return self.hyperparameters.get("popsize", 1)
 
     @property
     def stopping_fn(self) -> Callable:
+        """Create a stopping function from the stopping criteria.
+
+        Returns
+        -------
+        Callable
+            Stopping function with configured parameters.
+        """
         if not self.stopping_criteria:
             return lambda *args, **kwargs: False
 
@@ -131,6 +193,18 @@ class OptimizationStep:
 
     @classmethod
     def from_yaml(cls, config: dict[str, Any]) -> OptimizationStep:
+        """Create an OptimizationStep from a YAML configuration.
+
+        Parameters
+        ----------
+        config : dict[str, Any]
+            Configuration dictionary from YAML.
+
+        Returns
+        -------
+        OptimizationStep
+            New optimization step instance.
+        """
         return cls(
             optimizer=config["optimizer"],
             hyperparameters=config.get("hyperparameters", None),
@@ -139,16 +213,49 @@ class OptimizationStep:
 
     @staticmethod
     def save(object: OptimizationStep, path: str) -> str:
+        """Save an OptimizationStep to a JSON file.
+
+        Parameters
+        ----------
+        object : OptimizationStep
+            Optimization step to save.
+        path : str
+            File path to save to.
+
+        Returns
+        -------
+        str
+            Path to saved JSON file.
+        """
         object.save_to_json(path)
         return Path(path).with_suffix(".json")
 
     @classmethod
     def load(cls, filepath: str) -> OptimizationStep:
+        """Load an OptimizationStep from a JSON file.
+
+        Parameters
+        ----------
+        filepath : str
+            Path to JSON file.
+
+        Returns
+        -------
+        OptimizationStep
+            Loaded optimization step instance.
+        """
         with open(filepath) as f:
             data = json.load(f)
         return cls.from_dict(data)
 
     def to_dict(self) -> dict[str, Any]:
+        """Convert to a dictionary representation.
+
+        Returns
+        -------
+        dict[str, Any]
+            Dictionary containing optimizer configuration.
+        """
         return {
             "optimizer": self.optimizer,
             "hyperparameters": self.hyperparameters,
@@ -156,11 +263,30 @@ class OptimizationStep:
         }
 
     def save_to_json(self, filepath: Path | str):
+        """Save this optimization step to a JSON file.
+
+        Parameters
+        ----------
+        filepath : Path | str
+            Path to save the JSON file.
+        """
         with open(Path(filepath).with_suffix(".json"), "w") as f:
             json.dump(self.to_dict(), f, indent=4)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> OptimizationStep:
+        """Create an OptimizationStep from a dictionary.
+
+        Parameters
+        ----------
+        data : dict[str, Any]
+            Dictionary containing optimizer configuration.
+
+        Returns
+        -------
+        OptimizationStep
+            New optimization step instance.
+        """
         return cls(
             optimizer=data["optimizer"],
             hyperparameters=data.get("hyperparameters"),
@@ -168,4 +294,11 @@ class OptimizationStep:
         )
 
     def copy(self) -> OptimizationStep:
+        """Create a deep copy of this optimization step.
+
+        Returns
+        -------
+        OptimizationStep
+            Deep copy of this instance.
+        """
         return deepcopy(self)

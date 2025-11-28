@@ -54,6 +54,19 @@ vmapped_loss = eqx.filter_vmap(
 
 
 def ffill(x: jnp.ndarray) -> jnp.ndarray:
+    """Forward fill NaN values in array.
+
+    Parameters
+    ----------
+    x : jnp.ndarray
+        Input array with potential NaN values.
+
+    Returns
+    -------
+    jnp.ndarray
+        Array with NaN values forward filled.
+    """
+
     def scan_fn(carry, xi):
         carry = jnp.where(jnp.isnan(xi), carry, xi)
         return carry, carry
@@ -63,14 +76,52 @@ def ffill(x: jnp.ndarray) -> jnp.ndarray:
 
 
 def bfill(x: jnp.ndarray) -> jnp.ndarray:
+    """Backward fill NaN values in array.
+
+    Parameters
+    ----------
+    x : jnp.ndarray
+        Input array with potential NaN values.
+
+    Returns
+    -------
+    jnp.ndarray
+        Array with NaN values backward filled.
+    """
     return jnp.flip(ffill(jnp.flip(x)))
 
 
 def signlog1p(x: jnp.ndarray) -> jnp.ndarray:
+    """Apply signed log1p transformation.
+
+    Parameters
+    ----------
+    x : jnp.ndarray
+        Input array.
+
+    Returns
+    -------
+    jnp.ndarray
+        Transformed array with sign(x) * log1p(|x|).
+    """
     return jnp.sign(x) * jnp.log1p(jnp.abs(x))
 
 
 def signed_softlog(x: jax.Array, alpha: float = EPSILON) -> jax.Array:
+    """Apply signed soft logarithm transformation.
+
+    Parameters
+    ----------
+    x : jax.Array
+        Input array.
+    alpha : float, optional
+        Scaling parameter, by default EPSILON.
+
+    Returns
+    -------
+    jax.Array
+        Transformed array with signed soft log.
+    """
     scaled = jnp.abs(x) / alpha
     y = jnp.log1p(scaled) / jnp.log1p(1.0 / alpha)
     y = jnp.sign(x) * y
@@ -78,6 +129,20 @@ def signed_softlog(x: jax.Array, alpha: float = EPSILON) -> jax.Array:
 
 
 def interpolate(x: jnp.ndarray, n_points: int) -> jnp.ndarray:
+    """Interpolate array to specified number of points.
+
+    Parameters
+    ----------
+    x : jnp.ndarray
+        Input array to interpolate.
+    n_points : int
+        Target number of points.
+
+    Returns
+    -------
+    jnp.ndarray
+        Interpolated array with n_points elements.
+    """
     return jax.vmap(
         lambda xi: jnp.interp(
             jnp.linspace(0, 1, n_points), jnp.linspace(0, 1, len(xi)), xi
@@ -86,12 +151,40 @@ def interpolate(x: jnp.ndarray, n_points: int) -> jnp.ndarray:
 
 
 def minmax_scale(x: jax.Array, min: jax.Array, max: jax.Array) -> jax.Array:
+    """Scale array using min-max normalization.
+
+    Parameters
+    ----------
+    x : jax.Array
+        Input array to scale.
+    min : jax.Array
+        Minimum value for scaling.
+    max : jax.Array
+        Maximum value for scaling.
+
+    Returns
+    -------
+    jax.Array
+        Scaled array in range [0, 1].
+    """
     normed = (x - min) / (max - min + EPSILON)
     # Do this to avoid floating point issues with jitting
     return jnp.clip(normed, min=None, max=1.0)
 
 
 def log_stabilized_minmax_scale(x: jax.Array) -> jax.Array:
+    """Apply log-stabilized min-max scaling.
+
+    Parameters
+    ----------
+    x : jax.Array
+        Input array to scale.
+
+    Returns
+    -------
+    jax.Array
+        Log-stabilized scaled array in range [0, 1].
+    """
     p = x - jnp.min(x)
 
     # Only take positive entries for epsilon computation
@@ -112,6 +205,20 @@ def log_stabilized_minmax_scale(x: jax.Array) -> jax.Array:
 def log_stabilized_minmax_scale_with_global_min(
     x: jax.Array, global_min: jax.Array
 ) -> jax.Array:
+    """Apply log-stabilized min-max scaling with global minimum reference.
+
+    Parameters
+    ----------
+    x : jax.Array
+        Input array to scale.
+    global_min : jax.Array
+        Global minimum value for reference.
+
+    Returns
+    -------
+    jax.Array
+        Log-stabilized scaled array in range [0, 1].
+    """
     shift = jnp.minimum(jnp.min(x), global_min)
     p = x - shift
 
@@ -203,6 +310,15 @@ def tree_where(pred, true, false):
 
 
 def save_model(model, path: str | Path) -> None:
+    """Save model to disk using cloudpickle and equinox serialization.
+
+    Parameters
+    ----------
+    model : eqx.Module
+        Model to save.
+    path : str | Path
+        Path to save the model files.
+    """
     _path = Path(path)
     model_shape = eqx.filter_eval_shape(lambda x: model, None)
 
@@ -213,6 +329,20 @@ def save_model(model, path: str | Path) -> None:
 
 
 def load_model(model_path: str, shape_path: str) -> eqx.Module:
+    """Load model from disk.
+
+    Parameters
+    ----------
+    model_path : str
+        Path to the model weights file (.eqx).
+    shape_path : str
+        Path to the model shape file (.pkl).
+
+    Returns
+    -------
+    eqx.Module
+        Loaded model.
+    """
     _model_path = Path(model_path)
     _shape_path = Path(shape_path)
     with open(_shape_path.with_suffix(".pkl"), "rb") as f:
@@ -226,15 +356,45 @@ def load_model(model_path: str, shape_path: str) -> eqx.Module:
 
 
 def load_jnparray(path: str | Path) -> jnp.ndarray:
+    """Load JAX numpy array from disk.
+
+    Parameters
+    ----------
+    path : str | Path
+        Path to the numpy file.
+
+    Returns
+    -------
+    jnp.ndarray
+        Loaded array (flattened).
+    """
     # TODO: investigate this flatten behaviour
     return jnp.load(Path(path)).flatten()
 
 
 def save_jnparray(model, path: str | Path) -> None:
+    """Save JAX numpy array to disk.
+
+    Parameters
+    ----------
+    model : jnp.ndarray
+        Array to save.
+    path : str | Path
+        Path to save the array.
+    """
     jnp.save(path, model)
 
 
 def save_dataset(dataset: dict[str, jnp.ndarray], path: str | Path):
+    """Save dataset dictionary to disk as npz file.
+
+    Parameters
+    ----------
+    dataset : dict[str, jnp.ndarray]
+        Dataset dictionary to save.
+    path : str | Path
+        Path to save the dataset.
+    """
     _path = Path(path)
     _path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -242,6 +402,18 @@ def save_dataset(dataset: dict[str, jnp.ndarray], path: str | Path):
 
 
 def load_dataset(path: str | Path | None) -> dict[str, jnp.ndarray]:
+    """Load dataset from npz file.
+
+    Parameters
+    ----------
+    path : str | Path | None
+        Path to the dataset file. If None, returns empty dict.
+
+    Returns
+    -------
+    dict[str, jnp.ndarray]
+        Loaded dataset dictionary.
+    """
     if path is None:
         return {}
     loaded_data = jnp.load(Path(path).with_suffix(".npz"))

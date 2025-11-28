@@ -18,9 +18,10 @@ def retrieve_tasks(experiment_data: ExperimentData) -> pd.DataFrame:
         Experiment data containing unique tasks.
     """
     domain = Domain()
-    domain.add_output('task')
+    domain.add_output("task")
 
-    tasks = set(es.input_data['task'] for _, es in experiment_data)
+    tasks = set(es.input_data["task"] for _, es in experiment_data)
 
-    return ExperimentData(domain=domain, output_data=[
-        {'task': task} for task in tasks])
+    return ExperimentData(
+        domain=domain, output_data=[{"task": task} for task in tasks]
+    )

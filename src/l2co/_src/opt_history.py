@@ -28,6 +28,27 @@ __status__ = "Stable"
 
 
 class OptHistory(OptHistoryType):
+    """Container for optimization history data.
+
+    Stores the history of losses, parameters, gradients, and evaluation
+    metrics for a population of optimization candidates.
+
+    Attributes
+    ----------
+    loss : Float[Array, " popsize"]
+        Loss values for each population member.
+    params : Float[PyTree, " popsize dim"]
+        Parameter values for each population member.
+    grads : Float[PyTree, " popsize dim"]
+        Gradient values for each population member.
+    update_step : Int[Array, " popsize"]
+        Update step number for each population member.
+    fevals : Int[Array, " popsize"]
+        Number of function evaluations for each population member.
+    iterations : Int[Array, " popsize"]
+        Iteration count for each population member.
+    """
+
     loss: Float[Array, " popsize"]
     params: Float[PyTree, " popsize dim"]
     grads: Float[PyTree, " popsize dim"]
@@ -37,6 +58,22 @@ class OptHistory(OptHistoryType):
 
     @classmethod
     def init(cls, params: PyTree, popsize: int, last_step: int) -> OptHistory:
+        """Initialize optimization history with NaN values.
+
+        Parameters
+        ----------
+        params : PyTree
+            Parameter tree structure.
+        popsize : int
+            Population size.
+        last_step : int
+            Last update step number.
+
+        Returns
+        -------
+        OptHistory
+            Initialized optimization history.
+        """
         loss = jnp.full((popsize,), jnp.nan)
         params = jax.tree.map(lambda p: jnp.full_like(p, jnp.nan), params)
         grads = jax.tree.map(lambda p: jnp.full_like(p, jnp.nan), params)
@@ -58,6 +95,22 @@ class OptHistory(OptHistoryType):
     def from_init_sample(
         cls, update_state: UpdateState, task: Task, key: PRNGKeyArray
     ):
+        """Create optimization history from initial sample evaluation.
+
+        Parameters
+        ----------
+        update_state : UpdateState
+            Current update state containing initial parameters.
+        task : Task
+            Task to evaluate against.
+        key : PRNGKeyArray
+            PRNG key for random operations.
+
+        Returns
+        -------
+        OptHistory
+            Optimization history initialized with evaluation results.
+        """
         # Evaluate the initial parameters
         init_params = jax.tree.map(lambda x: x[-1], update_state.last_params)
         init_loss, init_grads = jax.tree.map(
@@ -89,7 +142,21 @@ class OptHistory(OptHistoryType):
         )
 
     def update(self, history: OptHistory) -> OptHistory:
-        """Update the recent history with the current history."""
+        """Update the recent history with the current history.
+
+        Maintains a rolling window by removing the oldest entry and appending
+        the new history.
+
+        Parameters
+        ----------
+        history : OptHistory
+            New history to append.
+
+        Returns
+        -------
+        OptHistory
+            Updated optimization history.
+        """
 
         loss = jnp.concatenate([self.loss[1:], history.loss[None]], axis=0)
         params = jax.tree.map(

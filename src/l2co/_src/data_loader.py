@@ -111,6 +111,19 @@ class DataLoader:
     task_labels: xr.DataArray
 
     def __add__(self, __o: DataLoader) -> DataLoader:
+        """
+        Concatenate two DataLoader objects.
+
+        Parameters
+        ----------
+        __o : DataLoader
+            DataLoader to concatenate.
+
+        Returns
+        -------
+        DataLoader
+            Concatenated DataLoader.
+        """
         if __o is None:
             return self
 
@@ -130,6 +143,20 @@ class DataLoader:
         cls,
         data: xr.Dataset,
     ):
+        """
+        Create a DataLoader from an xarray.Dataset.
+
+        Parameters
+        ----------
+        data : xarray.Dataset
+            Dataset containing optimization trajectories and labels.
+
+        Returns
+        -------
+        DataLoader
+            Instantiated DataLoader object.
+        """
+
         def parse_mixed_value(val: str):
             """Try to convert a string into int, float, or leave as string."""
             if val.lower() == "true":
@@ -167,6 +194,21 @@ class DataLoader:
     def from_file(
         cls, path: str, data_filename: str = "entire_dataset"
     ) -> DataLoader:
+        """
+        Create a DataLoader from a file path.
+
+        Parameters
+        ----------
+        path : str
+            Path to the dataset file or directory.
+        data_filename : str, optional
+            Name of the dataset file, by default "entire_dataset".
+
+        Returns
+        -------
+        DataLoader
+            Instantiated DataLoader object.
+        """
         # Create path object
         _path = Path(path)
 
@@ -185,6 +227,21 @@ class DataLoader:
     def to_params(
         self, t: int, cost_metric: Literal["fevals", "iterations"] = "fevals"
     ):
+        """
+        Return task parameters and labels for a given budget.
+
+        Parameters
+        ----------
+        t : int
+            Budget value.
+        cost_metric : {'fevals', 'iterations'}, optional
+            Cost metric to use, by default 'fevals'.
+
+        Returns
+        -------
+        tuple
+            (task parameters, labels)
+        """
         x = self.task_labels.groupby(TASK_ID).first().sortby(TASK_ID)
         y = self.to_labels(t=t, cost_metric=cost_metric).sortby(TASK_ID)
         return x, y
@@ -192,6 +249,21 @@ class DataLoader:
     def to_labels(
         self, t: int, cost_metric: Literal["fevals", "iterations"] = "fevals"
     ):
+        """
+        Return labels for a given budget and cost metric.
+
+        Parameters
+        ----------
+        t : int
+            Budget value.
+        cost_metric : {'fevals', 'iterations'}, optional
+            Cost metric to use, by default 'fevals'.
+
+        Returns
+        -------
+        xarray.DataArray
+            Labels array.
+        """
         # Scale the data
         p = scale_by_task(output_cummin(self.data[OUTPUT_MIN])).ffill(BUDGET)
         dims = self.task_labels.sel(
@@ -319,6 +391,14 @@ class DataLoader:
 
     @property
     def hash_opt_step(self) -> xr.DataArray:
+        """
+        Returns a hash for each optimization step.
+
+        Returns
+        -------
+        xarray.DataArray
+            Hash values for optimization steps.
+        """
         return xr.apply_ufunc(
             lambda x: int(hashlib.sha256(x.tobytes()).hexdigest()[:8], 16)
             % (2**31 - 1),
@@ -330,14 +410,37 @@ class DataLoader:
 
     @property
     def n_iterations(self) -> int:
+        """
+        Returns the number of iterations (budget size).
+
+        Returns
+        -------
+        int
+            Number of iterations.
+        """
         return self.data[BUDGET].size
 
     @property
     def n_realization(self) -> int:
+        """
+        Returns the number of unique realizations.
+
+        Returns
+        -------
+        int
+            Number of realizations.
+        """
         return np.unique(self.data[REALIZATION]).size
 
     @property
     def features(self) -> xr.DataArray:
+        """
+        Returns the features coordinate.
+
+        Returns
+        -------
+        xarray.DataArray
+            The features coordinate."""
         """
         Property method to return the features coordinate
 
@@ -351,7 +454,7 @@ class DataLoader:
     @property
     def problems(self) -> xr.DataArray:
         """
-        Property method to return the problem coordinate
+        Returns the problem coordinate.
 
         Returns
         -------
@@ -389,10 +492,26 @@ class DataLoader:
 
     @property
     def performance(self) -> xr.DataArray:
+        """
+        Returns the performance data for optimizers.
+
+        Returns
+        -------
+        xarray.DataArray
+            Performance data.
+        """
         return self._performance(include_best=False, exclude_optimizer=None)
 
     @property
     def performance_per_realization(self) -> xr.DataArray:
+        """
+        Returns the performance data per realization.
+
+        Returns
+        -------
+        xarray.DataArray
+            Performance data per realization.
+        """
         t_start = perf_counter()
         print("Triggered performance")
         performance = scale_by_problem_and_schedule(
@@ -564,6 +683,21 @@ class DataLoader:
         DataLoader
             The selected data loader.
         """
+        """
+        Select a subset of the data loader at a specific budget.
+
+        Parameters
+        ----------
+        t : int
+            The budget to select.
+        t_start : float, optional
+            The starting budget number of the requested trajectory,
+
+        Returns
+        -------
+        DataLoader
+            The selected data loader.
+        """
         if select_one_before:
             # Check if there are budget coordinate values below t_start
             prior = self.data[BUDGET].where(
@@ -591,6 +725,21 @@ class DataLoader:
     def select_optimizer(
         self, optimizers: Iterable[str] | str, squash: bool = False
     ) -> DataLoader:
+        """
+        Select specific optimizers.
+
+        Parameters
+        ----------
+        optimizers : Iterable[str] or str
+            Optimizers to select.
+        squash : bool, optional
+            Whether to squash multiple optimizers into one, by default False.
+
+        Returns
+        -------
+        DataLoader
+            DataLoader containing selected optimizers.
+        """
         """
         Select specific optimizers.
 
@@ -743,6 +892,23 @@ class DataLoader:
         exclude_optimizer: str | None = None,
         cost_metric: Literal["fevals", "iterations"] = "fevals",
     ) -> xr.DataArray:
+        """
+        Compute the expected runtime distribution (ERTD) profile.
+
+        Parameters
+        ----------
+        include_best : bool, optional
+            Whether to include the best optimizer, by default False.
+        exclude_optimizer : str, optional
+            Optimizer to exclude, by default None.
+        cost_metric : {'fevals', 'iterations'}, optional
+            Cost metric to use, by default 'fevals'.
+
+        Returns
+        -------
+        xr.DataArray
+            ERTD profile.
+        """
         p = scale_by_task(output_cummin(self.data[OUTPUT_MIN])).ffill(BUDGET)
         dims = self.task_labels.sel(
             {FEATURE: "dimensionality"}, drop=True
@@ -766,12 +932,30 @@ class DataLoader:
         return _ertd.mean(TASK_ID)
 
     def load(self):
+        """
+        Load the data into memory.
+        """
         self.data.load()
 
 
 def calculate_sbs(
     performance: xr.DataArray, exclude_optimizer: str | Iterable[str]
 ) -> xr.DataArray:
+    """
+    Calculate the Single Best Solver (SBS) for each task.
+
+    Parameters
+    ----------
+    performance : xr.DataArray
+        Performance data.
+    exclude_optimizer : str or Iterable[str]
+        Optimizers to exclude.
+
+    Returns
+    -------
+    xr.DataArray
+        SBS choices for each task.
+    """
     return calculate_best_solver(
         performance=performance,
         exclude_optimizer=exclude_optimizer,
@@ -782,6 +966,21 @@ def calculate_sbs(
 def calculate_vbs(
     performance: xr.DataArray, exclude_optimizer: str | Iterable[str]
 ) -> xr.DataArray:
+    """
+    Calculate the Virtual Best Solver (VBS) for each problem.
+
+    Parameters
+    ----------
+    performance : xr.DataArray
+        Performance data.
+    exclude_optimizer : str or Iterable[str]
+        Optimizers to exclude.
+
+    Returns
+    -------
+    xr.DataArray
+        VBS choices for each problem.
+    """
     return calculate_best_solver(
         performance=performance,
         exclude_optimizer=exclude_optimizer,
@@ -794,6 +993,23 @@ def calculate_best_solver(
     exclude_optimizer: str | Iterable[str],
     group: str,
 ) -> xr.DataArray:
+    """
+    Calculate the best solver for a given group.
+
+    Parameters
+    ----------
+    performance : xr.DataArray
+        Performance data.
+    exclude_optimizer : str or Iterable[str]
+        Optimizers to exclude.
+    group : str
+        Grouping dimension (e.g., TASK_ID or PROBLEM).
+
+    Returns
+    -------
+    xr.DataArray
+        Best solver choices for the group.
+    """
     if exclude_optimizer is not None:
         if isinstance(exclude_optimizer, str):
             exclude_optimizer = [exclude_optimizer]
@@ -824,7 +1040,24 @@ def calculate_best_solver(
 
 
 class OptimizationDynamics:
+    """
+    Learning dataset for optimization dynamics, inherited from PyTorch Dataset.
+
+    Parameters
+    ----------
+    data : xarray.Dataset
+        Dataset containing optimization dynamics.
+    """
+
     def __init__(self, data: xr.Dataset):
+        """
+        Initialize OptimizationDynamics with data.
+
+        Parameters
+        ----------
+        data : xarray.Dataset
+            Dataset containing optimization dynamics.
+        """
         self.data = data
 
     @classmethod
@@ -833,6 +1066,21 @@ class OptimizationDynamics:
         data: xr.DataTree,
         previous_step: str | None = None,
     ) -> OptimizationDynamics:
+        """
+        Create OptimizationDynamics from a DataTree.
+
+        Parameters
+        ----------
+        data : xr.DataTree
+            DataTree containing optimization dynamics.
+        previous_step : str or None, optional
+            Previous step identifier, by default None.
+
+        Returns
+        -------
+        OptimizationDynamics
+            Instantiated OptimizationDynamics object.
+        """
         ds_list = []
         for k in data.keys():
             ds = data[k].to_dataset()
@@ -871,12 +1119,28 @@ class OptimizationDynamics:
 
     @property
     def X_features(self) -> pd.DataFrame:
+        """
+        Returns the features as a pandas DataFrame.
+
+        Returns
+        -------
+        pd.DataFrame
+            Features DataFrame.
+        """
         return (
             self.data[TASK_LABELS].to_pandas().infer_objects().convert_dtypes()
         )
 
     @property
     def X_trajectory(self) -> jax.Array:
+        """
+        Returns the optimization trajectory as a JAX array.
+
+        Returns
+        -------
+        jax.Array
+            Trajectory array.
+        """
         return jnp.stack(
             (
                 self.data[TRAJECTORY].values,
@@ -888,6 +1152,14 @@ class OptimizationDynamics:
 
     @property
     def Y(self) -> jax.Array:
+        """
+        Returns the performance values as a JAX array.
+
+        Returns
+        -------
+        jax.Array
+            Performance array.
+        """
         return jnp.array(self.data[PERFORMANCE])
 
     @classmethod
@@ -895,12 +1167,40 @@ class OptimizationDynamics:
         cls: type[OptimizationDynamics],
         task: Task,
         data: ExperimentData | None = None,
-    ) -> OptimizationDynamics: ...
+    ) -> OptimizationDynamics:
+        """
+        Create OptimizationDynamics from a Task and ExperimentData.
+
+        Parameters
+        ----------
+        task : Task
+            Task object.
+        data : ExperimentData or None, optional
+            Experiment data, by default None.
+
+        Returns
+        -------
+        OptimizationDynamics
+            Instantiated OptimizationDynamics object.
+        """
 
 
 def load_dynamics(
     path: str | Path | xr.DataTree,
 ) -> dict[str, OptimizationDynamics]:
+    """
+    Load optimization dynamics from a file or DataTree.
+
+    Parameters
+    ----------
+    path : str, Path, or xr.DataTree
+        Path to the file or DataTree object.
+
+    Returns
+    -------
+    dict[str, OptimizationDynamics]
+        Dictionary of OptimizationDynamics objects.
+    """
     if not isinstance(path, xr.DataTree):
         _path = Path(path)
         datatree = xr.open_datatree(_path.with_suffix(".nc"))
@@ -919,6 +1219,21 @@ def load_dynamics(
 
 
 def squash_optimizer(data: xr.Dataset, target_optimizer: str) -> xr.Dataset:
+    """
+    Squash multiple optimizer runs into a single run for the target optimizer.
+
+    Parameters
+    ----------
+    data : xr.Dataset
+        Dataset containing optimizer runs.
+    target_optimizer : str
+        Optimizer name to squash.
+
+    Returns
+    -------
+    xr.Dataset
+        Squashed dataset for the target optimizer.
+    """
     _data = data.sel(
         {
             SCHEDULE: [
@@ -944,6 +1259,21 @@ def squash_optimizer(data: xr.Dataset, target_optimizer: str) -> xr.Dataset:
 
 
 def impute_missing_values_svd(y: np.ndarray, k=2):
+    """
+    Impute missing values in a matrix using SVD.
+
+    Parameters
+    ----------
+    y : np.ndarray
+        Input matrix with missing values (NaNs).
+    k : int, optional
+        Number of SVD components to use, by default 2.
+
+    Returns
+    -------
+    np.ndarray
+        Matrix with imputed values.
+    """
     mask = ~np.isnan(y)
     mean_values = np.nanmean(y, axis=0)
 
@@ -1015,6 +1345,20 @@ def compute_X_trajectory(data: xr.DataArray) -> xr.DataArray:
 
 
 def log_relative_improvement(data: xr.Dataset) -> xr.DataArray:
+    """
+    Compute the log relative improvement of an optimization trajectory.
+
+    Parameters
+    ----------
+    data : xr.Dataset
+        Optimization trajectory data.
+
+    Returns
+    -------
+    xr.DataArray
+        Log relative improvement values.
+    """
+
     def compute_log_relative_improvement(x, b):
         impv = -(x[0] - x[-1]) / (b[0] - b[-1]) / (abs(x[0]) + 1e-8)
         t = np.log(impv + 1e-8)
@@ -1031,6 +1375,24 @@ def log_relative_improvement(data: xr.Dataset) -> xr.DataArray:
 
 
 def _squash(da: xr.DataArray, reduce_dim: str, vector_dim: str = PROBLEM):
+    """
+    Squash a DataArray along a dimension, keeping the first non-NaN value.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        DataArray to squash.
+    reduce_dim : str
+        Dimension to reduce.
+    vector_dim : str, optional
+        Vector dimension, by default PROBLEM.
+
+    Returns
+    -------
+    xr.DataArray
+        Squashed DataArray.
+    """
+
     def f(x):
         for val in x:
             if not np.isnan(val).any():
@@ -1056,6 +1418,18 @@ def compute_fitting(
     fit_params: xr.DataArray,
     basis_function: Callable,
 ):
+    """
+    Compute fitted values for a trajectory using a basis function.
+
+    Parameters
+    ----------
+    trajectory : xr.DataArray
+        Trajectory data.
+    fit_params : xr.DataArray
+        Parameters for fitting.
+    basis_function : Callable
+        Basis function for fitting.
+    """
     x_input = np.linspace(0.0, 1.0, trajectory.coords[BUDGET].size)
 
     fitted_sigmoid = xr.apply_ufunc(
@@ -1073,5 +1447,18 @@ def compute_fitting(
 
 
 def encode(xarr: xr.DataArray) -> xr.DataArray:
+    """
+    Encode a DataArray with unique integer values.
+
+    Parameters
+    ----------
+    xarr : xr.DataArray
+        DataArray to encode.
+
+    Returns
+    -------
+    xr.DataArray
+        Encoded DataArray with integer values.
+    """
     _, enc = np.unique(xarr, return_inverse=True)
     return xarr.copy(data=enc.reshape(xarr.shape))

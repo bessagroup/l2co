@@ -25,6 +25,21 @@ DEFAULT_VALIDATION_BUDGET_STEPS = 1000
 def validation_fn(
     x: xr.Dataset, budget_steps: int = DEFAULT_VALIDATION_BUDGET_STEPS
 ) -> xr.Dataset:
+    """Validate and interpolate optimization dataset to fixed budget steps.
+
+    Parameters
+    ----------
+    x : xr.Dataset
+        Input dataset with budget dimension.
+    budget_steps : int, optional
+        Number of budget steps for interpolation,
+        by default DEFAULT_VALIDATION_BUDGET_STEPS.
+
+    Returns
+    -------
+    xr.Dataset
+        Interpolated dataset with normalized budget coordinates.
+    """
     x = x.assign_coords({BUDGET: np.linspace(0.0, 1.0, x[BUDGET].size)})
     x_interp = x.interp(
         {BUDGET: np.linspace(0.0, 1.0, budget_steps)}, method="nearest"

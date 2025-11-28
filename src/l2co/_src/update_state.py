@@ -34,6 +34,25 @@ SAMPLING_STEP = 1
 
 
 class UpdateState(eqx.Module):
+    """State container for optimizer updates.
+
+    Stores the current and best parameters, losses, and step information
+    for the optimization process.
+
+    Attributes
+    ----------
+    last_params : Float[Array, "memory_size dim"]
+        Last evaluated parameter values.
+    last_loss : Float[Array, " memory size"]
+        Last evaluated loss values.
+    best_params : Float[Array, " dim"]
+        Best parameters found so far.
+    best_loss : Float[Array, 1]
+        Best loss value found so far.
+    last_step : Int[Array, 1]
+        Last update step number.
+    """
+
     last_params: Float[Array, "memory_size dim"]
     last_loss: Float[Array, " memory size"]
     best_params: Float[Array, " dim"]
@@ -42,6 +61,13 @@ class UpdateState(eqx.Module):
 
     @property
     def memory_size(self) -> int:
+        """Get the memory size (number of stored parameter sets).
+
+        Returns
+        -------
+        int
+            Memory size.
+        """
         # Assumes all leaves have same leading dimension
         return jax.tree.leaves(self.last_params)[0].shape[0]
 
@@ -51,6 +77,20 @@ class UpdateState(eqx.Module):
         params: InputParameters,
         memory_size: int,
     ) -> UpdateState:
+        """Initialize a new UpdateState.
+
+        Parameters
+        ----------
+        params : InputParameters
+            Initial parameter values.
+        memory_size : int
+            Number of parameter sets to store in memory.
+
+        Returns
+        -------
+        UpdateState
+            Initialized update state.
+        """
         # Efficiently add leading axis by broadcasting
         last_params = jax.tree.map(
             lambda x: jnp.broadcast_to(x, (memory_size,) + x.shape),
@@ -70,12 +110,35 @@ class UpdateState(eqx.Module):
 
     @eqx.filter_jit
     def reset(self) -> UpdateState:
+        """Reset state to best parameters found so far.
+
+        Returns
+        -------
+        UpdateState
+            Reset update state.
+        """
         return self.init(params=self.best_params, memory_size=self.memory_size)
 
     @classmethod
     def from_history(
         cls, history: OptHistoryType, memory_size: int, last_step: int
     ) -> UpdateState:
+        """Create UpdateState from optimization history.
+
+        Parameters
+        ----------
+        history : OptHistoryType
+            Optimization history to extract state from.
+        memory_size : int
+            Number of recent entries to retain in memory.
+        last_step : int
+            Last update step number.
+
+        Returns
+        -------
+        UpdateState
+            Update state initialized from history.
+        """
         params = jax.tree.map(lambda x: x[-memory_size:], history.params)
         losses = history.loss[-memory_size:]
 
@@ -100,6 +163,28 @@ class UpdateState(eqx.Module):
         sampler: Callable,
         key: PRNGKeyArray,
     ) -> UpdateState:
+        """Sample new parameters and evaluate them.
+
+        Parameters
+        ----------
+        batch_state : BatchState
+            Current batch state for data sampling.
+        static : PyTree
+            Static (non-trainable) parts of the model.
+        dataset : dict[str, jax.Array]
+            Dataset for evaluation.
+        loss_fn : Callable
+            Loss function for evaluation.
+        sampler : Callable
+            Function to sample new parameters.
+        key : PRNGKeyArray
+            PRNG key for random operations.
+
+        Returns
+        -------
+        UpdateState
+            Updated state with newly sampled and evaluated parameters.
+        """
         n_samples = self.memory_size
 
         # Sample new parameters using the provided sampler
@@ -124,6 +209,18 @@ class UpdateState(eqx.Module):
         )
 
     def merge(self, other: UpdateState) -> UpdateState:
+        """Merge with another UpdateState, keeping the better parameters.
+
+        Parameters
+        ----------
+        other : UpdateState
+            Other update state to merge with.
+
+        Returns
+        -------
+        UpdateState
+            Merged update state with best parameters from both states.
+        """
         pred = self.best_loss < other.best_loss
         best_params = tree_where(pred, self.best_params, other.best_params)
         best_loss = jnp.where(pred, self.best_loss, other.best_loss)
@@ -139,6 +236,20 @@ class UpdateState(eqx.Module):
     def evaluate_with_grads(
         self, task: Task, key: PRNGKeyArray
     ) -> tuple[jax.Array, PyTree]:
+        """Evaluate parameters and compute gradients.
+
+        Parameters
+        ----------
+        task : Task
+            Task to evaluate against.
+        key : PRNGKeyArray
+            PRNG key for random operations.
+
+        Returns
+        -------
+        tuple[jax.Array, PyTree]
+            Loss values and gradients for the last parameters.
+        """
         _, static = eqx.partition(task.model, eqx.is_inexact_array)
 
         batch_state = BatchState.init(
@@ -163,6 +274,26 @@ def _evaluate_one(
     loss_fn: Callable,
     key: PRNGKeyArray,
 ) -> jax.Array:
+    """Evaluate a single model on a batch of data.
+
+    Parameters
+    ----------
+    model : PyTree
+        Model to evaluate.
+    batch_state : BatchState
+        Batch state for data sampling.
+    dataset : dict[str, jax.Array]
+        Full dataset.
+    loss_fn : Callable
+        Loss function.
+    key : PRNGKeyArray
+        PRNG key for random operations.
+
+    Returns
+    -------
+    jax.Array
+        Loss value.
+    """
     batch_idxs, _ = batch_state.next(key)
     sample = jax.tree.map(lambda x: x[batch_idxs], dataset)
     return loss_fn(model, **sample)

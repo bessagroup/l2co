@@ -68,6 +68,26 @@ class RunState(eqx.Module):
         max_iterations: int,
         key: PRNGKeyArray,
     ) -> RunState:
+        """Initialize a new RunState.
+
+        Parameters
+        ----------
+        optimizer : OptimizationStep
+            Optimizer configuration.
+        task : Task
+            Task to optimize.
+        bounded : tuple[float, float]
+            Bounds for parameter values (lower, upper).
+        max_iterations : int
+            Maximum number of optimization iterations.
+        key : PRNGKeyArray
+            PRNG key for random operations.
+
+        Returns
+        -------
+        RunState
+            Initialized run state.
+        """
         params = eqx.filter(task.model, eqx.is_inexact_array)
 
         update_class: UpdateClass = optimizer_mapping(optimizer.optimizer)(
@@ -112,6 +132,24 @@ class RunState(eqx.Module):
 def reset(
     run_state: RunState, task: Task, sampler: Callable, key: PRNGKeyArray
 ) -> RunState:
+    """Reset the run state with new samples.
+
+    Parameters
+    ----------
+    run_state : RunState
+        Current run state.
+    task : Task
+        Task to optimize.
+    sampler : Callable
+        Sampling function for generating new parameters.
+    key : PRNGKeyArray
+        PRNG key for random operations.
+
+    Returns
+    -------
+    RunState
+        Reset run state with new samples.
+    """
     batch_state = run_state.batch_state.reset(key=key)
 
     _, static = eqx.partition(task.model, eqx.is_inexact_array)
@@ -146,6 +184,26 @@ def run(
     key: PRNGKeyArray,
     verbose: bool,
 ) -> HistoryState:
+    """Run optimization for a specified number of iterations.
+
+    Parameters
+    ----------
+    run_state : RunState
+        Current run state.
+    dataset : dict[str, jax.Array]
+        Dataset for evaluation.
+    n_iterations : int
+        Number of iterations to run.
+    key : PRNGKeyArray
+        PRNG key for random operations.
+    verbose : bool
+        Whether to print progress information.
+
+    Returns
+    -------
+    HistoryState
+        Updated history state after optimization.
+    """
     # Main optimization loop
     _, _, _, history_state = run_state.update_class.step(
         opt_state=run_state.opt_state,
@@ -169,6 +227,26 @@ def evaluate(
     key: PRNGKeyArray,
     verbose: bool,
 ) -> HistoryState:
+    """Evaluate optimization by resetting and running to completion.
+
+    Parameters
+    ----------
+    run_state : RunState
+        Current run state.
+    task : Task
+        Task to optimize.
+    sampler : Callable
+        Sampling function for generating new parameters.
+    key : PRNGKeyArray
+        PRNG key for random operations.
+    verbose : bool
+        Whether to print progress information.
+
+    Returns
+    -------
+    HistoryState
+        History state after complete optimization run.
+    """
     run_state = reset(run_state, task=task, sampler=sampler, key=key)
     return run(
         run_state=run_state,

@@ -38,6 +38,19 @@ __status__ = "Stable"
 
 
 class DatasetDict(TypedDict):
+    """
+    Dictionary describing a dataset configuration.
+
+    Attributes
+    ----------
+    dataset_path : str
+        Path to the dataset file.
+    batch_size : int
+        Batch size for loading the dataset.
+    seed : int
+        Random seed for dataset operations.
+    """
+
     dataset_path: str
     batch_size: int
     seed: int
@@ -47,54 +60,80 @@ class DatasetDict(TypedDict):
 
 
 class Task(eqx.Module):
+    """
+    Represents an optimization task.
+
+    Attributes
+    ----------
+    model : PyTree
+        The model used for the task.
+    loss_fn : Callable
+        The loss function for the task.
+    pass_rng : bool
+        Whether to pass a random key to the loss function.
+    has_aux : bool
+        Whether the loss function returns auxiliary outputs.
+    dataset : DatasetDict
+        Dataset information.
+    tag : dict[str, Any]
+        Metadata tags for the task.
+    """
+
     model: PyTree
     loss_fn: Callable = eqx.field(static=True)
     pass_rng: bool = eqx.field(static=True, default=False)
     has_aux: bool = eqx.field(static=True, default=False)
     dataset: DatasetDict = eqx.field(default_factory=dict, static=True)
     tag: dict[str, Any] = eqx.field(default_factory=dict, static=True)
-    """
-    Represents an optimization task.
-
-    Parameters
-    ----------
-    model : PyTree
-        The model used for the task.
-    loss_fn : Callable
-        The loss function for the task.
-    pass_rng : bool, optional
-        Whether to pass a random key to the loss function, by default False.
-    dataset : Optional[DatasetDict], optional
-        Dataset information, by default None.
-    has_aux : bool, optional
-        Whether the loss function returns auxiliary outputs, by default False.
-    tag : Optional[Dict[str, Any]], optional
-        Metadata tags for the task, by default None.
-
-    Methods
-    -------
-    save_to_json(filepath)
-        Save the task to a JSON file.
-    to_dict(path)
-        Convert the task to a dictionary representation.
-    """
 
     @property
     def loaded_dataset(self) -> dict[str, Any]:
+        """
+        Loads the dataset specified in the task.
+
+        Returns
+        -------
+        dict[str, Any]
+            Loaded dataset or empty dict if no path is specified.
+        """
         if self.dataset.get("dataset_path") is None:
             return dict()
         return load_dataset(self.dataset["dataset_path"])
 
     @property
     def batch_size(self) -> int | None:
+        """
+        Returns the batch size for the dataset.
+
+        Returns
+        -------
+        int or None
+            Batch size if specified, else None.
+        """
         return self.dataset.get("batch_size", None)
 
     @property
     def name(self) -> str:
+        """
+        Returns the name of the task.
+
+        Returns
+        -------
+        str
+            Task name if specified, else empty string.
+        """
         return self.tag.get("task_name", "")
 
     @property
     def dimensionality(self) -> int:
+        """
+        Returns the total number of parameters in the model.
+
+        Returns
+        -------
+        int
+            Dimensionality of the model.
+        """
         return sum(
             p.size
             for p in jtu.tree_leaves(
@@ -104,8 +143,29 @@ class Task(eqx.Module):
 
     @property
     def tag_hashable(self) -> tuple[tuple[str, Any]]:
+        """
+        Returns a hashable representation of the tag dictionary.
+
+        Returns
+        -------
+        frozenset
+            Hashable version of the tag dictionary.
+        """
+
         def make_hashable(value):
-            """Recursively convert lists to tuples and dicts to frozensets."""
+            """
+            Recursively convert lists to tuples and dicts to frozensets.
+
+            Parameters
+            ----------
+            value : Any
+                Value to convert.
+
+            Returns
+            -------
+            Any
+                Hashable value.
+            """
             if isinstance(value, list):
                 return tuple(make_hashable(v) for v in value)
             elif isinstance(value, dict):
@@ -121,6 +181,14 @@ class Task(eqx.Module):
 
     @property
     def hash(self) -> str:
+        """
+        Returns a short SHA256 hash of the tag.
+
+        Returns
+        -------
+        str
+            16-character hash string.
+        """
         t = sorted(self.tag_hashable)
         return hashlib.sha256(str(t).encode()).hexdigest()[:16]
 
@@ -128,6 +196,21 @@ class Task(eqx.Module):
     def from_dict(
         cls, data: dict[str, Any], filepath: str | None = None
     ) -> Task:
+        """
+        Create a Task instance from a dictionary.
+
+        Parameters
+        ----------
+        data : dict[str, Any]
+            Dictionary containing task data.
+        filepath : str or None, optional
+            Path to resolve model files, by default None.
+
+        Returns
+        -------
+        Task
+            Instantiated Task object.
+        """
         if "model" in data["model_path"]:
             try:
                 model = load_model(
@@ -177,15 +260,51 @@ class Task(eqx.Module):
         )
 
     def save_to_json(self, filepath: Path):
+        """
+        Save the task to a JSON file.
+
+        Parameters
+        ----------
+        filepath : Path
+            Path to save the JSON file.
+        """
         with open(filepath.with_suffix(".json"), "w") as f:
             json.dump(self.to_dict(filepath), f, indent=4)
 
     @staticmethod
     def save(object: Task, path: str) -> str:
+        """
+        Save a Task object to a JSON file.
+
+        Parameters
+        ----------
+        object : Task
+            Task object to save.
+        path : str
+            Path to save the JSON file.
+
+        Returns
+        -------
+        str
+            Path to the saved JSON file.
+        """
         object.save_to_json(Path(path))
         return Path(path).with_suffix(".json")
 
-    def to_dict(self, path: Path) -> str:
+    def to_dict(self, path: Path) -> dict:
+        """
+        Convert the task to a dictionary representation for serialization.
+
+        Parameters
+        ----------
+        path : Path
+            Path used for saving model files.
+
+        Returns
+        -------
+        dict
+            Dictionary representation of the task.
+        """
         path = path.resolve()  # Ensure absolute path
 
         # if model is eqx.Module, save as eqx.Module
@@ -203,7 +322,6 @@ class Task(eqx.Module):
 
         if self.dataset.get("dataset_path") is None:
             dataset = None
-
         else:
             dataset = self.dataset.copy()
             dataset["dataset_path"] = str(Path(self.dataset["dataset_path"]))
@@ -237,15 +355,52 @@ class Task(eqx.Module):
         return cls.from_dict(data, filepath)
 
     def __repr__(self):
-        return f"Task(tag={self.tag}"
+        """
+        Returns a string representation of the Task object.
+
+        Returns
+        -------
+        str
+            String representation.
+        """
+        return f"Task(tag={self.tag})"
 
     def __str__(self):
+        """
+        Returns a formatted string describing the Task.
+
+        Returns
+        -------
+        str
+            Formatted string.
+        """
         return f"Task:\n  Tag: {self.tag}\n"
 
     def __hash__(self):
+        """
+        Returns the hash of the Task object.
+
+        Returns
+        -------
+        int
+            Hash value.
+        """
         return hash(self.tag_hashable)
 
     def __eq__(self, other):
+        """
+        Checks equality with another Task object.
+
+        Parameters
+        ----------
+        other : Any
+            Object to compare.
+
+        Returns
+        -------
+        bool
+            True if equal, False otherwise.
+        """
         return (
             isinstance(other, Task) and self.tag_hashable == other.tag_hashable
         )

@@ -63,6 +63,34 @@ def optax_fn(
     n_updates_per_iteration: int,
     **kwargs,
 ) -> tuple[InitFunction, StepFunction]:
+    """
+    Creates initialization and step functions for Optax optimizers.
+
+    Parameters
+    ----------
+    static : PyTree
+        Static model parameters.
+    optimizer : optax.GradientTransformation
+        Optax optimizer instance.
+    loss_fn : LossFunction
+        Loss function to optimize.
+    bounded : tuple[float, float]
+        Parameter bounds for clipping.
+    pass_rng : bool
+        Whether to pass random key to loss function.
+    opt_hash : int
+        Hash for optimizer step tracking.
+    n_updates_per_iteration : int
+        Number of updates per iteration.
+    **kwargs
+        Additional arguments.
+
+    Returns
+    -------
+    tuple[InitFunction, StepFunction]
+        Initialization and step functions for optimization.
+    """
+
     def init_fn(
         update_state: UpdateState, key: PRNGKeyArray | None = None
     ) -> OptaxState:
@@ -146,6 +174,32 @@ def optax_extra_args_fn(
     opt_hash: int,
     **kwargs,
 ) -> tuple[InitFunction, StepFunction]:
+    """
+    Creates initialization and step functions for Optax optimizers with extra arguments.
+
+    Parameters
+    ----------
+    static : PyTree
+        Static model parameters.
+    optimizer : optax.GradientTransformationExtraArgs
+        Optax optimizer instance supporting extra arguments.
+    loss_fn : LossFunction
+        Loss function to optimize.
+    bounded : tuple[float, float]
+        Parameter bounds for clipping.
+    pass_rng : bool
+        Whether to pass random key to loss function.
+    opt_hash : int
+        Hash for optimizer step tracking.
+    **kwargs
+        Additional arguments.
+
+    Returns
+    -------
+    tuple[InitFunction, StepFunction]
+        Initialization and step functions for optimization.
+    """
+
     def init_fn(
         update_state: UpdateState, key: PRNGKeyArray = None, **sample
     ) -> OptaxState:
@@ -227,6 +281,36 @@ def evosax_distribution_based_fn(
     opt_hash: int,
     **kwargs,
 ) -> tuple[InitFunction, StepFunction]:
+    """
+    Creates initialization and step functions for EvoSax distribution-based optimizers.
+
+    Parameters
+    ----------
+    static : PyTree
+        Static model parameters.
+    optimizer : DistributionBasedAlgorithm
+        EvoSax distribution-based optimizer instance.
+    loss_fn : LossFunction
+        Loss function to optimize.
+    bounded : tuple[float, float]
+        Parameter bounds for clipping.
+    pass_rng : bool
+        Whether to pass random key to loss function.
+    popsize : int
+        Population size.
+    es_params : Params
+        Evolution strategy parameters.
+    opt_hash : int
+        Hash for optimizer step tracking.
+    **kwargs
+        Additional arguments.
+
+    Returns
+    -------
+    tuple[InitFunction, StepFunction]
+        Initialization and step functions for optimization.
+    """
+
     def init_fn(
         update_state: UpdateState, key: PRNGKeyArray = None, **sample
     ) -> EvoSaxState:
@@ -291,6 +375,36 @@ def evosax_population_based_fn(
     opt_hash: int,
     **kwargs,
 ) -> tuple[InitFunction, StepFunction]:
+    """
+    Creates initialization and step functions for EvoSax population-based optimizers.
+
+    Parameters
+    ----------
+    static : PyTree
+        Static model parameters.
+    optimizer : PopulationBasedAlgorithm
+        EvoSax population-based optimizer instance.
+    loss_fn : LossFunction
+        Loss function to optimize.
+    bounded : tuple[float, float]
+        Parameter bounds for clipping.
+    pass_rng : bool
+        Whether to pass random key to loss function.
+    popsize : int
+        Population size.
+    es_params : Params
+        Evolution strategy parameters.
+    opt_hash : int
+        Hash for optimizer step tracking.
+    **kwargs
+        Additional arguments.
+
+    Returns
+    -------
+    tuple[InitFunction, StepFunction]
+        Initialization and step functions for optimization.
+    """
+
     def init_fn(
         update_state: UpdateState, key: PRNGKeyArray, **sample
     ) -> EvoSaxState:
@@ -364,6 +478,33 @@ def optax_update(
     stop_fn: StopFunction | None = None,
     **hyperparameters,
 ) -> UpdateClass:
+    """
+    Creates an UpdateClass for Optax optimizers.
+
+    Parameters
+    ----------
+    task : Task
+        Task object containing model and loss function.
+    optimizer : optax.GradientTransformation
+        Optax optimizer constructor.
+    opt_hash : int
+        Hash for optimizer step tracking.
+    popsize : int
+        Population size.
+    bounded : tuple[float, float] or None, optional
+        Parameter bounds for clipping.
+    n_updates_per_iteration : int, optional
+        Number of updates per iteration.
+    stop_fn : StopFunction or None, optional
+        Stopping function.
+    **hyperparameters
+        Additional optimizer hyperparameters.
+
+    Returns
+    -------
+    UpdateClass
+        UpdateClass instance for optimization.
+    """
     params, static = eqx.partition(task.model, eqx.is_inexact_array)
 
     init_fn, step_fn = optax_fn(
@@ -394,6 +535,31 @@ def optax_update_extra_args(
     stop_fn: StopFunction | None = None,
     **hyperparameters,
 ) -> UpdateClass:
+    """
+    Creates an UpdateClass for Optax optimizers with extra arguments.
+
+    Parameters
+    ----------
+    task : Task
+        Task object containing model and loss function.
+    optimizer : optax.GradientTransformationExtraArgs
+        Optax optimizer constructor supporting extra arguments.
+    opt_hash : int
+        Hash for optimizer step tracking.
+    popsize : int
+        Population size.
+    bounded : tuple[float, float] or None, optional
+        Parameter bounds for clipping.
+    stop_fn : StopFunction or None, optional
+        Stopping function.
+    **hyperparameters
+        Additional optimizer hyperparameters.
+
+    Returns
+    -------
+    UpdateClass
+        UpdateClass instance for optimization.
+    """
     params, static = eqx.partition(task.model, eqx.is_inexact_array)
 
     init_fn, step_fn = optax_extra_args_fn(
@@ -424,6 +590,33 @@ def evosax_distribution_update(
     stop_fn: StopFunction | None = None,
     **hyperparameters,
 ) -> UpdateClass:
+    """
+    Creates an UpdateClass for EvoSax distribution-based optimizers.
+
+    Parameters
+    ----------
+    task : Task
+        Task object containing model and loss function.
+    optimizer : type[DistributionBasedAlgorithm]
+        EvoSax distribution-based optimizer class.
+    opt_hash : int
+        Hash for optimizer step tracking.
+    popsize : int
+        Population size.
+    bounded : tuple[float, float] or None, optional
+        Parameter bounds for clipping.
+    sampler : Callable, optional
+        Sampling function.
+    stop_fn : StopFunction or None, optional
+        Stopping function.
+    **hyperparameters
+        Additional optimizer hyperparameters.
+
+    Returns
+    -------
+    UpdateClass
+        UpdateClass instance for optimization.
+    """
     params, static = eqx.partition(task.model, eqx.is_inexact_array)
 
     optimizer = optimizer(population_size=popsize, solution=params)
@@ -458,6 +651,33 @@ def evosax_population_update(
     stop_fn: StopFunction | None = None,
     **hyperparameters,
 ) -> UpdateClass:
+    """
+    Creates an UpdateClass for EvoSax population-based optimizers.
+
+    Parameters
+    ----------
+    task : Task
+        Task object containing model and loss function.
+    optimizer : type[PopulationBasedAlgorithm]
+        EvoSax population-based optimizer class.
+    opt_hash : int
+        Hash for optimizer step tracking.
+    popsize : int
+        Population size.
+    bounded : tuple[float, float] or None, optional
+        Parameter bounds for clipping.
+    sampler : Callable, optional
+        Sampling function.
+    stop_fn : StopFunction or None, optional
+        Stopping function.
+    **hyperparameters
+        Additional optimizer hyperparameters.
+
+    Returns
+    -------
+    UpdateClass
+        UpdateClass instance for optimization.
+    """
     params, static = eqx.partition(task.model, eqx.is_inexact_array)
 
     optimizer = optimizer(population_size=popsize, solution=params)
@@ -488,6 +708,23 @@ def evosax_population_update(
 def cmaes_variable_popsize(
     task: Task, popsize: int | None = None, **kwargs
 ) -> UpdateClass:
+    """
+    Creates a CMA-ES optimizer with variable population size based on dimensionality.
+
+    Parameters
+    ----------
+    task : Task
+        Task object containing model and loss function.
+    popsize : int or None, optional
+        Population size. If None, computed from dimensionality.
+    **kwargs
+        Additional arguments.
+
+    Returns
+    -------
+    UpdateClass
+        UpdateClass instance for CMA-ES optimization.
+    """
     d = task.dimensionality
 
     optimizer = Partial(
@@ -504,6 +741,23 @@ def cmaes_variable_popsize(
 def pso_variable_popsize(
     task: Task, popsize: int | None = None, **kwargs
 ) -> UpdateClass:
+    """
+    Creates a PSO optimizer with variable population size based on dimensionality.
+
+    Parameters
+    ----------
+    task : Task
+        Task object containing model and loss function.
+    popsize : int or None, optional
+        Population size. If None, computed from dimensionality.
+    **kwargs
+        Additional arguments.
+
+    Returns
+    -------
+    UpdateClass
+        UpdateClass instance for PSO optimization.
+    """
     d = task.dimensionality
 
     optimizer = Partial(
@@ -520,6 +774,23 @@ def pso_variable_popsize(
 def sepcmaes_variable_popsize(
     task: Task, popsize: int | None = None, **kwargs
 ) -> UpdateClass:
+    """
+    Creates a Sep-CMA-ES optimizer with variable population size based on dimensionality.
+
+    Parameters
+    ----------
+    task : Task
+        Task object containing model and loss function.
+    popsize : int or None, optional
+        Population size. If None, computed from dimensionality.
+    **kwargs
+        Additional arguments.
+
+    Returns
+    -------
+    UpdateClass
+        UpdateClass instance for Sep-CMA-ES optimization.
+    """
     d = task.dimensionality
 
     optimizer = Partial(
@@ -535,6 +806,23 @@ def sepcmaes_variable_popsize(
 def adam_variable_updates(
     task: Task, n_updates_per_iteration: int | None = None, **kwargs
 ):
+    """
+    Creates an Adam optimizer with variable number of updates per iteration based on dimensionality.
+
+    Parameters
+    ----------
+    task : Task
+        Task object containing model and loss function.
+    n_updates_per_iteration : int or None, optional
+        Number of updates per iteration. If None, computed from dimensionality.
+    **kwargs
+        Additional arguments.
+
+    Returns
+    -------
+    UpdateClass
+        UpdateClass instance for Adam optimization.
+    """
     d = task.dimensionality
 
     optimizer = Partial(
@@ -554,6 +842,24 @@ def adam_variable_updates(
 
 
 def optimizer_mapping(name: str) -> UpdateClass:
+    """
+    Maps optimizer name to corresponding UpdateClass or function.
+
+    Parameters
+    ----------
+    name : str
+        Name of the optimizer.
+
+    Returns
+    -------
+    UpdateClass
+        Corresponding UpdateClass or function for the optimizer.
+
+    Raises
+    ------
+    ValueError
+        If optimizer name is not recognized.
+    """
     match name:
         case "adam":
             return Partial(optax_update, optimizer=optax.adam, popsize=1)

@@ -38,6 +38,25 @@ __status__ = "Stable"
 
 
 class UpdateClass(eqx.Module):
+    """Class for managing optimizer update operations.
+
+    This class encapsulates the initialization, stepping, and stopping logic
+    for optimization algorithms.
+
+    Attributes
+    ----------
+    init_fn : InitFunction
+        Function to initialize optimizer state.
+    step_fn : StepFunction
+        Function to perform optimization step.
+    stop_fn : StopFunction
+        Function to check stopping criteria.
+    popsize : int
+        Population size for the optimizer.
+    hash : int
+        Hash identifier for the optimizer configuration.
+    """
+
     init_fn: InitFunction = eqx.field(static=True)
     step_fn: StepFunction = eqx.field(static=True)
     stop_fn: StopFunction = eqx.field(static=True)
@@ -52,6 +71,21 @@ class UpdateClass(eqx.Module):
         hash: int,
         stop_fn: Callable | None = None,
     ):
+        """Initialize UpdateClass.
+
+        Parameters
+        ----------
+        init_fn : Callable
+            Function to initialize optimizer state.
+        step_fn : Callable
+            Function to perform optimization step.
+        popsize : int
+            Population size for the optimizer.
+        hash : int
+            Hash identifier for the optimizer configuration.
+        stop_fn : Callable | None, optional
+            Function to check stopping criteria, by default None.
+        """
         self.init_fn = init_fn
         self.step_fn = step_fn
         self.popsize = popsize
@@ -60,7 +94,20 @@ class UpdateClass(eqx.Module):
 
     @eqx.filter_jit
     def init(self, update_state: UpdateState, key: PRNGKeyArray) -> PyTree:
-        """Initialize the optimizer state."""
+        """Initialize the optimizer state.
+
+        Parameters
+        ----------
+        update_state : UpdateState
+            Current update state.
+        key : PRNGKeyArray
+            PRNG key for random operations.
+
+        Returns
+        -------
+        PyTree
+            Initialized optimizer state.
+        """
         return self.init_fn(update_state, key)
 
     def step(
@@ -74,6 +121,32 @@ class UpdateClass(eqx.Module):
         n_iterations: int,
         verbose: bool,
     ) -> tuple[UpdateState, PyTree, BatchState, HistoryState]:
+        """Perform optimization steps for specified iterations.
+
+        Parameters
+        ----------
+        opt_state : PyTree
+            Current optimizer state.
+        update_state : UpdateState
+            Current update state.
+        history_state : HistoryState
+            Current history state.
+        batch_state : BatchState
+            Current batch state.
+        dataset : dict[str, jax.Array]
+            Dataset for evaluation.
+        key : PRNGKeyArray
+            PRNG key for random operations.
+        n_iterations : int
+            Number of iterations to perform.
+        verbose : bool
+            Whether to print progress information.
+
+        Returns
+        -------
+        tuple[UpdateState, PyTree, BatchState, HistoryState]
+            Updated states after optimization steps.
+        """
         # Retrieve the last parameters from the update state
         params = jax.tree.map(
             lambda x: x[-self.popsize :], update_state.last_params
@@ -159,6 +232,21 @@ class UpdateClass(eqx.Module):
         ],
         OptHistory,
     ]:
+        """Execute a single optimization step.
+
+        Parameters
+        ----------
+        carry : tuple
+            Tuple containing (params, opt_state, key, batch_state, done,
+            recent_history).
+        dataset : dict[str, jax.Array]
+            Dataset for evaluation.
+
+        Returns
+        -------
+        tuple
+            Updated carry and optimization history.
+        """
         (params, opt_state, key, batch_state, done, recent_history) = carry
         batch_idxs, batch_state = batch_state.next(key)
         sample = jax.tree.map(lambda x: x[batch_idxs], dataset)
@@ -186,6 +274,19 @@ class UpdateClass(eqx.Module):
             OptHistory,
         ],
     ):
+        """Skip an optimization step when stopping criteria is met.
+
+        Parameters
+        ----------
+        carry : tuple
+            Tuple containing (params, opt_state, key, batch_state, done,
+            recent_history).
+
+        Returns
+        -------
+        tuple
+            Unchanged carry and dummy history.
+        """
         (params, opt_state, key, batch_state, done, recent_history) = carry
         dummy_history = recent_history.init(
             params, self.popsize, recent_history.update_step[-1]
@@ -223,6 +324,23 @@ class UpdateClass(eqx.Module):
         ],
         OptHistory,
     ]:
+        """Perform a single scan step with conditional execution.
+
+        Parameters
+        ----------
+        carry : tuple
+            Tuple containing (params, opt_state, key, batch_state, done,
+            recent_history).
+        xs : Any
+            Scan iteration variable (unused).
+        dataset : dict[str, jax.Array]
+            Dataset for evaluation.
+
+        Returns
+        -------
+        tuple
+            Updated carry and optimization history.
+        """
         _, opt_state, _, _, done, recent_history = carry
 
         (new_carry, history_entry) = jax.lax.cond(
@@ -251,6 +369,24 @@ class UpdateClass(eqx.Module):
         ],
         OptHistory,
     ]:
+        """Execute the optimization loop using JAX scan.
+
+        Parameters
+        ----------
+        carry : tuple
+            Initial carry state.
+        n_iterations : int
+            Number of iterations to perform.
+        dataset : dict[str, jax.Array]
+            Dataset for evaluation.
+        verbose : bool
+            Whether to show progress bar.
+
+        Returns
+        -------
+        tuple
+            Final carry state and optimization history.
+        """
         scan_fn = Partial(self.scan_step, dataset=dataset)
         if verbose:
             fn = scan_tqdm(n_iterations)(scan_fn)
@@ -270,6 +406,22 @@ class UpdateClass(eqx.Module):
 
 
 def for_loop(carry, scan_fn, n_iterations: int):
+    """Execute optimization loop using Python for loop with progress bar.
+
+    Parameters
+    ----------
+    carry : tuple
+        Initial carry state.
+    scan_fn : Callable
+        Scan function to execute at each iteration.
+    n_iterations : int
+        Number of iterations to perform.
+
+    Returns
+    -------
+    tuple
+        Final carry state and accumulated history buffer.
+    """
     jitted_scan_fn = jax.jit(scan_fn)
     carry, history = jitted_scan_fn(carry, None)
     buffer = jax.tree.map(
