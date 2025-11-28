@@ -17,5 +17,5 @@ task_kwargs:
   dataset_path: './data/spirals.npz'
   seed: ${seed}
 data_generator:
-  _target_: l2co._src.tasks.benchmarkfunctions.spiral_task.create_spiral_task
+  _target_: l2co._src.tasks.spiral_task.create_spiral_task
   _partial_: True

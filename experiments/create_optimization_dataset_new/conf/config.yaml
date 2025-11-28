@@ -1,10 +1,10 @@
 defaults:
-- tasks: pde
-- budgets: fixed_pde
+- tasks: spirals
+- budgets: fixed
 - samplers: xavier
 - optimizers: pde
 
-n_realizations: 1
+n_realizations: 5
 
 seed: 467
 mode: cluster
