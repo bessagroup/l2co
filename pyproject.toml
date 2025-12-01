@@ -28,7 +28,7 @@ maintainers = [
 name = "l2co"
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.2.1"
+version = "1.2.2"
 
 [project.optional-dependencies]
 app = [
@@ -54,9 +54,13 @@ tests = [
 ]
 
 [project.urls]
-Repository = "https://github.com/bessagroup/f3dasm"
+Repository = "https://github.com/bessagroup/l2co"
 
 [tool.ruff]
+extend-exclude = [
+  "notebooks",
+  "docs/*.ipynb"
+]
 line-length = 79
 
 [tool.ruff.lint]

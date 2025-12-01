@@ -146,6 +146,8 @@ data/
 docs/source/_autosummary/
 !docs/source/_autosummary/.gitkeep
 _autosummary/
+docs/experiment_data/
+!docs/*.ipynb
 
 notebooks/
 
