@@ -24,11 +24,19 @@
 
 ## Samplers
 
-::: l2co.sampling
+::: l2co.sampling.random_sampling
+
+::: l2co.sampling.normal_sampling
+
+::: l2co.sampling.xavier_sampling
+
+::: l2co.sampling.grid_sampling
 
 ## Running optimization
 
 ::: l2co.RunState
+
+::: l2co.RolloutWrapper
 
 ::: l2co.RunOptimization
 
