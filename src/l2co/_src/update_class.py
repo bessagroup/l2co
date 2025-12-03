@@ -22,7 +22,7 @@ from tqdm import tqdm
 # Local
 from .batching import BatchState
 from .history_state import HistoryState
-from .opt_history import OptHistory
+from .opt_history import OptHistory, RecentHistory
 from .typing import InitFunction, StepFunction, StopFunction
 from .update_state import UpdateState
 
@@ -149,19 +149,10 @@ class UpdateClass(eqx.Module):
             lambda x: x[-self.popsize :], update_state.last_params
         )
 
-        window_size = 20
-
         # Initialize moving history buffer with NaNs
-        recent_history_init = OptHistory.init(
+        recent_history_init = RecentHistory.init(
             params=params,
-            popsize=self.popsize,
-            last_step=update_state.last_step,
-        )
-
-        # Initialize the recent history
-        recent_history_init = jax.tree.map(
-            lambda x: jnp.tile(x[None], (window_size, *([1] * x.ndim))),
-            recent_history_init,
+            memory_size=20,
         )
 
         # Initialize done flag
@@ -183,17 +174,17 @@ class UpdateClass(eqx.Module):
         )
 
         # Remove first element for dim=0 history
-        history: OptHistory = jax.tree.map(lambda x: x[1:, :], history)
+        history: OptHistory = jax.tree.map(lambda x: x[1:], history)
 
-        # Flatten the first and second dimension of each key in history
-        history_flattened = jax.tree.map(
-            lambda x: x.reshape((x.shape[0] * x.shape[1],) + x.shape[2:]),
-            history,
-        )
+        # # Flatten the first and second dimension of each key in history
+        # history_flattened = jax.tree.map(
+        #     lambda x: x.reshape((x.shape[0] * x.shape[1],) + x.shape[2:]),
+        #     history,
+        # )
 
         # Create final update state from history
         final_update_state = UpdateState.from_history(
-            history=history_flattened,
+            history=history.flatten(),
             memory_size=update_state.memory_size,
             last_step=self.hash,
         )
@@ -201,8 +192,7 @@ class UpdateClass(eqx.Module):
         # Merge with previous update state
         update_state = update_state.merge(final_update_state)
 
-        # Update history state
-        # new_history_state = history_state.add(history)
+        # Create history state
         new_history_state = HistoryState.from_history(history)
 
         return update_state, opt_state, batch_state, new_history_state
@@ -215,9 +205,8 @@ class UpdateClass(eqx.Module):
             PRNGKeyArray,
             BatchState,
             jax.Array,
-            OptHistory,
+            RecentHistory,
         ],
-        # step_fn: StepFunction,
         dataset: dict[str, jax.Array],
     ) -> tuple[
         tuple[
@@ -226,7 +215,7 @@ class UpdateClass(eqx.Module):
             PRNGKeyArray,
             BatchState,
             jax.Array,
-            OptHistory,
+            RecentHistory,
         ],
         OptHistory,
     ]:
@@ -269,9 +258,19 @@ class UpdateClass(eqx.Module):
             PRNGKeyArray,
             BatchState,
             jax.Array,
-            OptHistory,
+            RecentHistory,
         ],
-    ):
+    ) -> tuple[
+        tuple[
+            PyTree,
+            tuple[PyTree],
+            PRNGKeyArray,
+            BatchState,
+            jax.Array,
+            RecentHistory,
+        ],
+        OptHistory,
+    ]:
         """Skip an optimization step when stopping criteria is met.
 
         Parameters
@@ -286,9 +285,7 @@ class UpdateClass(eqx.Module):
             Unchanged carry and dummy history.
         """
         (params, opt_state, key, batch_state, done, recent_history) = carry
-        dummy_history = recent_history.init(
-            params, self.popsize, recent_history.update_step[-1]
-        )
+        dummy_history = OptHistory.init(params, self.popsize, self.hash)
 
         return (
             params,
@@ -307,7 +304,7 @@ class UpdateClass(eqx.Module):
             PRNGKeyArray,
             BatchState,
             jax.Array,
-            OptHistory,
+            RecentHistory,
         ],
         xs,
         dataset: dict[str, jax.Array],
@@ -318,7 +315,7 @@ class UpdateClass(eqx.Module):
             PRNGKeyArray,
             BatchState,
             jax.Array,
-            OptHistory,
+            RecentHistory,
         ],
         OptHistory,
     ]:

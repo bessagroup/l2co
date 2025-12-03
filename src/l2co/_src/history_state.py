@@ -14,7 +14,7 @@ import jax
 import jax.numpy as jnp
 import numpy as onp
 import xarray as xr
-from jaxtyping import Array, Float, Int, PyTree
+from jaxtyping import Array, Float, Int
 
 from .naming import (
     BUDGET,
@@ -68,35 +68,6 @@ class HistoryState(eqx.Module):
     iterations: Int[Array, " n_iterations"]
 
     @classmethod
-    def init(cls, n_iterations: int, params: PyTree) -> HistoryState:
-        """Initialize a new HistoryState with NaN values.
-
-        Parameters
-        ----------
-        n_iterations : int
-            Number of iterations to track in history.
-        params : PyTree
-            Initial parameter tree structure.
-
-        Returns
-        -------
-        HistoryState
-            Initialized history state with NaN values.
-        """
-        nans_output = jnp.full((n_iterations,), jnp.nan, dtype=jnp.float32)
-        zeros_int32 = jnp.zeros((n_iterations,), dtype=jnp.int32)
-        zeros_u32 = jnp.zeros((n_iterations,), dtype=jnp.uint32)
-
-        return cls(
-            output_min=nans_output,
-            output_mean=nans_output,
-            output_std=nans_output,
-            update_step=zeros_int32,
-            fevals=zeros_u32,
-            iterations=zeros_u32,
-        )
-
-    @classmethod
     def from_history(cls, history: OptHistoryType) -> HistoryState:
         """Create HistoryState from optimization history.
 
@@ -112,20 +83,13 @@ class HistoryState(eqx.Module):
         """
         # History has shape (n_iter, pop)
         # Compute statistics across P dimension for each time step
-        o_min = jnp.min(history.loss, axis=1)  # shape (T,)
-        o_mean = jnp.mean(history.loss, axis=1)  # shape (T,)
-        o_std = jnp.std(history.loss, axis=1)  # shape (T,)
-        u_step = history.update_step[:, 0].astype(jnp.int32)
-        u_feval = history.fevals[:, 0].astype(jnp.uint32)
-        u_iterations = history.iterations[:, 0].astype(jnp.uint32)
-
         return cls(
-            output_min=o_min,
-            output_mean=o_mean,
-            output_std=o_std,
-            update_step=u_step,
-            fevals=u_feval,
-            iterations=u_iterations,
+            output_min=jnp.min(history.loss, axis=1),
+            output_mean=jnp.mean(history.loss, axis=1),
+            output_std=jnp.std(history.loss, axis=1),
+            update_step=history.update_step,
+            fevals=history.fevals,
+            iterations=history.iterations,
         )
 
     def reset(self, update_state: UpdateState) -> HistoryState:
