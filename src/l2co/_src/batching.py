@@ -129,7 +129,6 @@ class BatchState(eqx.Module):
             dataset_size=dataset_size,
         )
 
-    @eqx.filter_jit
     def reset(self, key: PRNGKeyArray) -> BatchState:
         """Reset the batching state to initial conditions.
 

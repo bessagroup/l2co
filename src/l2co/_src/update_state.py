@@ -108,7 +108,6 @@ class UpdateState(eqx.Module):
             last_step=jnp.array(0, dtype=jnp.int32),
         )
 
-    @eqx.filter_jit
     def reset(self) -> UpdateState:
         """Reset state to best parameters found so far.
 
@@ -153,7 +152,6 @@ class UpdateState(eqx.Module):
             last_step=jnp.array(last_step, dtype=jnp.int32),
         )
 
-    @eqx.filter_jit
     def sample(
         self,
         batch_state: BatchState,
@@ -299,12 +297,9 @@ def _evaluate_one(
     return loss_fn(model, **sample)
 
 
-evaluate = eqx.filter_vmap(
-    eqx.filter_jit(_evaluate_one),
-    in_axes=(0, None, None, None, None),
-)
+evaluate = eqx.filter_vmap(_evaluate_one, in_axes=(0, None, None, None, None))
+
 
 evaluate_with_grads = eqx.filter_vmap(
-    eqx.filter_value_and_grad(_evaluate_one),
-    in_axes=(0, None, None, None, None),
+    _evaluate_one, in_axes=(0, None, None, None, None)
 )

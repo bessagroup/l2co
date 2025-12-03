@@ -92,7 +92,6 @@ class UpdateClass(eqx.Module):
         self.hash = hash
         self.stop_fn = stop_fn or (lambda *_, **__: False)
 
-    @eqx.filter_jit
     def init(self, update_state: UpdateState, key: PRNGKeyArray) -> PyTree:
         """Initialize the optimizer state.
 
@@ -114,7 +113,7 @@ class UpdateClass(eqx.Module):
         self,
         opt_state: PyTree,
         update_state: UpdateState,
-        history_state: HistoryState,
+        # history_state: HistoryState,
         batch_state: BatchState,
         dataset: dict[str, jax.Array],
         key: PRNGKeyArray,
@@ -129,8 +128,6 @@ class UpdateClass(eqx.Module):
             Current optimizer state.
         update_state : UpdateState
             Current update state.
-        history_state : HistoryState
-            Current history state.
         batch_state : BatchState
             Current batch state.
         dataset : dict[str, jax.Array]
@@ -205,7 +202,8 @@ class UpdateClass(eqx.Module):
         update_state = update_state.merge(final_update_state)
 
         # Update history state
-        new_history_state = history_state.add(history)
+        # new_history_state = history_state.add(history)
+        new_history_state = HistoryState.from_history(history)
 
         return update_state, opt_state, batch_state, new_history_state
 

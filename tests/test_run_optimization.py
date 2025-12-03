@@ -51,9 +51,7 @@ def run(
         key=key,
     )
 
-    data_xarr = history_state.to_xarray_realizations(
-        include_input_mean=include_input_mean
-    )
+    data_xarr = history_state.to_xarray_realizations()
 
 
 # =============================================================================

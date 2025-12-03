@@ -136,7 +136,6 @@ def optax_fn(
 
         return (new_params, new_opt_state, sample, new_key), history
 
-    @eqx.filter_jit
     def step_fn(
         carry: tuple[InputParameters, OptaxState, PRNGKeyArray],
         sample: dict,
@@ -208,7 +207,6 @@ def optax_extra_args_fn(
         opt_state = optimizer.init(params)
         return opt_state
 
-    @eqx.filter_jit
     def step_fn(
         carry: tuple[InputParameters, OptaxState, PRNGKeyArray],
         sample: dict,
@@ -319,7 +317,6 @@ def evosax_distribution_based_fn(
         params = jax.tree.map(lambda x: x[-1], update_state.last_params)
         return optimizer.init(key, params, es_params)
 
-    @eqx.filter_jit
     def step_fn(
         carry: tuple[InputParameters, EvoSaxState, PRNGKeyArray],
         sample: dict,
@@ -421,7 +418,6 @@ def evosax_population_based_fn(
             key=key, population=population, fitness=loss, params=es_params
         )
 
-    @eqx.filter_jit
     def step_fn(
         carry: tuple[InputParameters, EvoSaxState, PRNGKeyArray],
         sample: dict,

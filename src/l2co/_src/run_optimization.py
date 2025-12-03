@@ -99,6 +99,7 @@ class RolloutWrapper(eqx.Module):
             run_state=run_state, task=task, sampler=sampler, verbose=verbose
         )
 
+    @eqx.filter_jit
     def batch_evaluate(
         self,
         key: PRNGKeyArray,

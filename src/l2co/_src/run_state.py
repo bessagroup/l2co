@@ -40,8 +40,6 @@ class RunState(eqx.Module):
     ----------
     update_state : UpdateState
         The current state of the optimizer updates.
-    history_state : HistoryState
-        The history of the optimization process.
     opt_state : PyTree
         The state of the optimizer.
     batch_state : BatchState
@@ -53,7 +51,6 @@ class RunState(eqx.Module):
     """
 
     update_state: UpdateState
-    history_state: HistoryState
     opt_state: PyTree
     batch_state: BatchState
     update_class: UpdateClass = eqx.field(static=True)
@@ -105,12 +102,6 @@ class RunState(eqx.Module):
         # Initialize the optimizer state
         opt_state = update_class.init(update_state=update_state, key=key)
 
-        # Initialize the history state
-        history_state = HistoryState.init(
-            n_iterations=max_iterations + 1,
-            params=params,
-        )
-
         # Initialize batch state
         batch_state = BatchState.init(
             dataset=task.loaded_dataset,
@@ -120,7 +111,6 @@ class RunState(eqx.Module):
 
         return cls(
             update_state=update_state,
-            history_state=history_state,
             opt_state=opt_state,
             batch_state=batch_state,
             update_class=update_class,
@@ -128,7 +118,6 @@ class RunState(eqx.Module):
         )
 
 
-@eqx.filter_jit
 def reset(
     run_state: RunState, task: Task, sampler: Callable, key: PRNGKeyArray
 ) -> RunState:
@@ -163,12 +152,10 @@ def reset(
         key=key,
     )
 
-    history_state = run_state.history_state.reset(update_state)
     opt_state = run_state.update_class.init(update_state=update_state, key=key)
 
     return RunState(
         update_state=update_state,
-        history_state=history_state,
         opt_state=opt_state,
         batch_state=batch_state,
         update_class=run_state.update_class,
@@ -176,7 +163,6 @@ def reset(
     )
 
 
-@eqx.filter_jit
 def run(
     run_state: RunState,
     dataset: dict[str, jax.Array],
@@ -208,7 +194,6 @@ def run(
     _, _, _, history_state = run_state.update_class.step(
         opt_state=run_state.opt_state,
         update_state=run_state.update_state,
-        history_state=run_state.history_state,
         batch_state=run_state.batch_state,
         dataset=dataset,
         key=key,
@@ -219,7 +204,6 @@ def run(
     return history_state
 
 
-@eqx.filter_jit
 def evaluate(
     run_state: RunState,
     task: Task,
@@ -262,10 +246,12 @@ batch_reset = eqx.filter_vmap(
     in_axes=(None, None, None, 0),
 )
 
+
 batch_run = eqx.filter_vmap(
     run,
     in_axes=(0, None, None, None, None),
 )
+
 
 batch_evaluate = eqx.filter_vmap(
     evaluate,
