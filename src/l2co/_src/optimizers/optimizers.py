@@ -296,9 +296,6 @@ def evosax_distribution_based_fn(
             key=key, state=new_opt_state, params=es_params
         )
 
-        # update_step = jnp.broadcast_to(opt_hash, loss.shape)
-        # fevals = jnp.broadcast_to(popsize, loss.shape)
-        # iterations = jnp.broadcast_to(1, loss.shape)
         grads = jax.tree.map(lambda p: jnp.full_like(p, jnp.nan), input_params)
 
         history = OptHistory(
@@ -382,12 +379,10 @@ def evosax_population_based_fn(
     ) -> tuple[tuple[InputParameters, EvoSaxState, PRNGKeyArray], OptHistory]:
         input_params, opt_state, key = carry
 
-        new_key, rng_key = jr.split(key)
-
         loss = vmapped_loss(eqx.combine(input_params, static), loss_fn, sample)
 
         new_opt_state, _ = optimizer.tell(
-            key=rng_key,
+            key=key,
             population=input_params,
             fitness=loss,
             state=opt_state,
@@ -395,26 +390,24 @@ def evosax_population_based_fn(
         )
 
         new_params, new_opt_state = optimizer.ask(
-            key=rng_key, state=new_opt_state, params=es_params
+            key=key, state=new_opt_state, params=es_params
         )
 
-        update_step = jnp.broadcast_to(opt_hash, loss.shape)
-        fevals = jnp.broadcast_to(popsize, loss.shape)
-        iterations = jnp.broadcast_to(1, loss.shape)
         grads = jax.tree.map(lambda p: jnp.full_like(p, jnp.nan), input_params)
 
         history = OptHistory(
             loss=loss,
             params=input_params,
-            update_step=update_step,
-            fevals=fevals,
+            update_step=opt_hash,
+            fevals=popsize,
             grads=grads,
-            iterations=iterations,
+            iterations=1,
         )
 
         # Apply box constraints
         new_params = jax.tree.map(lambda p: jnp.clip(p, *bounded), new_params)
 
+        new_key, _ = jr.split(key)
         return (new_params, new_opt_state, new_key), history
 
     return init_fn, step_fn

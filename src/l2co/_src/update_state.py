@@ -138,11 +138,14 @@ class UpdateState(eqx.Module):
         UpdateState
             Update state initialized from history.
         """
-        params = jax.tree.map(lambda x: x[-memory_size:], history.params)
-        losses = history.loss[-memory_size:]
+        history_flat = history.flatten()
+        params = jax.tree.map(lambda x: x[-memory_size:], history_flat.params)
+        losses = history_flat.loss[-memory_size:]
 
         # Get the best parameters and loss from the history
-        best_params, best_loss = get_best(params, losses)
+        best_params, best_loss = get_best(
+            history_flat.params, history_flat.loss
+        )
 
         return cls(
             last_params=params,

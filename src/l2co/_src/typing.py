@@ -60,6 +60,14 @@ class OptHistoryType(eqx.Module):
         """Update the recent history with the current history."""
         raise NotImplementedError
 
+    @abstractmethod
+    def flatten(self) -> OptHistoryType:
+        """
+        Flatten the first and second dimension of the loss,
+        params and grad.
+        """
+        raise NotImplementedError
+
 
 # =============================================================================
 

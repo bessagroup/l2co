@@ -113,7 +113,6 @@ class UpdateClass(eqx.Module):
         self,
         opt_state: PyTree,
         update_state: UpdateState,
-        # history_state: HistoryState,
         batch_state: BatchState,
         dataset: dict[str, jax.Array],
         key: PRNGKeyArray,
@@ -176,15 +175,9 @@ class UpdateClass(eqx.Module):
         # Remove first element for dim=0 history
         history: OptHistory = jax.tree.map(lambda x: x[1:], history)
 
-        # # Flatten the first and second dimension of each key in history
-        # history_flattened = jax.tree.map(
-        #     lambda x: x.reshape((x.shape[0] * x.shape[1],) + x.shape[2:]),
-        #     history,
-        # )
-
         # Create final update state from history
         final_update_state = UpdateState.from_history(
-            history=history.flatten(),
+            history=history,
             memory_size=update_state.memory_size,
             last_step=self.hash,
         )
