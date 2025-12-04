@@ -48,6 +48,9 @@ def combined_loss(model: PyTree, loss_fn: Callable, sample: dict) -> jax.Array:
     return loss_fn(model, **sample)
 
 
+vmapped_loss_and_grad = eqx.filter_vmap(
+    eqx.filter_value_and_grad(combined_loss), in_axes=(0, None, None)
+)
 vmapped_loss = eqx.filter_vmap(combined_loss, in_axes=(0, None, None))
 
 

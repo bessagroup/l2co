@@ -31,7 +31,10 @@ from optax import OptState as OptaxState
 from l2co._src.opt_history import OptHistory
 from l2co._src.sampler import random_sampling
 from l2co._src.task import Task
-from l2co._src.tree_utils import vmapped_loss
+from l2co._src.tree_utils import (
+    vmapped_loss,
+    vmapped_loss_and_grad,
+)
 from l2co._src.typing import (
     InitFunction,
     InputParameters,
@@ -40,7 +43,6 @@ from l2co._src.typing import (
     StopFunction,
 )
 from l2co._src.update_class import UpdateClass
-from l2co._src.update_state import UpdateState
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -86,9 +88,8 @@ def optax_fn(
     """
 
     def init_fn(
-        update_state: UpdateState, key: PRNGKeyArray | None = None
+        params: InputParameters, key: PRNGKeyArray | None = None, **sample
     ) -> OptaxState:
-        params = jax.tree.map(lambda x: x[-1], update_state.last_params)
         opt_state = optimizer.init(params)
         return opt_state
 
@@ -100,20 +101,17 @@ def optax_fn(
     ) -> tuple[tuple[InputParameters, OptaxState, PRNGKeyArray], OptHistory]:
         input_params, opt_state, key = carry
 
-        input_params = jax.tree.map(
-            lambda x: jnp.squeeze(x, axis=0), input_params
+        loss, grads = vmapped_loss_and_grad(
+            eqx.combine(input_params, static), loss_fn, sample
         )
 
-        model = eqx.combine(input_params, static)
-
-        loss, grads = eqx.filter_value_and_grad(loss_fn)(model, **sample)
         updates, new_opt_state = optimizer.update(grads, opt_state)
         new_params = eqx.apply_updates(input_params, updates)
 
         history = OptHistory(
-            loss=jax.tree.map(lambda x: jnp.expand_dims(x, 0), loss),
-            params=jax.tree.map(lambda x: jnp.expand_dims(x, 0), input_params),
-            grads=jax.tree.map(lambda x: jnp.expand_dims(x, 0), grads),
+            loss=loss,
+            params=input_params,
+            grads=grads,
             update_step=opt_hash,
             fevals=1,
             iterations=1,
@@ -121,10 +119,6 @@ def optax_fn(
 
         # Apply box constraints
         new_params = jax.tree.map(lambda p: jnp.clip(p, *bounded), new_params)
-
-        # history = jax.tree.map(lambda x: jnp.expand_dims(x, 0), history)
-
-        new_params = jax.tree.map(lambda x: jnp.expand_dims(x, 0), new_params)
 
         new_key, _ = jr.split(key)
         return (new_params, new_opt_state, new_key), history
@@ -166,9 +160,9 @@ def optax_extra_args_fn(
     """
 
     def init_fn(
-        update_state: UpdateState, key: PRNGKeyArray = None, **sample
+        params: InputParameters, key: PRNGKeyArray = None, **sample
     ) -> OptaxState:
-        params = jax.tree.map(lambda x: x[-1], update_state.last_params)
+        params = jax.tree.map(lambda x: x[0], params)
         opt_state = optimizer.init(params)
         return opt_state
 
@@ -212,11 +206,9 @@ def optax_extra_args_fn(
             iterations=1,
         )
 
-        # Expand dimensions
         new_params = jax.tree.map(lambda p: jnp.clip(p, *bounded), new_params)
 
-        # history = jax.tree.map(lambda x: jnp.expand_dims(x, 0), history)
-
+        # Expand dimensions
         new_params = jax.tree.map(lambda x: jnp.expand_dims(x, 0), new_params)
 
         new_key, _ = jr.split(key)
@@ -269,9 +261,9 @@ def evosax_distribution_based_fn(
     """
 
     def init_fn(
-        update_state: UpdateState, key: PRNGKeyArray = None, **sample
+        params: InputParameters, key: PRNGKeyArray = None, **sample
     ) -> EvoSaxState:
-        params = jax.tree.map(lambda x: x[-1], update_state.last_params)
+        params = jax.tree.map(lambda x: x[0], params)
         return optimizer.init(key, params, es_params)
 
     def step_fn(
@@ -321,7 +313,6 @@ def evosax_population_based_fn(
     optimizer: PopulationBasedAlgorithm,
     loss_fn: LossFunction,
     bounded: tuple[float, float],
-    pass_rng: bool,
     popsize: int,
     es_params: Params,
     opt_hash: int,
@@ -341,8 +332,6 @@ def evosax_population_based_fn(
         Loss function to optimize.
     bounded : tuple[float, float]
         Parameter bounds for clipping.
-    pass_rng : bool
-        Whether to pass random key to loss function.
     popsize : int
         Population size.
     es_params : Params
@@ -359,16 +348,12 @@ def evosax_population_based_fn(
     """
 
     def init_fn(
-        update_state: UpdateState, key: PRNGKeyArray, **sample
+        params: InputParameters, key: PRNGKeyArray, **sample
     ) -> EvoSaxState:
-        population = jax.tree.map(
-            lambda x: x[-popsize:], update_state.last_params
-        )
-
-        loss = vmapped_loss(eqx.combine(population, static), loss_fn, sample)
+        loss = vmapped_loss(eqx.combine(params, static), loss_fn, sample)
 
         return optimizer.init(
-            key=key, population=population, fitness=loss, params=es_params
+            key=key, population=params, fitness=loss, params=es_params
         )
 
     def step_fn(

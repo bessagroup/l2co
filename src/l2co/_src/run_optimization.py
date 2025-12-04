@@ -83,7 +83,6 @@ class RolloutWrapper(eqx.Module):
         optimizer: OptimizationStep,
         task: Task,
         sampler: Callable,
-        n_iterations: int,
         key: PRNGKeyArray,
         bounded: tuple[float, float] = (None, None),
         verbose: float = False,
@@ -92,7 +91,6 @@ class RolloutWrapper(eqx.Module):
             optimizer=optimizer,
             task=task,
             bounded=bounded,
-            max_iterations=n_iterations,
             key=key,
         )
         return cls(
@@ -103,12 +101,14 @@ class RolloutWrapper(eqx.Module):
     def batch_evaluate(
         self,
         key: PRNGKeyArray,
+        n_iterations: int,
         n_realizations: int = 1,
-    ) -> HistoryState:
+    ) -> tuple[RunState, HistoryState]:
         return batch_evaluate(
             self.run_state,
             self.task,
             self.sampler,
+            n_iterations,
             jr.split(key, n_realizations),
             self.verbose,
         )
@@ -272,18 +272,18 @@ class RunOptimization(DataGenerator):
 
         n_iterations = self.budget_fn(task=task)
 
-        rollout_wrapper = RolloutWrapper.init(
+        rollout_wrapper: RolloutWrapper = RolloutWrapper.init(
             optimizer=optimizer,
             task=task,
             sampler=self.sampler,
-            n_iterations=n_iterations,
             key=key,
             bounded=self.bounded,
             verbose=self.verbose,
         )
 
-        history_state = rollout_wrapper.batch_evaluate(
+        _, history_state = rollout_wrapper.batch_evaluate(
             key=key,
+            n_iterations=n_iterations,
             n_realizations=self.n_realizations,
         )
 

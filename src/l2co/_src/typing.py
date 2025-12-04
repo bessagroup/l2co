@@ -71,7 +71,7 @@ class OptHistoryType(eqx.Module):
 
 # =============================================================================
 
-InputParameters = PyTree
+InputParameters = Float[PyTree, " popsize dimensionality"]
 OptState = PyTree
 
 StepFunction = Callable[
@@ -86,3 +86,5 @@ InitFunction = Callable[[PyTree], OptaxOptState | EvoSaxState]
 LossFunction = Any
 
 BudgetFn = Callable[[Any], int]
+
+SamplerFunction = Callable[[PRNGKeyArray, PyTree, int], InputParameters]
