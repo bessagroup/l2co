@@ -28,7 +28,6 @@ from .naming import (
     UPDATE_STEP,
 )
 from .typing import OptHistoryType
-from .update_state import UpdateState
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -90,79 +89,6 @@ class HistoryState(eqx.Module):
             update_step=history.update_step,
             fevals=history.fevals,
             iterations=history.iterations,
-        )
-
-    def reset(self, update_state: UpdateState) -> HistoryState:
-        """Reset history state with the last values from update_state.
-
-        Parameters
-        ----------
-        update_state : UpdateState
-            Current update state containing the last parameters and losses.
-
-        Returns
-        -------
-        HistoryState
-            Reset history state with only the last value populated.
-        """
-        nans_output = jnp.full_like(
-            self.output_min, jnp.nan, dtype=jnp.float32
-        )
-        zeros_int32 = jnp.zeros(self.update_step.shape, dtype=jnp.int32)
-        zeros_u32 = jnp.zeros(self.fevals.shape, dtype=jnp.uint32)
-
-        output_min = nans_output.at[-1].set(update_state.last_loss.min())
-        output_mean = nans_output.at[-1].set(update_state.last_loss.mean())
-        output_std = nans_output.at[-1].set(update_state.last_loss.std())
-
-        update_step = zeros_int32.at[-1].set(update_state.last_step)
-        fevals = zeros_u32.at[-1].set(1)
-        iterations = zeros_u32.at[-1].set(1)
-
-        return HistoryState(
-            output_min=output_min,
-            output_mean=output_mean,
-            output_std=output_std,
-            update_step=update_step,
-            fevals=fevals,
-            iterations=iterations,
-        )
-
-    def add(self, history: OptHistoryType) -> HistoryState:
-        """Add new optimization history to the existing history.
-
-        Computes statistics across the population dimension and appends
-        them to the history, maintaining a rolling window of n_iterations.
-
-        Parameters
-        ----------
-        history : OptHistoryType
-            New optimization history to add.
-
-        Returns
-        -------
-        HistoryState
-            Updated history state with new values appended.
-        """
-        # Compute statistics across P dimension for each time step
-        o_min = jnp.min(history.loss, axis=1)  # shape (T,)
-        o_mean = jnp.mean(history.loss, axis=1)  # shape (T,)
-        o_std = jnp.std(history.loss, axis=1)  # shape (T,)
-        u_step = history.update_step[:, 0].astype(jnp.int32)
-        u_feval = history.fevals[:, 0].astype(jnp.uint32)
-        u_iterations = history.iterations[:, 0].astype(jnp.uint32)
-
-        def roll_concat(old: jax.Array, new: jax.Array) -> jax.Array:
-            combined = jnp.concatenate([old, new], axis=0)
-            return combined[-old.shape[0] :]  # keep last n_iterations
-
-        return HistoryState(
-            output_min=roll_concat(self.output_min, o_min),
-            output_mean=roll_concat(self.output_mean, o_mean),
-            output_std=roll_concat(self.output_std, o_std),
-            update_step=roll_concat(self.update_step, u_step),
-            fevals=roll_concat(self.fevals, u_feval),
-            iterations=roll_concat(self.iterations, u_iterations),
         )
 
     def to_xarray(self, budget_steps: int | None = None) -> xr.Dataset:

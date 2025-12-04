@@ -426,3 +426,43 @@ def for_loop(carry, scan_fn, n_iterations: int):
             history,
         )
     return carry, buffer
+
+
+SAMPLING_STEP = 1
+
+# =============================================================================
+
+
+def _evaluate_one(
+    model: PyTree,
+    batch_state: BatchState,
+    dataset: dict[str, jax.Array],
+    loss_fn: Callable,
+    key: PRNGKeyArray,
+) -> jax.Array:
+    """Evaluate a single model on a batch of data.
+
+    Parameters
+    ----------
+    model : PyTree
+        Model to evaluate.
+    batch_state : BatchState
+        Batch state for data sampling.
+    dataset : dict[str, jax.Array]
+        Full dataset.
+    loss_fn : Callable
+        Loss function.
+    key : PRNGKeyArray
+        PRNG key for random operations.
+
+    Returns
+    -------
+    jax.Array
+        Loss value.
+    """
+    batch_idxs, _ = batch_state.next(key)
+    sample = jax.tree.map(lambda x: x[batch_idxs], dataset)
+    return loss_fn(model, **sample)
+
+
+evaluate = eqx.filter_vmap(_evaluate_one, in_axes=(0, None, None, None, None))

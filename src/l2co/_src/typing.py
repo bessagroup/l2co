@@ -20,8 +20,6 @@ from evosax.algorithms.base import State as EvoSaxState
 from jaxtyping import Array, Float, Int, PRNGKeyArray, PyTree
 from optax import OptState as OptaxOptState
 
-from .task import Task
-
 #                                                          Authorship & Credits
 # =============================================================================
 __author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
@@ -45,19 +43,6 @@ class OptHistoryType(eqx.Module):
         cls, params: PyTree, popsize: int, last_step: int
     ) -> OptHistoryType:
         """Initialize the history."""
-        raise NotImplementedError
-
-    @classmethod
-    @abstractmethod
-    def from_init_sample(
-        cls, update_state, task: Task, key: PRNGKeyArray
-    ) -> OptHistoryType:
-        """Create history from initial sample."""
-        raise NotImplementedError
-
-    @abstractmethod
-    def update(self, history: OptHistoryType) -> OptHistoryType:
-        """Update the recent history with the current history."""
         raise NotImplementedError
 
     @abstractmethod
