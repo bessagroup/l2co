@@ -16,7 +16,7 @@ import jax
 import jax.numpy as jnp
 from jax.tree_util import Partial
 from jax_tqdm import scan_tqdm
-from jaxtyping import PRNGKeyArray, PyTree
+from jaxtyping import Array, Float, PRNGKeyArray, PyTree
 from tqdm import tqdm
 
 # Local
@@ -131,7 +131,14 @@ class UpdateClass(eqx.Module):
         key: PRNGKeyArray,
         n_iterations: int,
         verbose: bool,
-    ) -> tuple[InputParameters, PyTree, BatchState, HistoryState]:
+    ) -> tuple[
+        InputParameters,
+        InputParameters,
+        Array[Float, ""],
+        PyTree,
+        BatchState,
+        HistoryState,
+    ]:
         """Perform optimization steps for specified iterations.
 
         Parameters
@@ -153,7 +160,8 @@ class UpdateClass(eqx.Module):
 
         Returns
         -------
-        tuple[InputParameters, PyTree, BatchState, HistoryState]
+        tuple[InputParameters, InputParameters, Array[Float, ""], PyTree,
+        BatchState, HistoryState]
             Updated states after optimization steps.
         """
         # Initialize moving history buffer with NaNs
@@ -180,7 +188,12 @@ class UpdateClass(eqx.Module):
             verbose=verbose,
         )
 
+        best_params, best_loss = history.flatten().retrieve_best()
+
         # Remove first element for dim=0 history
+        ## TODO: If I don't do this, the history has the first element
+        # Is this a problem? Because for switching it is useful to have it for
+        # the first choice...
         history: OptHistory = jax.tree.map(lambda x: x[1:], history)
 
         params = jax.tree.map(lambda x: x[-1], history.params)
@@ -188,7 +201,14 @@ class UpdateClass(eqx.Module):
         # Create history state
         new_history_state = HistoryState.from_history(history)
 
-        return params, opt_state, batch_state, new_history_state
+        return (
+            params,
+            best_params,
+            best_loss,
+            opt_state,
+            batch_state,
+            new_history_state,
+        )
 
     def do_step(
         self,

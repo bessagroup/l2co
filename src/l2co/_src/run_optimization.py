@@ -50,6 +50,8 @@ from f3dasm import ExperimentSample
 from f3dasm.datageneration import DataGenerator
 from jaxtyping import PRNGKeyArray
 
+from l2co._src.batching import BatchState
+
 # Local
 from l2co._src.history_state import HistoryState
 from l2co._src.optimizerschedule import OptimizationStep
@@ -73,6 +75,7 @@ logger = logging.getLogger(__name__)
 
 class RolloutWrapper(eqx.Module):
     run_state: RunState
+    batch_state: BatchState
     sampler: Callable
     task: Task
     verbose: bool
@@ -93,8 +96,18 @@ class RolloutWrapper(eqx.Module):
             bounded=bounded,
             key=key,
         )
+
+        batch_state = BatchState.init(
+            dataset=task.loaded_dataset,
+            batch_size=task.batch_size,
+            key=key,
+        )
         return cls(
-            run_state=run_state, task=task, sampler=sampler, verbose=verbose
+            run_state=run_state,
+            batch_state=batch_state,
+            task=task,
+            sampler=sampler,
+            verbose=verbose,
         )
 
     @eqx.filter_jit
@@ -103,9 +116,10 @@ class RolloutWrapper(eqx.Module):
         key: PRNGKeyArray,
         n_iterations: int,
         n_realizations: int = 1,
-    ) -> tuple[RunState, HistoryState]:
+    ) -> tuple[RunState, BatchState, HistoryState]:
         return batch_evaluate(
             self.run_state,
+            self.batch_state,
             self.task,
             self.sampler,
             n_iterations,
@@ -281,7 +295,7 @@ class RunOptimization(DataGenerator):
             verbose=self.verbose,
         )
 
-        _, history_state = rollout_wrapper.batch_evaluate(
+        _, _, history_state = rollout_wrapper.batch_evaluate(
             key=key,
             n_iterations=n_iterations,
             n_realizations=self.n_realizations,

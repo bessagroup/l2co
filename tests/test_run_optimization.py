@@ -45,7 +45,7 @@ def run(
         bounded=bounded,
     )
 
-    _, history_state = rollout_wrapper.batch_evaluate(
+    _, _, history_state = rollout_wrapper.batch_evaluate(
         key=key,
         n_iterations=n_iterations,
         n_realizations=n_realizations,

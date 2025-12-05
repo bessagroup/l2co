@@ -10,7 +10,7 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import PRNGKeyArray, PyTree
+from jaxtyping import Array, Float, PRNGKeyArray, PyTree
 
 # Local
 from .batching import BatchState
@@ -20,6 +20,7 @@ from .optimizerschedule import OptimizationStep
 from .task import Task
 from .typing import InputParameters, SamplerFunction
 from .update_class import UpdateClass
+from .update_class import evaluate as evaluate_update_class
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -41,17 +42,20 @@ class RunState(eqx.Module):
     ----------
     params : InputParameters
         The current input parameters being optimized, shaped as (popsize, dim).
+    best_params : InputParameters
+        The best input parameters found so far, shaped as (dim,).
+    best_loss : Array[Float, ""]
+        The best loss value found so far.
     opt_state : PyTree
         The state of the optimizer.
-    batch_state : BatchState
-        The state of the data batching process.
     update_class : UpdateClass
         The class defining the optimizer update logic.
     """
 
     params: InputParameters
+    best_params: InputParameters
+    best_loss: Array[Float, ""]
     opt_state: PyTree
-    batch_state: BatchState
     update_class: UpdateClass = eqx.field(static=True)
 
     @classmethod
@@ -81,6 +85,7 @@ class RunState(eqx.Module):
             Initialized run state.
         """
         dataset = task.loaded_dataset
+        model_params = eqx.filter(task.model, eqx.is_inexact_array)
 
         update_class: UpdateClass = optimizer_mapping(optimizer.optimizer)(
             **optimizer.hyperparameters,
@@ -99,8 +104,9 @@ class RunState(eqx.Module):
 
         params = jax.tree.map(
             lambda x: jnp.repeat(x[None, ...], update_class.popsize, axis=0),
-            eqx.filter(task.model, eqx.is_inexact_array),
+            model_params,
         )
+
         # Initialize the optimizer state
         opt_state = update_class.init(
             params=params,
@@ -111,8 +117,9 @@ class RunState(eqx.Module):
 
         return cls(
             params=params,
+            best_params=model_params,
+            best_loss=jnp.array(jnp.inf, dtype=jnp.float32),
             opt_state=opt_state,
-            batch_state=batch_state,
             update_class=update_class,
         )
 
@@ -120,6 +127,7 @@ class RunState(eqx.Module):
 def reset(
     run_state: RunState,
     task: Task,
+    batch_state: BatchState,
     sampler: SamplerFunction,
     key: PRNGKeyArray,
 ) -> RunState:
@@ -141,15 +149,27 @@ def reset(
     RunState
         Reset run state with new samples.
     """
-    batch_state = run_state.batch_state.reset(key=key)
-
     dataset = task.loaded_dataset
+    task_params, task_static = eqx.partition(task.model, eqx.is_inexact_array)
 
     params = sampler(
         key,
-        eqx.filter(task.model, eqx.is_inexact_array),
+        task_params,
         run_state.update_class.popsize,
     )
+
+    loss = evaluate_update_class(
+        eqx.combine(task_static, params),
+        batch_state,
+        dataset,
+        task.loss_fn,
+        key,
+    )
+
+    # calculate the best params and best loss
+    best_idx = jnp.argmin(loss)
+    best_params = jax.tree.map(lambda x: x[best_idx], params)
+    best_loss = loss[best_idx]
 
     opt_state = run_state.update_class.init(
         params=params,
@@ -160,25 +180,29 @@ def reset(
 
     return RunState(
         params=params,
+        best_params=best_params,
+        best_loss=best_loss,
         opt_state=opt_state,
-        batch_state=batch_state,
         update_class=run_state.update_class,
     )
 
 
 def run(
     run_state: RunState,
+    batch_state: BatchState,
     dataset: dict[str, jax.Array],
     n_iterations: int,
     key: PRNGKeyArray,
     verbose: bool,
-) -> tuple[RunState, HistoryState]:
+) -> tuple[RunState, BatchState, HistoryState]:
     """Run optimization for a specified number of iterations.
 
     Parameters
     ----------
     run_state : RunState
         Current run state.
+    batch_state : BatchState
+        Current batch state.
     dataset : dict[str, jax.Array]
         Dataset for evaluation.
     n_iterations : int
@@ -190,15 +214,15 @@ def run(
 
     Returns
     -------
-    tuple[RunState, HistoryState]
-        Updated RunState and history state after optimization.
+    tuple[RunState, BatchState, HistoryState]
+        Updated RunState, BatchState and history state after optimization.
     """
     # Main optimization loop
-    params, opt_state, batch_state, history_state = (
+    params, best_params, best_loss, opt_state, batch_state, history_state = (
         run_state.update_class.step(
             opt_state=run_state.opt_state,
             params=run_state.params,
-            batch_state=run_state.batch_state,
+            batch_state=batch_state,
             dataset=dataset,
             key=key,
             n_iterations=n_iterations,
@@ -208,28 +232,32 @@ def run(
 
     run_state = RunState(
         params=params,
+        best_params=best_params,
+        best_loss=best_loss,
         opt_state=opt_state,
-        batch_state=batch_state,
         update_class=run_state.update_class,
     )
 
-    return run_state, history_state
+    return run_state, batch_state, history_state
 
 
 def evaluate(
     run_state: RunState,
+    batch_state: BatchState,
     task: Task,
     sampler: Callable,
     n_iterations: int,
     key: PRNGKeyArray,
     verbose: bool,
-) -> tuple[RunState, HistoryState]:
+) -> tuple[RunState, BatchState, HistoryState]:
     """Evaluate optimization by resetting and running to completion.
 
     Parameters
     ----------
     run_state : RunState
         Current run state.
+    batch_state : BatchState
+        Current batch state.
     task : Task
         Task to optimize.
     sampler : Callable
@@ -244,12 +272,15 @@ def evaluate(
     Returns
     -------
     tuple[RunState, HistoryState]
-        Tuple of updated RunState and History state after complete optimization
-        run.
+        Tuple of updated RunState, BatchState and History state after complete
+        optimization run.
     """
-    run_state = reset(run_state, task=task, sampler=sampler, key=key)
+    run_state = reset(
+        run_state, task=task, batch_state=batch_state, sampler=sampler, key=key
+    )
     return run(
         run_state=run_state,
+        batch_state=batch_state,
         dataset=task.loaded_dataset,
         n_iterations=n_iterations,
         key=key,
@@ -259,17 +290,17 @@ def evaluate(
 
 batch_reset = eqx.filter_vmap(
     reset,
-    in_axes=(None, None, None, 0),
+    in_axes=(None, None, None, None, 0),
 )
 
 
 batch_run = eqx.filter_vmap(
     run,
-    in_axes=(0, None, None, None, None),
+    in_axes=(0, None, None, None, None, None),
 )
 
 
 batch_evaluate = eqx.filter_vmap(
     evaluate,
-    in_axes=(None, None, None, None, 0, None),
+    in_axes=(None, None, None, None, None, 0, None),
 )

@@ -67,6 +67,37 @@ class HistoryState(eqx.Module):
     iterations: Int[Array, " n_iterations"]
 
     @classmethod
+    def init(cls, max_iterations: int) -> HistoryState:
+        """Initialize a new HistoryState with NaN values.
+
+        Parameters
+        ----------
+        max_iterations : int
+            Number of iterations to track in history.
+
+        Returns
+        -------
+        HistoryState
+            Initialized history state with NaN values.
+        """
+        nans_output = jnp.full((max_iterations,), jnp.nan, dtype=jnp.float32)
+        zeros_int32 = jnp.zeros((max_iterations,), dtype=jnp.int32)
+        zeros_u32 = jnp.zeros((max_iterations,), dtype=jnp.uint32)
+
+        return cls(
+            output_min=nans_output,
+            output_mean=nans_output,
+            output_std=nans_output,
+            update_step=zeros_int32,
+            fevals=zeros_u32,
+            iterations=zeros_u32,
+        )
+
+    def reset(self) -> HistoryState:
+        """Reset the history state to initial NaN values."""
+        return self.init(max_iterations=self.output_min.shape[0])
+
+    @classmethod
     def from_history(cls, history: OptHistoryType) -> HistoryState:
         """Create HistoryState from optimization history.
 
@@ -90,6 +121,42 @@ class HistoryState(eqx.Module):
             fevals=history.fevals,
             iterations=history.iterations,
         )
+
+    def add(self, other: HistoryState) -> HistoryState:
+        """
+        Append a multi-step HistoryState and drop the same number from the
+        front.
+
+        Parameters
+        ----------
+        other : HistoryState
+            HistoryState to append.
+
+        Returns
+        -------
+        HistoryState
+            New HistoryState with appended values.
+        """
+        K = other.output_min.shape[0]  # number of steps to append
+
+        def push(a, b):
+            N = a.shape[0]
+
+            # 1. slice tail: a[K:]
+            tail = jax.lax.dynamic_slice(a, (K,), (N - K,))
+
+            # 2. create output buffer (length N)
+            out = jnp.empty_like(a)
+
+            # 3. write tail at the front
+            out = jax.lax.dynamic_update_slice(out, tail, (0,))
+
+            # 4. write new entries at the end
+            out = jax.lax.dynamic_update_slice(out, b, (N - K,))
+
+            return out
+
+        return jax.tree.map(push, self, other)
 
     def to_xarray(self, budget_steps: int | None = None) -> xr.Dataset:
         """Convert history state to an xarray Dataset.

@@ -113,6 +113,19 @@ class OptHistory(OptHistoryType):
             iterations=self.iterations,
         )
 
+    def retrieve_best(self) -> tuple[PyTree, Float[Array, ""]]:
+        """Retrieve the best parameters and corresponding loss.
+
+        Returns
+        -------
+        tuple[PyTree, Float[Array, ""]]
+            Best parameters and their associated loss.
+        """
+        best_index = jnp.nanargmin(self.loss)
+        best_params = jax.tree.map(lambda x: x[best_index], self.params)
+        best_loss = self.loss[best_index]
+        return best_params, best_loss
+
 
 class RecentHistory(eqx.Module):
     grads: Float[PyTree, " memory_size dim"]

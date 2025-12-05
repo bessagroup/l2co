@@ -28,9 +28,9 @@ from l2co._src.optimizers import optimizer_mapping
 from l2co._src.optimizerschedule import OptimizationStep
 from l2co._src.preprocessing import preprocessing_factory
 from l2co._src.run_optimization import RolloutWrapper, RunOptimization
-from l2co._src.run_state import RunState
+from l2co._src.run_state import RunState, reset, run
 from l2co._src.task import Task
-from l2co._src.update_class import UpdateClass
+from l2co._src.update_class import UpdateClass, evaluate
 from l2co._src.validation import validation_fn
 
 #                                                          Authorship & Credits
@@ -57,5 +57,8 @@ __all__ = [
     "naming",
     "UpdateClass",
     "RolloutWrapper",
+    "reset",
+    "run",
+    "evaluate",
     "tree_utils",
 ]
