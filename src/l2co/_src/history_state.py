@@ -82,15 +82,14 @@ class HistoryState(eqx.Module):
         """
         nans_output = jnp.full((max_iterations,), jnp.nan, dtype=jnp.float32)
         zeros_int32 = jnp.zeros((max_iterations,), dtype=jnp.int32)
-        zeros_u32 = jnp.zeros((max_iterations,), dtype=jnp.uint32)
 
         return cls(
             output_min=nans_output,
             output_mean=nans_output,
             output_std=nans_output,
             update_step=zeros_int32,
-            fevals=zeros_u32,
-            iterations=zeros_u32,
+            fevals=zeros_int32,
+            iterations=zeros_int32,
         )
 
     def reset(self) -> HistoryState:
