@@ -53,7 +53,7 @@ class RunState(eqx.Module):
     """
 
     params: InputParameters
-    best_params: InputParameters
+    best_params: InputParameters  ## TODO this has shape (dim,) not (1, dim)
     best_loss: Array[Float, ""]
     opt_state: PyTree
     update_class: UpdateClass = eqx.field(static=True)
@@ -126,8 +126,10 @@ class RunState(eqx.Module):
 
 def reset(
     run_state: RunState,
-    task: Task,
     batch_state: BatchState,
+    static: PyTree,
+    dataset: dict[str, jax.Array],
+    loss_fn: Callable,
     sampler: SamplerFunction,
     key: PRNGKeyArray,
 ) -> RunState:
@@ -137,8 +139,12 @@ def reset(
     ----------
     run_state : RunState
         Current run state.
-    task : Task
-        Task to optimize.
+    static : PyTree
+        Model of the task to optimize.
+    dataset : dict[str, jax.Array]
+        Dataset for evaluation.
+    loss_fn : Callable
+        Loss function for evaluation.
     sampler : SamplerFunction
         Sampling function for generating new parameters.
     key : PRNGKeyArray
@@ -149,37 +155,34 @@ def reset(
     RunState
         Reset run state with new samples.
     """
-    dataset = task.loaded_dataset
-    task_params, task_static = eqx.partition(task.model, eqx.is_inexact_array)
-
-    params = sampler(
+    samples = sampler(
         key,
-        task_params,
+        run_state.best_params,
         run_state.update_class.popsize,
     )
 
     loss = evaluate_update_class(
-        eqx.combine(task_static, params),
+        eqx.combine(static, samples),
         batch_state,
         dataset,
-        task.loss_fn,
+        loss_fn,
         key,
     )
 
     # calculate the best params and best loss
     best_idx = jnp.argmin(loss)
-    best_params = jax.tree.map(lambda x: x[best_idx], params)
+    best_params = jax.tree.map(lambda x: x[best_idx], samples)
     best_loss = loss[best_idx]
 
     opt_state = run_state.update_class.init(
-        params=params,
+        params=samples,
         batch_state=batch_state,
         dataset=dataset,
         key=key,
     )
 
     return RunState(
-        params=params,
+        params=samples,
         best_params=best_params,
         best_loss=best_loss,
         opt_state=opt_state,
@@ -244,7 +247,9 @@ def run(
 def evaluate(
     run_state: RunState,
     batch_state: BatchState,
-    task: Task,
+    static: PyTree,
+    dataset: dict[str, jax.Array],
+    loss_fn: Callable,
     sampler: Callable,
     n_iterations: int,
     key: PRNGKeyArray,
@@ -258,8 +263,12 @@ def evaluate(
         Current run state.
     batch_state : BatchState
         Current batch state.
-    task : Task
-        Task to optimize.
+    model : PyTree
+        Model of the task to optimize.
+    dataset : dict[str, jax.Array]
+        Dataset for evaluation.
+    loss_fn : Callable
+        Loss function for evaluation.
     sampler : Callable
         Sampling function for generating new parameters.
     n_iterations : int
@@ -276,12 +285,18 @@ def evaluate(
         optimization run.
     """
     run_state = reset(
-        run_state, task=task, batch_state=batch_state, sampler=sampler, key=key
+        run_state=run_state,
+        batch_state=batch_state,
+        static=static,
+        dataset=dataset,
+        loss_fn=loss_fn,
+        sampler=sampler,
+        key=key,
     )
     return run(
         run_state=run_state,
         batch_state=batch_state,
-        dataset=task.loaded_dataset,
+        dataset=dataset,
         n_iterations=n_iterations,
         key=key,
         verbose=verbose,
@@ -290,7 +305,7 @@ def evaluate(
 
 batch_reset = eqx.filter_vmap(
     reset,
-    in_axes=(None, None, None, None, 0),
+    in_axes=(None, None, None, None, None, None, 0),
 )
 
 
@@ -302,5 +317,5 @@ batch_run = eqx.filter_vmap(
 
 batch_evaluate = eqx.filter_vmap(
     evaluate,
-    in_axes=(None, None, None, None, None, 0, None),
+    in_axes=(None, None, None, None, None, None, None, 0, None),
 )

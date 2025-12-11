@@ -48,7 +48,7 @@ import jax
 import jax.random as jr
 from f3dasm import ExperimentSample
 from f3dasm.datageneration import DataGenerator
-from jaxtyping import PRNGKeyArray
+from jaxtyping import PRNGKeyArray, PyTree
 
 from l2co._src.batching import BatchState
 
@@ -76,8 +76,10 @@ logger = logging.getLogger(__name__)
 class RolloutWrapper(eqx.Module):
     run_state: RunState
     batch_state: BatchState
+    static: PyTree
+    dataset: dict[str, jax.Array]
+    loss_fn: Callable
     sampler: Callable
-    task: Task
     verbose: bool
 
     @classmethod
@@ -97,15 +99,22 @@ class RolloutWrapper(eqx.Module):
             key=key,
         )
 
+        dataset = task.loaded_dataset
+
         batch_state = BatchState.init(
-            dataset=task.loaded_dataset,
+            dataset=dataset,
             batch_size=task.batch_size,
             key=key,
         )
+
+        _, static = eqx.partition(task.model, eqx.is_inexact_array)
+
         return cls(
             run_state=run_state,
             batch_state=batch_state,
-            task=task,
+            static=static,
+            dataset=dataset,
+            loss_fn=task.loss_fn,
             sampler=sampler,
             verbose=verbose,
         )
@@ -120,7 +129,9 @@ class RolloutWrapper(eqx.Module):
         return batch_evaluate(
             self.run_state,
             self.batch_state,
-            self.task,
+            self.static,
+            self.dataset,
+            self.loss_fn,
             self.sampler,
             n_iterations,
             jr.split(key, n_realizations),
