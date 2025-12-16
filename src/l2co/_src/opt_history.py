@@ -12,12 +12,10 @@ import equinox as eqx
 # Third-party
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Float, Int, PRNGKeyArray, PyTree
+from jaxtyping import Array, Float, Int, PyTree
 
 # Local
-from .task import Task
 from .typing import OptHistoryType
-from .update_state import UpdateState
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -41,20 +39,20 @@ class OptHistory(OptHistoryType):
         Parameter values for each population member.
     grads : Float[PyTree, " popsize dim"]
         Gradient values for each population member.
-    update_step : Int[Array, " popsize"]
-        Update step number for each population member.
-    fevals : Int[Array, " popsize"]
+    update_step : Int[Array, ""]
+        Update step hash number for each population member.
+    fevals : Int[Array, ""]
         Number of function evaluations for each population member.
-    iterations : Int[Array, " popsize"]
+    iterations : Int[Array, ""]
         Iteration count for each population member.
     """
 
     loss: Float[Array, " popsize"]
     params: Float[PyTree, " popsize dim"]
     grads: Float[PyTree, " popsize dim"]
-    update_step: Int[Array, " popsize"]
-    fevals: Int[Array, " popsize"]
-    iterations: Int[Array, " popsize"]
+    update_step: Int[Array, ""]
+    fevals: Int[Array, ""]
+    iterations: Int[Array, ""]
 
     @classmethod
     def init(cls, params: PyTree, popsize: int, last_step: int) -> OptHistory:
@@ -77,9 +75,9 @@ class OptHistory(OptHistoryType):
         loss = jnp.full((popsize,), jnp.nan)
         params = jax.tree.map(lambda p: jnp.full_like(p, jnp.nan), params)
         grads = jax.tree.map(lambda p: jnp.full_like(p, jnp.nan), params)
-        update_step = jnp.full((popsize,), last_step)
-        fevals = jnp.zeros((popsize,), dtype=jnp.int32)
-        iterations = jnp.zeros((popsize,), dtype=jnp.int32)
+        update_step = jnp.array(last_step, dtype=jnp.int32)
+        fevals = jnp.array(0, dtype=jnp.int32)
+        iterations = jnp.array(0, dtype=jnp.int32)
 
         return cls(
             loss=loss,
@@ -90,58 +88,73 @@ class OptHistory(OptHistoryType):
             iterations=iterations,
         )
 
-    @classmethod
-    @eqx.filter_jit
-    def from_init_sample(
-        cls, update_state: UpdateState, task: Task, key: PRNGKeyArray
-    ):
-        """Create optimization history from initial sample evaluation.
+    def flatten(self) -> OptHistory:
+        loss = jax.tree.map(
+            lambda x: x.reshape((x.shape[0] * x.shape[1],) + x.shape[2:]),
+            self.loss,
+        )
 
-        Parameters
-        ----------
-        update_state : UpdateState
-            Current update state containing initial parameters.
-        task : Task
-            Task to evaluate against.
-        key : PRNGKeyArray
-            PRNG key for random operations.
+        params = jax.tree.map(
+            lambda x: x.reshape((x.shape[0] * x.shape[1],) + x.shape[2:]),
+            self.params,
+        )
+
+        grads = jax.tree.map(
+            lambda x: x.reshape((x.shape[0] * x.shape[1],) + x.shape[2:]),
+            self.grads,
+        )
+
+        return OptHistory(
+            loss=loss,
+            params=params,
+            grads=grads,
+            update_step=self.update_step,
+            fevals=self.fevals,
+            iterations=self.iterations,
+        )
+
+    def retrieve_best(self) -> tuple[PyTree, Float[Array, ""]]:
+        """Retrieve the best parameters and corresponding loss.
 
         Returns
         -------
-        OptHistory
-            Optimization history initialized with evaluation results.
+        tuple[PyTree, Float[Array, ""]]
+            Best parameters and their associated loss.
         """
-        # Evaluate the initial parameters
-        init_params = jax.tree.map(lambda x: x[-1], update_state.last_params)
-        init_loss, init_grads = jax.tree.map(
-            lambda x: x[-1], update_state.evaluate_with_grads(task, key)
+        best_index = jnp.nanargmin(self.loss)
+        best_params = jax.tree.map(lambda x: x[best_index], self.params)
+        best_loss = self.loss[best_index]
+        return best_params, best_loss
+
+
+class RecentHistory(eqx.Module):
+    grads: Float[PyTree, " memory_size dim"]
+    loss: Float[Array, " memory_size"]
+
+    @classmethod
+    def init(cls, params: PyTree, memory_size: int) -> RecentHistory:
+        """Initialize recent history with NaN values.
+
+        Parameters
+        ----------
+        params : PyTree
+            Parameter tree structure.
+        memory_size : int
+            Size of the recent history memory.
+
+        Returns
+        -------
+        RecentHistory
+            Initialized recent history.
+        """
+        loss = jnp.full((memory_size,), jnp.nan)
+        grads = jax.tree.map(
+            lambda p: jnp.full((memory_size,) + p.shape, jnp.nan), params
         )
 
-        loss = jax.tree.map(lambda x: jnp.expand_dims(x, (0, 1)), init_loss)
-        params = jax.tree.map(
-            lambda x: jnp.expand_dims(x, (0, 1)), init_params
-        )
-        grads = jax.tree.map(lambda x: jnp.expand_dims(x, (0, 1)), init_grads)
-        update_step = jax.tree.map(
-            lambda x: jnp.expand_dims(x, (0, 1)), update_state.last_step
-        )
-        fevals = jax.tree.map(
-            lambda x: jnp.expand_dims(x, (0, 1)), jnp.array(0)
-        )
-        iterations = jax.tree.map(
-            lambda x: jnp.expand_dims(x, (0, 1)), jnp.array(0)
-        )
+        return cls(grads=grads, loss=loss)
 
-        return cls(
-            loss=loss,
-            params=params,
-            grads=grads,
-            update_step=update_step,
-            fevals=fevals,
-            iterations=iterations,
-        )
-
-    def update(self, history: OptHistory) -> OptHistory:
+    def update(self, history: OptHistory) -> RecentHistory:
         """Update the recent history with the current history.
 
         Maintains a rolling window by removing the oldest entry and appending
@@ -154,36 +167,18 @@ class OptHistory(OptHistoryType):
 
         Returns
         -------
-        OptHistory
-            Updated optimization history.
+        RecentHistory
+            Updated recent history.
         """
-
-        loss = jnp.concatenate([self.loss[1:], history.loss[None]], axis=0)
-        params = jax.tree.map(
-            lambda p, new: jnp.concatenate([p[1:], new[None]], axis=0),
-            self.params,
-            history.params,
-        )
+        window_size = self.loss.shape[0]
+        loss = jnp.concatenate([self.loss[1:], history.loss], axis=0)[
+            -window_size:
+        ]
         grads = jax.tree.map(
-            lambda g, new: jnp.concatenate([g[1:], new[None]], axis=0),
+            lambda g, new: jnp.concatenate([g[1:], new[None]], axis=0)[
+                -window_size:
+            ],
             self.grads,
             history.grads,
         )
-        update_step = jnp.concatenate(
-            [self.update_step[1:], history.update_step[None]], axis=0
-        )
-        fevals = jnp.concatenate(
-            [self.fevals[1:], history.fevals[None]], axis=0
-        )
-
-        iterations = jnp.concatenate(
-            [self.iterations[1:], history.iterations[None]], axis=0
-        )
-        return OptHistory(
-            loss=loss,
-            params=params,
-            grads=grads,
-            update_step=update_step,
-            fevals=fevals,
-            iterations=iterations,
-        )
+        return RecentHistory(grads=grads, loss=loss)

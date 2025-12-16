@@ -20,8 +20,6 @@ from evosax.algorithms.base import State as EvoSaxState
 from jaxtyping import Array, Float, Int, PRNGKeyArray, PyTree
 from optax import OptState as OptaxOptState
 
-from .task import Task
-
 #                                                          Authorship & Credits
 # =============================================================================
 __author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
@@ -47,23 +45,18 @@ class OptHistoryType(eqx.Module):
         """Initialize the history."""
         raise NotImplementedError
 
-    @classmethod
     @abstractmethod
-    def from_init_sample(
-        cls, update_state, task: Task, key: PRNGKeyArray
-    ) -> OptHistoryType:
-        """Create history from initial sample."""
-        raise NotImplementedError
-
-    @abstractmethod
-    def update(self, history: OptHistoryType) -> OptHistoryType:
-        """Update the recent history with the current history."""
+    def flatten(self) -> OptHistoryType:
+        """
+        Flatten the first and second dimension of the loss,
+        params and grad.
+        """
         raise NotImplementedError
 
 
 # =============================================================================
 
-InputParameters = PyTree
+InputParameters = Float[PyTree, " popsize dimensionality"]
 OptState = PyTree
 
 StepFunction = Callable[
@@ -78,3 +71,5 @@ InitFunction = Callable[[PyTree], OptaxOptState | EvoSaxState]
 LossFunction = Any
 
 BudgetFn = Callable[[Any], int]
+
+SamplerFunction = Callable[[PRNGKeyArray, PyTree, int], InputParameters]

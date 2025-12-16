@@ -47,7 +47,7 @@ from .naming import (
 )
 from .sampler import grid_sampling
 from .task import Task
-from .update_state import evaluate
+from .update_class import evaluate
 
 #                                                          Authorship & Credits
 # =============================================================================

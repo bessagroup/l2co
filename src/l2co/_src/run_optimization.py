@@ -48,7 +48,9 @@ import jax
 import jax.random as jr
 from f3dasm import ExperimentSample
 from f3dasm.datageneration import DataGenerator
-from jaxtyping import PRNGKeyArray
+from jaxtyping import PRNGKeyArray, PyTree
+
+from l2co._src.batching import BatchState
 
 # Local
 from l2co._src.history_state import HistoryState
@@ -73,8 +75,11 @@ logger = logging.getLogger(__name__)
 
 class RolloutWrapper(eqx.Module):
     run_state: RunState
+    batch_state: BatchState
+    static: PyTree
+    dataset: dict[str, jax.Array]
+    loss_fn: Callable
     sampler: Callable
-    task: Task
     verbose: bool
 
     @classmethod
@@ -83,7 +88,6 @@ class RolloutWrapper(eqx.Module):
         optimizer: OptimizationStep,
         task: Task,
         sampler: Callable,
-        n_iterations: int,
         key: PRNGKeyArray,
         bounded: tuple[float, float] = (None, None),
         verbose: float = False,
@@ -92,22 +96,44 @@ class RolloutWrapper(eqx.Module):
             optimizer=optimizer,
             task=task,
             bounded=bounded,
-            max_iterations=n_iterations,
             key=key,
         )
-        return cls(
-            run_state=run_state, task=task, sampler=sampler, verbose=verbose
+
+        dataset = task.loaded_dataset
+
+        batch_state = BatchState.init(
+            dataset=dataset,
+            batch_size=task.batch_size,
+            key=key,
         )
 
+        _, static = eqx.partition(task.model, eqx.is_inexact_array)
+
+        return cls(
+            run_state=run_state,
+            batch_state=batch_state,
+            static=static,
+            dataset=dataset,
+            loss_fn=task.loss_fn,
+            sampler=sampler,
+            verbose=verbose,
+        )
+
+    @eqx.filter_jit
     def batch_evaluate(
         self,
         key: PRNGKeyArray,
+        n_iterations: int,
         n_realizations: int = 1,
-    ) -> HistoryState:
+    ) -> tuple[RunState, BatchState, HistoryState]:
         return batch_evaluate(
             self.run_state,
-            self.task,
+            self.batch_state,
+            self.static,
+            self.dataset,
+            self.loss_fn,
             self.sampler,
+            n_iterations,
             jr.split(key, n_realizations),
             self.verbose,
         )
@@ -271,24 +297,22 @@ class RunOptimization(DataGenerator):
 
         n_iterations = self.budget_fn(task=task)
 
-        rollout_wrapper = RolloutWrapper.init(
+        rollout_wrapper: RolloutWrapper = RolloutWrapper.init(
             optimizer=optimizer,
             task=task,
             sampler=self.sampler,
-            n_iterations=n_iterations,
             key=key,
             bounded=self.bounded,
             verbose=self.verbose,
         )
 
-        history_state = rollout_wrapper.batch_evaluate(
+        _, _, history_state = rollout_wrapper.batch_evaluate(
             key=key,
+            n_iterations=n_iterations,
             n_realizations=self.n_realizations,
         )
 
-        data_xarr = history_state.to_xarray_realizations(
-            include_input_mean=self.save_input_parameters
-        )
+        data_xarr = history_state.to_xarray_realizations()
 
         experiment_sample.store(
             name="loss history", object=data_xarr, to_disk=True

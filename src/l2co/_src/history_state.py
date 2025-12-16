@@ -14,13 +14,11 @@ import jax
 import jax.numpy as jnp
 import numpy as onp
 import xarray as xr
-from jaxtyping import Array, Float, Int, PyTree
+from jaxtyping import Array, Float, Int
 
 from .naming import (
     BUDGET,
     FEVALS,
-    INPUT_DIM,
-    INPUT_MEAN,
     ITERATIONS,
     OUTPUT_DIM,
     OUTPUT_MEAN,
@@ -30,7 +28,6 @@ from .naming import (
     UPDATE_STEP,
 )
 from .typing import OptHistoryType
-from .update_state import UpdateState
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -48,8 +45,6 @@ class HistoryState(eqx.Module):
 
     Attributes
     ----------
-    input_mean : Float[Array, "n_iterations dim"]
-        Mean of input parameters at each iteration.
     output_min : Float[Array, " n_iterations"]
         Minimum output value at each iteration.
     output_mean : Float[Array, " n_iterations"]
@@ -64,7 +59,6 @@ class HistoryState(eqx.Module):
         Iteration counter.
     """
 
-    input_mean: Float[Array, "n_iterations dim"]
     output_min: Float[Array, " n_iterations"]
     output_mean: Float[Array, " n_iterations"]
     output_std: Float[Array, " n_iterations"]
@@ -73,140 +67,101 @@ class HistoryState(eqx.Module):
     iterations: Int[Array, " n_iterations"]
 
     @classmethod
-    def init(cls, n_iterations: int, params: PyTree) -> HistoryState:
+    def init(cls, max_iterations: int) -> HistoryState:
         """Initialize a new HistoryState with NaN values.
 
         Parameters
         ----------
-        n_iterations : int
+        max_iterations : int
             Number of iterations to track in history.
-        params : PyTree
-            Initial parameter tree structure.
 
         Returns
         -------
         HistoryState
             Initialized history state with NaN values.
         """
-        nans_input = jax.tree.map(
-            lambda p: jnp.full(
-                (n_iterations, *p.shape), jnp.nan, dtype=jnp.float32
-            ),
-            params,
-        )
-        nans_output = jnp.full((n_iterations,), jnp.nan, dtype=jnp.float32)
-        zeros_int32 = jnp.zeros((n_iterations,), dtype=jnp.int32)
-        zeros_u32 = jnp.zeros((n_iterations,), dtype=jnp.uint32)
+        nans_output = jnp.full((max_iterations,), jnp.nan, dtype=jnp.float32)
+        zeros_int32 = jnp.zeros((max_iterations,), dtype=jnp.int32)
 
         return cls(
-            input_mean=nans_input,
             output_min=nans_output,
             output_mean=nans_output,
             output_std=nans_output,
             update_step=zeros_int32,
-            fevals=zeros_u32,
-            iterations=zeros_u32,
+            fevals=zeros_int32,
+            iterations=zeros_int32,
         )
 
-    @eqx.filter_jit
-    def reset(self, update_state: UpdateState) -> HistoryState:
-        """Reset history state with the last values from update_state.
+    def reset(self) -> HistoryState:
+        """Reset the history state to initial NaN values."""
+        return self.init(max_iterations=self.output_min.shape[0])
 
-        Parameters
-        ----------
-        update_state : UpdateState
-            Current update state containing the last parameters and losses.
-
-        Returns
-        -------
-        HistoryState
-            Reset history state with only the last value populated.
-        """
-        nans_input = jax.tree.map(
-            lambda p: jnp.full_like(p, jnp.nan, dtype=jnp.float32),
-            self.input_mean,
-        )
-
-        nans_output = jnp.full_like(
-            self.output_min, jnp.nan, dtype=jnp.float32
-        )
-        zeros_int32 = jnp.zeros(self.update_step.shape, dtype=jnp.int32)
-        zeros_u32 = jnp.zeros(self.fevals.shape, dtype=jnp.uint32)
-
-        mean_params = jax.tree.map(
-            lambda x: jnp.mean(x, axis=0), update_state.last_params
-        )
-        input_mean = jax.tree.map(
-            lambda x, y: x.at[-1].set(y), nans_input, mean_params
-        )
-
-        output_min = nans_output.at[-1].set(update_state.last_loss.min())
-        output_mean = nans_output.at[-1].set(update_state.last_loss.mean())
-        output_std = nans_output.at[-1].set(update_state.last_loss.std())
-
-        update_step = zeros_int32.at[-1].set(update_state.last_step)
-        fevals = zeros_u32.at[-1].set(1)
-        iterations = zeros_u32.at[-1].set(1)
-
-        return HistoryState(
-            input_mean=input_mean,
-            output_min=output_min,
-            output_mean=output_mean,
-            output_std=output_std,
-            update_step=update_step,
-            fevals=fevals,
-            iterations=iterations,
-        )
-
-    @eqx.filter_jit
-    def add(self, history: OptHistoryType) -> HistoryState:
-        """Add new optimization history to the existing history.
-
-        Computes statistics across the population dimension and appends
-        them to the history, maintaining a rolling window of n_iterations.
+    @classmethod
+    def from_history(cls, history: OptHistoryType) -> HistoryState:
+        """Create HistoryState from optimization history.
 
         Parameters
         ----------
         history : OptHistoryType
-            New optimization history to add.
+            Optimization history containing parameters and losses.
 
         Returns
         -------
         HistoryState
-            Updated history state with new values appended.
+            History state populated with statistics from optimization history.
         """
+        # History has shape (n_iter, pop)
         # Compute statistics across P dimension for each time step
-        i_mean = jax.tree.map(lambda x: jnp.mean(x, axis=1), history.params)
-        o_min = jnp.min(history.loss, axis=1)  # shape (T,)
-        o_mean = jnp.mean(history.loss, axis=1)  # shape (T,)
-        o_std = jnp.std(history.loss, axis=1)  # shape (T,)
-        u_step = history.update_step[:, 0].astype(jnp.int32)
-        u_feval = history.fevals[:, 0].astype(jnp.uint32)
-        u_iterations = history.iterations[:, 0].astype(jnp.uint32)
-
-        def roll_concat(old: jax.Array, new: jax.Array) -> jax.Array:
-            combined = jnp.concatenate([old, new], axis=0)
-            return combined[-old.shape[0] :]  # keep last n_iterations
-
-        return HistoryState(
-            input_mean=jax.tree.map(roll_concat, self.input_mean, i_mean),
-            output_min=roll_concat(self.output_min, o_min),
-            output_mean=roll_concat(self.output_mean, o_mean),
-            output_std=roll_concat(self.output_std, o_std),
-            update_step=roll_concat(self.update_step, u_step),
-            fevals=roll_concat(self.fevals, u_feval),
-            iterations=roll_concat(self.iterations, u_iterations),
+        return cls(
+            output_min=jnp.min(history.loss, axis=1),
+            output_mean=jnp.mean(history.loss, axis=1),
+            output_std=jnp.std(history.loss, axis=1),
+            update_step=history.update_step,
+            fevals=history.fevals,
+            iterations=history.iterations,
         )
 
-    def to_xarray(
-        self, include_input_mean: bool = True, budget_steps: int | None = None
-    ) -> xr.Dataset:
+    def add(self, other: HistoryState) -> HistoryState:
+        """
+        Append a multi-step HistoryState and drop the same number from the
+        front.
+
+        Parameters
+        ----------
+        other : HistoryState
+            HistoryState to append.
+
+        Returns
+        -------
+        HistoryState
+            New HistoryState with appended values.
+        """
+        K = other.output_min.shape[0]  # number of steps to append
+
+        def push(a, b):
+            N = a.shape[0]
+
+            # 1. slice tail: a[K:]
+            tail = jax.lax.dynamic_slice(a, (K,), (N - K,))
+
+            # 2. create output buffer (length N)
+            out = jnp.empty_like(a)
+
+            # 3. write tail at the front
+            out = jax.lax.dynamic_update_slice(out, tail, (0,))
+
+            # 4. write new entries at the end
+            out = jax.lax.dynamic_update_slice(out, b, (N - K,))
+
+            return out
+
+        return jax.tree.map(push, self, other)
+
+    def to_xarray(self, budget_steps: int | None = None) -> xr.Dataset:
         """Convert history state to an xarray Dataset.
 
         Parameters
         ----------
-        include_input_mean : bool, optional
-            Whether to include input_mean in the dataset, by default True.
         budget_steps : int | None, optional
             Number of steps for budget interpolation. If None, no interpolation
             is performed, by default None.
@@ -218,11 +173,6 @@ class HistoryState(eqx.Module):
         """
         fevals_cumsum = jnp.cumsum(self.fevals)
         iterations_cumsum = jnp.cumsum(self.iterations)
-
-        if include_input_mean:
-            input_mean = xr.DataArray(
-                self.input_mean, dims=[BUDGET, INPUT_DIM]
-            )
 
         output_min = xr.DataArray(self.output_min, dims=[BUDGET]).expand_dims(
             {OUTPUT_DIM: ["y"]}
@@ -256,8 +206,6 @@ class HistoryState(eqx.Module):
             FEVALS: fevals,
             ITERATIONS: iterations,
         }
-        if include_input_mean:
-            data_vars[INPUT_MEAN] = input_mean
 
         ds = xr.Dataset(data_vars)
 
@@ -287,14 +235,12 @@ class HistoryState(eqx.Module):
         return ds
 
     def to_xarray_realizations(
-        self, include_input_mean: bool = True, budget_steps: int | None = None
+        self, budget_steps: int | None = None
     ) -> xr.Dataset:
         """Convert history state to xarray Dataset with realization dimension.
 
         Parameters
         ----------
-        include_input_mean : bool, optional
-            Whether to include input_mean in the dataset, by default True.
         budget_steps : int | None, optional
             Number of steps for budget interpolation. If None, no interpolation
             is performed, by default None.
@@ -314,7 +260,6 @@ class HistoryState(eqx.Module):
             )
             arrs.append(
                 new_history.to_xarray(
-                    include_input_mean=include_input_mean,
                     budget_steps=budget_steps,
                 )
             )

@@ -41,19 +41,17 @@ def run(
         optimizer=optimizer,
         task=task,
         sampler=sampler,
-        n_iterations=n_iterations,
         key=key,
         bounded=bounded,
     )
 
-    history_state = rollout_wrapper.batch_evaluate(
-        n_realizations=n_realizations,
+    _, _, history_state = rollout_wrapper.batch_evaluate(
         key=key,
+        n_iterations=n_iterations,
+        n_realizations=n_realizations,
     )
 
-    data_xarr = history_state.to_xarray_realizations(
-        include_input_mean=include_input_mean
-    )
+    data_xarr = history_state.to_xarray_realizations()
 
 
 # =============================================================================

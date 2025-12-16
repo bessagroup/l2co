@@ -22,4 +22,5 @@ OPTIMIZATION_STEPS = [
             "loss_tol": 1e-6,
         },
     ),
+    OptimizationStep(optimizer="pso"),
 ]

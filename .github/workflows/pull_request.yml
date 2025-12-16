@@ -2,6 +2,8 @@ name: Pull request to main branch
 
 on:
   pull_request:
+    branches:
+      - main
 
 jobs:
   run-tests:

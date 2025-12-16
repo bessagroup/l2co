@@ -16,15 +16,14 @@ import jax
 import jax.numpy as jnp
 from jax.tree_util import Partial
 from jax_tqdm import scan_tqdm
-from jaxtyping import PRNGKeyArray, PyTree
+from jaxtyping import Array, Float, PRNGKeyArray, PyTree
 from tqdm import tqdm
 
 # Local
 from .batching import BatchState
 from .history_state import HistoryState
-from .opt_history import OptHistory
-from .typing import InitFunction, StepFunction, StopFunction
-from .update_state import UpdateState
+from .opt_history import OptHistory, RecentHistory
+from .typing import InitFunction, InputParameters, StepFunction, StopFunction
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -92,14 +91,23 @@ class UpdateClass(eqx.Module):
         self.hash = hash
         self.stop_fn = stop_fn or (lambda *_, **__: False)
 
-    @eqx.filter_jit
-    def init(self, update_state: UpdateState, key: PRNGKeyArray) -> PyTree:
+    def init(
+        self,
+        params: InputParameters,
+        batch_state: BatchState,
+        dataset: dict[str, jax.Array],
+        key: PRNGKeyArray,
+    ) -> PyTree:
         """Initialize the optimizer state.
 
         Parameters
         ----------
-        update_state : UpdateState
-            Current update state.
+        params : InputParameters
+            Current input parameters.
+        batch_state : BatchState
+            Current batch state.
+        dataset : dict[str, jax.Array]
+            Dataset for evaluation.
         key : PRNGKeyArray
             PRNG key for random operations.
 
@@ -108,29 +116,35 @@ class UpdateClass(eqx.Module):
         PyTree
             Initialized optimizer state.
         """
-        return self.init_fn(update_state, key)
+        batch_idxs, _ = batch_state.next(key)
+        sample = jax.tree.map(lambda x: x[batch_idxs], dataset)
+        return self.init_fn(params, key, **sample)
 
     def step(
         self,
         opt_state: PyTree,
-        update_state: UpdateState,
-        history_state: HistoryState,
+        params: InputParameters,
         batch_state: BatchState,
         dataset: dict[str, jax.Array],
         key: PRNGKeyArray,
         n_iterations: int,
         verbose: bool,
-    ) -> tuple[UpdateState, PyTree, BatchState, HistoryState]:
+    ) -> tuple[
+        InputParameters,
+        InputParameters,
+        Array[Float, ""],
+        PyTree,
+        BatchState,
+        HistoryState,
+    ]:
         """Perform optimization steps for specified iterations.
 
         Parameters
         ----------
         opt_state : PyTree
             Current optimizer state.
-        update_state : UpdateState
-            Current update state.
-        history_state : HistoryState
-            Current history state.
+        params : InputParameters
+            Current input parameters.
         batch_state : BatchState
             Current batch state.
         dataset : dict[str, jax.Array]
@@ -144,27 +158,14 @@ class UpdateClass(eqx.Module):
 
         Returns
         -------
-        tuple[UpdateState, PyTree, BatchState, HistoryState]
+        tuple[InputParameters, InputParameters, Array[Float, ""], PyTree,
+        BatchState, HistoryState]
             Updated states after optimization steps.
         """
-        # Retrieve the last parameters from the update state
-        params = jax.tree.map(
-            lambda x: x[-self.popsize :], update_state.last_params
-        )
-
-        window_size = 20
-
         # Initialize moving history buffer with NaNs
-        recent_history_init = OptHistory.init(
+        recent_history_init = RecentHistory.init(
             params=params,
-            popsize=self.popsize,
-            last_step=update_state.last_step,
-        )
-
-        # Initialize the recent history
-        recent_history_init = jax.tree.map(
-            lambda x: jnp.tile(x[None], (window_size, *([1] * x.ndim))),
-            recent_history_init,
+            memory_size=20,
         )
 
         # Initialize done flag
@@ -185,50 +186,47 @@ class UpdateClass(eqx.Module):
             verbose=verbose,
         )
 
+        best_params, best_loss = history.flatten().retrieve_best()
+
         # Remove first element for dim=0 history
-        history: OptHistory = jax.tree.map(lambda x: x[1:, :], history)
+        ## TODO: If I don't do this, the history has the first element
+        # Is this a problem? Because for switching it is useful to have it for
+        # the first choice...
+        history: OptHistory = jax.tree.map(lambda x: x[1:], history)
 
-        # Flatten the first and second dimension of each key in history
-        history_flattened = jax.tree.map(
-            lambda x: x.reshape((x.shape[0] * x.shape[1],) + x.shape[2:]),
-            history,
+        params = jax.tree.map(lambda x: x[-1], history.params)
+
+        # Create history state
+        new_history_state = HistoryState.from_history(history)
+
+        return (
+            params,
+            best_params,
+            best_loss,
+            opt_state,
+            batch_state,
+            new_history_state,
         )
-
-        # Create final update state from history
-        final_update_state = UpdateState.from_history(
-            history=history_flattened,
-            memory_size=update_state.memory_size,
-            last_step=self.hash,
-        )
-
-        # Merge with previous update state
-        update_state = update_state.merge(final_update_state)
-
-        # Update history state
-        new_history_state = history_state.add(history)
-
-        return update_state, opt_state, batch_state, new_history_state
 
     def do_step(
         self,
         carry: tuple[
-            PyTree,
+            InputParameters,
             tuple[PyTree],
             PRNGKeyArray,
             BatchState,
             jax.Array,
-            OptHistory,
+            RecentHistory,
         ],
-        # step_fn: StepFunction,
         dataset: dict[str, jax.Array],
     ) -> tuple[
         tuple[
-            PyTree,
+            InputParameters,
             tuple[PyTree],
             PRNGKeyArray,
             BatchState,
             jax.Array,
-            OptHistory,
+            RecentHistory,
         ],
         OptHistory,
     ]:
@@ -266,14 +264,24 @@ class UpdateClass(eqx.Module):
     def skip_step(
         self,
         carry: tuple[
-            PyTree,
+            InputParameters,
             tuple[PyTree],
             PRNGKeyArray,
             BatchState,
             jax.Array,
-            OptHistory,
+            RecentHistory,
         ],
-    ):
+    ) -> tuple[
+        tuple[
+            InputParameters,
+            tuple[PyTree],
+            PRNGKeyArray,
+            BatchState,
+            jax.Array,
+            RecentHistory,
+        ],
+        OptHistory,
+    ]:
         """Skip an optimization step when stopping criteria is met.
 
         Parameters
@@ -288,9 +296,7 @@ class UpdateClass(eqx.Module):
             Unchanged carry and dummy history.
         """
         (params, opt_state, key, batch_state, done, recent_history) = carry
-        dummy_history = recent_history.init(
-            params, self.popsize, recent_history.update_step[-1]
-        )
+        dummy_history = OptHistory.init(params, self.popsize, self.hash)
 
         return (
             params,
@@ -304,23 +310,23 @@ class UpdateClass(eqx.Module):
     def scan_step(
         self,
         carry: tuple[
-            PyTree,
+            InputParameters,
             tuple[PyTree],
             PRNGKeyArray,
             BatchState,
             jax.Array,
-            OptHistory,
+            RecentHistory,
         ],
         xs,
         dataset: dict[str, jax.Array],
     ) -> tuple[
         tuple[
-            PyTree,
+            InputParameters,
             tuple[PyTree],
             PRNGKeyArray,
             BatchState,
             jax.Array,
-            OptHistory,
+            RecentHistory,
         ],
         OptHistory,
     ]:
@@ -360,7 +366,7 @@ class UpdateClass(eqx.Module):
         verbose: bool,
     ) -> tuple[
         tuple[
-            PyTree,
+            InputParameters,
             tuple[PyTree],
             PRNGKeyArray,
             BatchState,
@@ -438,3 +444,43 @@ def for_loop(carry, scan_fn, n_iterations: int):
             history,
         )
     return carry, buffer
+
+
+SAMPLING_STEP = 1
+
+# =============================================================================
+
+
+def _evaluate_one(
+    model: PyTree,
+    batch_state: BatchState,
+    dataset: dict[str, jax.Array],
+    loss_fn: Callable,
+    key: PRNGKeyArray,
+) -> jax.Array:
+    """Evaluate a single model on a batch of data.
+
+    Parameters
+    ----------
+    model : PyTree
+        Model to evaluate.
+    batch_state : BatchState
+        Batch state for data sampling.
+    dataset : dict[str, jax.Array]
+        Full dataset.
+    loss_fn : Callable
+        Loss function.
+    key : PRNGKeyArray
+        PRNG key for random operations.
+
+    Returns
+    -------
+    jax.Array
+        Loss value.
+    """
+    batch_idxs, _ = batch_state.next(key)
+    sample = jax.tree.map(lambda x: x[batch_idxs], dataset)
+    return loss_fn(model, **sample)
+
+
+evaluate = eqx.filter_vmap(_evaluate_one, in_axes=(0, None, None, None, None))
