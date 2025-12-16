@@ -1,0 +1,79 @@
+name: Pull request to develop branch
+
+on:
+    pull_request:
+        branches:
+            - develop
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+        strategy:
+            matrix:
+                version: ["3.11"]
+            fail-fast: false
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v3
+
+            - name: Set up Python ${{ matrix.version }}
+              uses: actions/setup-python@v4
+              with:
+                  python-version: ${{ matrix.version }}
+
+            - name: Install test dependencies
+              run: |
+                  python -m pip install --upgrade pip
+                  python -m pip install '.[tests]'
+
+            - name: Run tests (quick)
+              run: |
+                  pytest -q
+
+    build-docs:
+        runs-on: ubuntu-latest
+        strategy:
+            matrix:
+                version: ["3.11"]
+            fail-fast: false
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v3
+
+            - name: Set up Python ${{ matrix.version }}
+              uses: actions/setup-python@v4
+              with:
+                  python-version: ${{ matrix.version }}
+
+            - name: Install docs dependencies
+              run: |
+                  python -m pip install --upgrade pip
+                  python -m pip install --editable '.[docs]'
+
+            - name: Build documentation
+              run: |
+                  mkdocs build
+
+    check_pre-commit:
+        runs-on: ubuntu-latest
+        strategy:
+            matrix:
+                version: ["3.11"]
+            fail-fast: false
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v3
+
+            - name: Set up Python ${{ matrix.version }}
+              uses: actions/setup-python@v4
+              with:
+                  python-version: ${{ matrix.version }}
+
+            - name: Install pre-commit
+              run: |
+                  python -m pip install --upgrade pip
+                  python -m pip install '.[dev]'
+
+            - name: Run pre-commit checks
+              run: |
+                  pre-commit run --all-files

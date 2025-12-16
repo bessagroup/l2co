@@ -683,7 +683,7 @@ wheels = [
 
 [[package]]
 name = "f3dasm"
-version = "2.2.0"
+version = "2.2.1"
 source = { editable = "../f3dasm" }
 dependencies = [
     { name = "filelock" },
@@ -1217,7 +1217,7 @@ wheels = [
 
 [[package]]
 name = "l2co"
-version = "1.2.2"
+version = "1.2.3"
 source = { editable = "." }
 dependencies = [
     { name = "bbob-jax" },
