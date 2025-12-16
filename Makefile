@@ -6,9 +6,7 @@ help:
 	@echo "  build        - Build the package distribution"
 	@echo "  test         - Run tests with pytest"
 	@echo "  lint         - Lint code with ruff"
-	@echo "  format       - Format code with ruff"
 	@echo "  docs         - Build documentation with mkdocs"
-	@echo "  docs-serve   - Serve documentation locally"
 
 # Build targets
 build:
@@ -25,6 +23,3 @@ lint:
 # Documentation targets
 docs:
 	mkdocs build
-
-docs-serve:
-	mkdocs serve
