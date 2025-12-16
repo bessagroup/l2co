@@ -23,6 +23,7 @@ from l2co._src import tree_utils
 from l2co._src.batching import BatchState
 from l2co._src.data_loader import DataLoader
 from l2co._src.history_state import HistoryState
+from l2co._src.l2co_model2 import L2COModel
 from l2co._src.opt_history import OptHistory
 from l2co._src.optimizers import optimizer_mapping
 from l2co._src.optimizerschedule import OptimizationStep
@@ -30,6 +31,7 @@ from l2co._src.preprocessing import preprocessing_factory
 from l2co._src.run_optimization import RolloutWrapper, RunOptimization
 from l2co._src.run_state import RunState, reset, run
 from l2co._src.task import Task
+from l2co._src.task_features import FeatureProcessor, MixedEmbedding
 from l2co._src.update_class import UpdateClass, evaluate
 from l2co._src.validation import validation_fn
 
@@ -47,6 +49,8 @@ __all__ = [
     "RunState",
     "RunOptimization",
     "Task",
+    "FeatureProcessor",
+    "MixedEmbedding",
     "BatchState",
     "OptHistory",
     "optimizer_mapping",
@@ -60,5 +64,6 @@ __all__ = [
     "reset",
     "run",
     "evaluate",
+    "L2COModel",
     "tree_utils",
 ]

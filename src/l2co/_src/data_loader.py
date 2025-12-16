@@ -29,36 +29,28 @@ from time import perf_counter
 from typing import Literal
 
 # Third-party
-import jax
-import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import xarray as xr
-from f3dasm import ExperimentData
 from scipy.linalg import svd
 from sklearn.model_selection import train_test_split
 
 # Local
 from .naming import (
-    BATCH,
     BUDGET,
     FEATURE,
     FEVALS,
     ITERATIONS,
-    OPT_CHOICE,
-    OPT_HISTORY,
     OUTPUT_DIM,
     OUTPUT_MIN,
-    PERFORMANCE,
     PROBLEM,
     REALIZATION,
     SCHEDULE,
-    STAIRCASE,
     TASK_ID,
     TASK_LABELS,
-    TRAJECTORY,
     UPDATE_STEP,
 )
+from .optimizationdynamics import OptimizationDynamics
 from .performance import (
     ertd,
     output_cummin,
@@ -67,7 +59,6 @@ from .performance import (
     scale_by_problem_and_schedule,
     scale_by_task,
 )
-from .task import Task
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -244,7 +235,7 @@ class DataLoader:
         """
         x = self.task_labels.groupby(TASK_ID).first().sortby(TASK_ID)
         y = self.to_labels(t=t, cost_metric=cost_metric).sortby(TASK_ID)
-        return x, y
+        return OptimizationDynamics(x=x, y=y)
 
     def to_labels(
         self, t: int, cost_metric: Literal["fevals", "iterations"] = "fevals"
@@ -1037,154 +1028,6 @@ def calculate_best_solver(
 
 #                                                          OptimizationDynamics
 # =============================================================================
-
-
-class OptimizationDynamics:
-    """
-    Learning dataset for optimization dynamics, inherited from PyTorch Dataset.
-
-    Parameters
-    ----------
-    data : xarray.Dataset
-        Dataset containing optimization dynamics.
-    """
-
-    def __init__(self, data: xr.Dataset):
-        """
-        Initialize OptimizationDynamics with data.
-
-        Parameters
-        ----------
-        data : xarray.Dataset
-            Dataset containing optimization dynamics.
-        """
-        self.data = data
-
-    @classmethod
-    def from_data(
-        cls: type[OptimizationDynamics],
-        data: xr.DataTree,
-        previous_step: str | None = None,
-    ) -> OptimizationDynamics:
-        """
-        Create OptimizationDynamics from a DataTree.
-
-        Parameters
-        ----------
-        data : xr.DataTree
-            DataTree containing optimization dynamics.
-        previous_step : str or None, optional
-            Previous step identifier, by default None.
-
-        Returns
-        -------
-        OptimizationDynamics
-            Instantiated OptimizationDynamics object.
-        """
-        ds_list = []
-        for k in data.keys():
-            ds = data[k].to_dataset()
-
-            # Impute missing values
-            ds[PERFORMANCE] = xr.apply_ufunc(
-                impute_missing_values_svd,
-                ds[PERFORMANCE],
-                input_core_dims=[[PROBLEM, OPT_CHOICE]],
-                output_core_dims=[[PROBLEM, OPT_CHOICE]],
-                vectorize=True,
-            )
-
-            # Stack the dataset along a new 'batch' dimension
-            ds_list.append(
-                ds.stack(
-                    {BATCH: (PROBLEM, OPT_HISTORY, OUTPUT_DIM)},
-                    create_index=False,
-                )
-            )
-
-        # Concatenate all datasets along the 'batch' dimension
-        new_ds: xr.Dataset = xr.concat(ds_list, dim=BATCH)
-
-        nan_flags = [
-            var.isnull().any(dim=set(var.dims) - {BATCH})
-            for var in new_ds.data_vars.values()
-        ]
-
-        has_nan_anywhere = xr.concat(nan_flags, dim="_vars").any(dim="_vars")
-        new_ds = new_ds.sel({BATCH: ~has_nan_anywhere}).transpose()
-
-        new_ds[UPDATE_STEP] = encode(new_ds[UPDATE_STEP])
-
-        return cls(data=new_ds)
-
-    @property
-    def X_features(self) -> pd.DataFrame:
-        """
-        Returns the features as a pandas DataFrame.
-
-        Returns
-        -------
-        pd.DataFrame
-            Features DataFrame.
-        """
-        return (
-            self.data[TASK_LABELS].to_pandas().infer_objects().convert_dtypes()
-        )
-
-    @property
-    def X_trajectory(self) -> jax.Array:
-        """
-        Returns the optimization trajectory as a JAX array.
-
-        Returns
-        -------
-        jax.Array
-            Trajectory array.
-        """
-        return jnp.stack(
-            (
-                self.data[TRAJECTORY].values,
-                self.data[STAIRCASE].values,
-                self.data[UPDATE_STEP].values,
-            ),
-            axis=-1,
-        )
-
-    @property
-    def Y(self) -> jax.Array:
-        """
-        Returns the performance values as a JAX array.
-
-        Returns
-        -------
-        jax.Array
-            Performance array.
-        """
-        return jnp.array(self.data[PERFORMANCE])
-
-    @classmethod
-    def from_task_and_run(
-        cls: type[OptimizationDynamics],
-        task: Task,
-        data: ExperimentData | None = None,
-    ) -> OptimizationDynamics:
-        """
-        Create OptimizationDynamics from a Task and ExperimentData.
-
-        Parameters
-        ----------
-        task : Task
-            Task object.
-        data : ExperimentData or None, optional
-            Experiment data, by default None.
-
-        Returns
-        -------
-        OptimizationDynamics
-            Instantiated OptimizationDynamics object.
-        """
-
-
 def load_dynamics(
     path: str | Path | xr.DataTree,
 ) -> dict[str, OptimizationDynamics]:
