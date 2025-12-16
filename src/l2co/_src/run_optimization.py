@@ -312,9 +312,7 @@ class RunOptimization(DataGenerator):
             n_realizations=self.n_realizations,
         )
 
-        data_xarr = history_state.to_xarray_realizations(
-            include_input_mean=self.save_input_parameters
-        )
+        data_xarr = history_state.to_xarray_realizations()
 
         experiment_sample.store(
             name="loss history", object=data_xarr, to_disk=True

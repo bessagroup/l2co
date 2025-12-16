@@ -14,8 +14,6 @@
 
 ## States
 
-::: l2co.UpdateState
-
 ::: l2co.HistoryState
 
 ::: l2co.BatchState

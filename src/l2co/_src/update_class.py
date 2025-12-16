@@ -102,14 +102,12 @@ class UpdateClass(eqx.Module):
 
         Parameters
         ----------
-        update_state : UpdateState
-            Current update state.
-        key : PRNGKeyArray
-            PRNG key for random operations.
-        dataset : dict[str, jax.Array]
-            Dataset for evaluation.
+        params : InputParameters
+            Current input parameters.
         batch_state : BatchState
             Current batch state.
+        dataset : dict[str, jax.Array]
+            Dataset for evaluation.
         key : PRNGKeyArray
             PRNG key for random operations.
 
