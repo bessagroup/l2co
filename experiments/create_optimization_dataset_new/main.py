@@ -11,6 +11,7 @@ from f3dasm import Block, ExperimentData, datagenerator
 from f3dasm.design import Domain, grid
 from hydra.utils import instantiate
 from jax.extend.backend import get_backend
+import numpy as np
 from mpi4py import MPI
 from omegaconf import DictConfig
 
@@ -180,6 +181,17 @@ def create_experimentdata(config: DictConfig):
     experiment_data_combined = grid().call(
         data=ExperimentData(domain=domain_grid_sampling)
     )
+
+    if config.combination_fraction:
+        rng = np.random.default_rng(seed=config.seed)
+        n_combination = int(
+            len(experiment_data_combined) * config.combination_fraction
+        )
+        indices = rng.choice(
+            a=len(experiment_data_combined), size=n_combination, replace=False
+        )
+
+        experiment_data_combined = experiment_data_combined.select(indices)
 
     # Save everything
     domain_combined = Domain()

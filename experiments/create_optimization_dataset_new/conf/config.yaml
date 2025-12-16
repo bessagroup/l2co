@@ -1,10 +1,12 @@
 defaults:
-- tasks: spirals
-- budgets: fixed
-- samplers: xavier
-- optimizers: pde
+- tasks: bbob
+- budgets: based_on_dim
+- samplers: normal
+- optimizers: medium
 
 n_realizations: 5
+
+combination_fraction: 0.05
 
 seed: 467
 mode: cluster
