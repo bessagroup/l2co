@@ -1217,7 +1217,7 @@ wheels = [
 
 [[package]]
 name = "l2co"
-version = "1.2.3"
+version = "1.2.4"
 source = { editable = "." }
 dependencies = [
     { name = "bbob-jax" },
