@@ -73,6 +73,39 @@ class FeatureProcessor(eqx.Module):
 
         return jnp.array(feats, dtype=jnp.float32)
 
+    def to_dict(self) -> dict:
+        """
+        Serialize feature processor configuration.
+
+        Returns
+        -------
+        dict
+            Configuration dictionary.
+        """
+        return {
+            "schema": self.schema,
+            "means": self.means,
+            "stds": self.stds,
+            "vocabs": self.vocabs,
+        }
+
+    @classmethod
+    def reconstruct(cls, **kwargs) -> FeatureProcessor:
+        """
+        Reconstruct feature processor from configuration.
+
+        Parameters
+        ----------
+        **kwargs
+            Configuration dictionary.
+
+        Returns
+        -------
+        FeatureProcessor
+            Reconstructed feature processor instance.
+        """
+        return cls(**kwargs)
+
 
 # =============================================================================
 
