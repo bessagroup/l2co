@@ -55,7 +55,7 @@ from l2co._src.batching import BatchState
 
 # Local
 from l2co._src.history_state import HistoryState
-from l2co._src.l2co_model2 import L2COModel
+from l2co._src.models import L2COModel
 from l2co._src.naming import REALIZATION
 from l2co._src.optimizerschedule import OptimizationStep
 from l2co._src.run_state import RunState, batch_evaluate, evaluate
