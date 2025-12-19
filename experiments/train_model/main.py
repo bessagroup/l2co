@@ -1,87 +1,170 @@
+# Standard
 from pathlib import Path
+import logging
+import socket
+from time import perf_counter
+from time import sleep
 
 # Third-party
+import jax.random as jr
 import hydra
 from hydra.utils import instantiate
+from mpi4py import MPI
+from omegaconf import DictConfig
+from f3dasm import DataGenerator, ExperimentSample, ExperimentData, Block
+from f3dasm.hydra_tools import update_config_with_experiment_sample
 
 # Local
-from l2co import DataLoader, L2CO_model, logger
+from l2co import (
+    DataLoader,
+    L2COLoader,
+    L2COModel,
+    OptimizationStep,
+    FeatureProcessor,
+    RunOptimization,
+    Task,
+)
+
+# =============================================================================
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 
 
-@hydra.main(config_path=".", config_name="config")
-def main(config):
-    """
-    Main function to train the L2CO model.
+class ModelTrainer(DataGenerator):
+    def __init__(self, config: DictConfig):
+        self.config = config
 
-    Parameters
-    ----------
-    config : omegaconf.DictConfig
-        Configuration object containing all parameters for the training
-        process, including paths, model configurations, and training
-        hyperparameters.
+    def execute(
+        self, experiment_sample: ExperimentSample, id: int
+    ) -> ExperimentSample:
+        t1 = perf_counter()
 
-    Returns
-    -------
-    None
-    """
-    logger.info("Started model training script")
-    logger.info(f"{config=}")
+        config = update_config_with_experiment_sample(
+            self.config, experiment_sample
+        )
+        logger.info(f"[{id}] Starting training...")
 
-    # Load optimization data
-    path = Path(config.opt_dir) / str(config.path)
-    data = DataLoader.from_file(path)
-    logger.info(f"Loaded data from {path}: {len(data.data)} data points")
+        _path = (
+            Path(config.project_dir) / Path(config.path) / "entire_dataset"
+        ).with_suffix(".odata")
 
-    # Export data for training
-    data.export_all_and_store(
-        path=Path.cwd() / "data",
-        t_start=config.t_start,
-        t=config.t,
-        t_end=config.t_end,
+        d = DataLoader.from_file(_path)
+
+        opt_data = d.to_params(t=config.t, cost_metric=config.cost_metric)
+
+        # TEMPORARY: nan to num
+        opt_data.y = opt_data.y.fillna(0.0)
+
+        optimizers = [
+            OptimizationStep.from_yaml(opt) for opt in config.optimizers
+        ]
+
+        feature_processor = FeatureProcessor.init(
+            schema=dict(config.tasks.schema),
+            tags=opt_data.to_tag_list(),
+        )
+
+        # Initialize model
+        l2co_model = L2COModel.init(
+            feature_processor=feature_processor,
+            optimizers=optimizers,
+            model=instantiate(config.models.model),
+            type=config.models.type,
+        )
+
+        train_kwargs = (
+            dict(config.models.train_kwargs)
+            if config.models.train_kwargs
+            else {}
+        )
+
+        # Train the model
+        l2co_model, training_metrics = l2co_model.train(
+            data=opt_data, **train_kwargs
+        )
+
+        # Store the trained model in the experiment sample
+        experiment_sample.store(
+            name="l2co_model",
+            object=l2co_model,
+            to_disk=True,
+            store_function=L2COLoader.store,
+            load_function=L2COLoader.load,
+        )
+
+        logger.info(
+            f"[{id}] Finished training model.\t "
+            f"(Took {perf_counter() - t1:.2f} s)"
+        )
+
+        return experiment_sample
+
+
+def process(config: DictConfig, comm=None) -> None:
+    trainer = ModelTrainer(config)
+
+    experiment_data = ExperimentData.from_file(
+        project_dir=".",
+        wait_for_creation=True,
+        max_tries=500,
     )
-    logger.info(f"Exported data to {Path.cwd() / 'data'}")
 
-    # Initialize Stage 0 model
-    stage0_model = instantiate(config.stage0_model)
-    logger.info(f"Instantiated stage0 model: {stage0_model}")
+    if config.mode == "mpi":
+        experiment_data = trainer.call(
+            experiment_data, mode=config.mode, comm=comm, pass_id=True
+        )
 
-    # Initialize Stage 1 model
-    stage1_model_class = instantiate(config.stage1_model, _partial_=True)
-    logger.info(f"Instantiated stage1 model: {stage1_model_class}")
-    logger.info(f"Hyperparameters: {stage1_model_class.__dict__}")
+    if config.mode in ("cluster", "sequential"):
+        experiment_data = trainer.call(
+            experiment_data,
+            mode=config.mode,
+            pass_id=True,
+        )
 
-    # Create L2CO model
-    l2co_model = L2CO_model.init(
-        stage0_model=stage0_model,
-        stage1_model_class=stage1_model_class,
-        feature_types=config.feature_types,
-    )
-    logger.info(f"Instantiated L2CO model: {l2co_model}")
+    if config.mode == "sequential":
+        # Save the results to a file
+        experiment_data.store()
 
-    # Train the model
-    optimizer = instantiate(config.optimizer)
-    loss_fn = instantiate(config.loss_fn, _partial_=True)
-    l2co_model.train(
-        path=Path.cwd() / "data",
-        optimizer=optimizer,
-        epochs=config.epochs,
-        batch_size=config.batch_size,
-        seed=config.seed,
-        loss_fn=loss_fn,
-    )
-    logger.info(
-        f"Trained L2CO model: {l2co_model} with {optimizer=}, "
-        f"{config.loss_fn=}, {config.epochs=}, {config.batch_size=}, "
-        f"{config.seed=}"
-    )
 
-    # Save the model
-    l2co_model.save(path=Path.cwd() / "model")
-    logger.info(f"Saved L2CO model to {Path.cwd() / 'model'}")
+def pre_process(config: DictConfig) -> None:
+    # Initialize the domain
+    experiment_data = ExperimentData.from_yaml(config.experimentdata)
+    sampler: Block = instantiate(config.f3dasm_sampler)
+    experiment_data = sampler.call(experiment_data)
 
-    logger.info("End of this program")
+    experiment_data.store()
+
+
+# =============================================================================
+
+
+@hydra.main(
+    version_base=None,
+    config_path="../conf",
+    config_name="config",
+)
+def main(config: DictConfig) -> None:
+    if config.mode == "mpi":
+        comm = MPI.COMM_WORLD
+        rank = comm.Get_rank()
+        size = comm.Get_size()
+        print(f"[{rank}/{size}] Running on {socket.gethostname()}")
+
+        if rank == 0:
+            pre_process(config)
+            comm.bcast("ready", root=0)  # Signal other ranks to start
+            process(config, comm)
+        else:
+            signal = comm.bcast(None, root=0)  # Ensure all ranks receive
+            if signal == "ready":
+                sleep(2)
+                process(config, comm)
+
+    if config.mode in ("cluster", "sequential"):
+        pre_process(config)
+        process(config)
 
 
 if __name__ == "__main__":

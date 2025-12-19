@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-@hydra.main(config_path="./conf", config_name="config")
+@hydra.main(config_path="../conf", config_name="config")
 def main(config):
     # Check if the optimization is box constraint
     if "bounded" in config.tasks:

@@ -94,7 +94,9 @@ class L2COModel(AbstractModel):
             optimizers=optimizers,
         )
 
-    def train(self, data: OptimizationDynamics, **kwargs):
+    def train(
+        self, data: OptimizationDynamics, **kwargs
+    ) -> tuple[L2COModel, dict]:
         x_array = jnp.stack(
             [self.feature_processor.transform(xi) for xi in data.to_tag_list()]
         )
@@ -110,12 +112,14 @@ class L2COModel(AbstractModel):
         else:
             raise ValueError(f"Unknown model type {self.type}")
 
-        return L2COModel(
+        l2co_model = L2COModel(
             feature_processor=self.feature_processor,
             model=model,
             type=self.type,
             optimizers=self.optimizers,
         )
+
+        return l2co_model, metrics
 
     def predict_logits(self, x: dict[str, Any]) -> jax.Array:
         x_array = self.feature_processor.transform(x)

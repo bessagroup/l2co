@@ -27,7 +27,7 @@ f3dasm_logger = logging.getLogger("f3dasm")
 # =============================================================================
 
 
-@hydra.main(config_path="./conf", config_name="config")
+@hydra.main(config_path="../conf", config_name="config")
 def main(config):
     if config.mode == "mpi":
         comm = MPI.COMM_WORLD

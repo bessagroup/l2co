@@ -26,5 +26,5 @@ fn_dim: 15
 
 schema:
   dimensionality: continuous
-  separable: categorical
-  unimodal: categorical
+  separable: boolean
+  unimodal: boolean
