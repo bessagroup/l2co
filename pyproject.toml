@@ -39,7 +39,8 @@ app = [
 dev = [
   "build>=1.3.0",
   "ipykernel>=7.1.0",
-  "pre-commit>=4.5.0"
+  "pre-commit>=4.5.0",
+  "ruff>=0.14.10"
 ]
 docs = [
   "mkdocs-gen-files>=0.6.0",
