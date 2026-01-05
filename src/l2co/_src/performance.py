@@ -24,8 +24,6 @@ create_performance_profile
 # Standard
 from __future__ import annotations
 
-from functools import partial
-
 # Third-party
 import numpy as np
 import xarray as xr
@@ -312,24 +310,31 @@ def ertd(
         dims="cost_per_dim",
         coords={"cost_per_dim": values},
     )
-    ertd = (ert_multi <= budgets).mean([SEED, OUTPUT_DIM, TARGET])
+    ertd = (ert_multi <= budgets).mean([OUTPUT_DIM, TARGET])
 
     return ertd
 
 
-def compute_ert_group(ds: xr.Dataset, seed: int, n_picks: int) -> xr.DataArray:
+def draw_samples(seed: int, n_realizations: int, n_picks: int):
     rng = np.random.default_rng(seed)
-    n_realizations = int(ds[REALIZATION].max())
-    samples = np.concat(
+    return np.concatenate(
         [
             rng.permutation(n_realizations + 1),
             rng.integers(
-                0, n_realizations + 1, size=max(n_picks - n_realizations, 0)
+                0,
+                n_realizations + 1,
+                size=max(n_picks - n_realizations, 0),
             ),
         ]
     )
 
+
+def compute_ert_group(
+    ds: xr.Dataset,
+    samples: xr.DataArray,
+) -> xr.DataArray:
     ds = ds.isel({PROBLEM: samples})
+
     # Find index of first True along "problem"
     first_true = ds[SUCCESS].argmax(PROBLEM)
 
@@ -350,7 +355,8 @@ def compute_ert_group(ds: xr.Dataset, seed: int, n_picks: int) -> xr.DataArray:
 
     # Divide by the dimensionality of the problem
     ert = ert / ds["dims"].mean(PROBLEM)
-    return ert
+
+    return ert.mean(SEED)
 
 
 def compute_ert_multi_seed(
@@ -360,19 +366,23 @@ def compute_ert_multi_seed(
     Compute ERT across multiple random seeds and return an xarray
     with dimensions (seed, taskID, ...).
     """
-    # Create a version of compute_ert_group with n_picks fixed
-    compute_partial = partial(compute_ert_group, n_picks=n_picks)
+    n_realizations = int(ds[REALIZATION].max())
+    samples = np.stack(
+        [
+            draw_samples(
+                seed=s, n_realizations=n_realizations, n_picks=n_picks
+            )
+            for s in np.arange(n_seeds)
+        ],
+        axis=0,
+    )
 
-    # Map over seeds in a vectorized fashion
-    ert_list = [
-        ds.groupby(TASK_ID)
-        .map(compute_partial, seed=seed)
-        .expand_dims({SEED: [seed]})
-        for seed in np.arange(n_seeds)
-    ]
+    samples_da = xr.DataArray(
+        samples,
+        dims=(SEED, PROBLEM),
+    )
 
-    # Concatenate along the seed dimension
-    ert_all = xr.concat(ert_list, dim=SEED)
+    ert_all = ds.groupby(TASK_ID).map(compute_ert_group, samples=samples_da)
 
     return ert_all
 

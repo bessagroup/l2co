@@ -29,6 +29,7 @@ from time import perf_counter
 from typing import Literal
 
 # Third-party
+import jax
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -42,6 +43,7 @@ from .naming import (
     FEVALS,
     ITERATIONS,
     OUTPUT_DIM,
+    OUTPUT_MEAN,
     OUTPUT_MIN,
     PROBLEM,
     REALIZATION,
@@ -59,6 +61,7 @@ from .performance import (
     scale_by_problem_and_schedule,
     scale_by_task,
 )
+from .tree_utils import traj_and_stair
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -236,6 +239,29 @@ class DataLoader:
         x = self.task_labels.groupby(TASK_ID).first().sortby(TASK_ID)
         y = self.to_labels(t=t, cost_metric=cost_metric).sortby(TASK_ID)
         return OptimizationDynamics(x=x, y=y)
+
+    def to_traj_and_stair(
+        self,
+    ) -> xr.DataArray:
+        x_min = self.data[OUTPUT_MIN].stack(
+            {"batch": (SCHEDULE, OUTPUT_DIM, PROBLEM)}
+        )
+        x_mean = self.data[OUTPUT_MEAN].stack(
+            {"batch": (SCHEDULE, OUTPUT_DIM, PROBLEM)}
+        )
+
+        out = jax.vmap(traj_and_stair)(x_mean.values.T, x_min.values.T)
+
+        y = xr.DataArray(
+            out,
+            dims=["batch", BUDGET, "kind"],
+            coords={
+                BUDGET: self.data[BUDGET],
+                "batch": x_min["batch"],
+                "kind": ["trajectory", "staircase"],
+            },
+        )
+        return y.unstack("batch")
 
     def to_labels(
         self, t: int, cost_metric: Literal["fevals", "iterations"] = "fevals"

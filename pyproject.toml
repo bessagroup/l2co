@@ -12,6 +12,7 @@ dependencies = [
   "equinox>=0.13.0",
   "evosax>=0.2.0",
   "f3dasm",
+  "gpjax>=0.12.2",
   "jax",
   "jax-tqdm>=0.4.0",
   "jaxtyping>=0.3.2",

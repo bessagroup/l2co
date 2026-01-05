@@ -257,6 +257,18 @@ def output_cummin(x: jax.Array) -> jax.Array:
     return jax.lax.cummin(x, axis=0)
 
 
+# =============================================================================
+
+
+def traj_and_stair(x_output_mean, x_output_min):
+    traj = ffill(bfill(x_output_mean))
+    stair = output_cummin(ffill(bfill(x_output_min)))
+    return log_stabilized_minmax_scale(jnp.stack((traj, stair), axis=1))
+
+
+# =============================================================================
+
+
 def get_best(params: PyTree, losses: jax.Array):
     """
     Retrieve the best parameters and corresponding loss.

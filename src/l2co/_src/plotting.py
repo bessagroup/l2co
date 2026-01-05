@@ -34,6 +34,9 @@ from matplotlib.colors import (
     SymLogNorm,
 )
 from matplotlib.patches import Patch
+from scipy.interpolate import griddata
+
+from .batching import BatchState
 
 # Local
 from .data_loader import DataLoader, OptimizationDynamics
@@ -566,6 +569,8 @@ def plot_2d_loss_landscape_only(
     seed: int = 0,
     ax=None,
     colorbar: bool = True,
+    lower_bound: float = 0.0,
+    upper_bound: float = 1.0,
 ):
     """
     Plot a 2D loss landscape for a given task.
@@ -585,6 +590,10 @@ def plot_2d_loss_landscape_only(
         by default None.
     colorbar : bool, optional
         Whether to display a colorbar, by default True.
+    lower_bound : float, optional
+        Lower bound for sampling, by default 0.0.
+    upper_bound : float, optional
+        Upper bound for sampling, by default 1.0.
 
     Returns
     -------
@@ -601,11 +610,17 @@ def plot_2d_loss_landscape_only(
     samples = grid_sampling(
         params=params,
         n_points_per_dim=int(1 // stepsize),
-        lower_bound=0.0,
-        upper_bound=1.0,
+        lower_bound=lower_bound,
+        upper_bound=upper_bound,
     )
 
-    z = evaluate(params=samples, task=task, key=jr.key(seed))
+    dataset = task.loaded_dataset
+
+    batch_state = BatchState.init(
+        dataset=dataset, batch_size=task.batch_size, key=jr.key(seed)
+    )
+
+    z = evaluate(samples, batch_state, dataset, task.loss_fn, jr.key(seed))
     x = samples[:, 0]
     y = samples[:, 1]
 
@@ -642,6 +657,133 @@ def plot_2d_loss_landscape_only(
     ax.set_xticks([])
     ax.set_yticks([])
     return fig, ax
+
+
+def plot_2d_loss_landscape_slice_grid(
+    task: Task,
+    plot_resolution: int = 100,
+    stepsize: float = 0.033,
+    seed: int = 0,
+    z_slices: int | list[float] = 6,
+    lower_bound: float = 0.0,
+    upper_bound: float = 1.0,
+    colorbar: bool = True,
+):
+    """
+    Plot a grid of 2D (x, y) loss landscape slices for fixed z values,
+    annotating the GLOBAL minimum with a red cross.
+    """
+    params, static = eqx.partition(task.model, eqx.is_inexact_array)
+
+    samples = grid_sampling(
+        params=params,
+        n_points_per_dim=int(1 // stepsize),
+        lower_bound=lower_bound,
+        upper_bound=upper_bound,
+    )
+
+    dataset = task.loaded_dataset
+    batch_state = BatchState.init(
+        dataset=dataset, batch_size=task.batch_size, key=jr.key(seed)
+    )
+
+    losses = evaluate(
+        samples, batch_state, dataset, task.loss_fn, jr.key(seed)
+    )
+
+    x = samples[:, 0]
+    y = samples[:, 1]
+    z = samples[:, 2]
+
+    # ------------------------------------------------------------------
+    # GLOBAL minimum across ALL samples
+    # ------------------------------------------------------------------
+    global_min_idx = np.argmin(losses)
+    x_min = x[global_min_idx]
+    y_min = y[global_min_idx]
+    z_min = z[global_min_idx]
+
+    # Choose z slices from actual grid
+    unique_z = np.unique(z)
+
+    if isinstance(z_slices, int):
+        z_indices = np.linspace(0, len(unique_z) - 1, z_slices, dtype=int)
+        z_values = unique_z[z_indices]
+    else:
+        z_values = np.asarray(z_slices)
+
+    n_slices = len(z_values)
+    ncols = int(np.ceil(np.sqrt(n_slices)))
+    nrows = int(np.ceil(n_slices / ncols))
+
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(4 * ncols, 4 * nrows), squeeze=False
+    )
+
+    all_Z = []
+    slice_data = []
+
+    # First pass: compute interpolated Z
+    for z_val in z_values:
+        mask = z == z_val
+
+        xs, ys, ls = x[mask], y[mask], losses[mask]
+
+        X, Y = np.meshgrid(
+            np.linspace(xs.min(), xs.max(), plot_resolution),
+            np.linspace(ys.min(), ys.max(), plot_resolution),
+        )
+
+        Z = griddata((xs, ys), ls, (X, Y), method="cubic")
+        Z -= np.nanmin(Z)
+        Z += np.nanmin(Z[Z > 0])
+
+        slice_data.append((X, Y, Z))
+        all_Z.append(Z)
+
+    # Shared log normalization
+    Z_global_min = min(np.nanmin(Z) for Z in all_Z)
+    Z_global_max = max(np.nanmax(Z) for Z in all_Z)
+    norm = LogNorm(vmin=Z_global_min, vmax=Z_global_max)
+
+    im = None
+
+    for ax, z_val, data in zip(axes.flat, z_values, slice_data, strict=False):
+        X, Y, Z = data
+
+        im = ax.pcolormesh(
+            X,
+            Y,
+            Z,
+            shading="auto",
+            cmap="viridis",
+            norm=norm,
+        )
+
+        # 🔴 Plot GLOBAL minimum only in the correct slice
+        if z_val == z_min:
+            ax.plot(
+                x_min,
+                y_min,
+                marker="x",
+                color="red",
+                markersize=12,
+                markeredgewidth=2.5,
+            )
+
+        ax.set_title(f"z = {z_val:.3f}")
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    # Disable unused axes
+    for ax in axes.flat[n_slices:]:
+        ax.axis("off")
+
+    if colorbar and im is not None:
+        fig.colorbar(im, ax=axes, fraction=0.03, pad=0.02)
+
+    fig.tight_layout()
+    return fig, axes, z_values
 
 
 def plot_3d_loss_landscape_only(
@@ -691,9 +833,6 @@ def plot_3d_loss_landscape_only(
     z = evaluate(params=samples, task=task, key=jr.key(seed))
     x = samples[:, 0]
     y = samples[:, 1]
-
-    import numpy as np
-    from scipy.interpolate import griddata
 
     X, Y = np.meshgrid(
         np.linspace(min(x), max(x), plot_resolution),
