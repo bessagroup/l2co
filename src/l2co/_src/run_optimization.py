@@ -80,6 +80,7 @@ class RolloutWrapper(eqx.Module):
     dataset: dict[str, jax.Array]
     loss_fn: Callable
     sampler: Callable
+    pass_rng: bool
     verbose: bool
 
     @classmethod
@@ -99,6 +100,8 @@ class RolloutWrapper(eqx.Module):
             key=key,
         )
 
+        pass_rng = task.pass_rng
+
         dataset = task.loaded_dataset
 
         batch_state = BatchState.init(
@@ -116,6 +119,7 @@ class RolloutWrapper(eqx.Module):
             dataset=dataset,
             loss_fn=task.loss_fn,
             sampler=sampler,
+            pass_rng=pass_rng,
             verbose=verbose,
         )
 
@@ -134,6 +138,7 @@ class RolloutWrapper(eqx.Module):
             self.loss_fn,
             self.sampler,
             n_iterations,
+            self.pass_rng,
             jr.split(key, n_realizations),
             self.verbose,
         )
@@ -151,6 +156,7 @@ class RolloutWrapper(eqx.Module):
             self.loss_fn,
             self.sampler,
             n_iterations,
+            self.pass_rng,
             key,
             self.verbose,
         )
