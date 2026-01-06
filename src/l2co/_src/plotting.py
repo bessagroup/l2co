@@ -21,6 +21,7 @@ from typing import Literal
 
 # Third-party
 import equinox as eqx
+import jax
 import jax.random as jr
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
@@ -620,12 +621,20 @@ def plot_2d_loss_landscape_only(
         dataset=dataset, batch_size=task.batch_size, key=jr.key(seed)
     )
 
-    z = evaluate(samples, batch_state, dataset, task.loss_fn, jr.key(seed))
+    key = jr.key(seed)
+    n_samples = jax.tree_util.tree_leaves(samples)[0].shape[0]
+
+    z = evaluate(
+        samples,
+        batch_state,
+        dataset,
+        task.loss_fn,
+        task.pass_rng,
+        key,
+        jr.split(key, n_samples),
+    )
     x = samples[:, 0]
     y = samples[:, 1]
-
-    import numpy as np
-    from scipy.interpolate import griddata
 
     X, Y = np.meshgrid(
         np.linspace(min(x), max(x), plot_resolution),
@@ -682,13 +691,22 @@ def plot_2d_loss_landscape_slice_grid(
         upper_bound=upper_bound,
     )
 
+    key = jr.key(seed)
+    n_samples = jax.tree_util.tree_leaves(samples)[0].shape[0]
+
     dataset = task.loaded_dataset
     batch_state = BatchState.init(
-        dataset=dataset, batch_size=task.batch_size, key=jr.key(seed)
+        dataset=dataset, batch_size=task.batch_size, key=key
     )
 
     losses = evaluate(
-        samples, batch_state, dataset, task.loss_fn, jr.key(seed)
+        samples,
+        batch_state,
+        dataset,
+        task.loss_fn,
+        task.pass_rng,
+        key,
+        jr.split(key, n_samples),
     )
 
     x = samples[:, 0]
@@ -830,7 +848,23 @@ def plot_3d_loss_landscape_only(
         upper_bound=1.0,
     )
 
-    z = evaluate(params=samples, task=task, key=jr.key(seed))
+    dataset = task.loaded_dataset
+    batch_state = BatchState.init(
+        dataset=dataset, batch_size=task.batch_size, key=jr.key(seed)
+    )
+
+    key = jr.key(seed)
+    n_samples = jax.tree_util.tree_leaves(samples)[0].shape[0]
+
+    z = evaluate(
+        samples,
+        batch_state,
+        dataset,
+        task.loss_fn,
+        task.pass_rng,
+        key,
+        jr.split(key, n_samples),
+    )
     x = samples[:, 0]
     y = samples[:, 1]
 

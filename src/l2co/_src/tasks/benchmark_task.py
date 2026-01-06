@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import functools
+
 # Standard
 import bbob_jax
 import jax
@@ -97,18 +99,44 @@ def scale_input(domain_bounds: jax.Array, function_bounds: jax.Array):
     return decorator
 
 
-def create_bbob_task(fn_name: str, seed: int, dimensionality: int) -> Task:
+def add_noise(noise_level: float):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(x, key, *args, **kwargs):
+            noise = jr.normal(key, shape=()) * noise_level
+            y = func(x, *args, **kwargs)
+            return y + y * noise
+
+        return wrapper
+
+    return decorator
+
+
+def create_bbob_task(
+    fn_name: str, seed: int, dimensionality: int, noise: float = 0.0
+) -> Task:
     fn_scale_input = scale_input(
         domain_bounds=jnp.tile(jnp.array([0.0, 1.0]), (dimensionality, 2)),
         function_bounds=jnp.tile(jnp.array([-5.0, 5.0]), (dimensionality, 2)),
     )
-    loss_fn = fn_scale_input(
-        bbob_jax.registry[fn_name](ndim=dimensionality, key=jr.key(seed)),
+
+    if noise > 0.0:
+        fn_noise = add_noise(noise_level=noise)
+        pass_rng = True
+    else:
+        fn_noise = lambda f: f
+        pass_rng = False
+
+    loss_fn = fn_noise(
+        fn_scale_input(
+            bbob_jax.registry[fn_name](ndim=dimensionality, key=jr.key(seed))
+        )
     )
     model = jnp.zeros(dimensionality)
     tag = bbob_jax.function_characteristics[fn_name].copy()
     tag["dimensionality"] = dimensionality
     tag["fn_name"] = fn_name
     tag["seed"] = seed
+    tag["noise"] = noise
 
-    return Task(model=model, pass_rng=False, loss_fn=loss_fn, tag=tag)
+    return Task(model=model, pass_rng=pass_rng, loss_fn=loss_fn, tag=tag)
