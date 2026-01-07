@@ -83,6 +83,50 @@ def output_cummin(da: xr.DataArray) -> xr.DataArray:
     )
 
 
+def adaptive_worst_quantile_1d(x, q=0.99):
+    T = x.shape[0]
+    out = np.empty(T, dtype=x.dtype)
+    ks = np.ceil(np.log(np.arange(T) + 3) ** 2 / 2).astype(int)
+
+    for t, k in enumerate(ks):
+        start = max(0, t - k + 1)
+        w = x[start : t + 1]
+        idx = int(np.ceil(q * (w.size - 1)))
+        out[t] = np.partition(w, idx)[idx]
+
+    return out
+
+
+def output_quantile(da: xr.DataArray) -> xr.DataArray:
+    """
+    Calculate the cumulative minimum of the given data array.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The data array to calculate the cumulative minimum for.
+
+    Returns
+    -------
+    xarray.DataArray
+        The data array with the cumulative minimum calculated.
+
+    Notes
+    -----
+    The cumulative minimum is calculated along the coordinate named 'budget'.
+    """
+    return xr.apply_ufunc(
+        adaptive_worst_quantile_1d,
+        da,
+        input_core_dims=[[BUDGET]],
+        output_core_dims=[[BUDGET]],
+        vectorize=True,
+        dask="parallelized",
+        output_dtypes=[da.dtype],
+        dask_gufunc_kwargs={"allow_rechunk": True},
+    )
+
+
 def cap_value(data: xr.DataArray, cap: float = EPSILON) -> xr.DataArray:
     """
     Cap the values in the data array at a specified threshold. (0 < data < cap)
