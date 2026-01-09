@@ -428,7 +428,9 @@ def compute_ert_multi_seed(
 
     ert_all = ds.groupby(TASK_ID).map(compute_ert_group, samples=samples_da)
 
-    return ert_all
+    ert_full = ert_all.sel({TASK_ID: ds[TASK_ID]})
+
+    return ert_full
 
 
 # =============================================================================

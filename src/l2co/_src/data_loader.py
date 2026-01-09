@@ -61,6 +61,7 @@ from .performance import (
     scale_by_problem_and_schedule,
     scale_by_task,
 )
+from .task_features import FeatureProcessor
 from .tree_utils import traj_and_stair
 
 #                                                          Authorship & Credits
@@ -219,15 +220,23 @@ class DataLoader:
     # =========================================================================
 
     def to_params(
-        self, t: int, cost_metric: Literal["fevals", "iterations"] = "fevals"
+        self,
+        t: float,
+        t_end: int,
+        schema: dict[str, str],
+        cost_metric: Literal["fevals", "iterations"] = "fevals",
     ):
         """
         Return task parameters and labels for a given budget.
 
         Parameters
         ----------
-        t : int
+        t : float
             Budget value.
+        t_end : int
+            End budget value.
+        schema : dict[str, str]
+            Schema for feature processing.
         cost_metric : {'fevals', 'iterations'}, optional
             Cost metric to use, by default 'fevals'.
 
@@ -236,9 +245,59 @@ class DataLoader:
         tuple
             (task parameters, labels)
         """
-        x = self.task_labels.groupby(TASK_ID).first().sortby(TASK_ID)
-        y = self.to_labels(t=t, cost_metric=cost_metric).sortby(TASK_ID)
-        return OptimizationDynamics(x=x, y=y)
+        dict_features = self.task_labels.sortby(TASK_ID).transpose(
+            PROBLEM, FEATURE
+        )
+
+        tags_list = [
+            {
+                str(k): v
+                for k, v in zip(
+                    dict_features[FEATURE].values, xi.values, strict=True
+                )
+            }
+            for xi in dict_features
+        ]
+
+        feature_processor = FeatureProcessor.init(
+            schema=schema, tags=tags_list
+        )
+
+        x_features = np.stack(
+            [feature_processor.transform(xi) for xi in tags_list]
+        )
+
+        x_features = xr.DataArray(
+            x_features,
+            coords={
+                PROBLEM: dict_features[PROBLEM],
+                FEATURE: list(schema.keys()),
+            },
+            dims=dict_features.dims,
+        )
+
+        x_features = x_features.assign_coords(
+            {PROBLEM: self.task_labels[PROBLEM]}
+        )
+
+        x_history = (
+            self.select_t(t=t)
+            .to_traj_and_stair()
+            .sortby(TASK_ID)
+            .transpose(PROBLEM, BUDGET, SCHEDULE, "kind")
+        )
+        y = (
+            self.to_labels(t=t_end, cost_metric=cost_metric)
+            .sortby(TASK_ID)
+            .transpose(PROBLEM, SCHEDULE)
+        )
+
+        return OptimizationDynamics(
+            x_features=x_features,
+            x_history=x_history,
+            y=y,
+            feature_processor=feature_processor,
+        )
 
     def to_traj_and_stair(
         self,
@@ -261,7 +320,12 @@ class DataLoader:
                 "kind": ["trajectory", "staircase"],
             },
         )
-        return y.unstack("batch")
+        y = y.unstack("batch")
+        return (
+            y.assign_coords({PROBLEM: self.data[PROBLEM]})
+            .reset_index(PROBLEM, drop=True)
+            .isel({OUTPUT_DIM: 0}, drop=True)
+        )
 
     def to_labels(
         self, t: int, cost_metric: Literal["fevals", "iterations"] = "fevals"
@@ -496,16 +560,14 @@ class DataLoader:
     def valid_files(self) -> xr.DataArray:
         """
         Returns a boolean array indicating valid files. It has coordinates
-        of TASK_ID, SCHEDULE and OUTPUT_DIM.
+        of PROBLEM, SCHEDULE and OUTPUT_DIM.
 
         Returns
         -------
         xarray.DataArray
             Boolean array indicating valid files.
         """
-        return (
-            ~self.data[OUTPUT_MIN].isnull().all(BUDGET).groupby(TASK_ID).all()
-        )
+        return ~self.data[OUTPUT_MIN].isnull().all(BUDGET)
 
     @property
     def performance(self) -> xr.DataArray:

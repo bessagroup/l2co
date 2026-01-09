@@ -70,6 +70,7 @@ OPTIMIZER_COLORS = {
     "adam_variable_updates_learning_rate=0.01": "#1f77b4",
     "adam_learning_rate=0.01": "#1f77b4",
     "adam_learning_rate=0.1": "#17becf",
+    "adam_learning_rate=0.001": "#aec7e8",
     "sepcmaes": "#ff7f0e",
     "cmaes": "#ff7f0e",
     "lbfgsb": "#2ca02c",
