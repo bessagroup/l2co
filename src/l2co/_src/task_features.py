@@ -130,22 +130,9 @@ class MixedEmbedding(eqx.Module):
         Final projection layer.
     """
 
+    out_size: int
     embedders: list[eqx.Module]
     final_proj: eqx.nn.Linear
-
-    def __init__(self, embedders: list[eqx.Module], final_proj: eqx.nn.Linear):
-        """
-        Initialize mixed embedding layer.
-
-        Parameters
-        ----------
-        embedders : list[eqx.Module]
-            List of embedding/linear layers.
-        final_proj : eqx.nn.Linear
-            Final projection layer.
-        """
-        self.embedders = embedders
-        self.final_proj = final_proj
 
     @classmethod
     def from_feature_processor(
@@ -201,7 +188,9 @@ class MixedEmbedding(eqx.Module):
             key=keys[-1],
         )
 
-        return cls(embedders=embedders, final_proj=final_proj)
+        return cls(
+            embedders=embedders, final_proj=final_proj, out_size=output_dim
+        )
 
     def __call__(self, x: jax.Array) -> jax.Array:
         """
@@ -316,4 +305,9 @@ class MixedEmbedding(eqx.Module):
             out_features=final_proj["out_features"],
             key=k2,
         )
-        return cls(embedders=embedders_list, final_proj=final_proj, **kwargs)
+        return cls(
+            embedders=embedders_list,
+            final_proj=final_proj,
+            out_size=final_proj["out_features"],
+            **kwargs,
+        )

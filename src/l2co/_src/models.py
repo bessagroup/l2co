@@ -97,17 +97,19 @@ class L2COModel(AbstractModel):
     def train(
         self, data: OptimizationDynamics, **kwargs
     ) -> tuple[L2COModel, dict]:
-        x_array = jnp.stack(
-            [self.feature_processor.transform(xi) for xi in data.to_tag_list()]
-        )
-
         if self.type == "scikit":
             model, metrics = train_scikit(
-                model=self.model, x=x_array, y=jnp.array(data.y), **kwargs
+                model=self.model,
+                x=jnp.array(data.x_features),
+                y=jnp.array(data.y),
+                **kwargs,
             )
         elif self.type == "equinox":
             model, metrics = train_equinox(
-                model=self.model, x=x_array, y=jnp.array(data.y), **kwargs
+                model=self.model,
+                x=jnp.array(data.x_features),
+                y=jnp.array(data.y),
+                **kwargs,
             )
         else:
             raise ValueError(f"Unknown model type {self.type}")
@@ -134,7 +136,7 @@ class L2COModel(AbstractModel):
 
     def predict(
         self, x: dict[str, Any], key: PRNGKeyArray, n_realizations: int = 1
-    ) -> jax.Array:
+    ) -> OptimizationStep:
         logits = self.predict_logits(x)
         keys = jr.split(key, num=n_realizations)
         actions = jax.vmap(jr.categorical, in_axes=(0, None))(keys, logits)
@@ -144,7 +146,7 @@ class L2COModel(AbstractModel):
         return steps
 
     def batch_predict(self, x: dict[str, Any], key: PRNGKeyArray) -> jax.Array:
-        x_array = jnp.stack([self.feature_processor.transform(xi) for xi in x])
+        x_array = jnp.stack([self.predict_logits(xi) for xi in x])
         if self.type == "scikit":
             logits = predict_scikit(self.model, x_array)
         elif self.type == "equinox":
@@ -202,6 +204,120 @@ class L2COModel(AbstractModel):
             type=type,
             **kwargs,
         )
+
+
+class HistoryModel(AbstractModel):
+    mixed_embedding: MixedEmbedding
+    feature_processor: FeatureProcessor
+    history_encoder: eqx.Module
+    model: eqx.Module
+    optimizers: Iterable[OptimizationStep]
+
+    def __call__(self, x: tuple[jax.Array, jax.Array]) -> jax.Array:
+        x_features, x_history = x
+        history_emb = self.history_encoder(x_history)
+        features_emb = self.mixed_embedding(x_features)
+        combined = jnp.concatenate([features_emb, history_emb], axis=-1)
+        return self.model(combined)
+
+    def train(
+        self, data: OptimizationDynamics, **kwargs
+    ) -> tuple[HistoryModel, dict]:
+        model, metrics = train_equinox(
+            x=(jnp.array(data.x_features), jnp.array(data.x_history)),
+            y=jnp.array(data.y),
+            model=self,
+            **kwargs,
+        )
+        return model, metrics
+
+    def predict_logits(
+        self,
+        x_feature: dict[str, Any],
+        x_history: jax.Array,
+    ) -> jax.Array:
+        x = (self.feature_processor.transform(x_feature), x_history)
+        return self(x)
+
+    def predict(
+        self,
+        x_feature: dict[str, Any],
+        x_history: jax.Array,
+        key: PRNGKeyArray,
+    ) -> OptimizationStep:
+        logits = self.predict_logits(x_feature, x_history)
+        action = jr.categorical(key, logits)
+        step = self.optimizers[int(action)]
+        return step
+
+    def reconstruct() -> HistoryModel: ...
+
+    def to_dict(self) -> dict[str, Any]: ...
+
+
+class LSTM_Encoder(eqx.Module):
+    """
+    LSTM Encoder module.
+
+    Parameters
+    ----------
+    in_size : int
+        Input size of the LSTM encoder.
+    hidden_size : int
+        Hidden size of the LSTM encoder.
+    key : jax.Array
+        Random key for initializing the LSTM cell.
+
+    Attributes
+    ----------
+    hidden_size : int
+        Hidden size of the LSTM encoder.
+    cell : eqx.nn.LSTMCell
+        LSTM cell used in the encoder.
+    linear : eqx.nn.Linear
+        Linear layer applied to the final hidden state.
+    """
+
+    hidden_size: int
+    out_size: int
+    cell: eqx.nn.LSTMCell
+    linear: eqx.nn.Linear
+
+    def __init__(self, in_size, hidden_size, out_size, *, key):
+        self.hidden_size = hidden_size
+        self.out_size = out_size
+        # self.cell = eqx.nn.GRUCell(in_size, hidden_size, key=key)
+        self.cell = eqx.nn.LSTMCell(in_size, hidden_size, key=key)
+        self.linear = eqx.nn.Linear(hidden_size, out_size, key=key)
+
+    def __call__(self, x):
+        """
+        Encode sequence using LSTM.
+
+        Parameters
+        ----------
+        x : array-like
+            Input sequence to encode.
+        init_state : array-like
+            Initial hidden state for LSTM.
+
+        Returns
+        -------
+        array-like
+            Final hidden state after encoding sequence.
+        """
+
+        def scan_fn(state, input):
+            return (self.cell(input, state), None)
+
+        init_state = (
+            jnp.zeros(self.cell.hidden_size),
+            jnp.zeros(self.cell.hidden_size),
+        )
+
+        (h, c), _ = jax.lax.scan(scan_fn, init_state, x)
+        h = self.linear(h)
+        return h
 
 
 # =============================================================================

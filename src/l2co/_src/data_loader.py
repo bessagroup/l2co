@@ -245,18 +245,16 @@ class DataLoader:
         tuple
             (task parameters, labels)
         """
-        dict_features = self.task_labels.sortby(TASK_ID).transpose(
-            PROBLEM, FEATURE
-        )
+        dict_features = self.task_labels.transpose(PROBLEM, FEATURE)
 
         tags_list = [
             {
                 str(k): v
                 for k, v in zip(
-                    dict_features[FEATURE].values, xi.values, strict=True
+                    self.task_labels[FEATURE].values, xi.values, strict=True
                 )
             }
-            for xi in dict_features
+            for xi in self.task_labels
         ]
 
         feature_processor = FeatureProcessor.init(
@@ -270,14 +268,14 @@ class DataLoader:
         x_features = xr.DataArray(
             x_features,
             coords={
-                PROBLEM: dict_features[PROBLEM],
+                PROBLEM: self.problems,
                 FEATURE: list(schema.keys()),
             },
             dims=dict_features.dims,
         )
 
-        x_features = x_features.assign_coords(
-            {PROBLEM: self.task_labels[PROBLEM]}
+        x_features = x_features.assign_coords({PROBLEM: self.problems}).sortby(
+            TASK_ID
         )
 
         x_history = (
