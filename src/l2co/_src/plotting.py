@@ -435,6 +435,8 @@ def plot_ertd_profile(
     """
     _ertd = d.ertd_profile(include_best=include_best, cost_metric=cost_metric)
 
+    _ertd = _ertd.mean(PROBLEM)
+
     fig, ax = _get_or_create_axes(ax)
 
     if optimizers_to_plot is None:

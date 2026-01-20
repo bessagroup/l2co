@@ -24,6 +24,8 @@ create_performance_profile
 # Standard
 from __future__ import annotations
 
+from typing import Literal
+
 # Third-party
 import numpy as np
 import xarray as xr
@@ -31,7 +33,10 @@ import xarray as xr
 from .naming import (
     BUDGET,
     COST,
+    FEVALS,
+    ITERATIONS,
     OUTPUT_DIM,
+    OUTPUT_MIN,
     PROBLEM,
     REALIZATION,
     SCHEDULE,
@@ -325,13 +330,13 @@ def rtd(performance: xr.DataArray) -> xr.DataArray:
 
 
 def ertd(
-    performance: xr.DataArray,
-    cost_measure: xr.DataArray,
+    performance: xr.Dataset,
+    cost_measure: Literal[FEVALS, ITERATIONS],
     dims: xr.DataArray,
     cost_values: np.ndarray = DEFAULT_COST_VALUES,
 ) -> xr.DataArray:
     targets = xr.DataArray(DEFAULT_TARGETS, dims=TARGET)
-    solved = performance <= targets
+    solved = performance[OUTPUT_MIN] <= targets
     success = solved.any(BUDGET)
     first_solved = solved.argmax(BUDGET).where(
         success, other=solved[BUDGET].argmax()
@@ -339,7 +344,7 @@ def ertd(
 
     ds = xr.Dataset(
         {
-            COST: cost_measure.isel({BUDGET: first_solved}),
+            COST: performance[cost_measure].isel({BUDGET: first_solved}),
             SUCCESS: success,
             "dims": dims,
         }

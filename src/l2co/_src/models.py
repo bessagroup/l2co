@@ -13,12 +13,17 @@ import jax.random as jr
 import joblib
 import numpy as np
 import optax
+import xarray as xr
+from jax_tqdm import scan_tqdm
 from jaxtyping import PRNGKeyArray
 from sklearn.base import BaseEstimator
 from sklearn.multioutput import MultiOutputRegressor
 from tqdm import tqdm
 
+from l2co.naming import SCHEDULE
+
 from .data_loader import OptimizationDynamics
+from .naming import BUDGET, KIND, PROBLEM
 from .optimizerschedule import OptimizationStep
 from .task_features import FeatureProcessor, MixedEmbedding
 
@@ -221,15 +226,132 @@ class HistoryModel(AbstractModel):
         return self.model(combined)
 
     def train(
-        self, data: OptimizationDynamics, **kwargs
+        self,
+        data: OptimizationDynamics,
+        i: int | None,
+        optimizer: optax.GradientTransformation,
+        num_steps: int = 100,
+        verbose: bool = False,
+        scan: bool = True,
     ) -> tuple[HistoryModel, dict]:
+        # 1. Filter problems with invalid targets (must be valid for all
+        # # schedules)
+        # Note: We assume the model predicts the full y vector, so y must
+        # be valid.
+        y_mask = ~data.y.isnull().any(SCHEDULE)
+        data = data.select(problems=y_mask)
+
+        # 2. Split by problem to prevent leakage
+        data_train, data_val = data.train_test_split(
+            train_fraction=0.8, seed=42
+        )
+
+        def make_dataset(d: OptimizationDynamics) -> tuple[tuple, jax.Array]:
+            if i is not None:
+                # Single schedule mode
+                xh = d.x_history.isel({SCHEDULE: i}, drop=True)  # (P, B, K)
+
+                # Filter indices with valid history
+                valid_mask = ~xh.isnull().any([BUDGET, KIND])
+                xh = xh.where(valid_mask, drop=True)
+
+                # Align features and targets
+                xf = d.x_features.sel({PROBLEM: xh[PROBLEM]})
+                y = d.y.sel({PROBLEM: xh[PROBLEM]})
+
+                return (jnp.array(xf), jnp.array(xh)), jnp.array(y)
+            else:
+                # All schedules mode
+                # Stack (PROBLEM, SCHEDULE) into a single sample dimension
+                xh = d.x_history.stack(sample=(PROBLEM, SCHEDULE))
+
+                # Filter indices with valid history
+                valid_mask = ~xh.isnull().any([BUDGET, KIND])
+                xh = xh.where(valid_mask, drop=True)
+
+                # Align features and targets
+                # xh[PROBLEM] gives the problem index for each valid sample
+                xf = d.x_features.sel({PROBLEM: xh[PROBLEM]})
+                y = d.y.sel({PROBLEM: xh[PROBLEM]})
+
+                # Transpose xh to (sample, B, K) to match expected input
+                #  shape for batching
+                xh = xh.transpose("sample", BUDGET, "kind")
+
+                return (jnp.array(xf), jnp.array(xh)), jnp.array(y)
+
+        x_train, y_train = make_dataset(data_train)
+        x_val, y_val = make_dataset(data_val)
+
         model, metrics = train_equinox(
-            x=(jnp.array(data.x_features), jnp.array(data.x_history)),
-            y=jnp.array(data.y),
             model=self,
-            **kwargs,
+            optimizer=optimizer,
+            train_data=(x_train, y_train),
+            val_data=(x_val, y_val),
+            num_steps=num_steps,
+            verbose=verbose,
+            scan=scan,
         )
         return model, metrics
+
+    def evaluate(
+        self,
+        key: PRNGKeyArray,
+        data: OptimizationDynamics,
+        i: int | None,
+    ) -> jax.Array:
+        if i is not None:
+            x_eval = (
+                jnp.array(
+                    data.x_features,
+                ),
+                jnp.array(data.x_history.isel(schedule=i, drop=True)),
+            )
+
+            logits = eqx.filter_vmap(self)(x_eval)
+            # actions: jax.Array = jr.categorical(key, logits)
+            actions: jax.Array = jnp.argmax(logits, axis=-1)
+
+            optimizers = [self.optimizers[k] for k in actions]
+            y = (
+                xr.DataArray(
+                    optimizers,
+                    dims="problem",
+                    coords={"problem": data.x_features[PROBLEM]},
+                )
+                .assign_coords({PROBLEM: data.x_features[PROBLEM]})
+                .drop_vars(PROBLEM)
+            )
+        else:
+            # i is None: Evaluate on ALL (Problem, Schedule) pairs
+
+            # Stack to create single sample dimension
+            xh_stacked = data.x_history.stack(sample=(PROBLEM, SCHEDULE))
+
+            # Align features
+            # xh_stacked[PROBLEM] gives the problem index for each sample
+            xf_aligned = data.x_features.sel({PROBLEM: xh_stacked[PROBLEM]})
+            x_eval = (
+                jnp.array(xf_aligned),
+                jnp.array(xh_stacked.transpose("sample", BUDGET, "kind")),
+            )
+
+            logits = eqx.filter_vmap(self)(x_eval)
+            actions: jax.Array = jnp.argmax(logits, axis=-1)
+
+            optimizers = [self.optimizers[k] for k in actions]
+
+            # Create DataArray with stacked coord
+            y_flat = xr.DataArray(
+                optimizers,
+                dims="sample",
+                coords={"sample": xh_stacked["sample"]},
+            )
+
+            # Unstack back to (PROBLEM, SCHEDULE)
+            y = y_flat.unstack("sample")
+
+        return y
 
     def predict_logits(
         self,
@@ -530,24 +652,82 @@ def mse_loss(
     return jnp.mean((preds - y) ** 2)
 
 
+# def train_equinox(
+#     model: AbstractModel,
+#     x: jax.Array,
+#     y: jax.Array,
+#     optimizer: optax.GradientTransformation,
+#     num_steps: int = 100,
+#     verbose: bool = False,
+# ) -> tuple[AbstractModel, list[float]]:
+#     """Train the model with Adam on an iterable of (x, y) batches."""
+#     opt_state = optimizer.init(eqx.filter(model, eqx.is_inexact_array))
+#     loss_and_grad = eqx.filter_value_and_grad(mse_loss)
+
+#     loss_history: list[float] = []
+
+#     for _ in tqdm(range(num_steps), disable=not verbose):
+#         loss, grads = loss_and_grad(model, x, y)
+#         updates, opt_state = optimizer.update(grads, opt_state, model)
+#         model = eqx.apply_updates(model, updates)
+
+#         loss_history.append(float(loss))
+
+#     return model, loss_history
+
+
 def train_equinox(
-    model: AbstractModel,
-    x: jax.Array,
-    y: jax.Array,
+    model: eqx.Module,
     optimizer: optax.GradientTransformation,
+    train_data: tuple[jax.Array, jax.Array],
+    val_data: tuple[jax.Array, jax.Array] | None = None,  # Optional validation
     num_steps: int = 100,
-) -> tuple[AbstractModel, list[float]]:
-    """Train the model with Adam on an iterable of (x, y) batches."""
-    opt_state = optimizer.init(eqx.filter(model, eqx.is_inexact_array))
-    loss_and_grad = eqx.filter_value_and_grad(mse_loss)
+    verbose: bool = False,
+    scan: bool = True,
+) -> tuple[eqx.Module, dict[str, jax.Array]]:
+    x_train, y_train = train_data
 
-    loss_history: list[float] = []
+    params, static = eqx.partition(model, eqx.is_inexact_array)
+    opt_state = optimizer.init(params)
 
-    for _ in tqdm(range(num_steps)):
-        loss, grads = loss_and_grad(model, x, y)
-        updates, opt_state = optimizer.update(grads, opt_state, model)
-        model = eqx.apply_updates(model, updates)
+    loss_fn = mse_loss
+    loss_and_grad_fn = eqx.filter_value_and_grad(loss_fn)
 
-        loss_history.append(float(loss))
+    def make_step(carry, _):
+        params, opt_state = carry
+        model = eqx.combine(params, static)
 
-    return model, loss_history
+        # Training Branch
+        train_loss, grads = loss_and_grad_fn(model, *train_data)
+        updates, opt_state = optimizer.update(grads, opt_state, params)
+        new_params = eqx.apply_updates(params, updates)
+
+        # Validation Branch (Conditional)
+        val_loss = (
+            loss_fn(model, *val_data) if val_data is not None else jnp.nan
+        )
+
+        metrics = {"train_loss": train_loss, "val_loss": val_loss}
+        return (new_params, opt_state), metrics
+
+    # 2. Execution Logic (Scan vs Loop)
+    if scan:
+        step_fn = scan_tqdm(num_steps)(make_step) if verbose else make_step
+        (params, opt_state), metrics = jax.lax.scan(
+            step_fn,
+            (params, opt_state),
+            xs=jnp.arange(num_steps),
+            length=num_steps,
+        )
+    else:
+        metrics_list = []
+        for _ in tqdm(range(num_steps), disable=not verbose):
+            (params, opt_state), step_metrics = make_step(
+                (params, opt_state), None
+            )
+            metrics_list.append(step_metrics)
+        metrics = {
+            k: jnp.stack([m[k] for m in metrics_list]) for k in metrics_list[0]
+        }
+
+    return eqx.combine(params, static), metrics
