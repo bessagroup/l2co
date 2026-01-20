@@ -1,0 +1,73 @@
+# Evosax: Distribution-based Algorithms
+- optimizer: ars
+- optimizer: asebo
+- optimizer: cmaes
+- optimizer: crfmnes
+- optimizer: des
+- optimizer: esmc
+- optimizer: gradientlessdescent
+- optimizer: guidedes
+- optimizer: hillclimbing
+- optimizer: iamalgamfull
+- optimizer: iamalgamunivariate
+- optimizer: les
+- optimizer: lmmaes
+- optimizer: maes
+- optimizer: noisereusees
+- optimizer: openes
+- optimizer: persistentes
+- optimizer: pgpe
+- optimizer: rmes
+- optimizer: sepcmaes
+- optimizer: simulatedannealing
+- optimizer: simplees
+- optimizer: snes
+- optimizer: xnes
+
+# Evosax: Population-based / Genetic Algorithms
+- optimizer: differentialevolution
+- optimizer: diffusionevolution
+- optimizer: gesmrga
+- optimizer: mr15ga
+- optimizer: pso
+- optimizer: samrga
+- optimizer: simplega
+
+# Optax: Gradient-based Optimizers
+- optimizer: adabelief
+- optimizer: adadelta
+- optimizer: adan
+- optimizer: adafactor
+- optimizer: adagrad
+- optimizer: adam
+- optimizer: adamw
+- optimizer: adamax
+- optimizer: adamaxw
+- optimizer: amsgrad
+- optimizer: fromage
+- optimizer: lamb
+- optimizer: lars
+- optimizer: lion
+- optimizer: nadam
+- optimizer: nadamw
+- optimizer: noisysgd
+- optimizer: novograd
+- optimizer: optimisticgradientdescent
+- optimizer: optimisticadamv2
+- optimizer: radam
+- optimizer: rmsprop
+- optimizer: rprop
+- optimizer: sgd
+- optimizer: signsgd
+- optimizer: sm3
+- optimizer: yogi
+
+# Second-order
+- optimizer: lbfgs
+  stopping_criteria:
+    type: combined
+    grad_tol: 1e-3
+    loss_tol: 1e-6
+
+# Random Search
+- optimizer: randomsearch

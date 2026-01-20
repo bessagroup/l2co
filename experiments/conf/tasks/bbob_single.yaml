@@ -21,8 +21,8 @@ data_generator:
   _target_: l2co._src.tasks.benchmark_task.create_bbob_task
   _partial_: True
 
-fn_name: sphere
-fn_dim: 15
+fn_name: rastrigin
+fn_dim: 5
 
 schema:
   dimensionality: continuous

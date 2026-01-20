@@ -1,4 +1,5 @@
 from l2co import OptimizationStep
+from l2co._src.optimizers import optimizers
 
 OPTIMIZATION_STEPS = [
     OptimizationStep(
@@ -15,7 +16,7 @@ OPTIMIZATION_STEPS = [
         },
     ),
     OptimizationStep(
-        optimizer="lbfgsb",
+        optimizer="lbfgs",
         stopping_criteria={
             "type": "combined",
             "grad_tol": 1e-3,
@@ -24,3 +25,5 @@ OPTIMIZATION_STEPS = [
     ),
     OptimizationStep(optimizer="pso"),
 ]
+
+ALL_OPTIMIZERS = list(optimizers.keys())
