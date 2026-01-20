@@ -39,13 +39,14 @@ from __future__ import annotations
 
 import gc
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from time import time
 
 # Third-party
 import equinox as eqx
 import jax
 import jax.random as jr
+import xarray as xr
 from f3dasm import ExperimentSample
 from f3dasm.datageneration import DataGenerator
 from jaxtyping import PRNGKeyArray, PyTree
@@ -54,11 +55,10 @@ from l2co._src.batching import BatchState
 
 # Local
 from l2co._src.history_state import HistoryState
+from l2co._src.models import L2COModel
+from l2co._src.naming import REALIZATION
 from l2co._src.optimizerschedule import OptimizationStep
-from l2co._src.run_state import (
-    RunState,
-    batch_evaluate,
-)
+from l2co._src.run_state import RunState, batch_evaluate, evaluate
 from l2co._src.task import Task
 
 #                                                          Authorship & Credits
@@ -80,6 +80,7 @@ class RolloutWrapper(eqx.Module):
     dataset: dict[str, jax.Array]
     loss_fn: Callable
     sampler: Callable
+    pass_rng: bool
     verbose: bool
 
     @classmethod
@@ -99,6 +100,8 @@ class RolloutWrapper(eqx.Module):
             key=key,
         )
 
+        pass_rng = task.pass_rng
+
         dataset = task.loaded_dataset
 
         batch_state = BatchState.init(
@@ -116,6 +119,7 @@ class RolloutWrapper(eqx.Module):
             dataset=dataset,
             loss_fn=task.loss_fn,
             sampler=sampler,
+            pass_rng=pass_rng,
             verbose=verbose,
         )
 
@@ -134,7 +138,26 @@ class RolloutWrapper(eqx.Module):
             self.loss_fn,
             self.sampler,
             n_iterations,
+            self.pass_rng,
             jr.split(key, n_realizations),
+            self.verbose,
+        )
+
+    def evaluate(
+        self,
+        key,
+        n_iterations: int,
+    ) -> tuple[RunState, BatchState, HistoryState]:
+        evaluate(
+            self.run_state,
+            self.batch_state,
+            self.static,
+            self.dataset,
+            self.loss_fn,
+            self.sampler,
+            n_iterations,
+            self.pass_rng,
+            key,
             self.verbose,
         )
 
@@ -215,7 +238,11 @@ class RunOptimization(DataGenerator):
         self.verbose = verbose
         self.save_input_parameters = save_input_parameters
 
-    def execute(self, experiment_sample: ExperimentSample) -> ExperimentSample:
+    def execute(
+        self,
+        experiment_sample: ExperimentSample,
+        model: L2COModel | None = None,
+    ) -> ExperimentSample:
         """
         Execute the optimization task for a given experiment sample.
 
@@ -228,6 +255,8 @@ class RunOptimization(DataGenerator):
         experiment_sample : ExperimentSample
             The experiment sample containing task and optimizer configuration
             in the input_data.
+        model : L2COModel | None
+            The L2CO model to use for optimization, if applicable.
 
         Returns
         -------
@@ -243,11 +272,18 @@ class RunOptimization(DataGenerator):
         task: Task = es["task"]
         optimizer: OptimizationStep = es["optimizer schedule"]
 
-        experiment_sample = self.run_optimization(
-            experiment_sample=experiment_sample,
-            task=task,
-            optimizer=optimizer,
-        )
+        if optimizer.name == "l2co":
+            experiment_sample = self.run_optimization_l2co(
+                experiment_sample=experiment_sample,
+                task=task,
+                model=model,
+            )
+        else:
+            experiment_sample = self.run_optimization(
+                experiment_sample=experiment_sample,
+                task=task,
+                optimizer=optimizer,
+            )
 
         if self.clear_jax_cache:
             eqx.clear_caches()
@@ -255,6 +291,64 @@ class RunOptimization(DataGenerator):
             gc.collect()
 
         return experiment_sample
+
+    def run_optimization_l2co(
+        self,
+        experiment_sample: ExperimentSample,
+        task: Task,
+        model: L2COModel,
+    ) -> ExperimentSample:
+        t1 = time()
+        key = jr.key(self.seed)
+        n_iterations = self.budget_fn(task=task)
+
+        optimizers: Iterable[OptimizationStep] = model.predict(
+            x=task.tag,
+            key=jr.key(self.seed),
+            n_realizations=self.n_realizations,
+        )
+
+        keys = jr.split(key, num=self.n_realizations)
+
+        histories = []
+
+        for key, optimizer in zip(keys, optimizers, strict=True):
+            rollout_wrapper: RolloutWrapper = RolloutWrapper.init(
+                optimizer=optimizer,
+                task=task,
+                sampler=self.sampler,
+                key=key,
+                bounded=self.bounded,
+                verbose=self.verbose,
+            )
+
+            _, _, history_state = rollout_wrapper.evaluate(
+                key=key,
+                n_iterations=n_iterations,
+                n_realizations=self.n_realizations,
+            )
+
+            histories.append(history_state.to_xarray())
+
+        data_xarr = xr.concat(
+            histories,
+            dim=xr.DataArray(
+                range(self.n_realizations),
+                dims=[REALIZATION],
+            ),
+        )
+
+        experiment_sample.store(
+            name="loss history", object=data_xarr, to_disk=True
+        )
+
+        logger.info(
+            f"Finished optimization task {task.name} ({task.dimensionality}D) "
+            f"with L2CO model for"
+            f" {n_iterations} "
+            f"iterations for {self.n_realizations} realizations"
+            f" (took {time() - t1:.2f} seconds)"
+        )
 
     def run_optimization(
         self,

@@ -85,11 +85,15 @@ def test_pde(optimizer: OptimizationStep, tmp_path: Path):
 @pytest.mark.parametrize("optimizer", OPTIMIZATION_STEPS)
 @pytest.mark.parametrize("fn_name", ["sphere", "rastrigin"])
 @pytest.mark.parametrize("dim", [2, 5])
-def test_bbob(optimizer: OptimizationStep, fn_name: str, dim: int):
+@pytest.mark.parametrize("noise", [0.0, 0.01])
+def test_bbob(
+    optimizer: OptimizationStep, fn_name: str, dim: int, noise: float
+):
     task = create_bbob_task(
         fn_name=fn_name,
         seed=0,
         dimensionality=dim,
+        noise=noise,
     )
     run(
         optimizer=optimizer,

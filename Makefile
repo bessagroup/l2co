@@ -1,12 +1,12 @@
-.PHONY: help build test lint format docs docs-serve
+.PHONY: help build test lint format docs
 
 # Default target
 help:
 	@echo "Available targets:"
 	@echo "  build        - Build the package distribution"
-	@echo "  test         - Run tests with pytest"
-	@echo "  lint         - Lint code with ruff"
-	@echo "  docs         - Build documentation with mkdocs"
+	@echo "  test         - Run tests"
+	@echo "  lint         - Lint code"
+	@echo "  docs         - Build documentation"
 
 # Build targets
 build:

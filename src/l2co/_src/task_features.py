@@ -15,7 +15,8 @@ class FeatureProcessor(eqx.Module):
     stds: dict[str, float] = eqx.field(static=True)
     vocabs: dict[str, dict[object, int]] = eqx.field(static=True)
 
-    def __init__(self, schema: dict[str, str], tags: Iterable[dict[str, Any]]):
+    @classmethod
+    def init(cls, schema: dict[str, str], tags: Iterable[dict[str, Any]]):
         """
         Initialize feature processor with schema and task data.
 
@@ -27,26 +28,30 @@ class FeatureProcessor(eqx.Module):
         tasks : Iterable[Task]
             Task objects containing feature data.
         """
-        self.schema = schema
-
-        self.means = {}
-        self.stds = {}
-        self.vocabs = {}
+        means = {}
+        stds = {}
+        vocabs = {}
 
         if isinstance(tags, dict):
             tags = [tags]
 
         for name, ftype in schema.items():
-            col = [d[name] for d in tags]
+            if ftype == "boolean":
+                col = [str(d[name]).lower() for d in tags]
+            else:
+                col = [d[name] for d in tags]
+
             if ftype == "continuous":
                 arr = jnp.array(col, dtype=jnp.float32)
-                self.means[name] = float(arr.mean())
-                self.stds[name] = float(arr.std() + 1e-8)
-            elif ftype in ("categorical", "ordinal"):
+                means[name] = float(arr.mean())
+                stds[name] = float(arr.std() + 1e-8)
+            elif ftype in ("categorical", "ordinal", "boolean"):
                 uniqs = sorted(set(col))
-                self.vocabs[name] = {v: i for i, v in enumerate(uniqs)}
+                vocabs[name] = {v: i for i, v in enumerate(uniqs)}
             else:
                 raise ValueError(f"Unknown feature type {ftype}")
+
+        return cls(schema=schema, means=means, stds=stds, vocabs=vocabs)
 
     def transform(self, x: dict[str, object]) -> jax.Array:
         """
@@ -64,7 +69,10 @@ class FeatureProcessor(eqx.Module):
         """
         feats = []
         for name, ftype in self.schema.items():
-            val = x[name]
+            if ftype == "boolean":
+                val = str(x[name]).lower()
+            else:
+                val = x[name]
             if ftype == "continuous":
                 normed = (float(val) - self.means[name]) / self.stds[name]
                 feats.append(normed)
@@ -72,6 +80,39 @@ class FeatureProcessor(eqx.Module):
                 feats.append(float(self.vocabs[name][val]))
 
         return jnp.array(feats, dtype=jnp.float32)
+
+    def to_dict(self) -> dict:
+        """
+        Serialize feature processor configuration.
+
+        Returns
+        -------
+        dict
+            Configuration dictionary.
+        """
+        return {
+            "schema": self.schema,
+            "means": self.means,
+            "stds": self.stds,
+            "vocabs": self.vocabs,
+        }
+
+    @classmethod
+    def reconstruct(cls, **kwargs) -> FeatureProcessor:
+        """
+        Reconstruct feature processor from configuration.
+
+        Parameters
+        ----------
+        **kwargs
+            Configuration dictionary.
+
+        Returns
+        -------
+        FeatureProcessor
+            Reconstructed feature processor instance.
+        """
+        return cls(**kwargs)
 
 
 # =============================================================================
@@ -89,22 +130,9 @@ class MixedEmbedding(eqx.Module):
         Final projection layer.
     """
 
+    out_size: int
     embedders: list[eqx.Module]
     final_proj: eqx.nn.Linear
-
-    def __init__(self, embedders: list[eqx.Module], final_proj: eqx.nn.Linear):
-        """
-        Initialize mixed embedding layer.
-
-        Parameters
-        ----------
-        embedders : list[eqx.Module]
-            List of embedding/linear layers.
-        final_proj : eqx.nn.Linear
-            Final projection layer.
-        """
-        self.embedders = embedders
-        self.final_proj = final_proj
 
     @classmethod
     def from_feature_processor(
@@ -140,7 +168,7 @@ class MixedEmbedding(eqx.Module):
         for (name, s), k in zip(
             feature_processor.schema.items(), keys[:-1], strict=True
         ):
-            if s in ("categorical", "ordinal"):
+            if s in ("categorical", "ordinal", "boolean"):
                 embedders.append(
                     eqx.nn.Embedding(
                         num_embeddings=len(feature_processor.vocabs[name]),
@@ -160,7 +188,9 @@ class MixedEmbedding(eqx.Module):
             key=keys[-1],
         )
 
-        return cls(embedders=embedders, final_proj=final_proj)
+        return cls(
+            embedders=embedders, final_proj=final_proj, out_size=output_dim
+        )
 
     def __call__(self, x: jax.Array) -> jax.Array:
         """
@@ -275,4 +305,9 @@ class MixedEmbedding(eqx.Module):
             out_features=final_proj["out_features"],
             key=k2,
         )
-        return cls(embedders=embedders_list, final_proj=final_proj, **kwargs)
+        return cls(
+            embedders=embedders_list,
+            final_proj=final_proj,
+            out_size=final_proj["out_features"],
+            **kwargs,
+        )

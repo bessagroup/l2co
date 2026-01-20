@@ -160,3 +160,9 @@ notebooks/
 *.out
 
 .DS_Store
+
+# Agent
+.agent/
+ARCHITECT_PLAN.md
+AUDIT_REPORT.md
+NEXT_PROMPT.md

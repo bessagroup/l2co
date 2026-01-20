@@ -24,7 +24,7 @@ create_performance_profile
 # Standard
 from __future__ import annotations
 
-from functools import partial
+from typing import Literal
 
 # Third-party
 import numpy as np
@@ -33,7 +33,10 @@ import xarray as xr
 from .naming import (
     BUDGET,
     COST,
+    FEVALS,
+    ITERATIONS,
     OUTPUT_DIM,
+    OUTPUT_MIN,
     PROBLEM,
     REALIZATION,
     SCHEDULE,
@@ -75,6 +78,50 @@ def output_cummin(da: xr.DataArray) -> xr.DataArray:
     """
     return xr.apply_ufunc(
         np.minimum.accumulate,
+        da,
+        input_core_dims=[[BUDGET]],
+        output_core_dims=[[BUDGET]],
+        vectorize=True,
+        dask="parallelized",
+        output_dtypes=[da.dtype],
+        dask_gufunc_kwargs={"allow_rechunk": True},
+    )
+
+
+def adaptive_worst_quantile_1d(x, q=0.99):
+    T = x.shape[0]
+    out = np.empty(T, dtype=x.dtype)
+    ks = np.ceil(np.log(np.arange(T) + 3) ** 2 / 2).astype(int)
+
+    for t, k in enumerate(ks):
+        start = max(0, t - k + 1)
+        w = x[start : t + 1]
+        idx = int(np.ceil(q * (w.size - 1)))
+        out[t] = np.partition(w, idx)[idx]
+
+    return out
+
+
+def output_quantile(da: xr.DataArray) -> xr.DataArray:
+    """
+    Calculate the cumulative minimum of the given data array.
+
+    Parameters
+    ----------
+    da : xarray.DataArray
+        The data array to calculate the cumulative minimum for.
+
+    Returns
+    -------
+    xarray.DataArray
+        The data array with the cumulative minimum calculated.
+
+    Notes
+    -----
+    The cumulative minimum is calculated along the coordinate named 'budget'.
+    """
+    return xr.apply_ufunc(
+        adaptive_worst_quantile_1d,
         da,
         input_core_dims=[[BUDGET]],
         output_core_dims=[[BUDGET]],
@@ -283,13 +330,13 @@ def rtd(performance: xr.DataArray) -> xr.DataArray:
 
 
 def ertd(
-    performance: xr.DataArray,
-    cost_measure: xr.DataArray,
+    performance: xr.Dataset,
+    cost_measure: Literal[FEVALS, ITERATIONS],
     dims: xr.DataArray,
     cost_values: np.ndarray = DEFAULT_COST_VALUES,
 ) -> xr.DataArray:
     targets = xr.DataArray(DEFAULT_TARGETS, dims=TARGET)
-    solved = performance <= targets
+    solved = performance[OUTPUT_MIN] <= targets
     success = solved.any(BUDGET)
     first_solved = solved.argmax(BUDGET).where(
         success, other=solved[BUDGET].argmax()
@@ -297,7 +344,7 @@ def ertd(
 
     ds = xr.Dataset(
         {
-            COST: cost_measure.isel({BUDGET: first_solved}),
+            COST: performance[cost_measure].isel({BUDGET: first_solved}),
             SUCCESS: success,
             "dims": dims,
         }
@@ -312,24 +359,31 @@ def ertd(
         dims="cost_per_dim",
         coords={"cost_per_dim": values},
     )
-    ertd = (ert_multi <= budgets).mean([SEED, OUTPUT_DIM, TARGET])
+    ertd = (ert_multi <= budgets).mean([OUTPUT_DIM, TARGET])
 
     return ertd
 
 
-def compute_ert_group(ds: xr.Dataset, seed: int, n_picks: int) -> xr.DataArray:
+def draw_samples(seed: int, n_realizations: int, n_picks: int):
     rng = np.random.default_rng(seed)
-    n_realizations = int(ds[REALIZATION].max())
-    samples = np.concat(
+    return np.concatenate(
         [
             rng.permutation(n_realizations + 1),
             rng.integers(
-                0, n_realizations + 1, size=max(n_picks - n_realizations, 0)
+                0,
+                n_realizations + 1,
+                size=max(n_picks - n_realizations, 0),
             ),
         ]
     )
 
+
+def compute_ert_group(
+    ds: xr.Dataset,
+    samples: xr.DataArray,
+) -> xr.DataArray:
     ds = ds.isel({PROBLEM: samples})
+
     # Find index of first True along "problem"
     first_true = ds[SUCCESS].argmax(PROBLEM)
 
@@ -350,7 +404,8 @@ def compute_ert_group(ds: xr.Dataset, seed: int, n_picks: int) -> xr.DataArray:
 
     # Divide by the dimensionality of the problem
     ert = ert / ds["dims"].mean(PROBLEM)
-    return ert
+
+    return ert.mean(SEED)
 
 
 def compute_ert_multi_seed(
@@ -360,21 +415,27 @@ def compute_ert_multi_seed(
     Compute ERT across multiple random seeds and return an xarray
     with dimensions (seed, taskID, ...).
     """
-    # Create a version of compute_ert_group with n_picks fixed
-    compute_partial = partial(compute_ert_group, n_picks=n_picks)
+    n_realizations = int(ds[REALIZATION].max())
+    samples = np.stack(
+        [
+            draw_samples(
+                seed=s, n_realizations=n_realizations, n_picks=n_picks
+            )
+            for s in np.arange(n_seeds)
+        ],
+        axis=0,
+    )
 
-    # Map over seeds in a vectorized fashion
-    ert_list = [
-        ds.groupby(TASK_ID)
-        .map(compute_partial, seed=seed)
-        .expand_dims({SEED: [seed]})
-        for seed in np.arange(n_seeds)
-    ]
+    samples_da = xr.DataArray(
+        samples,
+        dims=(SEED, PROBLEM),
+    )
 
-    # Concatenate along the seed dimension
-    ert_all = xr.concat(ert_list, dim=SEED)
+    ert_all = ds.groupby(TASK_ID).map(compute_ert_group, samples=samples_da)
 
-    return ert_all
+    ert_full = ert_all.sel({TASK_ID: ds[TASK_ID]})
+
+    return ert_full
 
 
 # =============================================================================

@@ -14,7 +14,7 @@ import cloudpickle
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import PyTree
+from jaxtyping import PRNGKeyArray, PyTree
 
 # Local
 from .performance import EPSILON
@@ -48,10 +48,46 @@ def combined_loss(model: PyTree, loss_fn: Callable, sample: dict) -> jax.Array:
     return loss_fn(model, **sample)
 
 
+def combined_loss_with_rng(
+    model: PyTree, loss_fn: Callable, sample: dict, key: PRNGKeyArray
+) -> jax.Array:
+    """
+    Compute the combined loss for a given set of parameters with RNG.
+
+    Parameters
+    ----------
+    model : PyTree
+        The model parameters.
+    loss_fn : Callable
+        The loss function to compute the loss.
+    sample : dict
+        Sample data for loss computation.
+    key : PRNGKeyArray
+        Random number generator key.
+
+    Returns
+    -------
+    jax.Array
+        The computed loss.
+    """
+    return loss_fn(model, **sample, key=key)
+
+
 vmapped_loss_and_grad = eqx.filter_vmap(
     eqx.filter_value_and_grad(combined_loss), in_axes=(0, None, None)
 )
 vmapped_loss = eqx.filter_vmap(combined_loss, in_axes=(0, None, None))
+
+
+vmapped_loss_and_grad_with_rng = eqx.filter_vmap(
+    eqx.filter_value_and_grad(combined_loss_with_rng),
+    in_axes=(0, None, None, 0),
+)
+
+vmapped_loss_with_rng = eqx.filter_vmap(
+    combined_loss_with_rng,
+    in_axes=(0, None, None, 0),
+)
 
 
 def ffill(x: jnp.ndarray) -> jnp.ndarray:
@@ -255,6 +291,18 @@ def output_cummin(x: jax.Array) -> jax.Array:
         Array with cumulative minimum values.
     """
     return jax.lax.cummin(x, axis=0)
+
+
+# =============================================================================
+
+
+def traj_and_stair(x_output_mean, x_output_min):
+    traj = ffill(bfill(x_output_mean))
+    stair = output_cummin(ffill(bfill(x_output_min)))
+    return log_stabilized_minmax_scale(jnp.stack((traj, stair), axis=1))
+
+
+# =============================================================================
 
 
 def get_best(params: PyTree, losses: jax.Array):

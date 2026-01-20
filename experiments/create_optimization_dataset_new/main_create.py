@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-@hydra.main(config_path="./conf", config_name="config")
+@hydra.main(config_path="../conf", config_name="config")
 def main(config: DictConfig):
     experiment_data_tasks = ExperimentData.from_yaml(
         config.tasks.experimentdata

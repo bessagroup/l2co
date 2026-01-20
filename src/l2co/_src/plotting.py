@@ -21,6 +21,7 @@ from typing import Literal
 
 # Third-party
 import equinox as eqx
+import jax
 import jax.random as jr
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
@@ -34,6 +35,9 @@ from matplotlib.colors import (
     SymLogNorm,
 )
 from matplotlib.patches import Patch
+from scipy.interpolate import griddata
+
+from .batching import BatchState
 
 # Local
 from .data_loader import DataLoader, OptimizationDynamics
@@ -66,6 +70,7 @@ OPTIMIZER_COLORS = {
     "adam_variable_updates_learning_rate=0.01": "#1f77b4",
     "adam_learning_rate=0.01": "#1f77b4",
     "adam_learning_rate=0.1": "#17becf",
+    "adam_learning_rate=0.001": "#aec7e8",
     "sepcmaes": "#ff7f0e",
     "cmaes": "#ff7f0e",
     "lbfgsb": "#2ca02c",
@@ -82,9 +87,9 @@ OPTIMIZER_LINESTYLES = {
     "cmaes": "-",
     "lbfgsb": "-",
     "pso": "-",
-    "sbs": "-",
+    "sbs": ":",
     "l2co": "--",
-    "vbs": "-",
+    "vbs": ":",
     "random": "-",
 }
 
@@ -135,6 +140,211 @@ def set_size(width, fraction=1, subplots=(1, 1)):
 # =============================================================================
 
 
+#                                                           Helper Functions
+# =============================================================================
+
+
+def _get_or_create_axes(
+    ax: plt.Axes | None = None,
+    figsize: tuple[float, float] | None = None,
+) -> tuple[plt.Figure, plt.Axes]:
+    """
+    Get or create a matplotlib axes object.
+
+    Parameters
+    ----------
+    ax : plt.Axes, optional
+        Existing matplotlib axes. If None, creates new figure and axes.
+    figsize : tuple[float, float], optional
+        Figure size for new figure creation. If None and ax is None,
+        uses default size.
+
+    Returns
+    -------
+    tuple[plt.Figure, plt.Axes]
+        Matplotlib figure and axes.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(
+            1, 1, figsize=figsize or set_size(width="paper", subplots=(1, 1))
+        )
+    else:
+        fig = ax.get_figure()
+    return fig, ax
+
+
+def _plot_schedule_curves(
+    data: xr.DataArray,
+    ax: plt.Axes,
+    optimizers_to_plot: Iterable[str] | None = None,
+    x_data: np.ndarray | None = None,
+    use_label_values: bool = True,
+) -> None:
+    """
+    Plot curves for each schedule/optimizer in the data.
+
+    Parameters
+    ----------
+    data : xr.DataArray
+        DataArray with SCHEDULE dimension containing data for each optimizer.
+    ax : plt.Axes
+        Matplotlib axes to plot on.
+    optimizers_to_plot : Iterable[str], optional
+        Specific optimizers to plot. If None, plots all.
+    x_data : np.ndarray, optional
+        X-axis data. If None, uses implicit integer indices.
+    use_label_values : bool, optional
+        Whether to use label values from coordinates for legend.
+        By default True.
+    """
+    if optimizers_to_plot is None:
+        optimizers_to_plot = data[SCHEDULE].values
+
+    for optimizer in optimizers_to_plot:
+        y_vals = data.sel({SCHEDULE: optimizer})
+        label = optimizer.values if use_label_values else optimizer
+
+        if x_data is not None:
+            ax.plot(x_data, y_vals, label=label)
+        else:
+            ax.plot(y_vals, label=label)
+
+
+def _prepare_loss_landscape(
+    task: Task,
+    stepsize: float = 0.033,
+    seed: int = 0,
+    lower_bound: float = 0.0,
+    upper_bound: float = 1.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Prepare loss landscape by grid sampling and evaluation.
+
+    Parameters
+    ----------
+    task : Task
+        The optimization task containing the model and evaluation function.
+    stepsize : float, optional
+        Step size for grid sampling, by default 0.033.
+    seed : int, optional
+        Random seed for evaluation, by default 0.
+    lower_bound : float, optional
+        Lower bound for sampling, by default 0.0.
+    upper_bound : float, optional
+        Upper bound for sampling, by default 1.0.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        samples, losses arrays from evaluated samples.
+    """
+    params, static = eqx.partition(task.model, eqx.is_inexact_array)
+    samples = grid_sampling(
+        params=params,
+        n_points_per_dim=int(1 // stepsize),
+        lower_bound=lower_bound,
+        upper_bound=upper_bound,
+    )
+
+    key = jr.key(seed)
+    n_samples = jax.tree_util.tree_leaves(samples)[0].shape[0]
+
+    dataset = task.loaded_dataset
+    batch_state = BatchState.init(
+        dataset=dataset, batch_size=task.batch_size, key=key
+    )
+
+    losses = evaluate(
+        samples,
+        batch_state,
+        dataset,
+        task.loss_fn,
+        task.pass_rng,
+        key,
+        jr.split(key, n_samples),
+    )
+
+    return samples, losses
+
+
+def _interpolate_2d_grid_from_scattered(
+    x: np.ndarray,
+    y: np.ndarray,
+    losses: np.ndarray,
+    plot_resolution: int = 100,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Interpolate a 2D grid from scattered data points.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        X coordinates of sample points.
+    y : np.ndarray
+        Y coordinates of sample points.
+    losses : np.ndarray
+        Loss values at sample points.
+    plot_resolution : int, optional
+        Resolution of interpolated grid, by default 100.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, np.ndarray]
+        Interpolated X, Y meshgrids and Z values (normalized for log scale).
+    """
+    X, Y = np.meshgrid(
+        np.linspace(x.min(), x.max(), plot_resolution),
+        np.linspace(y.min(), y.max(), plot_resolution),
+    )
+
+    Z = griddata((x, y), losses, (X, Y), method="cubic")
+    Z -= np.nanmin(Z)
+    Z += np.nanmin(Z[Z > 0])
+
+    return X, Y, Z
+
+
+def _create_positive_log_normalized_grid(
+    x: np.ndarray,
+    y: np.ndarray,
+    losses: np.ndarray,
+    plot_resolution: int = 100,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Create a grid from scattered data and apply log normalization.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        X coordinates of sample points.
+    y : np.ndarray
+        Y coordinates of sample points.
+    losses : np.ndarray
+        Loss values at sample points.
+    plot_resolution : int, optional
+        Resolution of interpolated grid, by default 100.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, np.ndarray]
+        Interpolated X, Y meshgrids and Z values (normalized for log scale).
+    """
+    X, Y, Z = _interpolate_2d_grid_from_scattered(
+        x=x, y=y, losses=losses, plot_resolution=plot_resolution
+    )
+
+    # Ensure Z is positive for log normalization
+    Z_nonzero = Z[Z > 0]
+    eps = np.min(Z_nonzero) if Z_nonzero.size > 0 else 1e-1
+
+    Z += eps
+
+    return X, Y, Z
+
+
+# =============================================================================
+
+
 def plot_rtd_profile(
     d: DataLoader,
     ax: plt.Axes | None = None,
@@ -174,20 +384,14 @@ def plot_rtd_profile(
         .isel({OUTPUT_DIM: 0})
     )
 
-    if ax is None:
-        fig, ax = plt.subplots(
-            1, 1, figsize=set_size(width="paper", subplots=(1, 1))
-        )
-    else:
-        fig = ax.get_figure()
+    fig, ax = _get_or_create_axes(ax=ax)
 
-    if optimizers_to_plot is None:
-        for optimizer in _rtd[SCHEDULE]:
-            ax.plot(_rtd.sel({SCHEDULE: optimizer}), label=optimizer.values)
-
-    else:
-        for optimizer in optimizers_to_plot:
-            ax.plot(_rtd.sel({SCHEDULE: optimizer}), label=optimizer)
+    _plot_schedule_curves(
+        data=_rtd,
+        ax=ax,
+        optimizers_to_plot=optimizers_to_plot,
+        use_label_values=True,
+    )
 
     ax.legend()
     ax.set_xlabel("Function evaluations")
@@ -231,40 +435,33 @@ def plot_ertd_profile(
     """
     _ertd = d.ertd_profile(include_best=include_best, cost_metric=cost_metric)
 
-    if ax is None:
-        fig, ax = plt.subplots(
-            1, 1, figsize=set_size(width="paper", subplots=(1, 1))
-        )
-    else:
-        fig = ax.get_figure()
+    _ertd = _ertd.mean(PROBLEM)
 
-    if optimizers_to_plot is None:
-        for optimizer in _ertd[SCHEDULE]:
-            ax.plot(
-                _ertd["cost_per_dim"],
-                _ertd.sel({SCHEDULE: optimizer}),
-                label=optimizer.values,
-            )
+    return plot_ertd(ertd=_ertd, ax=ax, cost_metric=cost_metric)
 
-    else:
-        for optimizer in optimizers_to_plot:
-            ax.plot(
-                _ertd["cost_per_dim"],
-                _ertd.sel({SCHEDULE: optimizer}),
-                label=optimizer,
-            )
+    # fig, ax = _get_or_create_axes(ax)
 
-    ax.legend()
-    ax.set_xscale("log")
+    # if optimizers_to_plot is None:
+    #     optimizers_to_plot = _ertd[SCHEDULE].values
 
-    if cost_metric == "iterations":
-        ax.set_xlabel("Iterations / dimensionality)")
-    else:
-        ax.set_xlabel("Function evaluations / dimensionality)")
-    ax.set_ylabel("Fraction of function, target pairs")
-    ax.set_ylim(0.0, 1.0)
-    ax.set_xlim(10**0)
-    return fig, ax
+    # for optimizer in optimizers_to_plot:
+    #     ax.plot(
+    #         _ertd["cost_per_dim"],
+    #         _ertd.sel({SCHEDULE: optimizer}),
+    #         label=optimizer,
+    #     )
+
+    # ax.legend()
+    # ax.set_xscale("log")
+
+    # if cost_metric == "iterations":
+    #     ax.set_xlabel("Iterations / dimensionality)")
+    # else:
+    #     ax.set_xlabel("Function evaluations / dimensionality)")
+    # ax.set_ylabel("Fraction of function, target pairs")
+    # ax.set_ylim(0.0, 1.0)
+    # ax.set_xlim(10**0)
+    # return fig, ax
 
 
 def plot_perf_profile(
@@ -301,12 +498,7 @@ def plot_perf_profile(
     ).to_array("optimizer")
     rel_error = _perf.f * 100 - 100
 
-    if ax is None:
-        fig, ax = plt.subplots(
-            1, 1, figsize=set_size(width="paper", subplots=(1, 1))
-        )
-    else:
-        fig = ax.get_figure()
+    fig, ax = _get_or_create_axes(ax=ax)
 
     for optimizer in _perf[SCHEDULE]:
         ax.plot(
@@ -566,6 +758,8 @@ def plot_2d_loss_landscape_only(
     seed: int = 0,
     ax=None,
     colorbar: bool = True,
+    lower_bound: float = 0.0,
+    upper_bound: float = 1.0,
 ):
     """
     Plot a 2D loss landscape for a given task.
@@ -585,6 +779,10 @@ def plot_2d_loss_landscape_only(
         by default None.
     colorbar : bool, optional
         Whether to display a colorbar, by default True.
+    lower_bound : float, optional
+        Lower bound for sampling, by default 0.0.
+    upper_bound : float, optional
+        Upper bound for sampling, by default 1.0.
 
     Returns
     -------
@@ -597,42 +795,23 @@ def plot_2d_loss_landscape_only(
     landscapes with large dynamic ranges. The loss values are shifted to
     be positive before applying log normalization.
     """
-    params, static = eqx.partition(task.model, eqx.is_inexact_array)
-    samples = grid_sampling(
-        params=params,
-        n_points_per_dim=int(1 // stepsize),
-        lower_bound=0.0,
-        upper_bound=1.0,
+    samples, losses = _prepare_loss_landscape(
+        task=task,
+        stepsize=stepsize,
+        seed=seed,
+        lower_bound=lower_bound,
+        upper_bound=upper_bound,
     )
 
-    z = evaluate(params=samples, task=task, key=jr.key(seed))
     x = samples[:, 0]
     y = samples[:, 1]
 
-    import numpy as np
-    from scipy.interpolate import griddata
-
-    X, Y = np.meshgrid(
-        np.linspace(min(x), max(x), plot_resolution),
-        np.linspace(min(y), max(y), plot_resolution),
+    X, Y, Z = _create_positive_log_normalized_grid(
+        x=x, y=y, losses=losses, plot_resolution=plot_resolution
     )
 
-    Z = griddata((x, y), z, (X, Y), method="cubic")
-
-    # Ensure Z is positive
-    Z_min = np.min(Z)
-    Z = Z - Z_min
-
-    Z_nonzero = Z[Z > 0]
-    eps = np.min(Z_nonzero) if Z_nonzero.size > 0 else 1e-1
-
-    Z += eps
-
     # Create the figure and set up the subplots
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(12, 6))
-    else:
-        fig = ax.get_figure()
+    fig, ax = _get_or_create_axes(ax=ax, figsize=(12, 6))
 
     heatmap = ax.pcolormesh(
         X, Y, Z, cmap="viridis", shading="auto", norm=LogNorm()
@@ -642,6 +821,118 @@ def plot_2d_loss_landscape_only(
     ax.set_xticks([])
     ax.set_yticks([])
     return fig, ax
+
+
+def plot_2d_loss_landscape_slice_grid(
+    task: Task,
+    plot_resolution: int = 100,
+    stepsize: float = 0.033,
+    seed: int = 0,
+    z_slices: int | list[float] = 6,
+    lower_bound: float = 0.0,
+    upper_bound: float = 1.0,
+    colorbar: bool = True,
+):
+    """
+    Plot a grid of 2D (x, y) loss landscape slices for fixed z values,
+    annotating the GLOBAL minimum with a red cross.
+    """
+    samples, losses = _prepare_loss_landscape(
+        task=task,
+        stepsize=stepsize,
+        seed=seed,
+        lower_bound=lower_bound,
+        upper_bound=upper_bound,
+    )
+
+    x = samples[:, 0]
+    y = samples[:, 1]
+    z = samples[:, 2]
+
+    # ------------------------------------------------------------------
+    # GLOBAL minimum across ALL samples
+    # ------------------------------------------------------------------
+    global_min_idx = np.argmin(losses)
+    x_min = x[global_min_idx]
+    y_min = y[global_min_idx]
+    z_min = z[global_min_idx]
+
+    # Choose z slices from actual grid
+    unique_z = np.unique(z)
+
+    if isinstance(z_slices, int):
+        z_indices = np.linspace(0, len(unique_z) - 1, z_slices, dtype=int)
+        z_values = unique_z[z_indices]
+    else:
+        z_values = np.asarray(z_slices)
+
+    n_slices = len(z_values)
+    ncols = int(np.ceil(np.sqrt(n_slices)))
+    nrows = int(np.ceil(n_slices / ncols))
+
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(4 * ncols, 4 * nrows), squeeze=False
+    )
+
+    all_Z = []
+    slice_data = []
+
+    # First pass: compute interpolated Z
+    for z_val in z_values:
+        mask = z == z_val
+
+        xs, ys, ls = x[mask], y[mask], losses[mask]
+
+        X, Y, Z = _interpolate_2d_grid_from_scattered(
+            x=xs, y=ys, losses=ls, plot_resolution=plot_resolution
+        )
+
+        slice_data.append((X, Y, Z))
+        all_Z.append(Z)
+
+    # Shared log normalization
+    Z_global_min = min(np.nanmin(Z) for Z in all_Z)
+    Z_global_max = max(np.nanmax(Z) for Z in all_Z)
+    norm = LogNorm(vmin=Z_global_min, vmax=Z_global_max)
+
+    im = None
+
+    for ax, z_val, data in zip(axes.flat, z_values, slice_data, strict=False):
+        X, Y, Z = data
+
+        im = ax.pcolormesh(
+            X,
+            Y,
+            Z,
+            shading="auto",
+            cmap="viridis",
+            norm=norm,
+        )
+
+        # 🔴 Plot GLOBAL minimum only in the correct slice
+        if z_val == z_min:
+            ax.plot(
+                x_min,
+                y_min,
+                marker="x",
+                color="red",
+                markersize=12,
+                markeredgewidth=2.5,
+            )
+
+        ax.set_title(f"z = {z_val:.3f}")
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    # Disable unused axes
+    for ax in axes.flat[n_slices:]:
+        ax.axis("off")
+
+    if colorbar and im is not None:
+        fig.colorbar(im, ax=axes, fraction=0.03, pad=0.02)
+
+    fig.tight_layout()
+    return fig, axes, z_values
 
 
 def plot_3d_loss_landscape_only(
@@ -680,37 +971,21 @@ def plot_3d_loss_landscape_only(
     landscapes with large dynamic ranges. The loss values are shifted to
     be positive before applying log normalization.
     """
-    params, static = eqx.partition(task.model, eqx.is_inexact_array)
-    samples = grid_sampling(
-        params=params,
-        n_points_per_dim=int(1 // stepsize),
+    samples, losses = _prepare_loss_landscape(
+        task=task,
+        stepsize=stepsize,
+        seed=seed,
         lower_bound=0.0,
         upper_bound=1.0,
     )
 
-    z = evaluate(params=samples, task=task, key=jr.key(seed))
     x = samples[:, 0]
     y = samples[:, 1]
 
-    import numpy as np
-    from scipy.interpolate import griddata
-
-    X, Y = np.meshgrid(
-        np.linspace(min(x), max(x), plot_resolution),
-        np.linspace(min(y), max(y), plot_resolution),
+    X, Y, Z = _create_positive_log_normalized_grid(
+        x=x, y=y, losses=losses, plot_resolution=plot_resolution
     )
-
-    Z = griddata((x, y), z, (X, Y), method="cubic")
     Z_orig = Z.copy()
-
-    # Ensure Z is positive
-    Z_min = np.min(Z)
-    Z = Z - Z_min
-
-    Z_nonzero = Z[Z > 0]
-    eps = np.min(Z_nonzero) if Z_nonzero.size > 0 else 1e-1
-
-    Z += eps
 
     # If no axis is provided, create one
     created_fig = False
@@ -1004,10 +1279,7 @@ def plot_rtd(rtd: xr.DataArray, ax: plt.Axes | None = None):
     for each optimizer. Colors and line styles are determined by the
     OPTIMIZER_COLORS and OPTIMIZER_LINESTYLES dictionaries.
     """
-    if ax is None:
-        fig, ax = plt.subplots()
-    else:
-        fig = ax.get_figure()
+    fig, ax = _get_or_create_axes(ax=ax)
 
     x = rtd[BUDGET].values.flatten()
     for schedule in rtd[SCHEDULE].values:
@@ -1057,12 +1329,7 @@ def plot_ertd(
     The x-axis uses logarithmic scaling. Colors and line styles are determined
     by the OPTIMIZER_COLORS and OPTIMIZER_LINESTYLES dictionaries.
     """
-    if ax is None:
-        fig, ax = plt.subplots(
-            1, 1, figsize=set_size(width="paper", subplots=(1, 1))
-        )
-    else:
-        fig = ax.get_figure()
+    fig, ax = _get_or_create_axes(ax=ax)
 
     x = ertd["cost_per_dim"]
     for schedule in ertd[SCHEDULE].values:
@@ -1115,10 +1382,7 @@ def plot_pp(pp: xr.DataArray, ax: plt.Axes | None = None):
     error threshold for each optimizer. Colors and line styles are determined
     by the OPTIMIZER_COLORS and OPTIMIZER_LINESTYLES dictionaries.
     """
-    if ax is None:
-        fig, ax = plt.subplots()
-    else:
-        fig = ax.get_figure()
+    fig, ax = _get_or_create_axes(ax=ax)
 
     x = pp["relative_error"].values.flatten()
     for schedule in pp[SCHEDULE].values:
@@ -1171,10 +1435,7 @@ def plot_actions(
     the OPTIMIZER_COLORS dictionary, with white indicating sampled/random
     selection.
     """
-    if ax is None:
-        fig, ax = plt.subplots()
-    else:
-        fig = ax.get_figure()
+    fig, ax = _get_or_create_axes(ax=ax)
 
     y = update_step.isel({OUTPUT_DIM: 0}).sel({SCHEDULE: schedule}, drop=True)
 

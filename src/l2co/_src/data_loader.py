@@ -29,6 +29,7 @@ from time import perf_counter
 from typing import Literal
 
 # Third-party
+import jax
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -40,8 +41,9 @@ from .naming import (
     BUDGET,
     FEATURE,
     FEVALS,
-    ITERATIONS,
+    OPT_STEPS,
     OUTPUT_DIM,
+    OUTPUT_MEAN,
     OUTPUT_MIN,
     PROBLEM,
     REALIZATION,
@@ -59,6 +61,8 @@ from .performance import (
     scale_by_problem_and_schedule,
     scale_by_task,
 )
+from .task_features import FeatureProcessor
+from .tree_utils import traj_and_stair
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -73,6 +77,7 @@ __status__ = "Stable"
 
 INVALID_PERFORMANCE_VALUE = 1.0
 PADDING_VALUE = 1.0
+DEFAULT_COST_VALUES = np.logspace(-1, 6, 100) ** 0.8
 
 #                                                                   Data Loader
 # =============================================================================
@@ -100,6 +105,10 @@ class DataLoader:
 
     data: xr.Dataset
     task_labels: xr.DataArray
+
+    def __post_init__(self):
+        self.data = self.data.sortby(TASK_ID)
+        self.task_labels = self.task_labels.sortby(TASK_ID)
 
     def __add__(self, __o: DataLoader) -> DataLoader:
         """
@@ -216,15 +225,23 @@ class DataLoader:
     # =========================================================================
 
     def to_params(
-        self, t: int, cost_metric: Literal["fevals", "iterations"] = "fevals"
+        self,
+        t: float,
+        t_end: int,
+        schema: dict[str, str],
+        cost_metric: Literal["fevals", "iterations"] = "fevals",
     ):
         """
         Return task parameters and labels for a given budget.
 
         Parameters
         ----------
-        t : int
+        t : float
             Budget value.
+        t_end : int
+            End budget value.
+        schema : dict[str, str]
+            Schema for feature processing.
         cost_metric : {'fevals', 'iterations'}, optional
             Cost metric to use, by default 'fevals'.
 
@@ -233,9 +250,103 @@ class DataLoader:
         tuple
             (task parameters, labels)
         """
-        x = self.task_labels.groupby(TASK_ID).first().sortby(TASK_ID)
-        y = self.to_labels(t=t, cost_metric=cost_metric).sortby(TASK_ID)
-        return OptimizationDynamics(x=x, y=y)
+        dict_features = self.task_labels.transpose(PROBLEM, FEATURE)
+
+        tags_list = [
+            {
+                str(k): v
+                for k, v in zip(
+                    self.task_labels[FEATURE].values, xi.values, strict=True
+                )
+            }
+            for xi in self.task_labels
+        ]
+
+        feature_processor = FeatureProcessor.init(
+            schema=schema, tags=tags_list
+        )
+
+        x_features = np.stack(
+            [feature_processor.transform(xi) for xi in tags_list]
+        )
+
+        x_features = xr.DataArray(
+            x_features,
+            coords={
+                PROBLEM: self.problems,
+                FEATURE: list(schema.keys()),
+            },
+            dims=dict_features.dims,
+        )
+
+        x_features = x_features.assign_coords({PROBLEM: self.problems}).sortby(
+            TASK_ID
+        )
+
+        x_features = x_features.drop_vars(PROBLEM)
+
+        x_history = (
+            self.select_t(t=t)
+            .to_traj_and_stair()
+            .sortby(TASK_ID)
+            .transpose(PROBLEM, BUDGET, SCHEDULE, "kind")
+        )
+
+        # Add one-hot encoded schedule to x_history
+        n_schedules = x_history.sizes[SCHEDULE]
+        one_hot = np.eye(n_schedules)
+        new_kind_coords = [f"schedule_{i}" for i in range(n_schedules)]
+        one_hot_da = xr.DataArray(
+            one_hot,
+            dims=[SCHEDULE, "kind"],
+            coords={SCHEDULE: x_history[SCHEDULE], "kind": new_kind_coords},
+        )
+        # Broadcast to match x_history dimensions (except kind)
+        one_hot_expanded = one_hot_da.broadcast_like(
+            x_history.isel(kind=0, drop=True)
+        )
+        x_history = xr.concat([x_history, one_hot_expanded], dim="kind")
+
+        y = (
+            self.to_labels(t=t_end, cost_metric=cost_metric)
+            .sortby(TASK_ID)
+            .transpose(PROBLEM, SCHEDULE)
+        )
+
+        return OptimizationDynamics(
+            x_features=x_features,
+            x_history=x_history,
+            y=y,
+            feature_processor=feature_processor,
+        )
+
+    def to_traj_and_stair(
+        self,
+    ) -> xr.DataArray:
+        x_min = self.data[OUTPUT_MIN].stack(
+            {"batch": (SCHEDULE, OUTPUT_DIM, PROBLEM)}
+        )
+        x_mean = self.data[OUTPUT_MEAN].stack(
+            {"batch": (SCHEDULE, OUTPUT_DIM, PROBLEM)}
+        )
+
+        out = jax.vmap(traj_and_stair)(x_mean.values.T, x_min.values.T)
+
+        y = xr.DataArray(
+            out,
+            dims=["batch", BUDGET, "kind"],
+            coords={
+                BUDGET: self.data[BUDGET],
+                "batch": x_min["batch"],
+                "kind": ["trajectory", "staircase"],
+            },
+        )
+        y = y.unstack("batch")
+        return (
+            y.assign_coords({PROBLEM: self.data[PROBLEM]})
+            .reset_index(PROBLEM, drop=True)
+            .isel({OUTPUT_DIM: 0}, drop=True)
+        )
 
     def to_labels(
         self, t: int, cost_metric: Literal["fevals", "iterations"] = "fevals"
@@ -255,32 +366,11 @@ class DataLoader:
         xarray.DataArray
             Labels array.
         """
-        # Scale the data
-        p = scale_by_task(output_cummin(self.data[OUTPUT_MIN])).ffill(BUDGET)
-        dims = self.task_labels.sel(
-            {FEATURE: "dimensionality"}, drop=True
-        ).astype(int)
-
-        # Select the cost metric
-        match cost_metric:
-            case "iterations":
-                cost_measure = self.data[ITERATIONS]
-            case "fevals":
-                cost_measure = self.data[FEVALS]
-            case _:
-                raise ValueError(
-                    f"Unknown cost metric: {cost_metric}. "
-                    f"Choose 'fevals' or 'iterations'."
-                )
-
-        _ertd = ertd(
-            performance=p,
-            dims=dims,
-            cost_measure=cost_measure,
+        _ertd = self.ertd_profile(
+            include_best=False,
+            cost_metric=cost_metric,
             cost_values=np.array([t]),
         )
-
-        _ertd = _ertd.where(self.valid_files.isel({OUTPUT_DIM: 0}, drop=True))
 
         return _ertd.mean("cost_per_dim")
 
@@ -470,16 +560,14 @@ class DataLoader:
     def valid_files(self) -> xr.DataArray:
         """
         Returns a boolean array indicating valid files. It has coordinates
-        of TASK_ID, SCHEDULE and OUTPUT_DIM.
+        of PROBLEM, SCHEDULE and OUTPUT_DIM.
 
         Returns
         -------
         xarray.DataArray
             Boolean array indicating valid files.
         """
-        return (
-            ~self.data[OUTPUT_MIN].isnull().all(BUDGET).groupby(TASK_ID).all()
-        )
+        return ~self.data[OUTPUT_MIN].isnull().all(BUDGET)
 
     @property
     def performance(self) -> xr.DataArray:
@@ -594,6 +682,15 @@ class DataLoader:
 
         problems = feature_data[PROBLEM].where(mask, drop=True).astype(int)
         return self.select_problems(problems)
+
+    def create_strategy(self, choices: xr.DataArray, name: str) -> DataLoader:
+        strategy = self.data.sel({SCHEDULE: choices}).drop_vars(SCHEDULE)
+        strategy[OPT_STEPS] = strategy[OPT_STEPS].isel({PROBLEM: 0}, drop=True)
+        strategy = strategy.expand_dims({SCHEDULE: [name]})
+
+        data = xr.concat([self.data, strategy], dim=SCHEDULE)
+
+        return replace(self, data=data)
 
     def isel(self, problems: Iterable[int]) -> DataLoader:
         """
@@ -770,7 +867,7 @@ class DataLoader:
 
     def _performance(
         self, include_best: bool, exclude_optimizer: str | None = None
-    ) -> xr.DataArray:
+    ) -> xr.Dataset:
         """
         Computes the performance of the optimizers.
 
@@ -789,9 +886,19 @@ class DataLoader:
         t_start = perf_counter()
         print("Triggered performance")
 
-        performance = scale_by_problem_and_schedule(
-            output_cummin(self.data[OUTPUT_MIN])
-        ).ffill(BUDGET)
+        # performance = scale_by_task(
+        #     output_cummin(self.data[OUTPUT_MIN])).ffill(
+        #     BUDGET
+        # )
+
+        performance = xr.Dataset(
+            {
+                OUTPUT_MIN: scale_by_task(
+                    output_cummin(self.data[OUTPUT_MIN])
+                ).ffill(BUDGET),
+                FEVALS: self.data[FEVALS],
+            }
+        )
 
         if include_best:
             sbs = calculate_sbs(
@@ -812,9 +919,7 @@ class DataLoader:
                 .reset_coords(SCHEDULE, drop=True)
                 .expand_dims({SCHEDULE: ["vbs"]})
             )
-            performance = xr.merge([performance, perf_sbs, perf_vbs])[
-                OUTPUT_MIN
-            ]
+            performance = xr.merge([performance, perf_sbs, perf_vbs])
 
         print(f"Performance calculation took: {perf_counter() - t_start:0.2f}")
         return performance
@@ -882,6 +987,7 @@ class DataLoader:
         include_best: bool = False,
         exclude_optimizer: str | None = None,
         cost_metric: Literal["fevals", "iterations"] = "fevals",
+        cost_values: np.ndarray = DEFAULT_COST_VALUES,
     ) -> xr.DataArray:
         """
         Compute the expected runtime distribution (ERTD) profile.
@@ -900,27 +1006,32 @@ class DataLoader:
         xr.DataArray
             ERTD profile.
         """
-        p = scale_by_task(output_cummin(self.data[OUTPUT_MIN])).ffill(BUDGET)
+        p = self._performance(
+            include_best=include_best, exclude_optimizer=exclude_optimizer
+        )
         dims = self.task_labels.sel(
             {FEATURE: "dimensionality"}, drop=True
         ).astype(int)
 
-        if cost_metric == "iterations":
-            cost_metric = ITERATIONS
-        elif cost_metric == "fevals":
-            cost_metric = FEVALS
-        else:
-            raise ValueError(
-                f"Unknown cost metric: {cost_metric}. "
-                f"Choose 'fevals' or 'iterations'."
-            )
-
         _ertd = ertd(
-            performance=p, cost_measure=self.data[cost_metric], dims=dims
+            performance=p,
+            cost_measure=cost_metric,
+            dims=dims,
+            cost_values=cost_values,
         )
 
-        _ertd = _ertd.where(self.valid_files.isel({OUTPUT_DIM: 0}, drop=True))
-        return _ertd.mean(TASK_ID)
+        # 1. Get the base mask from valid_files
+        mask = self.valid_files.isel({OUTPUT_DIM: 0}, drop=True)
+
+        # 2. Reindex the mask to include 'vbs' and 'sbs' from _ertd
+        # fill_value=True ensures that any schedule NOT in self.data
+        # (like vbs/sbs) defaults to True.
+        mask = mask.reindex_like(_ertd[SCHEDULE], method=None, fill_value=True)
+
+        # 3. Apply the expanded mask
+        _ertd = _ertd.where(mask)
+
+        return _ertd
 
     def load(self):
         """
@@ -930,7 +1041,7 @@ class DataLoader:
 
 
 def calculate_sbs(
-    performance: xr.DataArray, exclude_optimizer: str | Iterable[str]
+    performance: xr.Dataset, exclude_optimizer: str | Iterable[str]
 ) -> xr.DataArray:
     """
     Calculate the Single Best Solver (SBS) for each task.
@@ -955,7 +1066,7 @@ def calculate_sbs(
 
 
 def calculate_vbs(
-    performance: xr.DataArray, exclude_optimizer: str | Iterable[str]
+    performance: xr.Dataset, exclude_optimizer: str | Iterable[str]
 ) -> xr.DataArray:
     """
     Calculate the Virtual Best Solver (VBS) for each problem.
@@ -980,7 +1091,7 @@ def calculate_vbs(
 
 
 def calculate_best_solver(
-    performance: xr.DataArray,
+    performance: xr.Dataset,
     exclude_optimizer: str | Iterable[str],
     group: str,
 ) -> xr.DataArray:
@@ -1012,7 +1123,8 @@ def calculate_best_solver(
         check_sbs = performance
 
     best = (
-        check_sbs.groupby(group)
+        check_sbs[OUTPUT_MIN]
+        .groupby(group)
         .map(
             lambda x: x.mean(PROBLEM)
             .isel({BUDGET: -1}, drop=True)

@@ -34,6 +34,8 @@ from l2co._src.task import Task
 from l2co._src.tree_utils import (
     vmapped_loss,
     vmapped_loss_and_grad,
+    vmapped_loss_and_grad_with_rng,
+    vmapped_loss_with_rng,
 )
 from l2co._src.typing import (
     InitFunction,
@@ -61,6 +63,7 @@ def optax_fn(
     loss_fn: LossFunction,
     bounded: tuple[float, float],
     opt_hash: int,
+    pass_rng: bool,
     **kwargs,
 ) -> tuple[InitFunction, StepFunction]:
     """
@@ -78,6 +81,8 @@ def optax_fn(
         Parameter bounds for clipping.
     opt_hash : int
         Hash for optimizer step tracking.
+    pass_rng : bool
+        Whether to pass RNG key to loss function.
     **kwargs
         Additional arguments.
 
@@ -101,9 +106,18 @@ def optax_fn(
     ) -> tuple[tuple[InputParameters, OptaxState, PRNGKeyArray], OptHistory]:
         input_params, opt_state, key = carry
 
-        loss, grads = vmapped_loss_and_grad(
-            eqx.combine(input_params, static), loss_fn, sample
-        )
+        if pass_rng:
+            loss, grads = vmapped_loss_and_grad_with_rng(
+                eqx.combine(input_params, static),
+                loss_fn,
+                sample,
+                jr.split(key, 1),
+            )
+
+        else:
+            loss, grads = vmapped_loss_and_grad(
+                eqx.combine(input_params, static), loss_fn, sample
+            )
 
         updates, new_opt_state = optimizer.update(grads, opt_state)
         new_params = eqx.apply_updates(input_params, updates)
@@ -132,6 +146,7 @@ def optax_extra_args_fn(
     loss_fn: LossFunction,
     bounded: tuple[float, float],
     opt_hash: int,
+    pass_rng: bool,
     **kwargs,
 ) -> tuple[InitFunction, StepFunction]:
     """
@@ -150,6 +165,8 @@ def optax_extra_args_fn(
         Parameter bounds for clipping.
     opt_hash : int
         Hash for optimizer step tracking.
+    pass_rng : bool
+        Whether to pass RNG key to loss function.
     **kwargs
         Additional arguments.
 
@@ -179,8 +196,10 @@ def optax_extra_args_fn(
         )
 
         model = eqx.combine(input_params, static)
-
-        fn = Partial(loss_fn, **sample)
+        if pass_rng:
+            fn = Partial(loss_fn, key=key, **sample)
+        else:
+            fn = Partial(loss_fn, **sample)
 
         loss, grads = optax.value_and_grad_from_state(fn)(
             model, state=opt_state
@@ -229,6 +248,7 @@ def evosax_distribution_based_fn(
     popsize: int,
     es_params: Params,
     opt_hash: int,
+    pass_rng: bool,
     **kwargs,
 ) -> tuple[InitFunction, StepFunction]:
     """
@@ -251,6 +271,8 @@ def evosax_distribution_based_fn(
         Evolution strategy parameters.
     opt_hash : int
         Hash for optimizer step tracking.
+    pass_rng : bool
+        Whether to pass RNG key to loss function.
     **kwargs
         Additional arguments.
 
@@ -274,7 +296,18 @@ def evosax_distribution_based_fn(
     ) -> tuple[tuple[InputParameters, EvoSaxState, PRNGKeyArray], OptHistory]:
         input_params, opt_state, key = carry
 
-        loss = vmapped_loss(eqx.combine(input_params, static), loss_fn, sample)
+        if pass_rng:
+            loss = vmapped_loss_with_rng(
+                eqx.combine(input_params, static),
+                loss_fn,
+                sample,
+                jr.split(key, popsize),
+            )
+
+        else:
+            loss = vmapped_loss(
+                eqx.combine(input_params, static), loss_fn, sample
+            )
 
         new_opt_state, _ = optimizer.tell(
             key=key,
@@ -316,6 +349,7 @@ def evosax_population_based_fn(
     popsize: int,
     es_params: Params,
     opt_hash: int,
+    pass_rng: bool,
     **kwargs,
 ) -> tuple[InitFunction, StepFunction]:
     """
@@ -350,7 +384,15 @@ def evosax_population_based_fn(
     def init_fn(
         params: InputParameters, key: PRNGKeyArray, **sample
     ) -> EvoSaxState:
-        loss = vmapped_loss(eqx.combine(params, static), loss_fn, sample)
+        if pass_rng:
+            loss = vmapped_loss_with_rng(
+                eqx.combine(params, static),
+                loss_fn,
+                sample,
+                jr.split(key, popsize),
+            )
+        else:
+            loss = vmapped_loss(eqx.combine(params, static), loss_fn, sample)
 
         return optimizer.init(
             key=key, population=params, fitness=loss, params=es_params
@@ -364,7 +406,17 @@ def evosax_population_based_fn(
     ) -> tuple[tuple[InputParameters, EvoSaxState, PRNGKeyArray], OptHistory]:
         input_params, opt_state, key = carry
 
-        loss = vmapped_loss(eqx.combine(input_params, static), loss_fn, sample)
+        if pass_rng:
+            loss = vmapped_loss_with_rng(
+                eqx.combine(input_params, static),
+                loss_fn,
+                sample,
+                jr.split(key, popsize),
+            )
+        else:
+            loss = vmapped_loss(
+                eqx.combine(input_params, static), loss_fn, sample
+            )
 
         new_opt_state, _ = optimizer.tell(
             key=key,
@@ -443,6 +495,7 @@ def optax_update(
         loss_fn=task.loss_fn,
         bounded=bounded,
         opt_hash=opt_hash,
+        pass_rng=task.pass_rng,
     )
 
     return UpdateClass(
@@ -496,6 +549,7 @@ def optax_update_extra_args(
         loss_fn=task.loss_fn,
         bounded=bounded,
         opt_hash=opt_hash,
+        pass_rng=task.pass_rng,
     )
 
     return UpdateClass(
@@ -556,6 +610,7 @@ def evosax_distribution_update(
         popsize=popsize,
         es_params=optimizer.default_params.replace(**hyperparameters),
         opt_hash=opt_hash,
+        pass_rng=task.pass_rng,
     )
 
     return UpdateClass(
@@ -616,6 +671,7 @@ def evosax_population_update(
         popsize=popsize,
         es_params=optimizer.default_params.replace(**hyperparameters),
         opt_hash=opt_hash,
+        pass_rng=task.pass_rng,
     )
 
     return UpdateClass(

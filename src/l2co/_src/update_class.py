@@ -456,7 +456,9 @@ def _evaluate_one(
     batch_state: BatchState,
     dataset: dict[str, jax.Array],
     loss_fn: Callable,
-    key: PRNGKeyArray,
+    pass_rng: bool,
+    batch_key: PRNGKeyArray,
+    loss_key: PRNGKeyArray,
 ) -> jax.Array:
     """Evaluate a single model on a batch of data.
 
@@ -470,6 +472,8 @@ def _evaluate_one(
         Full dataset.
     loss_fn : Callable
         Loss function.
+    pass_rng : bool
+        Whether to pass RNG key to the loss function.
     key : PRNGKeyArray
         PRNG key for random operations.
 
@@ -478,9 +482,14 @@ def _evaluate_one(
     jax.Array
         Loss value.
     """
-    batch_idxs, _ = batch_state.next(key)
+    batch_idxs, _ = batch_state.next(batch_key)
     sample = jax.tree.map(lambda x: x[batch_idxs], dataset)
-    return loss_fn(model, **sample)
+    if pass_rng:
+        return loss_fn(model, key=loss_key, **sample)
+    else:
+        return loss_fn(model, **sample)
 
 
-evaluate = eqx.filter_vmap(_evaluate_one, in_axes=(0, None, None, None, None))
+evaluate = eqx.filter_vmap(
+    _evaluate_one, in_axes=(0, None, None, None, None, None, 0)
+)

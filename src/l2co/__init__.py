@@ -23,7 +23,7 @@ from l2co._src import tree_utils
 from l2co._src.batching import BatchState
 from l2co._src.data_loader import DataLoader
 from l2co._src.history_state import HistoryState
-from l2co._src.l2co_model2 import L2COModel
+from l2co._src.models import AbstractModel, L2COLoader, L2COModel
 from l2co._src.opt_history import OptHistory
 from l2co._src.optimizers import optimizer_mapping
 from l2co._src.optimizerschedule import OptimizationStep
@@ -45,9 +45,11 @@ __status__ = "Stable"
 __all__ = [
     "DataLoader",
     "HistoryState",
+    "AbstractModel",
     "OptimizationStep",
     "RunState",
     "RunOptimization",
+    "L2COLoader",
     "Task",
     "FeatureProcessor",
     "MixedEmbedding",

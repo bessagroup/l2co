@@ -10,6 +10,7 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import jax.random as jr
 from jaxtyping import Array, Float, PRNGKeyArray, PyTree
 
 # Local
@@ -130,6 +131,7 @@ def reset(
     static: PyTree,
     dataset: dict[str, jax.Array],
     loss_fn: Callable,
+    pass_rng: bool,
     sampler: SamplerFunction,
     key: PRNGKeyArray,
 ) -> RunState:
@@ -166,7 +168,9 @@ def reset(
         batch_state,
         dataset,
         loss_fn,
+        pass_rng,
         key,
+        jr.split(key, run_state.update_class.popsize),
     )
 
     # calculate the best params and best loss
@@ -252,6 +256,7 @@ def evaluate(
     loss_fn: Callable,
     sampler: Callable,
     n_iterations: int,
+    pass_rng: bool,
     key: PRNGKeyArray,
     verbose: bool,
 ) -> tuple[RunState, BatchState, HistoryState]:
@@ -290,6 +295,7 @@ def evaluate(
         static=static,
         dataset=dataset,
         loss_fn=loss_fn,
+        pass_rng=pass_rng,
         sampler=sampler,
         key=key,
     )
@@ -305,7 +311,7 @@ def evaluate(
 
 batch_reset = eqx.filter_vmap(
     reset,
-    in_axes=(None, None, None, None, None, None, 0),
+    in_axes=(None, None, None, None, None, None, None, 0),
 )
 
 
@@ -317,5 +323,5 @@ batch_run = eqx.filter_vmap(
 
 batch_evaluate = eqx.filter_vmap(
     evaluate,
-    in_axes=(None, None, None, None, None, None, None, 0, None),
+    in_axes=(None, None, None, None, None, None, None, None, 0, None),
 )

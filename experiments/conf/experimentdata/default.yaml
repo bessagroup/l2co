@@ -1,0 +1,6 @@
+domain:
+  input:
+    seed:
+      type: category
+      categories:
+        - 0

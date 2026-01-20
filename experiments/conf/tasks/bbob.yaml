@@ -45,10 +45,15 @@ experimentdata:
       seed:
         type: int
         low: 0
-        high: 15
+        high: 0
 
 task_kwargs:
 
 data_generator:
   _target_: l2co._src.tasks.benchmark_task.create_bbob_task
   _partial_: True
+
+schema:
+  dimensionality: continuous
+  separable: boolean
+  unimodal: boolean

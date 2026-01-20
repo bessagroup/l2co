@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-@hydra.main(config_path="./conf", config_name="config")
+@hydra.main(config_path="../conf", config_name="config")
 def main(config: DictConfig):
     project_dir = Path(config.project_dir) / str(config.project_job)
 
