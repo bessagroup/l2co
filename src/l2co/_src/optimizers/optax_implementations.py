@@ -383,7 +383,7 @@ opt_names_normal = [
     "noisy_sgd",
     "novograd",
     "optimistic_gradient_descent",
-    "optimistic_adam_v2",
+    "optimistic_adam",
     # "polyak_sgd", # function call signature is different, ignored!
     "radam",
     "rmsprop",
