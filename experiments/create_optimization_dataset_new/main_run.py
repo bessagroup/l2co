@@ -53,11 +53,21 @@ def main(config):
         project_dir=project_dir,
     )
 
-    _ = run_opt.call(
-        data=experiment_data,
-        mode="cluster_array",
-        job_number=config.job_number,
+    # Determine which experiments to run
+    max_number_of_arrayjobs = 900
+    total_experiments = len(experiment_data)
+    jobs_to_run = list(
+        range(config.job_number, total_experiments, max_number_of_arrayjobs)
     )
+
+    logger.info(f"Running experiments with indices: {jobs_to_run}")
+
+    for job_idx in jobs_to_run:
+        _ = run_opt.call(
+            data=experiment_data,
+            mode="cluster_array",
+            job_number=job_idx,
+        )
 
 
 if __name__ == "__main__":
