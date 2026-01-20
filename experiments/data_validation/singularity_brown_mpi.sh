@@ -37,12 +37,12 @@ export APPTAINER_BINDPATH="/oscar/home/$USER,/oscar/scratch/$USER,/oscar/data"
 CONTAINER=/users/$USER/jax312.simg
 SCRIPT=main.py
 
-project_dir="/scratch/$USER/create_optimization_dataset_new/"
+project_dir="$HOME/scratch/create_optimization_dataset_new/"
 
 
 # Get project folder
 projectfolder=$(basename $(pwd))
-run_dir="/scratch/$USER/${projectfolder}/${SLURM_JOB_ID}"
+run_dir="$HOME/scratch/${projectfolder}/${SLURM_JOB_ID}"
 
 echo "======================================="
 echo " Execution Information"
