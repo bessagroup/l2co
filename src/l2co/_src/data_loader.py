@@ -77,6 +77,7 @@ __status__ = "Stable"
 
 INVALID_PERFORMANCE_VALUE = 1.0
 PADDING_VALUE = 1.0
+DEFAULT_COST_VALUES = np.logspace(-1, 6, 100) ** 0.8
 
 #                                                                   Data Loader
 # =============================================================================
@@ -305,6 +306,7 @@ class DataLoader:
             x_history.isel(kind=0, drop=True)
         )
         x_history = xr.concat([x_history, one_hot_expanded], dim="kind")
+
         y = (
             self.to_labels(t=t_end, cost_metric=cost_metric)
             .sortby(TASK_ID)
@@ -364,32 +366,11 @@ class DataLoader:
         xarray.DataArray
             Labels array.
         """
-        # Scale the data
-        p = scale_by_task(output_cummin(self.data[OUTPUT_MIN])).ffill(BUDGET)
-        dims = self.task_labels.sel(
-            {FEATURE: "dimensionality"}, drop=True
-        ).astype(int)
-
-        # # Select the cost metric
-        # match cost_metric:
-        #     case "iterations":
-        #         cost_measure = self.data[ITERATIONS]
-        #     case "fevals":
-        #         cost_measure = self.data[FEVALS]
-        #     case _:
-        #         raise ValueError(
-        #             f"Unknown cost metric: {cost_metric}. "
-        #             f"Choose 'fevals' or 'iterations'."
-        #         )
-
-        _ertd = ertd(
-            performance=p,
-            cost_measure=cost_metric,
-            dims=dims,
+        _ertd = self.ertd_profile(
+            include_best=False,
+            cost_metric=cost_metric,
             cost_values=np.array([t]),
         )
-
-        _ertd = _ertd.where(self.valid_files.isel({OUTPUT_DIM: 0}, drop=True))
 
         return _ertd.mean("cost_per_dim")
 
@@ -1006,6 +987,7 @@ class DataLoader:
         include_best: bool = False,
         exclude_optimizer: str | None = None,
         cost_metric: Literal["fevals", "iterations"] = "fevals",
+        cost_values: np.ndarray = DEFAULT_COST_VALUES,
     ) -> xr.DataArray:
         """
         Compute the expected runtime distribution (ERTD) profile.
@@ -1031,7 +1013,12 @@ class DataLoader:
             {FEATURE: "dimensionality"}, drop=True
         ).astype(int)
 
-        _ertd = ertd(performance=p, cost_measure=cost_metric, dims=dims)
+        _ertd = ertd(
+            performance=p,
+            cost_measure=cost_metric,
+            dims=dims,
+            cost_values=cost_values,
+        )
 
         # 1. Get the base mask from valid_files
         mask = self.valid_files.isel({OUTPUT_DIM: 0}, drop=True)

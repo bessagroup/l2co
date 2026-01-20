@@ -45,7 +45,7 @@ experimentdata:
       seed:
         type: int
         low: 0
-        high: 15
+        high: 0
 
 task_kwargs:
 

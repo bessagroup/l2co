@@ -87,9 +87,9 @@ OPTIMIZER_LINESTYLES = {
     "cmaes": "-",
     "lbfgsb": "-",
     "pso": "-",
-    "sbs": "-",
+    "sbs": ":",
     "l2co": "--",
-    "vbs": "-",
+    "vbs": ":",
     "random": "-",
 }
 
@@ -437,29 +437,31 @@ def plot_ertd_profile(
 
     _ertd = _ertd.mean(PROBLEM)
 
-    fig, ax = _get_or_create_axes(ax)
+    return plot_ertd(ertd=_ertd, ax=ax, cost_metric=cost_metric)
 
-    if optimizers_to_plot is None:
-        optimizers_to_plot = _ertd[SCHEDULE].values
+    # fig, ax = _get_or_create_axes(ax)
 
-    for optimizer in optimizers_to_plot:
-        ax.plot(
-            _ertd["cost_per_dim"],
-            _ertd.sel({SCHEDULE: optimizer}),
-            label=optimizer,
-        )
+    # if optimizers_to_plot is None:
+    #     optimizers_to_plot = _ertd[SCHEDULE].values
 
-    ax.legend()
-    ax.set_xscale("log")
+    # for optimizer in optimizers_to_plot:
+    #     ax.plot(
+    #         _ertd["cost_per_dim"],
+    #         _ertd.sel({SCHEDULE: optimizer}),
+    #         label=optimizer,
+    #     )
 
-    if cost_metric == "iterations":
-        ax.set_xlabel("Iterations / dimensionality)")
-    else:
-        ax.set_xlabel("Function evaluations / dimensionality)")
-    ax.set_ylabel("Fraction of function, target pairs")
-    ax.set_ylim(0.0, 1.0)
-    ax.set_xlim(10**0)
-    return fig, ax
+    # ax.legend()
+    # ax.set_xscale("log")
+
+    # if cost_metric == "iterations":
+    #     ax.set_xlabel("Iterations / dimensionality)")
+    # else:
+    #     ax.set_xlabel("Function evaluations / dimensionality)")
+    # ax.set_ylabel("Fraction of function, target pairs")
+    # ax.set_ylim(0.0, 1.0)
+    # ax.set_xlim(10**0)
+    # return fig, ax
 
 
 def plot_perf_profile(
