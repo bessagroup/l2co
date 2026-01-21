@@ -127,11 +127,11 @@ def create_bbob_task(
         fn_noise = lambda f: f
         pass_rng = False
 
-    loss_fn = fn_noise(
-        fn_scale_input(
-            bbob_jax.registry[fn_name](ndim=dimensionality, key=jr.key(seed))
-        )
+    bbob_fn, global_min = bbob_jax.registry[fn_name](
+        ndim=dimensionality, key=jr.key(seed)
     )
+
+    loss_fn = fn_noise(fn_scale_input(bbob_fn))
     model = jnp.zeros(dimensionality)
     tag = bbob_jax.function_characteristics[fn_name].copy()
     tag["dimensionality"] = dimensionality
@@ -139,4 +139,10 @@ def create_bbob_task(
     tag["seed"] = seed
     tag["noise"] = noise
 
-    return Task(model=model, pass_rng=pass_rng, loss_fn=loss_fn, tag=tag)
+    return Task(
+        model=model,
+        # global_min=float(global_min),
+        pass_rng=pass_rng,
+        loss_fn=loss_fn,
+        tag=tag,
+    )

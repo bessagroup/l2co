@@ -9,7 +9,7 @@
     type: combined
     grad_tol: 1e-3
     loss_tol: 1e-6
-- optimizer: lbfgsb
+- optimizer: lbfgs
   stopping_criteria:
     type: combined
     grad_tol: 1e-3

@@ -41,6 +41,8 @@ from .naming import (
     BUDGET,
     FEATURE,
     FEVALS,
+    GLOBAL_MIN,
+    ITERATIONS,
     OPT_STEPS,
     OUTPUT_DIM,
     OUTPUT_MEAN,
@@ -163,6 +165,8 @@ class DataLoader:
                 return True
             elif val.lower() == "false":
                 return False
+            elif val == "None":
+                return None
             try:
                 if "." in val or "e" in val.lower():
                     return float(val)
@@ -894,9 +898,13 @@ class DataLoader:
         performance = xr.Dataset(
             {
                 OUTPUT_MIN: scale_by_task(
-                    output_cummin(self.data[OUTPUT_MIN])
+                    data=output_cummin(self.data[OUTPUT_MIN]),
+                    global_min=self.task_labels.sel(
+                        {FEATURE: GLOBAL_MIN}
+                    ).astype(float),
                 ).ffill(BUDGET),
                 FEVALS: self.data[FEVALS],
+                ITERATIONS: self.data[ITERATIONS],
             }
         )
 

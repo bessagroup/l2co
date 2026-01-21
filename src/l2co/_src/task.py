@@ -81,6 +81,7 @@ class Task(eqx.Module):
 
     model: PyTree
     loss_fn: Callable = eqx.field(static=True)
+    global_min: float = eqx.field(static=True, default=None)
     pass_rng: bool = eqx.field(static=True, default=False)
     has_aux: bool = eqx.field(static=True, default=False)
     dataset: DatasetDict = eqx.field(default_factory=dict, static=True)
@@ -176,6 +177,9 @@ class Task(eqx.Module):
 
         tag_hashable = {k: make_hashable(v) for k, v in self.tag.items()}
 
+        # Add global_min to the hashable tag
+        tag_hashable["global_min"] = self.global_min
+
         # Use frozenset for order independence
         return frozenset(tag_hashable.items())
 
@@ -250,8 +254,10 @@ class Task(eqx.Module):
         tag = data.get("tag", {})
         has_aux = data["has_aux"]
         pass_rng = data["pass_rng"]
+        global_min = data.get("global_min", None)
         return cls(
             model=model,
+            global_min=global_min,
             pass_rng=pass_rng,
             loss_fn=loss_fn,
             dataset=dataset,
@@ -333,6 +339,7 @@ class Task(eqx.Module):
             "dataset": dataset,
             "tag": self.tag,
             "has_aux": self.has_aux,
+            "global_min": self.global_min,
         }
 
     @classmethod

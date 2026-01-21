@@ -34,6 +34,7 @@ from .naming import (
     BUDGET,
     COST,
     FEVALS,
+    GLOBAL_MIN,
     ITERATIONS,
     OUTPUT_DIM,
     OUTPUT_MIN,
@@ -151,20 +152,52 @@ def cap_value(data: xr.DataArray, cap: float = EPSILON) -> xr.DataArray:
     return data.where((data >= cap) | (data <= 0.0) | data.isnull(), other=cap)
 
 
-def min_custom(x: xr.DataArray) -> xr.DataArray:
-    p = x - np.nanmin(x)
-    eps = (np.where(p > 0.0, p, np.nanmax(p) + EPSILON)).min() + EPSILON
+# def min_custom(x: xr.DataArray) -> xr.DataArray:
+#     p = x - np.nanmin(x)
+#     eps = (np.where(p > 0.0, p, np.nanmax(p) + EPSILON)).min() + EPSILON
+#     x_log10 = np.log10(p + eps)
+#     # 5. Min-max scaling of the data
+#     x_min = np.nanmin(x_log10)
+#     x_max = np.nanmax(x_log10)
+#     return (x_log10 - x_min) / (x_max - x_min + EPSILON)
+
+
+def min_custom(ds: xr.Dataset) -> xr.DataArray:
+    """
+    Applies custom log scaling to 'output_min' based on the presence
+    of 'global_min' within the dataset slice.
+    """
+    x = ds[OUTPUT_MIN]
+    g_min = ds[GLOBAL_MIN]
+
+    # 1. Determine p based on whether global_min is NaN
+    # We check if all values in g_min are NaN (assuming one g_min per task)
+    if g_min.isnull().all():
+        p = x - x.min(skipna=True)
+    else:
+        p = x - g_min
+
+    # 2. Calculate epsilon for the log shift
+    # We find the smallest positive value to avoid log(0)
+    p_positive = p.where(p > 0)
+    eps = p_positive.min(skipna=True) + EPSILON
+
+    # 3. Apply log10 scaling
     x_log10 = np.log10(p + eps)
-    # 5. Min-max scaling of the data
-    x_min = np.nanmin(x_log10)
-    x_max = np.nanmax(x_log10)
+
+    # 4. Min-max scaling
+    x_min = x_log10.min(skipna=True)
+    x_max = x_log10.max(skipna=True)
+
     return (x_log10 - x_min) / (x_max - x_min + EPSILON)
 
 
 # =============================================================================
 
 
-def scale_by_task(data: xr.DataArray) -> xr.DataArray:
+def scale_by_task(
+    data: xr.DataArray, global_min: xr.DataArray
+) -> xr.DataArray:
     """
     Scale the given data array using a custom scaling method.
 
@@ -184,7 +217,9 @@ def scale_by_task(data: xr.DataArray) -> xr.DataArray:
     min-max scaling for each realization in the data.
     """
     # Cap the loss value at 1e-8
-    ds_output = cap_value(data, cap=EPSILON)
+    ds_output = xr.Dataset(
+        {OUTPUT_MIN: cap_value(data, cap=EPSILON), GLOBAL_MIN: global_min}
+    )
 
     ds_log10_positive = ds_output.groupby(TASK_ID).map(min_custom)
 
