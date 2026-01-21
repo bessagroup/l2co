@@ -6,23 +6,13 @@ Plotting module
 # =============================================================================
 
 # Local
-from ._src.plotting import (
-    OPTIMIZER_COLORS,
-    OPTIMIZER_LINESTYLES,
-    change_colors_and_style,
-    format_plot,
+from ._src.visualize.colors import get_schedule_styles
+from ._src.visualize.plotting import (
     plot_2d_loss_landscape_only,
     plot_2d_loss_landscape_slice_grid,
-    plot_2d_trajectories,
     plot_3d_loss_landscape_only,
-    plot_actions,
     plot_ertd,
     plot_ertd_profile,
-    plot_perf_profile,
-    plot_pp,
-    plot_rtd,
-    plot_rtd_profile,
-    plot_trajectories,
     set_size,
 )
 
@@ -37,21 +27,11 @@ __status__ = "Stable"
 
 
 __all__ = [
-    "OPTIMIZER_COLORS",
-    "OPTIMIZER_LINESTYLES",
-    "change_colors_and_style",
-    "format_plot",
+    "set_size",
+    "plot_ertd_profile",
+    "plot_ertd",
     "plot_2d_loss_landscape_only",
     "plot_2d_loss_landscape_slice_grid",
-    "plot_2d_trajectories",
     "plot_3d_loss_landscape_only",
-    "plot_actions",
-    "plot_ertd",
-    "plot_ertd_profile",
-    "plot_perf_profile",
-    "plot_pp",
-    "plot_rtd",
-    "plot_rtd_profile",
-    "plot_trajectories",
-    "set_size",
+    "get_schedule_styles",
 ]
