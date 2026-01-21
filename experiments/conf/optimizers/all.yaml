@@ -1,4 +1,6 @@
+# ==========================================
 # Evosax: Distribution-based Algorithms
+# ==========================================
 - optimizer: ars
 - optimizer: asebo
 - optimizer: cmaes
@@ -24,7 +26,9 @@
 - optimizer: snes
 - optimizer: xnes
 
+# ==========================================
 # Evosax: Population-based / Genetic Algorithms
+# ==========================================
 - optimizer: differentialevolution
 - optimizer: diffusionevolution
 - optimizer: gesmrga
@@ -33,41 +37,75 @@
 - optimizer: samrga
 - optimizer: simplega
 
+# ==========================================
 # Optax: Gradient-based Optimizers
+# ==========================================
 - optimizer: adabelief
-- optimizer: adadelta
-- optimizer: adan
-- optimizer: adafactor
-- optimizer: adagrad
-- optimizer: adam
-- optimizer: adamw
-- optimizer: adamax
-- optimizer: adamaxw
-- optimizer: amsgrad
-- optimizer: fromage
-- optimizer: lamb
-- optimizer: lars
-- optimizer: lion
-- optimizer: nadam
-- optimizer: nadamw
-- optimizer: noisysgd
-- optimizer: novograd
-- optimizer: optimisticgradientdescent
-- optimizer: optimisticadamv2
-- optimizer: radam
-- optimizer: rmsprop
-- optimizer: rprop
-- optimizer: sgd
-- optimizer: signsgd
-- optimizer: sm3
-- optimizer: yogi
-
-# Second-order
-- optimizer: lbfgs
-  stopping_criteria:
+  stopping_criteria: &gradient_stop
     type: combined
     grad_tol: 1e-3
     loss_tol: 1e-6
 
+- optimizer: adadelta
+  stopping_criteria: *gradient_stop
+- optimizer: adan
+  stopping_criteria: *gradient_stop
+- optimizer: adafactor
+  stopping_criteria: *gradient_stop
+- optimizer: adagrad
+  stopping_criteria: *gradient_stop
+- optimizer: adam
+  stopping_criteria: *gradient_stop
+- optimizer: adamw
+  stopping_criteria: *gradient_stop
+- optimizer: adamax
+  stopping_criteria: *gradient_stop
+- optimizer: adamaxw
+  stopping_criteria: *gradient_stop
+- optimizer: amsgrad
+  stopping_criteria: *gradient_stop
+- optimizer: fromage
+  stopping_criteria: *gradient_stop
+- optimizer: lamb
+  stopping_criteria: *gradient_stop
+- optimizer: lars
+  stopping_criteria: *gradient_stop
+- optimizer: lion
+  stopping_criteria: *gradient_stop
+- optimizer: nadam
+  stopping_criteria: *gradient_stop
+- optimizer: nadamw
+  stopping_criteria: *gradient_stop
+- optimizer: noisysgd
+  stopping_criteria: *gradient_stop
+- optimizer: novograd
+  stopping_criteria: *gradient_stop
+- optimizer: optimisticgradientdescent
+  stopping_criteria: *gradient_stop
+- optimizer: optimisticadam
+  stopping_criteria: *gradient_stop
+- optimizer: radam
+  stopping_criteria: *gradient_stop
+- optimizer: rmsprop
+  stopping_criteria: *gradient_stop
+- optimizer: rprop
+  stopping_criteria: *gradient_stop
+- optimizer: sgd
+  stopping_criteria: *gradient_stop
+- optimizer: signsgd
+  stopping_criteria: *gradient_stop
+- optimizer: sm3
+  stopping_criteria: *gradient_stop
+- optimizer: yogi
+  stopping_criteria: *gradient_stop
+
+# ==========================================
+# Second-order
+# ==========================================
+- optimizer: lbfgs
+  stopping_criteria: *gradient_stop
+
+# ==========================================
 # Random Search
+# ==========================================
 - optimizer: randomsearch
