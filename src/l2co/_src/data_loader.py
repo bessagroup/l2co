@@ -372,11 +372,10 @@ class DataLoader:
         """
         _ertd = self.ertd_profile(
             include_best=False,
-            cost_metric=cost_metric,
             cost_values=np.array([t]),
         )
 
-        return _ertd.mean("cost_per_dim")
+        return _ertd.sel({"metric": cost_metric}).mean("cost_per_dim")
 
     def to_spreadsheet(self, criteria: Literal["min", "mean"] = "min"):
         """
@@ -994,7 +993,6 @@ class DataLoader:
         self,
         include_best: bool = False,
         exclude_optimizer: str | None = None,
-        cost_metric: Literal["fevals", "iterations"] = "fevals",
         cost_values: np.ndarray = DEFAULT_COST_VALUES,
     ) -> xr.DataArray:
         """
@@ -1006,24 +1004,22 @@ class DataLoader:
             Whether to include the best optimizer, by default False.
         exclude_optimizer : str, optional
             Optimizer to exclude, by default None.
-        cost_metric : {'fevals', 'iterations'}, optional
-            Cost metric to use, by default 'fevals'.
 
         Returns
         -------
         xr.DataArray
             ERTD profile.
         """
-        p = self._performance(
-            include_best=include_best, exclude_optimizer=exclude_optimizer
-        )
+        # TODO : include best
+        # p = self._performance(
+        #     include_best=include_best, exclude_optimizer=exclude_optimizer
+        # )
         dims = self.task_labels.sel(
             {FEATURE: "dimensionality"}, drop=True
         ).astype(int)
 
         _ertd = ertd(
-            performance=p,
-            cost_measure=cost_metric,
+            performance=self.data,
             dims=dims,
             cost_values=cost_values,
         )

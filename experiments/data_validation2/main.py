@@ -12,96 +12,22 @@ from typing import Any
 import hydra
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
 import xarray as xr
-import f3dasm
+from f3dasm import ExperimentData
 
 # Local
 from l2co import OptimizationStep, Task, validation_fn
-from l2co._src import task
-from l2co.naming import (
-    FEATURE,
-    INPUT_DIM,
-    REALIZATION,
-    SCHEDULE,
-    TASK_ID,
-    BUDGET,
-    OUTPUT_MIN,
-    GLOBAL_MIN,
-    TASK_LABELS,
-    REALIZATION,
-    TASK_ID,
-    ITERATIONS,
-    FEVALS,
-    TARGET,
-    COST,
-    SUCCESS,
-)
-from l2co._src.performance import output_cummin, DEFAULT_TARGETS, EPSILON
+from l2co.naming import FEATURE, INPUT_DIM, REALIZATION, SCHEDULE, TASK_ID
 
 # =============================================================================
 
 OPTIMIZATION_DATA_SUFFIX = ".odata"
+OPTIMIZATION_SCHEDULE_SUFFIX = ".osched"
+
 
 # =============================================================================
 
 logger = logging.getLogger("l2co")
-
-loss_column_name: str = "loss history"
-optimizer_column_name: str = "optimizer schedule"
-task_column_name: str = "task"
-
-# =============================================================================
-
-
-def quality_value(x: xr.DataArray, g_min: float) -> xr.DataArray:
-    if g_min.isnull().any():
-        g_min = x.min(skipna=True)
-    p = x - g_min
-    p_positive = p.where(p > 0)
-    eps = p_positive.min(skipna=True) + EPSILON
-    x_log10 = np.log10(p + eps)
-    x_min = x_log10.min(skipna=True)
-    x_max = x_log10.max(skipna=True)
-    qv = (x_log10 - x_min) / (x_max - x_min + EPSILON)
-    return qv
-
-
-def calculate_ert(data: xr.Dataset) -> xr.Dataset:
-    raw_g_min = data.coords.get(GLOBAL_MIN, np.nan)
-    g_min = raw_g_min if not np.isnan(raw_g_min) else None
-
-    x = output_cummin(data[OUTPUT_MIN]).ffill(BUDGET)
-    qv = quality_value(x, g_min)
-
-    targets = xr.DataArray(
-        DEFAULT_TARGETS, dims=TARGET, coords={TARGET: DEFAULT_TARGETS}
-    )
-    solved = qv <= targets
-    success = solved.any(BUDGET)
-    first_solved = (
-        solved.argmax(BUDGET)
-        .where(success, other=solved[BUDGET].argmax())
-        .compute()
-    )
-
-    # Extract the scalar values at the 'first_solved' budget step
-    fevals = data[FEVALS].isel({BUDGET: first_solved})
-    iterations = data[ITERATIONS].isel({BUDGET: first_solved})
-
-    # Combine metrics into a single DataArray named 'COST'
-    # with a new dimension 'metric'
-    cost_da = xr.concat(
-        [fevals, iterations],
-        dim=xr.DataArray([FEVALS, ITERATIONS], dims="metric", name="metric"),
-    )
-
-    return xr.Dataset(
-        {
-            COST: cost_da,
-            SUCCESS: success,
-        }
-    )
 
 
 # =============================================================================
@@ -111,11 +37,70 @@ def calculate_ert(data: xr.Dataset) -> xr.Dataset:
 def main(config):
     path = Path(config.opt_dir) / str(config.path)
 
-    experiment_data = f3dasm.ExperimentData.from_file(path)
+    experimentdata = ExperimentData.from_file(path)
+    opt_data, schedule_data, placeholder_path = create_entire_dataset(
+        experiment_data=experimentdata,
+        budget_steps=config.budget_steps,
+    )
+
+    # Store the files
+    opt_data.to_netcdf(
+        (path / "entire_dataset").with_suffix(OPTIMIZATION_DATA_SUFFIX)
+    )
 
     logger.info(
-        f"Loaded experiment data from {path}, with {len(experiment_data)} entries."
+        f"Entire dataset stored at {(path / 'entire_dataset').with_suffix(OPTIMIZATION_DATA_SUFFIX)}"
     )
+
+    # Remove placeholder
+    placeholder_path.unlink()
+
+    if schedule_data is not None:
+        schedule_data.to_netcdf(
+            (path / "entire_dataset_schedules").with_suffix(
+                OPTIMIZATION_SCHEDULE_SUFFIX
+            )
+        )
+
+        logger.info(
+            f"Entire dataset schedules stored at "
+            f"{(path / 'entire_dataset_schedules').with_suffix(OPTIMIZATION_SCHEDULE_SUFFIX)}"
+        )
+
+    logger.info("End of the program")
+
+
+def create_entire_dataset(
+    experiment_data: ExperimentData,
+    budget_steps: int,
+    loss_column_name: str = "loss history",
+    seed_column_name: str = "seed",
+    optimizer_column_name: str = "optimizer schedule",
+    task_column_name: str = "task",
+    l2co_schedules_column_name: str = "l2co schedules",
+) -> tuple[xr.Dataset, xr.Dataset | None, Path]:
+    """
+    Create an entire dataset from a given experiment data object.
+
+    Parameters
+    ----------
+    experiment_data : f3dasm.ExperimentData
+        The experiment data object.
+
+    Returns
+    -------
+    xarray.Dataset
+        The resulting entire dataset.
+
+    Notes
+    -----
+    The entire dataset is created by concatenating all the optimization
+    trajectories (NetCDF files) of the experiment data object.
+
+    All of the files are checked on:
+    - if they are flagged as 'invalid' or 'ERROR'
+    - if they contain np.nan values
+    """
 
     # Only select finished experiments and reset the index
     experiment_data = experiment_data.select_with_status(
@@ -148,161 +133,161 @@ def main(config):
         axis=1,
     )
 
-    temp_df = df.copy()
+    # ============= Create the labels =============
 
-    temp_df[TASK_ID] = temp_df[task_column_name].apply(lambda x: Task.load(x))
-    temp_df[SCHEDULE] = temp_df[optimizer_column_name].apply(
-        lambda x: OptimizationStep.load(x)
+    pivot_table, step_dict = create_pivot_table(
+        df=df,
+        loss_column_name=loss_column_name,
+        optimizer_column_name=optimizer_column_name,
+        task_column_name=task_column_name,
     )
 
-    pivot_table = temp_df.pivot(
-        index=TASK_ID,
-        columns=SCHEDULE,
-        values=loss_column_name,
+    # ============= Create the optimization data =============
+
+    opt_data, placeholder_path = create_optimization_data(
+        pivot_table,
+        validation_fn=partial(validation_fn, budget_steps=budget_steps),
     )
+
+    df_labels = create_task_labels_df(pivot_table)
 
     # Task labels
-
-    df_tasks = pivot_table.index.to_series()
-    task_ids = df_tasks.apply(lambda r: r.hash)
-
-    # Opt schedules
-
-    df_schedules = pivot_table.columns.to_series()
-    df_schedules.index = df_schedules.apply(lambda r: r.hash)
-    df_schedules = df_schedules.apply(lambda r: r.name)
-
-    # Open entire dataset
-    xarr_df = pivot_table.copy()
-    xarr_df.columns = df_schedules
-    xarr_df
-
-    # Process per task
-    for task, loss_history in tqdm(xarr_df.iterrows(), total=len(xarr_df)):
-        placeholder_path = Path.cwd() / f"placeholder_{task.hash}.ncs"
-
-        placeholder = xr.open_dataset(
-            loss_history.dropna(axis=0, how="all").iloc[0]
-        )
-
-        placeholder = xr.full_like(placeholder, fill_value=np.nan)
-        placeholder.to_netcdf(placeholder_path)
-        placeholder.close()
-
-        loss_history = loss_history.fillna(placeholder_path)
-
-        b = xr.open_mfdataset(
-            loss_history.to_numpy().tolist(),
-            combine="nested",
-            concat_dim=[
-                xr.DataArray(
-                    xarr_df.columns, coords=[xarr_df.columns], dims=[SCHEDULE]
-                ),
-            ],
-            parallel=False,
-            preprocess=None,
-            coords="minimal",
-            join="outer",
-        )
-
-        # add global min
-        g_min_val = task.global_min if task.global_min is not None else np.nan
-        b = b.assign_coords({GLOBAL_MIN: g_min_val})
-
-        b.to_netcdf(f"{task.hash}.ncs")
-        b.close()
-
-        placeholder_path.unlink()
-        # break
-
-    file_list = [Path.cwd() / Path(t).with_suffix(".ncs") for t in task_ids]
-
-    # ============= PERFORMANCE ============= #
-
-    logger.info("Starting opening the entire dataset for validation")
-
-    xarr_performance = xr.open_mfdataset(
-        file_list,
-        combine="nested",
-        concat_dim=[
-            xr.DataArray(task_ids, coords=[task_ids], dims=[TASK_ID]),
-        ],
-        parallel=False,
-        preprocess=calculate_ert,
-        coords="minimal",
-        join="outer",
-    )
-
-    xarr_performance = xarr_performance.stack(
-        problem=(REALIZATION, TASK_ID), create_index=False
-    )
-
-    xarr_performance.to_netcdf(
-        (path / "entire_dataset_new").with_suffix(OPTIMIZATION_DATA_SUFFIX)
-    )
-
-    # ============= TRAJECTORY ============= #
-
-    logger.info("Starting trajectory dataset creation")
-
-    xarr_trajectory = xr.open_mfdataset(
-        file_list,
-        combine="nested",
-        concat_dim=[
-            xr.DataArray(task_ids, coords=[task_ids], dims=[TASK_ID]),
-        ],
-        parallel=False,
-        preprocess=partial(validation_fn, budget_steps=config.budget_steps),
-        coords="minimal",
-        join="outer",
-    )
-
-    xarr_trajectory = xarr_trajectory.stack(
-        problem=(REALIZATION, TASK_ID), create_index=False
-    )
-
-    # Create task labels
-
-    labels_data = pd.DataFrame(
-        [
-            {**task.tag, GLOBAL_MIN: task.global_min}
-            for task in pivot_table.index
-        ],
-    )
     xarr_task_labels = xr.DataArray(
-        labels_data.values,
-        coords={TASK_ID: task_ids, FEATURE: labels_data.columns},
+        df_labels.values,
+        coords={TASK_ID: df_labels.index, FEATURE: df_labels.columns},
         dims=[TASK_ID, FEATURE],
     )
 
-    xarr_trajectory[TASK_LABELS] = xarr_task_labels.sel(
-        {TASK_ID: xarr_trajectory[TASK_ID]}
+    opt_data["task_labels"] = xarr_task_labels.sel(
+        {TASK_ID: opt_data[TASK_ID]}
     ).astype(str)
 
-    # ============= MERGE AND SAVE ============= #
+    if INPUT_DIM in opt_data.coords:
+        opt_data = opt_data.drop(INPUT_DIM)
 
-    logger.info("Merging trajectory and performance datasets")
+    schedule_data = None
 
-    entire_dataset = xr.merge(
-        [xarr_trajectory, xarr_performance], compat="override"
+    return opt_data, schedule_data, placeholder_path
+
+
+def create_pivot_table(
+    df: pd.DataFrame,
+    loss_column_name: str = "loss history",
+    optimizer_column_name: str = "optimizer schedule",
+    task_column_name: str = "task",
+) -> tuple[pd.DataFrame, dict[str, dict[str, Any]]]:
+    labels = []
+    for task_path in df[task_column_name]:
+        task = Task.load(task_path)
+        labels.append(task.tag_hashable)
+
+        del task
+
+    df_labels = pd.DataFrame(
+        labels, columns=[f"task_{i}" for i in range(len(labels[0]))]
     )
 
-    entire_dataset.stack(problem=(REALIZATION, TASK_ID), create_index=False)
+    schedules = []
+    step_list: list[OptimizationStep] = []
+    for schedule_path in df[optimizer_column_name]:
+        step = OptimizationStep.load(schedule_path)
+        step_list.append(step)
+        schedules.append(step.tag_hashable)
+        del step
 
-    entire_dataset.drop_vars(GLOBAL_MIN)
+    step_dict: dict[str, dict[str, Any]] = {
+        s.name: s.to_dict() for s in step_list
+    }
 
-    logging.info("Saving entire dataset to disk")
-
-    entire_dataset.to_netcdf(
-        (path / "entire_dataset").with_suffix(OPTIMIZATION_DATA_SUFFIX)
+    df_schedules = pd.DataFrame(
+        schedules, columns=[f"schedule{i}" for i in range(len(schedules[0]))]
     )
 
-    # ============= CLEAN UP ============= #
+    df_loss = df[loss_column_name].to_frame()
 
-    logger.info("Cleaning up temporary files")
+    # # Concatenate and create a MultiIndex
+    df_multiindex = pd.concat([df_labels, df_schedules, df_loss], axis=1)
 
-    for f in file_list:
-        f.unlink()
+    pivot_table = df_multiindex.pivot_table(
+        index=[*df_labels.columns],  # These are the rows
+        columns=[*df_schedules.columns],  # This is the column
+        values=[*df_loss.columns],  # This is the value you want to aggregate
+        aggfunc="first",
+    )
+
+    return pivot_table, step_dict
+
+
+def create_task_labels_df(pivot_table: pd.DataFrame) -> pd.DataFrame:
+    df_labels = pivot_table.index.to_frame(index=False)
+
+    df = pd.DataFrame(
+        [{v[0]: v[1] for v in row} for i, row in df_labels.iterrows()]
+    )
+
+    df = df.reindex(sorted(df.columns), axis=1)
+
+    def hash_row_with_columns(row):
+        # Include column names
+        row_str = "_".join(f"{col}:{row[col]}" for col in row.index)
+        # Truncate for readability
+        return hashlib.sha256(row_str.encode()).hexdigest()[:16]
+
+    df.index = df.apply(hash_row_with_columns, axis=1)
+
+    return df
+
+
+def create_optimization_data(
+    pivot_table: pd.DataFrame, validation_fn: Callable | None = None
+) -> tuple[xr.Dataset, Path]:
+    df = pivot_table.copy(deep=True)
+    df_labels = create_task_labels_df(df)
+
+    # Hashing
+    df.index = df_labels.index
+    df.columns = pd.DataFrame(
+        [{v[0]: v[1] for v in col} for col in df.columns.droplevel(0)]
+    )["opt_name"]
+
+    # Open first file to create placeholder
+    placeholder_path = Path.cwd() / "placeholder.nc"
+    placeholder = xr.open_dataset(
+        df.dropna(axis=0, how="all").iloc[0].dropna().iloc[0]
+    )
+
+    placeholder = xr.full_like(placeholder, np.nan)
+
+    # Store placeholder to disk
+    placeholder.to_netcdf(placeholder_path)
+    placeholder.close()
+
+    # Fill al nans with the placeholder path
+    df: pd.DataFrame = df.fillna(placeholder_path)
+
+    logger.info("Starting opening the entire dataset")
+
+    xarr_full = xr.open_mfdataset(
+        df.to_numpy().tolist(),
+        combine="nested",
+        concat_dim=[
+            xr.DataArray(df.index, coords=[df.index], dims=[TASK_ID]),
+            xr.DataArray(df.columns, coords=[df.columns], dims=[SCHEDULE]),
+        ],
+        parallel=False,
+        preprocess=validation_fn,
+        coords="minimal",
+        join="outer",
+    )
+
+    xarr_full = xarr_full.stack(
+        problem=(REALIZATION, TASK_ID), create_index=False
+    )
+
+    # Open the whole thing:
+    logger.info("Opening the whole thing")
+
+    return xarr_full, placeholder_path
 
 
 if __name__ == "__main__":

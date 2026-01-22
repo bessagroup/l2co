@@ -292,9 +292,9 @@ def plot_ertd_profile(
     -----
     If no axes are provided, a new figure is created.
     """
-    _ertd = d.ertd_profile(include_best=include_best, cost_metric=cost_metric)
+    _ertd = d.ertd_profile(include_best=include_best)
 
-    _ertd = _ertd.mean(PROBLEM)
+    _ertd = _ertd.sel({"metric": cost_metric}).mean(PROBLEM)
 
     return plot_ertd(
         ertd=_ertd,
