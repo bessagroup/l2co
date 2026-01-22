@@ -698,6 +698,6 @@ def plot_ertd(
         )
 
     ax.set_ylim(0.0, 1.0)
-    ax.set_xlim(left=1)  # Starts the x-axis at 10^0
+    ax.set_xlim(left=0.1)  # Starts the x-axis at 10^-1
 
     return fig, ax
