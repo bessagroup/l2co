@@ -33,9 +33,7 @@ import xarray as xr
 from .naming import (
     BUDGET,
     COST,
-    FEVALS,
     GLOBAL_MIN,
-    ITERATIONS,
     OUTPUT_DIM,
     OUTPUT_MIN,
     PROBLEM,
@@ -366,7 +364,7 @@ def rtd(performance: xr.DataArray) -> xr.DataArray:
 
 def ertd(
     performance: xr.Dataset,
-    cost_measure: Literal[FEVALS, ITERATIONS],
+    cost_measure: Literal["fevals", "iterations"],
     dims: xr.DataArray,
     cost_values: np.ndarray = DEFAULT_COST_VALUES,
 ) -> xr.DataArray:
