@@ -55,7 +55,7 @@ task_column_name: str = "task"
 
 
 def quality_value(x: xr.DataArray, g_min: float) -> xr.DataArray:
-    if g_min.isnull().any():
+    if np.isnan(g_min):
         g_min = x.min(skipna=True)
     p = x - g_min
     p_positive = p.where(p > 0)
