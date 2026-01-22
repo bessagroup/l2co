@@ -141,7 +141,7 @@ def create_bbob_task(
 
     return Task(
         model=model,
-        # global_min=float(global_min),
+        global_min=float(global_min),
         pass_rng=pass_rng,
         loss_fn=loss_fn,
         tag=tag,
