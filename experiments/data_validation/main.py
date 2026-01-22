@@ -70,7 +70,7 @@ def quality_value(x: xr.DataArray, g_min: float) -> xr.DataArray:
 def calculate_ert(data: xr.Dataset) -> xr.Dataset:
     raw_g_min = data.coords.get(GLOBAL_MIN, np.nan)
     raw_g_min = raw_g_min if not None else np.nan
-    g_min = raw_g_min if not np.isnan(raw_g_min) else None
+    g_min = raw_g_min if not np.isnan(raw_g_min) else np.nan
 
     x = output_cummin(data[OUTPUT_MIN]).ffill(BUDGET)
     qv = quality_value(x, g_min)
