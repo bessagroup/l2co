@@ -162,51 +162,10 @@ def create_entire_dataset(
         {TASK_ID: opt_data[TASK_ID]}
     ).astype(str)
 
-    # Schedules
-    # o = {
-    #     name: json.dumps(schedule_dict)
-    #     for name, schedule_dict in step_dict.items()
-    # }
-
-    # xarr_opt_steps = xr.DataArray(
-    #     data=list(o.values()),
-    #     coords={SCHEDULE: list(o.keys())},
-    #     dims=SCHEDULE,
-    #     name="schedules",
-    # )
-
-    # opt_data["opt_steps"] = xarr_opt_steps
-
     if INPUT_DIM in opt_data.coords:
         opt_data = opt_data.drop(INPUT_DIM)
 
-    if "l2co schedules" in experiment_data.domain.output_names:
-        df_schedules = pd.concat(
-            [
-                df_input[task_column_name],
-                df_input[optimizer_column_name],
-                df_output[l2co_schedules_column_name],
-            ],
-            axis=1,
-        )
-
-        pivot_table_schedules, _ = create_pivot_table(
-            df=df_schedules,
-            loss_column_name=l2co_schedules_column_name,
-            optimizer_column_name=optimizer_column_name,
-            task_column_name=task_column_name,
-        )
-
-        schedule_data, placeholder_path = create_optimization_data(
-            pivot_table_schedules, validation_fn=None
-        )
-
-        schedule_data = schedule_data["__xarray_dataarray_variable__"].rename(
-            "schedules"
-        )
-
-    else:
-        schedule_data = None
+    schedule_data = None
 
     return opt_data, schedule_data, placeholder_path
 
