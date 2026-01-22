@@ -58,7 +58,7 @@ def main():
     )
 
     mixed_embedding = MixedEmbedding.from_feature_processor(
-        feature_processor=o.feature_processor,
+        feature_processor=o.feature_processor_task,
         embed_dim=8,
         output_dim=16,
         key=jr.key(3),
@@ -73,8 +73,8 @@ def main():
     )
 
     history_model = HistoryModel(
-        feature_processor=o.feature_processor,
-        mixed_embedding=mixed_embedding,
+        feature_processor_task=o.feature_processor_task,
+        mixed_embedding_task=mixed_embedding,
         history_encoder=history_encoder,
         model=model,
         optimizers=d.optimizers.values,
@@ -109,7 +109,7 @@ def main():
     # Evaluate across ALL (Problem, Schedule) pairs at once
     y_pred_all = new_history_model.evaluate(key=jr.key(3), data=o, i=None)
     print(
-        f"Prediction output shape: {y_pred_all.shape} (Expected: ({o.x_features.sizes[PROBLEM]}, {len(d.optimizers)}))"
+        f"Prediction output shape: {y_pred_all.shape} (Expected: ({o.x_features_task.sizes[PROBLEM]}, {len(d.optimizers)}))"
     )
 
     # Select a specific history context for visualization (e.g., Schedule 0)

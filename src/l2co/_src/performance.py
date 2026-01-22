@@ -380,7 +380,11 @@ def ertd(
         }
     )
 
+    print("Computing ERTD...")
+
     ert_multi = compute_ert_multi_seed(ds, n_seeds=50, n_picks=50)
+
+    print("Calculating ERTD values...")
 
     values = np.unique(cost_values)
 
@@ -461,6 +465,7 @@ def compute_ert_multi_seed(
         dims=(SEED, PROBLEM),
     )
 
+    # TODO: is this necessary?
     ert_all = ds.groupby(TASK_ID).map(compute_ert_group, samples=samples_da)
 
     ert_full = ert_all.sel({TASK_ID: ds[TASK_ID]})

@@ -47,7 +47,7 @@ def main(i: int, t_end: float):
     )
 
     mixed_embedding = MixedEmbedding.from_feature_processor(
-        feature_processor=o.feature_processor,
+        feature_processor=o.feature_processor_task,
         embed_dim=4,
         output_dim=8,
         key=jr.key(3),
@@ -62,8 +62,8 @@ def main(i: int, t_end: float):
     )
 
     history_model = HistoryModel(
-        feature_processor=o.feature_processor,
-        mixed_embedding=mixed_embedding,
+        feature_processor_task=o.feature_processor_task,
+        mixed_embedding_task=mixed_embedding,
         history_encoder=history_encoder,
         model=model,
         optimizers=d.optimizers.values,

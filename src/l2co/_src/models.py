@@ -23,7 +23,7 @@ from tqdm import tqdm
 from l2co.naming import SCHEDULE
 
 from .data_loader import OptimizationDynamics
-from .naming import BUDGET, KIND, PROBLEM
+from .naming import BUDGET, PROBLEM
 from .optimizerschedule import OptimizationStep
 from .task_features import FeatureProcessor, MixedEmbedding
 
@@ -105,14 +105,14 @@ class L2COModel(AbstractModel):
         if self.type == "scikit":
             model, metrics = train_scikit(
                 model=self.model,
-                x=jnp.array(data.x_features),
+                x=jnp.array(data.x_features_task),
                 y=jnp.array(data.y),
                 **kwargs,
             )
         elif self.type == "equinox":
             model, metrics = train_equinox(
                 model=self.model,
-                x=jnp.array(data.x_features),
+                x=jnp.array(data.x_features_task),
                 y=jnp.array(data.y),
                 **kwargs,
             )
@@ -212,76 +212,53 @@ class L2COModel(AbstractModel):
 
 
 class HistoryModel(AbstractModel):
-    mixed_embedding: MixedEmbedding
-    feature_processor: FeatureProcessor
+    mixed_embedding_task: MixedEmbedding
+    mixed_embedding_optimizer: MixedEmbedding
+    feature_processor_task: FeatureProcessor
+    feature_processor_optimizer: FeatureProcessor
     history_encoder: eqx.Module
     model: eqx.Module
     optimizers: Iterable[OptimizationStep]
 
-    def __call__(self, x: tuple[jax.Array, jax.Array]) -> jax.Array:
-        x_features, x_history = x
+    def __call__(self, x: tuple[jax.Array, jax.Array, jax.Array]) -> jax.Array:
+        x_features_task, x_features_optimizer, x_history = x
         history_emb = self.history_encoder(x_history)
-        features_emb = self.mixed_embedding(x_features)
-        combined = jnp.concatenate([features_emb, history_emb], axis=-1)
+        features_task_emb = self.mixed_embedding_task(x_features_task)
+        features_optimizer_emb = self.mixed_embedding_optimizer(
+            x_features_optimizer
+        )
+        combined = jnp.concatenate(
+            [features_task_emb, features_optimizer_emb, history_emb], axis=-1
+        )
         return self.model(combined)
 
     def train(
         self,
         data: OptimizationDynamics,
-        i: int | None,
         optimizer: optax.GradientTransformation,
         num_steps: int = 100,
         verbose: bool = False,
         scan: bool = True,
     ) -> tuple[HistoryModel, dict]:
-        # 1. Filter problems with invalid targets (must be valid for all
-        # # schedules)
-        # Note: We assume the model predicts the full y vector, so y must
-        # be valid.
-        y_mask = ~data.y.isnull().any(SCHEDULE)
-        data = data.select(problems=y_mask)
-
         # 2. Split by problem to prevent leakage
-        data_train, data_val = data.train_test_split(
+        data_train, data_val = data.filter().train_test_split(
             train_fraction=0.8, seed=42
         )
 
-        def make_dataset(d: OptimizationDynamics) -> tuple[tuple, jax.Array]:
-            if i is not None:
-                # Single schedule mode
-                xh = d.x_history.isel({SCHEDULE: i}, drop=True)  # (P, B, K)
+        x_train = (
+            jnp.array(data_train.x_features_task),
+            jnp.array(data_train.x_features_optimizer),
+            jnp.array(data_train.x_history),
+        )
 
-                # Filter indices with valid history
-                valid_mask = ~xh.isnull().any([BUDGET, KIND])
-                xh = xh.where(valid_mask, drop=True)
+        x_val = (
+            jnp.array(data_val.x_features_task),
+            jnp.array(data_val.x_features_optimizer),
+            jnp.array(data_val.x_history),
+        )
 
-                # Align features and targets
-                xf = d.x_features.sel({PROBLEM: xh[PROBLEM]})
-                y = d.y.sel({PROBLEM: xh[PROBLEM]})
-
-                return (jnp.array(xf), jnp.array(xh)), jnp.array(y)
-            else:
-                # All schedules mode
-                # Stack (PROBLEM, SCHEDULE) into a single sample dimension
-                xh = d.x_history.stack(sample=(PROBLEM, SCHEDULE))
-
-                # Filter indices with valid history
-                valid_mask = ~xh.isnull().any([BUDGET, KIND])
-                xh = xh.where(valid_mask, drop=True)
-
-                # Align features and targets
-                # xh[PROBLEM] gives the problem index for each valid sample
-                xf = d.x_features.sel({PROBLEM: xh[PROBLEM]})
-                y = d.y.sel({PROBLEM: xh[PROBLEM]})
-
-                # Transpose xh to (sample, B, K) to match expected input
-                #  shape for batching
-                xh = xh.transpose("sample", BUDGET, "kind")
-
-                return (jnp.array(xf), jnp.array(xh)), jnp.array(y)
-
-        x_train, y_train = make_dataset(data_train)
-        x_val, y_val = make_dataset(data_val)
+        y_train = jnp.array(data_train.y)
+        y_val = jnp.array(data_val.y)
 
         model, metrics = train_equinox(
             model=self,
@@ -303,7 +280,7 @@ class HistoryModel(AbstractModel):
         if i is not None:
             x_eval = (
                 jnp.array(
-                    data.x_features,
+                    data.x_features_task,
                 ),
                 jnp.array(data.x_history.isel(schedule=i, drop=True)),
             )
@@ -317,9 +294,9 @@ class HistoryModel(AbstractModel):
                 xr.DataArray(
                     optimizers,
                     dims="problem",
-                    coords={"problem": data.x_features[PROBLEM]},
+                    coords={"problem": data.x_features_task[PROBLEM]},
                 )
-                .assign_coords({PROBLEM: data.x_features[PROBLEM]})
+                .assign_coords({PROBLEM: data.x_features_task[PROBLEM]})
                 .drop_vars(PROBLEM)
             )
         else:
@@ -330,7 +307,9 @@ class HistoryModel(AbstractModel):
 
             # Align features
             # xh_stacked[PROBLEM] gives the problem index for each sample
-            xf_aligned = data.x_features.sel({PROBLEM: xh_stacked[PROBLEM]})
+            xf_aligned = data.x_features_task.sel(
+                {PROBLEM: xh_stacked[PROBLEM]}
+            )
             x_eval = (
                 jnp.array(xf_aligned),
                 jnp.array(xh_stacked.transpose("sample", BUDGET, "kind")),
@@ -358,7 +337,7 @@ class HistoryModel(AbstractModel):
         x_feature: dict[str, Any],
         x_history: jax.Array,
     ) -> jax.Array:
-        x = (self.feature_processor.transform(x_feature), x_history)
+        x = (self.feature_processor_task.transform(x_feature), x_history)
         return self(x)
 
     def predict(
@@ -644,9 +623,7 @@ class MLP(AbstractModel):
         )
 
 
-def mse_loss(
-    model: AbstractModel, x: dict[str, Any], y: jax.Array
-) -> jax.Array:
+def mse_loss(model: AbstractModel, x, y) -> jax.Array:
     """Mean squared error between model predictions and targets."""
     preds = eqx.filter_vmap(model)(x)
     return jnp.mean((preds - y) ** 2)
@@ -679,14 +656,13 @@ def mse_loss(
 def train_equinox(
     model: eqx.Module,
     optimizer: optax.GradientTransformation,
-    train_data: tuple[jax.Array, jax.Array],
-    val_data: tuple[jax.Array, jax.Array] | None = None,  # Optional validation
+    train_data: tuple[tuple[jax.Array, jax.Array, jax.Array], jax.Array],
+    val_data: tuple[tuple[jax.Array, jax.Array, jax.Array], jax.Array]
+    | None = None,  # Optional validation
     num_steps: int = 100,
     verbose: bool = False,
     scan: bool = True,
 ) -> tuple[eqx.Module, dict[str, jax.Array]]:
-    x_train, y_train = train_data
-
     params, static = eqx.partition(model, eqx.is_inexact_array)
     opt_state = optimizer.init(params)
 

@@ -292,10 +292,31 @@ class DataLoader:
         x_features = x_features.drop_vars(PROBLEM)
 
         # OPTIMIZER FEATURES
-        # tags = [{"optimizer": str(v)} for v in self.optimizers.values]
-        # feature_processor_optimizer = FeatureProcessor.init(
-        #     schema={"optimizer": "categorical"}, tags=tags
-        # )
+        opt_labels = self.optimizers.broadcast_like(self.problems)
+
+        tags_optimizer = [
+            {"optimizer": str(xi)} for xi in opt_labels.values.flatten()
+        ]
+
+        # OPTIMIZER FEATURES
+        feature_processor_optimizer = FeatureProcessor.init(
+            schema={"optimizer": "categorical"}, tags=tags_optimizer
+        )
+
+        x_features_optimizer = np.stack(
+            [
+                feature_processor_optimizer.transform(xi)
+                for xi in tags_optimizer
+            ]
+        )
+
+        x_features_optimizer = xr.DataArray(
+            x_features_optimizer,
+            coords={
+                "feature": ["optimizer"],
+            },
+            dims=["sample", "feature"],
+        )
 
         # OPTIMIZATION TRAJECTORY
 
@@ -306,20 +327,20 @@ class DataLoader:
             .transpose(PROBLEM, BUDGET, SCHEDULE, "kind")
         )
 
-        # Add one-hot encoded schedule to x_history
-        n_schedules = x_history.sizes[SCHEDULE]
-        one_hot = np.eye(n_schedules)
-        new_kind_coords = [f"schedule_{i}" for i in range(n_schedules)]
-        one_hot_da = xr.DataArray(
-            one_hot,
-            dims=[SCHEDULE, "kind"],
-            coords={SCHEDULE: x_history[SCHEDULE], "kind": new_kind_coords},
-        )
-        # Broadcast to match x_history dimensions (except kind)
-        one_hot_expanded = one_hot_da.broadcast_like(
-            x_history.isel(kind=0, drop=True)
-        )
-        x_history = xr.concat([x_history, one_hot_expanded], dim="kind")
+        # # Add one-hot encoded schedule to x_history
+        # n_schedules = x_history.sizes[SCHEDULE]
+        # one_hot = np.eye(n_schedules)
+        # new_kind_coords = [f"schedule_{i}" for i in range(n_schedules)]
+        # one_hot_da = xr.DataArray(
+        #     one_hot,
+        #     dims=[SCHEDULE, "kind"],
+        #     coords={SCHEDULE: x_history[SCHEDULE], "kind": new_kind_coords},
+        # )
+        # # Broadcast to match x_history dimensions (except kind)
+        # one_hot_expanded = one_hot_da.broadcast_like(
+        #     x_history.isel(kind=0, drop=True)
+        # )
+        # x_history = xr.concat([x_history, one_hot_expanded], dim="kind")
 
         y = (
             self.to_labels(t=t_end, cost_metric=cost_metric)
@@ -327,11 +348,25 @@ class DataLoader:
             .transpose(PROBLEM, SCHEDULE)
         )
 
+        _x_history = x_history.stack(
+            sample=("problem", "schedule"), create_index=False
+        )
+        _x_features = x_features.broadcast_like(x_history.schedule).stack(
+            sample=("problem", "schedule"), create_index=False
+        )
+        _y = y.expand_dims({"schedule2": self.optimizers.values}).stack(
+            sample=("problem", "schedule2"), create_index=False
+        )
+
         return OptimizationDynamics(
-            x_features=x_features,
-            x_history=x_history,
-            y=y,
-            feature_processor=feature_processor_task,
+            x_features_task=_x_features.transpose("sample", FEATURE),
+            x_features_optimizer=x_features_optimizer.transpose(
+                "sample", FEATURE
+            ),
+            x_history=_x_history.transpose("sample", BUDGET, "kind"),
+            y=_y.transpose("sample", SCHEDULE),
+            feature_processor_task=feature_processor_task,
+            feature_processor_optimizer=feature_processor_optimizer,
         )
 
     def to_traj_and_stair(

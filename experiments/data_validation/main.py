@@ -238,10 +238,6 @@ def main(config):
         problem=(REALIZATION, TASK_ID), create_index=False
     )
 
-    xarr_performance.to_netcdf(
-        (path / "entire_dataset_new").with_suffix(OPTIMIZATION_DATA_SUFFIX)
-    )
-
     # ============= TRAJECTORY ============= #
 
     logger.info("Starting trajectory dataset creation")
