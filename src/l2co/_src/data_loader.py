@@ -254,6 +254,8 @@ class DataLoader:
         tuple
             (task parameters, labels)
         """
+
+        # TASK FEATURES
         dict_features = self.task_labels.transpose(PROBLEM, FEATURE)
 
         tags_list = [
@@ -266,12 +268,12 @@ class DataLoader:
             for xi in self.task_labels
         ]
 
-        feature_processor = FeatureProcessor.init(
+        feature_processor_task = FeatureProcessor.init(
             schema=schema, tags=tags_list
         )
 
         x_features = np.stack(
-            [feature_processor.transform(xi) for xi in tags_list]
+            [feature_processor_task.transform(xi) for xi in tags_list]
         )
 
         x_features = xr.DataArray(
@@ -288,6 +290,14 @@ class DataLoader:
         )
 
         x_features = x_features.drop_vars(PROBLEM)
+
+        # OPTIMIZER FEATURES
+        # tags = [{"optimizer": str(v)} for v in self.optimizers.values]
+        # feature_processor_optimizer = FeatureProcessor.init(
+        #     schema={"optimizer": "categorical"}, tags=tags
+        # )
+
+        # OPTIMIZATION TRAJECTORY
 
         x_history = (
             self.select_t(t=t)
@@ -321,7 +331,7 @@ class DataLoader:
             x_features=x_features,
             x_history=x_history,
             y=y,
-            feature_processor=feature_processor,
+            feature_processor=feature_processor_task,
         )
 
     def to_traj_and_stair(
