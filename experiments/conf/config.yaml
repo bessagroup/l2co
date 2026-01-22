@@ -2,7 +2,7 @@ defaults:
 - tasks: bbob
 - budgets: based_on_dim
 - samplers: normal
-- optimizers: standard
+- optimizers: medium
 - models: histgradientboostingregressor
 - experimentdata: default
 
