@@ -55,7 +55,7 @@ task_column_name: str = "task"
 
 
 def quality_value(x: xr.DataArray, g_min: float) -> xr.DataArray:
-    if np.isnan(g_min):
+    if g_min.isnull().any():
         g_min = x.min(skipna=True)
     p = x - g_min
     p_positive = p.where(p > 0)
@@ -237,9 +237,6 @@ def main(config):
         problem=(REALIZATION, TASK_ID), create_index=False
     )
 
-    # remove the global_min coordinate
-    xarr_performance = xarr_performance.drop_vars(GLOBAL_MIN)
-
     xarr_performance.to_netcdf(
         (path / "entire_dataset_new").with_suffix(OPTIMIZATION_DATA_SUFFIX)
     )
@@ -282,7 +279,21 @@ def main(config):
         {TASK_ID: xarr_trajectory[TASK_ID]}
     ).astype(str)
 
-    xarr_trajectory.to_netcdf(
+    # ============= MERGE AND SAVE ============= #
+
+    logger.info("Merging trajectory and performance datasets")
+
+    entire_dataset = xr.merge(
+        [xarr_trajectory, xarr_performance], compat="override"
+    )
+
+    entire_dataset.stack(problem=(REALIZATION, TASK_ID), create_index=False)
+
+    entire_dataset.drop_vars(GLOBAL_MIN)
+
+    logging.info("Saving entire dataset to disk")
+
+    entire_dataset.to_netcdf(
         (path / "entire_dataset").with_suffix(OPTIMIZATION_DATA_SUFFIX)
     )
 
