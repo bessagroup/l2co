@@ -365,13 +365,6 @@ def ertd(
     dims: xr.DataArray,
     cost_values: np.ndarray = DEFAULT_COST_VALUES,
 ) -> xr.DataArray:
-    # targets = xr.DataArray(DEFAULT_TARGETS, dims=TARGET)
-    # solved = performance[OUTPUT_MIN] <= targets
-    # success = solved.any(BUDGET)
-    # first_solved = solved.argmax(BUDGET).where(
-    #     success, other=solved[BUDGET].argmax()
-    # )
-
     ds = xr.Dataset(
         {
             COST: performance[COST],
@@ -380,9 +373,60 @@ def ertd(
         }
     )
 
-    print("Computing ERTD...")
+    ds = ds.unstack(PROBLEM)
 
-    ert_multi = compute_ert_multi_seed(ds, n_seeds=50, n_picks=50)
+    samples = np.stack(
+        [
+            draw_samples(
+                seed=s, n_realizations=ds[REALIZATION].size, n_picks=50
+            )
+            for s in np.arange(50)
+        ],
+        axis=0,
+    )
+
+    samples_da = xr.DataArray(
+        samples,
+        dims=(SEED, REALIZATION),
+    )
+
+    ds_selected = ds.isel({REALIZATION: samples_da})
+
+    # # Find index of first True along "problem"
+    first_true = ds_selected[SUCCESS].argmax(REALIZATION)
+
+    # # Handle case where there is no True at all
+    first_true = first_true.where(
+        ds_selected[SUCCESS].any(REALIZATION), other=-1
+    )
+
+    # # Coordinate index
+    idx = xr.DataArray(
+        np.arange(ds_selected.sizes[REALIZATION]), dims=REALIZATION
+    )
+
+    # # Mask up to first True
+    mask = (idx <= first_true).fillna(False)
+
+    # # Sum cost up to first True
+    ert = ds_selected[COST].where(mask, 0).sum(REALIZATION)
+    # # If not any success, put NaN
+    ert = ert.where(ds_selected[SUCCESS].any(REALIZATION))
+
+    # # Divide by the dimensionality of the problem
+    ert = ert / ds_selected["dims"].mean(REALIZATION)
+
+    ert_multi = ert.mean(SEED)
+    values = np.unique(DEFAULT_COST_VALUES)
+    budgets = xr.DataArray(
+        values,
+        dims="cost_per_dim",
+        coords={"cost_per_dim": values},
+    )
+
+    ertd = (ert_multi <= budgets).mean([OUTPUT_DIM, TARGET])
+
+    # ert_multi = compute_ert_multi_seed(ds, n_seeds=50, n_picks=50)
 
     print("Calculating ERTD values...")
 
@@ -402,10 +446,10 @@ def draw_samples(seed: int, n_realizations: int, n_picks: int):
     rng = np.random.default_rng(seed)
     return np.concatenate(
         [
-            rng.permutation(n_realizations + 1),
+            rng.permutation(n_realizations),
             rng.integers(
                 0,
-                n_realizations + 1,
+                n_realizations,
                 size=max(n_picks - n_realizations, 0),
             ),
         ]

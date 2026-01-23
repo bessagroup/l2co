@@ -31,10 +31,8 @@ from typing import Literal
 # Third-party
 import jax
 import numpy as np
-import pandas as pd
 import xarray as xr
 from scipy.linalg import svd
-from sklearn.model_selection import train_test_split
 
 # Local
 from .naming import (
@@ -158,6 +156,7 @@ class DataLoader:
         DataLoader
             Instantiated DataLoader object.
         """
+        data = data.stack({PROBLEM: (REALIZATION, TASK_ID)}, create_index=True)
 
         def parse_mixed_value(val: str):
             """Try to convert a string into int, float, or leave as string."""
@@ -177,8 +176,8 @@ class DataLoader:
         task_labels = xr.apply_ufunc(
             np.vectorize(parse_mixed_value),
             data[TASK_LABELS],
-            input_core_dims=[[PROBLEM]],
-            output_core_dims=[[PROBLEM]],
+            input_core_dims=[[PROBLEM]],  # PROBLEM
+            output_core_dims=[[PROBLEM]],  # PROBLEM
             vectorize=True,
             dask="allowed",
             output_dtypes=[object],
@@ -422,99 +421,6 @@ class DataLoader:
 
         return _ertd.sel({"metric": cost_metric}).mean("cost_per_dim")
 
-    def to_spreadsheet(self, criteria: Literal["min", "mean"] = "min"):
-        """
-        Generate a spreadsheet summarizing optimization results.
-
-        Parameters
-        ----------
-        criteria : {'min', 'mean'}, optional
-            Criteria for summarizing results, by default 'min'.
-
-        Returns
-        -------
-        pd.DataFrame
-            Styled DataFrame for visualization.
-        """
-
-        ds = xr.Dataset(
-            {TASK_LABELS: self.task_labels, OUTPUT_MIN: self.data[OUTPUT_MIN]}
-        )
-
-        if criteria == "min":
-            df = (
-                ds.groupby(TASK_ID)
-                .min()
-                .min(BUDGET)
-                .isel({OUTPUT_DIM: 0})[OUTPUT_MIN]
-                .to_pandas()
-            )
-        elif criteria == "mean":
-            df = (
-                ds.groupby(TASK_ID)
-                .mean()
-                .min(BUDGET)
-                .isel({OUTPUT_DIM: 0})[OUTPUT_MIN]
-                .to_pandas()
-            )
-
-        df.index = (
-            ds.groupby(TASK_ID)
-            .min()
-            .min(BUDGET)
-            .isel({OUTPUT_DIM: 0})[TASK_LABELS]
-        )
-
-        # Function to highlight the smallest value per row
-        def highlight_min_row(row):
-            min_val = row.min()
-            return [
-                "font-weight: bold" if val == min_val else "" for val in row
-            ]
-
-        # Apply styling and scientific notation formatting
-        styled_df = (
-            df.style
-            # Highlight smallest value per row
-            .apply(highlight_min_row, axis=1).format(
-                "{:.2e}"
-            )  # Display in scientific notation
-        )
-
-        return styled_df
-
-    def display_sbs_table(
-        self, exclude_optimizer: str | Iterable[str]
-    ) -> pd.DataFrame:
-        """
-        Display a table of SBS (Single Best Solver) choices.
-
-        Parameters
-        ----------
-        exclude_optimizer : str or Iterable[str]
-            Optimizers to exclude from the SBS calculation.
-
-        Returns
-        -------
-        pd.DataFrame
-            DataFrame containing SBS choices.
-        """
-
-        sbs = calculate_sbs(
-            performance=self.performance, exclude_optimizer=exclude_optimizer
-        )
-        ds = xr.Dataset(
-            {
-                "sbs": sbs,
-                TASK_LABELS: self.task_labels,
-            }
-        )
-
-        df_task_labels = ds.groupby(TASK_ID).min()[TASK_LABELS].to_pandas()
-        df_sbs = ds.groupby(TASK_ID).min()["sbs"].to_pandas().rename("sbs")
-
-        return pd.concat([df_task_labels, df_sbs], axis=1)
-
     #                                                                Properties
     # =========================================================================
 
@@ -728,7 +634,7 @@ class DataLoader:
                 current_mask = feature_data == feature_value
             mask = current_mask if mask is None else (mask & current_mask)
 
-        problems = feature_data[PROBLEM].where(mask, drop=True).astype(int)
+        problems = feature_data[PROBLEM].where(mask, drop=True)  # .astype(int)
         return self.select_problems(problems)
 
     def create_strategy(self, choices: xr.DataArray, name: str) -> DataLoader:
@@ -766,34 +672,34 @@ class DataLoader:
             task_labels=self.task_labels.isel({PROBLEM: problems}),
         )
 
-    def train_test_split(
-        self, test_size: float = 0.2, random_state: int | None = None
-    ) -> tuple[DataLoader, DataLoader]:
-        """
-        Split the data into train and test sets.
+    # def train_test_split(
+    #     self, test_size: float = 0.2, random_state: int | None = None
+    # ) -> tuple[DataLoader, DataLoader]:
+    #     """
+    #     Split the data into train and test sets.
 
-        Parameters
-        ----------
-        test_size : float, optional
-            The size of the test set, by default 0.2
-        random_state : int, optional
-            The random state, by default None
+    #     Parameters
+    #     ----------
+    #     test_size : float, optional
+    #         The size of the test set, by default 0.2
+    #     random_state : int, optional
+    #         The random state, by default None
 
-        Returns
-        -------
-        Tuple[DataLoader, DataLoader]
-            The train and test data loaders.
-        """
-        (
-            _X_train_indices,
-            _X_test_indices,
-        ) = train_test_split(
-            range(len(self.problems)),
-            test_size=test_size,
-            random_state=random_state,
-        )
+    #     Returns
+    #     -------
+    #     Tuple[DataLoader, DataLoader]
+    #         The train and test data loaders.
+    #     """
+    #     (
+    #         _X_train_indices,
+    #         _X_test_indices,
+    #     ) = train_test_split(
+    #         range(len(self.problems)),
+    #         test_size=test_size,
+    #         random_state=random_state,
+    #     )
 
-        return (self.isel(_X_train_indices), self.isel(_X_test_indices))
+    #     return (self.isel(_X_train_indices), self.isel(_X_test_indices))
 
     #                                                          Selecting budget
     # =========================================================================
@@ -1068,6 +974,11 @@ class DataLoader:
             dims=dims,
             cost_values=cost_values,
         )
+
+        # Expand realization and stack dimensions to match valid_files
+        _ertd = _ertd.expand_dims(
+            {REALIZATION: np.arange(self.n_realization)}
+        ).stack({PROBLEM: (REALIZATION, TASK_ID)})
 
         # 1. Get the base mask from valid_files
         mask = self.valid_files.isel({OUTPUT_DIM: 0}, drop=True)
