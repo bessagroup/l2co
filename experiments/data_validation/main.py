@@ -234,9 +234,9 @@ def main(config):
         join="outer",
     )
 
-    xarr_performance = xarr_performance.stack(
-        problem=(REALIZATION, TASK_ID), create_index=False
-    )
+    # xarr_performance = xarr_performance.stack(
+    #     problem=(REALIZATION, TASK_ID), create_index=True
+    # )
 
     # ============= TRAJECTORY ============= #
 
@@ -254,9 +254,9 @@ def main(config):
         join="outer",
     )
 
-    xarr_trajectory = xarr_trajectory.stack(
-        problem=(REALIZATION, TASK_ID), create_index=False
-    )
+    # xarr_trajectory = xarr_trajectory.stack(
+    #     problem=(REALIZATION, TASK_ID), create_index=True
+    # )
 
     # Create task labels
 
@@ -284,9 +284,11 @@ def main(config):
         [xarr_trajectory, xarr_performance], compat="override"
     )
 
-    entire_dataset.stack(problem=(REALIZATION, TASK_ID), create_index=False)
+    # entire_dataset = entire_dataset.stack(
+    #     problem=(REALIZATION, TASK_ID), create_index=False
+    # )
 
-    entire_dataset.drop_vars(GLOBAL_MIN)
+    entire_dataset = entire_dataset.drop_vars(GLOBAL_MIN)
 
     logging.info("Saving entire dataset to disk")
 
@@ -300,6 +302,8 @@ def main(config):
 
     for f in file_list:
         f.unlink()
+
+    logger.info("End of program.")
 
 
 if __name__ == "__main__":
