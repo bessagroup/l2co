@@ -6,6 +6,11 @@ Plotting module
 # =============================================================================
 
 # Local
+from ._src.visualize.bbob_plot import (
+    ertd_per_category,
+    ertd_per_dimension,
+    ertd_per_function_raster,
+)
 from ._src.visualize.colors import get_schedule_styles
 from ._src.visualize.plotting import (
     plot_2d_loss_landscape_only,
@@ -34,4 +39,7 @@ __all__ = [
     "plot_2d_loss_landscape_slice_grid",
     "plot_3d_loss_landscape_only",
     "get_schedule_styles",
+    "ertd_per_category",
+    "ertd_per_dimension",
+    "ertd_per_function_raster",
 ]

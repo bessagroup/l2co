@@ -91,15 +91,23 @@ def calculate_ert(data: xr.Dataset) -> xr.Dataset:
     x = output_cummin(data[OUTPUT_MIN]).ffill(BUDGET)
     qv = quality_value(x, g_min)
 
+    qv = qv.fillna(np.inf)
+
     targets = xr.DataArray(
         DEFAULT_TARGETS, dims=TARGET, coords={TARGET: DEFAULT_TARGETS}
     )
     solved = qv <= targets
     success = solved.any(BUDGET)
+    # first_solved = (
+    #     solved.argmax(BUDGET)
+    #     .where(success, other=solved[BUDGET].argmax())
+    #     .compute()
+    # )
+
+    stopping_budget = (qv.argmin(BUDGET) + 1).clip(max=data.sizes[BUDGET] - 1)
+
     first_solved = (
-        solved.argmax(BUDGET)
-        .where(success, other=solved[BUDGET].argmax())
-        .compute()
+        solved.argmax(BUDGET).where(success, other=stopping_budget).compute()
     )
 
     # Extract the scalar values at the 'first_solved' budget step
