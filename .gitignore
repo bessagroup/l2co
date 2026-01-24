@@ -133,6 +133,7 @@ dmypy.json
 
 # Output files
 outputs/
+multirun/
 *.csv
 *.pkl
 *.json

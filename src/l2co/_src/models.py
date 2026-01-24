@@ -20,10 +20,7 @@ from sklearn.base import BaseEstimator
 from sklearn.multioutput import MultiOutputRegressor
 from tqdm import tqdm
 
-from l2co.naming import SCHEDULE
-
 from .data_loader import OptimizationDynamics
-from .naming import BUDGET, PROBLEM
 from .optimizerschedule import OptimizationStep
 from .task_features import FeatureProcessor, MixedEmbedding
 
@@ -273,62 +270,24 @@ class HistoryModel(AbstractModel):
 
     def evaluate(
         self,
-        key: PRNGKeyArray,
         data: OptimizationDynamics,
-        i: int | None,
     ) -> jax.Array:
-        if i is not None:
-            x_eval = (
-                jnp.array(
-                    data.x_features_task,
-                ),
-                jnp.array(data.x_history.isel(schedule=i, drop=True)),
-            )
+        x_eval = (
+            jnp.array(data.x_features_task),
+            jnp.array(data.x_features_optimizer),
+            jnp.array(data.x_history),
+        )
 
-            logits = eqx.filter_vmap(self)(x_eval)
-            # actions: jax.Array = jr.categorical(key, logits)
-            actions: jax.Array = jnp.argmax(logits, axis=-1)
+        logits = eqx.filter_vmap(self)(x_eval)
+        actions: jax.Array = jnp.argmax(logits, axis=-1)
 
-            optimizers = [self.optimizers[k] for k in actions]
-            y = (
-                xr.DataArray(
-                    optimizers,
-                    dims="problem",
-                    coords={"problem": data.x_features_task[PROBLEM]},
-                )
-                .assign_coords({PROBLEM: data.x_features_task[PROBLEM]})
-                .drop_vars(PROBLEM)
-            )
-        else:
-            # i is None: Evaluate on ALL (Problem, Schedule) pairs
+        optimizers = [self.optimizers[k] for k in actions]
 
-            # Stack to create single sample dimension
-            xh_stacked = data.x_history.stack(sample=(PROBLEM, SCHEDULE))
-
-            # Align features
-            # xh_stacked[PROBLEM] gives the problem index for each sample
-            xf_aligned = data.x_features_task.sel(
-                {PROBLEM: xh_stacked[PROBLEM]}
-            )
-            x_eval = (
-                jnp.array(xf_aligned),
-                jnp.array(xh_stacked.transpose("sample", BUDGET, "kind")),
-            )
-
-            logits = eqx.filter_vmap(self)(x_eval)
-            actions: jax.Array = jnp.argmax(logits, axis=-1)
-
-            optimizers = [self.optimizers[k] for k in actions]
-
-            # Create DataArray with stacked coord
-            y_flat = xr.DataArray(
-                optimizers,
-                dims="sample",
-                coords={"sample": xh_stacked["sample"]},
-            )
-
-            # Unstack back to (PROBLEM, SCHEDULE)
-            y = y_flat.unstack("sample")
+        y = xr.DataArray(
+            np.array(optimizers),
+            coords={"sample": data.y["sample"].coords["sample"]},
+            dims=["sample"],
+        )
 
         return y
 

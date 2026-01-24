@@ -646,6 +646,12 @@ def plot_ertd(
         marker = style[schedule].marker
         y = ertd.sel({SCHEDULE: schedule})
 
+        # FAILSAFE: Check if the entire series is NaN
+        if y.isnull().all():
+            # Optional: Add a log message or print here if you want to know
+            # which failed
+            continue
+
         ax.plot(
             x,
             y,

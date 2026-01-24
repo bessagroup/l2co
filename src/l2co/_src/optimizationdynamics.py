@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 import xarray as xr
 
-from .naming import BUDGET, FEATURE, SCHEDULE
+from .naming import BUDGET, FEATURE
 from .task_features import FeatureProcessor
 
 
@@ -55,10 +55,10 @@ class OptimizationDynamics:
         return train_data, test_data
 
     def filter(self):
-        y_mask = ~self.y.isnull().any(SCHEDULE)
+        y_mask = ~self.y.isnull().any("label")
         x_features_task_mask = ~self.x_features_task.isnull().any(FEATURE)
         x_features_optimizer_mask = ~self.x_features_optimizer.isnull().any(
-            FEATURE
+            "optimizer_feature"
         )
         x_history_mask = ~self.x_history.isnull().any([BUDGET, "kind"])
 

@@ -426,10 +426,6 @@ def ertd(
 
     ertd = (ert_multi <= budgets).mean([OUTPUT_DIM, TARGET])
 
-    # ert_multi = compute_ert_multi_seed(ds, n_seeds=50, n_picks=50)
-
-    print("Calculating ERTD values...")
-
     values = np.unique(cost_values)
 
     budgets = xr.DataArray(

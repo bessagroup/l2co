@@ -32,12 +32,13 @@ from l2co.naming import (
     REALIZATION,
     TASK_ID,
     ITERATIONS,
+    OUTPUT_DIM,
     FEVALS,
     TARGET,
     COST,
     SUCCESS,
 )
-from l2co._src.performance import output_cummin, DEFAULT_TARGETS, EPSILON
+from l2co._src.performance import output_cummin, EPSILON
 
 # =============================================================================
 
@@ -53,23 +54,38 @@ task_column_name: str = "task"
 
 # =============================================================================
 
+# DEFAULT_TARGETS = np.linspace(0.0, 1.0, 51)
+DEFAULT_TARGETS = np.logspace(-8, 2, 51)
+
+
+# def quality_value(x: xr.DataArray, g_min: float) -> xr.DataArray:
+#     if np.isnan(g_min):
+#         g_min = x.min(skipna=True)
+#     p = x - g_min
+#     p_positive = p.where(p > 0)
+#     eps = p_positive.min(skipna=True) + EPSILON
+#     x_log10 = np.log10(p + eps)
+#     x_min = x_log10.min(skipna=True)
+#     x_max = x_log10.max(skipna=True)
+#     qv = (x_log10 - x_min) / (x_max - x_min + EPSILON)
+#     return qv
+
 
 def quality_value(x: xr.DataArray, g_min: float) -> xr.DataArray:
     if np.isnan(g_min):
         g_min = x.min(skipna=True)
-    p = x - g_min
-    p_positive = p.where(p > 0)
-    eps = p_positive.min(skipna=True) + EPSILON
-    x_log10 = np.log10(p + eps)
-    x_min = x_log10.min(skipna=True)
-    x_max = x_log10.max(skipna=True)
-    qv = (x_log10 - x_min) / (x_max - x_min + EPSILON)
-    return qv
+    qv = x - g_min
+
+    # scaling
+    sf = (
+        1 / qv.isel({BUDGET: 0}).quantile(q=0.5, skipna=True)
+    ) * DEFAULT_TARGETS[-1]
+    return qv * sf
 
 
 def calculate_ert(data: xr.Dataset) -> xr.Dataset:
     raw_g_min = data.coords.get(GLOBAL_MIN, np.nan)
-    raw_g_min = raw_g_min if not None else np.nan
+    raw_g_min = raw_g_min if raw_g_min is not None else np.nan
     g_min = raw_g_min if not np.isnan(raw_g_min) else np.nan
 
     x = output_cummin(data[OUTPUT_MIN]).ffill(BUDGET)

@@ -1,0 +1,38 @@
+hydra:
+  job:
+    chdir: True
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+# Data & Core Settings
+path: /Volumes/T7/data/118028
+t: 0.1
+t_end: 10000
+opts: ["lbfgs", "sepcmaes"]
+
+# Data Filtering Schema
+schema:
+  dimensionality: continuous
+  separable: boolean
+  unimodal: boolean
+
+# Model Architecture
+model:
+  history_encoder:
+    hidden_size: 16
+    out_size: 4
+  embedding:
+    dim: 4
+  mlp:
+    width_size: 16
+    depth: 3
+    in_size: 12
+
+# Training Hyperparameters
+train:
+  learning_rate: 1e-2
+  num_steps: 100
+  seed: 3
+  verbose: True
