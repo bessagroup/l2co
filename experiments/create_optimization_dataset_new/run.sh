@@ -57,8 +57,9 @@ while [ ! -f "$jobs_file" ]; do
 done
 
 
-# Count number of lines in jobs_file and subtract 2 (header + 0-indexing)
-num_jobs=$(($(wc -l < "$jobs_file") - 2))
+# Count exactly how many lines have the status 'OPEN'
+num_jobs=$(grep -c "OPEN" "$jobs_file")
+# num_jobs=$(($(wc -l < "$jobs_file") - 2))
 num_jobs=$(( num_jobs > 900 ? 900 : num_jobs ))
 
 
