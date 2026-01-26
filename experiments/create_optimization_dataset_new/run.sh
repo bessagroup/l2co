@@ -38,7 +38,7 @@ if [[ $1 == project_job=* ]]; then
     # Extract the ID after the "=" sign (e.g., 123456)
     project_job="${1#*=}"
     echo "Resuming existing project. Running: sbatch $JOB_CREATE project_job=$project_job"
-    id_create=$(sbatch $JOB_CREATE | awk '{print $4}')
+    id_create=$(sbatch $JOB_CREATE project_job=$project_job | awk '{print $4}')
     
 else
     # Case: Fresh start. Capture the ID from the new sbatch call

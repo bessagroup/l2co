@@ -23,19 +23,21 @@ logger = logging.getLogger(__name__)
 
 @hydra.main(config_path="../conf", config_name="config")
 def main(config: DictConfig):
-    project_dir = Path(config.project_dir) / str(config.project_job)
-    if not project_dir.exists():
+    if config.project_job is None:
         logger.info(
-            f"{project_dir} does not exist: Creating new experiment_data..."
+            f"Project_job does not exist: Creating new experiment_data..."
         )
         create_experimentdata(config)
     else:
+        project_dir = Path(config.project_dir) / str(config.project_job)
         logger.info(
-            (
-                f"{project_dir} exists: Continuing from existing "
-                f"experiment_data..."
-            )
+            (f"Continuing from existing experiment_data: {project_dir}...")
         )
+
+        if not project_dir.exists():
+            raise FileNotFoundError(
+                f"Project directory {project_dir} does not exist."
+            )
         experiment_data = ExperimentData.from_file(
             project_dir=project_dir, wait_for_creation=True, max_tries=500
         )
