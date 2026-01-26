@@ -36,20 +36,20 @@ JOB_POST="job_post.sh"
 
 if [[ $1 == project_job=* ]]; then
     # Extract the ID after the "=" sign (e.g., 123456)
-    id_create="${1#*=}"
-    echo "Resuming existing project. Running: sbatch $JOB_CREATE project_job=$id_create"
+    project_job="${1#*=}"
+    echo "Resuming existing project. Running: sbatch $JOB_CREATE project_job=$project_job"
+    id_create=$(sbatch $JOB_CREATE | awk '{print $4}')
     
-    # Run the create script with the existing job ID
-    sbatch $JOB_CREATE project_job=$id_create
 else
     # Case: Fresh start. Capture the ID from the new sbatch call
-    id_create=$(sbatch $JOB_CREATE | awk '{print $4}')
     echo "Started new project with Job ID: $id_create"
+    id_create=$(sbatch $JOB_CREATE | awk '{print $4}')
+    project_job=$id_create
 fi
 
 
 projectfolder=$(basename $(pwd))
-jobs_file="${HOME}/scratch/${projectfolder}/${id_create}/experiment_data/jobs.csv"
+jobs_file="${HOME}/scratch/${projectfolder}/${project_job}/experiment_data/jobs.csv"
 
 echo "Waiting for jobs.csv..."
 while [ ! -f "$jobs_file" ]; do
@@ -65,9 +65,9 @@ num_jobs=$(( num_jobs > 900 ? 900 : num_jobs ))
 # echo number of jobs
 echo "Number of jobs to run: $num_jobs"
 
-id_run=$(sbatch --array=0-$(($num_jobs-1))%64 -o "slurm-${id_create}.out"  --dependency=afterok:$id_create --export=id_create=$id_create $JOB_RUN  ++project_job=$id_create | awk '{print $4}')
+id_run=$(sbatch --array=0-$(($num_jobs-1))%64 -o "slurm-${project_job}.out"  --dependency=afterok:$id_create --export=id_create=$id_create $JOB_RUN  ++project_job=$project_job | awk '{print $4}')
 
-id_post=$(sbatch -o "slurm-${id_create}.out" --dependency=afterany:$id_run --export=id_create=$id_create $JOB_POST ++project_job=$id_create | awk '{print $4}')
+id_post=$(sbatch -o "slurm-${project_job}.out" --dependency=afterany:$id_run --export=id_create=$id_create $JOB_POST ++project_job=$project_job | awk '{print $4}')
 
 # Job ID table
 echo -e "\nCREATE DATASET\n------------------------------------------------------"
