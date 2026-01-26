@@ -70,15 +70,15 @@ class AbstractModel(eqx.Module):
 
 
 class L2COModel(AbstractModel):
-    feature_processor: FeatureProcessor
-    model: BaseEstimator | AbstractModel
+    feature_processor_task: FeatureProcessor
     type: Literal["scikit", "equinox"]
+    model: BaseEstimator | AbstractModel
     optimizers: Iterable[OptimizationStep]
 
     @classmethod
     def init(
         cls,
-        feature_processor: FeatureProcessor,
+        feature_processor_task: FeatureProcessor,
         model: BaseEstimator | AbstractModel,
         type: Literal["scikit", "equinox"],
         optimizers: Iterable[OptimizationStep],
@@ -90,34 +90,48 @@ class L2COModel(AbstractModel):
             model = MultiOutputRegressor(model)
 
         return cls(
-            feature_processor=feature_processor,
+            feature_processor_task=feature_processor_task,
             model=model,
             type=type,
             optimizers=optimizers,
         )
 
+    def __call__(self, x: jax.Array) -> jax.Array:
+        x_transformed = self.feature_processor_task.transform(x)
+        if self.type == "scikit":
+            logits = predict_scikit(self.model, x_transformed)
+        elif self.type == "equinox":
+            logits = predict_equinox(self.model, x_transformed)
+        else:
+            raise ValueError(f"Unknown model type {self.type}")
+        return logits
+
     def train(
         self, data: OptimizationDynamics, **kwargs
     ) -> tuple[L2COModel, dict]:
+        data = data.filter()
+        x = jnp.array(data.x_features_task)
+        y = jnp.array(data.y)
+
         if self.type == "scikit":
             model, metrics = train_scikit(
                 model=self.model,
-                x=jnp.array(data.x_features_task),
-                y=jnp.array(data.y),
+                x=x,
+                y=y,
                 **kwargs,
             )
         elif self.type == "equinox":
             model, metrics = train_equinox(
                 model=self.model,
-                x=jnp.array(data.x_features_task),
-                y=jnp.array(data.y),
+                x=x,
+                y=y,
                 **kwargs,
             )
         else:
             raise ValueError(f"Unknown model type {self.type}")
 
         l2co_model = L2COModel(
-            feature_processor=self.feature_processor,
+            feature_processor_task=self.feature_processor_task,
             model=model,
             type=self.type,
             optimizers=self.optimizers,
@@ -125,8 +139,8 @@ class L2COModel(AbstractModel):
 
         return l2co_model, metrics
 
-    def predict_logits(self, x: dict[str, Any]) -> jax.Array:
-        x_array = self.feature_processor.transform(x)
+    def pred_logits(self, x: dict[str, Any]) -> jax.Array:
+        x_array = self.feature_processor_task.transform(x)
         if self.type == "scikit":
             logits = predict_scikit(self.model, x_array)
         elif self.type == "equinox":
@@ -139,7 +153,7 @@ class L2COModel(AbstractModel):
     def predict(
         self, x: dict[str, Any], key: PRNGKeyArray, n_realizations: int = 1
     ) -> OptimizationStep:
-        logits = self.predict_logits(x)
+        logits = self.pred_logits(x)
         keys = jr.split(key, num=n_realizations)
         actions = jax.vmap(jr.categorical, in_axes=(0, None))(keys, logits)
 
@@ -148,7 +162,7 @@ class L2COModel(AbstractModel):
         return steps
 
     def batch_predict(self, x: dict[str, Any], key: PRNGKeyArray) -> jax.Array:
-        x_array = jnp.stack([self.predict_logits(xi) for xi in x])
+        x_array = jnp.stack([self.pred_logits(xi) for xi in x])
         if self.type == "scikit":
             logits = predict_scikit(self.model, x_array)
         elif self.type == "equinox":
@@ -171,7 +185,7 @@ class L2COModel(AbstractModel):
                 model = self.model.to_dict()
 
         return {
-            "feature_processor": self.feature_processor.to_dict(),
+            "feature_processor": self.feature_processor_task.to_dict(),
             "model": model,
             "type": self.type,
             "optimizers": [step.to_dict() for step in self.optimizers],
@@ -216,6 +230,27 @@ class HistoryModel(AbstractModel):
     history_encoder: eqx.Module
     model: eqx.Module
     optimizers: Iterable[OptimizationStep]
+
+    @classmethod
+    def init(
+        cls,
+        feature_processor_task: FeatureProcessor,
+        feature_processor_optimizer: FeatureProcessor,
+        mixed_embedding_task: MixedEmbedding,
+        mixed_embedding_optimizer: MixedEmbedding,
+        history_encoder: eqx.Module,
+        model: eqx.Module,
+        optimizers: Iterable[OptimizationStep],
+    ) -> HistoryModel:
+        return cls(
+            feature_processor_task=feature_processor_task,
+            feature_processor_optimizer=feature_processor_optimizer,
+            mixed_embedding_task=mixed_embedding_task,
+            mixed_embedding_optimizer=mixed_embedding_optimizer,
+            history_encoder=history_encoder,
+            model=model,
+            optimizers=optimizers,
+        )
 
     def __call__(self, x: tuple[jax.Array, jax.Array, jax.Array]) -> jax.Array:
         x_features_task, x_features_optimizer, x_history = x
@@ -268,7 +303,7 @@ class HistoryModel(AbstractModel):
         )
         return model, metrics
 
-    def pred_logits(self, data: OptimizationDynamics):
+    def pred_logits(self, data: OptimizationDynamics) -> xr.DataArray:
         x = (
             jnp.array(data.x_features_task),
             jnp.array(data.x_features_optimizer),
@@ -285,7 +320,7 @@ class HistoryModel(AbstractModel):
     def evaluate(
         self,
         data: OptimizationDynamics,
-    ) -> jax.Array:
+    ) -> xr.DataArray:
         x_eval = (
             jnp.array(data.x_features_task),
             jnp.array(data.x_features_optimizer),
@@ -307,8 +342,8 @@ class HistoryModel(AbstractModel):
 
     def predict(
         self,
-        x_feature_task: jax.Array,
-        x_feature_optimizer: jax.Array,
+        x_feature_task: dict[str, Any],
+        x_feature_optimizer: dict[str, Any],
         x_history: jax.Array,
         key: PRNGKeyArray,
     ) -> OptimizationStep:
