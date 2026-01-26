@@ -1,7 +1,6 @@
 - optimizer: l2co
   hyperparameters:
-    n_switches: 5
-    l2co_path: ${path}
-    model_dir: ${model_dir}
-    train: True
+    stage0_model: /Users/martin/Documents/GitHub/l2co/experiments/train_model2/outputs/2026-01-26/16-48-21/stage0model
+    stage1_model: /Users/martin/Documents/GitHub/l2co/experiments/train_model2/outputs/2026-01-26/16-48-21/stage1model
+    t: 0.01
 

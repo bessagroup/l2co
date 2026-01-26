@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import gc
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from time import time
 
 # Third-party
@@ -56,9 +56,15 @@ from l2co._src.batching import BatchState
 # Local
 from l2co._src.history_state import HistoryState
 from l2co._src.models import L2COModel
-from l2co._src.naming import REALIZATION
+from l2co._src.naming import BUDGET, OUTPUT_MEAN, OUTPUT_MIN, REALIZATION
 from l2co._src.optimizerschedule import OptimizationStep
-from l2co._src.run_state import RunState, batch_evaluate, evaluate
+from l2co._src.run_state import (
+    RunState,
+    batch_evaluate,
+    evaluate,
+    reset_from_stage0,
+    run,
+)
 from l2co._src.task import Task
 
 #                                                          Authorship & Credits
@@ -123,6 +129,59 @@ class RolloutWrapper(eqx.Module):
             verbose=verbose,
         )
 
+    @classmethod
+    def init_from_stage0(
+        cls,
+        previous_run_state: RunState,
+        batch_state: BatchState,
+        optimizer: OptimizationStep,
+        task: Task,
+        sampler: Callable,
+        key: PRNGKeyArray,
+        switch: bool,
+        bounded: tuple[float, float] = (None, None),
+        verbose: float = False,
+    ) -> RolloutWrapper:
+        dataset = task.loaded_dataset
+        _, static = eqx.partition(task.model, eqx.is_inexact_array)
+        pass_rng = task.pass_rng
+
+        if switch:
+            run_state = previous_run_state
+        else:
+            # Initialize new run state
+            run_state = RunState.init(
+                optimizer=optimizer,
+                task=task,
+                bounded=bounded,
+                key=key,
+            )
+
+            run_state = reset_from_stage0(
+                run_state=run_state,
+                best_params=previous_run_state.best_params,
+                batch_state=batch_state,
+                static=static,
+                dataset=dataset,
+                loss_fn=task.loss_fn,
+                pass_rng=pass_rng,
+                sampler=sampler,
+                key=key,
+            )
+
+        # Replace one of run_state params with best_params
+
+        return cls(
+            run_state=run_state,
+            batch_state=batch_state,
+            static=static,
+            dataset=dataset,
+            loss_fn=task.loss_fn,
+            sampler=sampler,
+            pass_rng=pass_rng,
+            verbose=verbose,
+        )
+
     @eqx.filter_jit
     def batch_evaluate(
         self,
@@ -148,7 +207,7 @@ class RolloutWrapper(eqx.Module):
         key,
         n_iterations: int,
     ) -> tuple[RunState, BatchState, HistoryState]:
-        evaluate(
+        return evaluate(
             self.run_state,
             self.batch_state,
             self.static,
@@ -159,6 +218,20 @@ class RolloutWrapper(eqx.Module):
             self.pass_rng,
             key,
             self.verbose,
+        )
+
+    def run(
+        self,
+        key: PRNGKeyArray,
+        n_iterations: int,
+    ) -> tuple[RunState, BatchState, HistoryState]:
+        return run(
+            run_state=self.run_state,
+            batch_state=self.batch_state,
+            dataset=self.dataset,
+            n_iterations=n_iterations,
+            key=key,
+            verbose=self.verbose,
         )
 
 
@@ -241,7 +314,6 @@ class RunOptimization(DataGenerator):
     def execute(
         self,
         experiment_sample: ExperimentSample,
-        model: L2COModel | None = None,
     ) -> ExperimentSample:
         """
         Execute the optimization task for a given experiment sample.
@@ -255,8 +327,6 @@ class RunOptimization(DataGenerator):
         experiment_sample : ExperimentSample
             The experiment sample containing task and optimizer configuration
             in the input_data.
-        model : L2COModel | None
-            The L2CO model to use for optimization, if applicable.
 
         Returns
         -------
@@ -272,11 +342,17 @@ class RunOptimization(DataGenerator):
         task: Task = es["task"]
         optimizer: OptimizationStep = es["optimizer schedule"]
 
-        if optimizer.name == "l2co":
+        if optimizer.optimizer == "l2co":
+            model = L2COModel.load(
+                stage0_model=optimizer.hyperparameters["stage0_model"],
+                stage1_model=optimizer.hyperparameters["stage1_model"],
+            )
+
             experiment_sample = self.run_optimization_l2co(
                 experiment_sample=experiment_sample,
                 task=task,
                 model=model,
+                t=optimizer.hyperparameters["t"],
             )
         else:
             experiment_sample = self.run_optimization(
@@ -297,38 +373,86 @@ class RunOptimization(DataGenerator):
         experiment_sample: ExperimentSample,
         task: Task,
         model: L2COModel,
+        t: float,
     ) -> ExperimentSample:
         t1 = time()
+
         key = jr.key(self.seed)
         n_iterations = self.budget_fn(task=task)
 
-        optimizers: Iterable[OptimizationStep] = model.predict(
-            x=task.tag,
-            key=jr.key(self.seed),
-            n_realizations=self.n_realizations,
+        # Calculate split for stage 0
+        n_iterations_stage0 = int(round(n_iterations * t))
+
+        # Ensure stage 0 doesn't gobble everything or nothing
+        # if n_iterations > 0
+        n_iterations_stage0 = max(min(n_iterations_stage0, n_iterations), 0)
+
+        # The remainder goes to stage 1
+        n_iterations_stage1 = n_iterations - n_iterations_stage0
+
+        stage0_optimizer: OptimizationStep = model.predict_stage0(
+            task_features=task.tag,
         )
 
+        # First run stage0 optimizer
+        rollout_wrapper: RolloutWrapper = RolloutWrapper.init(
+            optimizer=stage0_optimizer,
+            task=task,
+            sampler=self.sampler,
+            key=key,
+            bounded=self.bounded,
+            verbose=self.verbose,
+        )
         keys = jr.split(key, num=self.n_realizations)
 
         histories = []
+        for k in keys:
+            run_state_stage0, batch_state, history_state_stage0 = (
+                rollout_wrapper.evaluate(
+                    key=k,
+                    n_iterations=n_iterations_stage0,
+                )
+            )
 
-        for key, optimizer in zip(keys, optimizers, strict=True):
-            rollout_wrapper: RolloutWrapper = RolloutWrapper.init(
-                optimizer=optimizer,
+            data_xarr_stage0 = history_state_stage0.to_xarray()
+
+            stage1_optimizer: OptimizationStep = model.predict_stage1(
+                task_features=task.tag,
+                optimizer_features={"optimizer": stage0_optimizer.name},
+                x_output_mean=data_xarr_stage0[OUTPUT_MEAN].values.flatten(),
+                x_output_min=data_xarr_stage0[OUTPUT_MIN].values.flatten(),
+                global_min=task.global_min,
+            )
+
+            # Stage 1
+            _, k1 = jr.split(k)
+            run_state_stage1: RolloutWrapper = RolloutWrapper.init_from_stage0(
+                previous_run_state=run_state_stage0,
+                batch_state=batch_state,
+                optimizer=stage1_optimizer,
                 task=task,
                 sampler=self.sampler,
-                key=key,
+                key=k1,
+                switch=(stage0_optimizer == stage1_optimizer),
                 bounded=self.bounded,
                 verbose=self.verbose,
             )
 
-            _, _, history_state = rollout_wrapper.evaluate(
-                key=key,
-                n_iterations=n_iterations,
-                n_realizations=self.n_realizations,
+            _, _, history_state_stage1 = run_state_stage1.run(
+                key=k1, n_iterations=n_iterations_stage1
             )
 
-            histories.append(history_state.to_xarray())
+            data_xarr_stage1 = history_state_stage1.to_xarray()
+
+            combined_xarr = xr.concat(
+                [
+                    data_xarr_stage0,
+                    data_xarr_stage1,
+                ],
+                dim=BUDGET,
+            )
+
+            histories.append(combined_xarr)
 
         data_xarr = xr.concat(
             histories,
@@ -346,9 +470,13 @@ class RunOptimization(DataGenerator):
             f"Finished optimization task {task.name} ({task.dimensionality}D) "
             f"with L2CO model for"
             f" {n_iterations} "
-            f"iterations for {self.n_realizations} realizations"
+            f"iterations for {self.n_realizations} realizations. "
+            f"Optimizers used: ({stage0_optimizer.name} -> "
+            f"{stage1_optimizer.name})"
             f" (took {time() - t1:.2f} seconds)"
         )
+
+        return experiment_sample
 
     def run_optimization(
         self,

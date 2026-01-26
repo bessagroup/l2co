@@ -12,6 +12,15 @@ t: 0.01
 t_end: 10000
 opts: ["lbfgs", "sepcmaes", "adam_learning_rate=0.01", "pso"]
 
+optimizers:
+  - optimizer: sepcmaes
+  - optimizer: adam
+    hyperparameters:
+      learning_rate: 1e-2
+  - optimizer: lbfgs
+  - optimizer: pso
+
+
 # Data Filtering Schema
 schema:
   dimensionality: continuous

@@ -6,8 +6,18 @@ import optax
 import math
 import logging
 from pathlib import Path
+from l2co import OptimizationStep
 import matplotlib.pyplot as plt
-from l2co._src.models import LSTM_Encoder, HistoryModel, MixedEmbedding
+from l2co._src.models import (
+    LSTM_Encoder,
+    EquinoxStage1Model,
+    MixedEmbedding,
+    MLP,
+    Stage0Loader,
+    Stage1Loader,
+    ScikitStage0Model,
+)
+from sklearn.ensemble import HistGradientBoostingRegressor
 from l2co.naming import TASK_ID, REALIZATION, PROBLEM, SCHEDULE
 from l2co.plotting import (
     ertd_per_category,
@@ -17,7 +27,7 @@ from l2co.plotting import (
 )
 from l2co._src.visualize.bbob_plot import _add_eval_line
 
-log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 @hydra.main(config_path=".", config_name="config", version_base=None)
@@ -31,7 +41,9 @@ def main(config):
     d = d.select_optimizer(list(config.opts))
     o = d.to_params(t=config.t, t_end=config.t_end, schema=config.schema)
 
-    # --- 3. Model Initialization ---
+    # --- 3. Stage1 Model Initialization ---
+    optimizers = [OptimizationStep.from_yaml(opt) for opt in config.optimizers]
+
     history_encoder = LSTM_Encoder(
         in_size=2,
         hidden_size=config.model.history_encoder.hidden_size,
@@ -53,7 +65,7 @@ def main(config):
         key=k_opt,
     )
 
-    model = eqx.nn.MLP(
+    model = MLP.init(
         in_size=config.model.mlp.in_size,
         out_size=len(d.optimizers),
         width_size=config.model.mlp.width_size,
@@ -61,24 +73,42 @@ def main(config):
         key=k_mlp,
     )
 
-    history_model = HistoryModel(
+    history_model = EquinoxStage1Model(
         feature_processor_task=o.feature_processor_task,
         feature_processor_optimizer=o.feature_processor_optimizer,
         mixed_embedding_task=mixed_embedding_task,
         mixed_embedding_optimizer=mixed_embedding_optimizer,
         history_encoder=history_encoder,
         model=model,
-        optimizers=d.optimizers.values,
+        optimizers=optimizers,
     )
 
     # --- 4. Training ---
-    log.info("Starting training...")
+    logger.info("Starting training...")
     new_history_model, metrics = history_model.train(
         data=o,
         optimizer=optax.adam(config.train.learning_rate),
         num_steps=config.train.num_steps,
         verbose=config.train.verbose,
     )
+
+    Stage1Loader.store(object=new_history_model, path="stage1model")
+
+    # Stage0 init and training
+
+    model = HistGradientBoostingRegressor()
+
+    stage0model = ScikitStage0Model.init(
+        feature_processor_task=o.feature_processor_task,
+        model=model,
+        optimizers=optimizers,
+    )
+
+    new_stage0_model, _ = stage0model.train(
+        data=o,
+    )
+
+    Stage0Loader.store(object=new_stage0_model, path="stage0model")
 
     # --- 5. Metric Plotting (Hardcoded Layout) ---
     fig, ax = plt.subplots(figsize=(8, 6))
@@ -98,7 +128,7 @@ def main(config):
     fig.savefig("r2_plot.png", dpi=300, bbox_inches="tight")
 
     for opt_ in config.opts:
-        log.info(f"Generating plots for strategy: {opt_}")
+        logger.info(f"Generating plots for strategy: {opt_}")
         choices = (
             y_pred.unstack("sample")
             .sel({SCHEDULE: opt_}, drop=True)

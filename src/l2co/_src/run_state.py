@@ -194,6 +194,89 @@ def reset(
     )
 
 
+def reset_from_stage0(
+    run_state: RunState,
+    best_params: PyTree,
+    batch_state: BatchState,
+    static: PyTree,
+    dataset: dict[str, jax.Array],
+    loss_fn: Callable,
+    pass_rng: bool,
+    sampler: SamplerFunction,
+    key: PRNGKeyArray,
+) -> RunState:
+    """Reset the run state with new samples.
+
+    Parameters
+    ----------
+    run_state : RunState
+        Current run state.
+    best_params : PyTree
+        Best parameters from stage 0.
+    batch_state : BatchState
+        Current batch state.
+    static : PyTree
+        Model of the task to optimize.
+    dataset : dict[str, jax.Array]
+        Dataset for evaluation.
+    loss_fn : Callable
+        Loss function for evaluation.
+    pass_rng : bool
+        Whether to pass RNG keys to the loss function.
+    sampler : SamplerFunction
+        Sampling function for generating new parameters.
+    key : PRNGKeyArray
+        PRNG key for random operations.
+
+    Returns
+    -------
+    RunState
+        Reset run state with new samples.
+    """
+    samples = sampler(
+        key,
+        run_state.best_params,
+        run_state.update_class.popsize,
+    )
+
+    # Replace the first sample with the best params from stage 0
+    samples = jax.tree.map(
+        lambda x, y: x.at[0].set(y),
+        samples,
+        best_params,
+    )
+
+    loss = evaluate_update_class(
+        eqx.combine(static, samples),
+        batch_state,
+        dataset,
+        loss_fn,
+        pass_rng,
+        key,
+        jr.split(key, run_state.update_class.popsize),
+    )
+
+    # calculate the best params and best loss
+    best_idx = jnp.argmin(loss)
+    best_params = jax.tree.map(lambda x: x[best_idx], samples)
+    best_loss = loss[best_idx]
+
+    opt_state = run_state.update_class.init(
+        params=samples,
+        batch_state=batch_state,
+        dataset=dataset,
+        key=key,
+    )
+
+    return RunState(
+        params=samples,
+        best_params=best_params,
+        best_loss=best_loss,
+        opt_state=opt_state,
+        update_class=run_state.update_class,
+    )
+
+
 def run(
     run_state: RunState,
     batch_state: BatchState,
