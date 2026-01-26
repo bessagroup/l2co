@@ -4,10 +4,12 @@ import equinox as eqx
 import jax.random as jr
 import optax
 import math
+import numpy as np
 import logging
 from pathlib import Path
 from l2co import OptimizationStep
 import matplotlib.pyplot as plt
+from hydra.utils import instantiate
 from l2co._src.models import (
     LSTM_Encoder,
     EquinoxStage1Model,
@@ -30,46 +32,46 @@ from l2co._src.visualize.bbob_plot import _add_eval_line
 logger = logging.getLogger(__name__)
 
 
-@hydra.main(config_path=".", config_name="config", version_base=None)
+@hydra.main(config_path="../conf", config_name="config")
 def main(config):
     # --- 1. JAX Key Management ---
-    key = jr.key(config.train.seed)
+    key = jr.key(config.seed)
     k_encoder, k_task, k_opt, k_mlp = jr.split(key, 4)
 
     # --- 2. Data Preparation ---
-    d = l2co.DataLoader.from_file(Path(config.path) / "entire_dataset.odata")
-    d = d.select_optimizer(list(config.opts))
-    o = d.to_params(t=config.t, t_end=config.t_end, schema=config.schema)
+    _path = Path(config.project_dir) / str(config.path)
+    d = l2co.DataLoader.from_file(_path / "entire_dataset.odata")
+    o = d.to_params(t=config.t, t_end=config.t_end, schema=config.tasks.schema)
 
     # --- 3. Stage1 Model Initialization ---
     optimizers = [OptimizationStep.from_yaml(opt) for opt in config.optimizers]
 
     history_encoder = LSTM_Encoder(
         in_size=2,
-        hidden_size=config.model.history_encoder.hidden_size,
-        out_size=config.model.history_encoder.out_size,
+        hidden_size=config.stage1_models.history_encoder.hidden_size,
+        out_size=config.stage1_models.history_encoder.out_size,
         key=k_encoder,
     )
 
     mixed_embedding_task = MixedEmbedding.from_feature_processor(
         feature_processor=o.feature_processor_task,
-        embed_dim=config.model.embedding.dim,
-        output_dim=config.model.embedding.dim,
+        embed_dim=config.stage1_models.embedding.dim,
+        output_dim=config.stage1_models.embedding.dim,
         key=k_task,
     )
 
     mixed_embedding_optimizer = MixedEmbedding.from_feature_processor(
         feature_processor=o.feature_processor_optimizer,
-        embed_dim=config.model.embedding.dim,
-        output_dim=config.model.embedding.dim,
+        embed_dim=config.stage1_models.embedding.dim,
+        output_dim=config.stage1_models.embedding.dim,
         key=k_opt,
     )
 
     model = MLP.init(
-        in_size=config.model.mlp.in_size,
+        in_size=config.stage1_models.mlp.in_size,
         out_size=len(d.optimizers),
-        width_size=config.model.mlp.width_size,
-        depth=config.model.mlp.depth,
+        width_size=config.stage1_models.mlp.width_size,
+        depth=config.stage1_models.mlp.depth,
         key=k_mlp,
     )
 
@@ -96,7 +98,7 @@ def main(config):
 
     # Stage0 init and training
 
-    model = HistGradientBoostingRegressor()
+    model = instantiate(config.stage0_models)
 
     stage0model = ScikitStage0Model.init(
         feature_processor_task=o.feature_processor_task,
@@ -127,7 +129,7 @@ def main(config):
     fig, ax = plot_r2(o.filter().y, y_pred_logits)
     fig.savefig("r2_plot.png", dpi=300, bbox_inches="tight")
 
-    for opt_ in config.opts:
+    for opt_ in np.unique(y_pred[SCHEDULE].values):
         logger.info(f"Generating plots for strategy: {opt_}")
         choices = (
             y_pred.unstack("sample")

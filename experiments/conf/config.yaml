@@ -2,8 +2,9 @@ defaults:
 - tasks: bbob
 - budgets: based_on_dim
 - samplers: normal
-- optimizers: l2co
-- models: histgradientboostingregressor
+- optimizers: medium
+- stage0_models: histgradientboostingregressor
+- stage1_models: default
 - experimentdata: default
 
 n_realizations: 25
@@ -14,9 +15,16 @@ seed: 467
 mode: cluster
 
 cost_metric: fevals
-t: 1000
+t: 0.01
+t_end: 10000
 
 log_level: 20
+
+# Training Hyperparameters
+train:
+  learning_rate: 1e-2
+  num_steps: 1000
+  verbose: True
 
 verbose: False
 clear_jax_cache: True
