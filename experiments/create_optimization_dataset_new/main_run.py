@@ -53,12 +53,20 @@ def main(config):
         project_dir=project_dir,
     )
 
+    open_experiments = experiment_data.select_with_status(
+        "open"
+    ).index.tolist()
+
     # Determine which experiments to run
     max_number_of_arrayjobs = 900
-    total_experiments = len(experiment_data)
-    jobs_to_run = list(
-        range(config.job_number, total_experiments, max_number_of_arrayjobs)
-    )
+    # total_experiments = len(experiment_data)
+    # jobs_to_run = list(
+    #     range(config.job_number, total_experiments, max_number_of_arrayjobs)
+    # )
+
+    jobs_to_run = open_experiments[
+        config.job_number :: max_number_of_arrayjobs
+    ]
 
     logger.info(f"Running experiments with indices: {jobs_to_run}")
 
