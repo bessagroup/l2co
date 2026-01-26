@@ -47,15 +47,35 @@ else
     project_job=$id_create
 fi
 
+echo "Waiting for Job $id_create to complete..."
+
+while true; do
+    # Get the status of the job
+    job_status=$(sacct -j "$id_create" --format=State --noheader | head -n 1 | awk '{print $1}')
+
+    if [[ "$job_status" == "COMPLETED" ]]; then
+        echo "Job $id_create finished successfully."
+        break
+    elif [[ "$job_status" == "FAILED" || "$job_status" == "CANCELLED" || "$job_status" == "NODE_FAIL" || "$job_status" == "TIMEOUT" ]]; then
+        echo "Error: Job $id_create ended with status: $job_status"
+        exit 1
+    elif [[ -z "$job_status" ]]; then
+        echo "Job $id_create not yet found in sacct... waiting."
+    else
+        echo "Job $id_create status: $job_status. Checking again in 5 seconds..."
+    fi
+
+    sleep 5
+done
 
 projectfolder=$(basename $(pwd))
 jobs_file="${HOME}/scratch/${projectfolder}/${project_job}/experiment_data/jobs.csv"
 
-echo "Waiting for jobs.csv..."
-while [ ! -f "$jobs_file" ]; do
-    sleep 5
-done
-
+# Double check file existence before grepping
+if [ ! -f "$jobs_file" ]; then
+    echo "Error: Job $id_create reported COMPLETED, but $jobs_file is missing!"
+    exit 1
+fi
 
 # Count exactly how many lines have the status 'OPEN'
 num_jobs=$(grep -c "OPEN" "$jobs_file")
