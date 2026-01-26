@@ -19,6 +19,7 @@ from matplotlib.colors import (
     LogNorm,
 )
 from scipy.interpolate import griddata
+from sklearn.metrics import r2_score
 
 from l2co._src.batching import BatchState
 
@@ -707,3 +708,77 @@ def plot_ertd(
     ax.set_xlim(left=0.1)  # Starts the x-axis at 10^-1
 
     return fig, ax
+
+
+def plot_r2(y_true: xr.DataArray, y_pred: xr.DataArray):
+    """
+    Plots Predicted vs True values for each label in a row.
+
+    Parameters:
+    y_true (xr.DataArray): True values, shape (sample, labels)
+    y_pred (xr.DataArray): Predicted values, shape (sample, labels)
+    """
+    labels = y_true["label"].values
+    n_labels = len(labels)
+
+    # Create the figure and axes
+    fig, axes = plt.subplots(
+        1, n_labels, figsize=(5 * n_labels, 5), sharey=False
+    )
+
+    # Ensure axes is an array even if there is only 1 plot
+    if n_labels == 1:
+        axes = [axes]
+
+    for i, label in enumerate(labels):
+        ax = axes[i]
+
+        # Select data for the specific label
+        # .values converts the DataArray slice to a numpy array for calculation
+        y_t = y_true.sel({"label": label}).values
+        y_p = y_pred.sel({"label": label}).values
+
+        # 1. Calculate R2 score
+        r2 = r2_score(y_t, y_p)
+
+        # Scatter plot
+        ax.scatter(y_t, y_p, alpha=0.5, s=20)
+
+        # Define the limits for the diagonal line
+        all_vals = np.concatenate([y_t, y_p])
+        low, high = np.min(all_vals), np.max(all_vals)
+
+        # Draw the 1:1 diagonal line (representing perfect R2)
+        ax.plot(
+            [low, high],
+            [low, high],
+            color="red",
+            linestyle="--",
+            label="1:1 Line",
+        )
+
+        # 4. Add the R2 text box in the top left
+        text_str = f"$R^2 = {r2:.3f}$"
+        # bbox creates the box styling
+        props = dict(
+            boxstyle="round", facecolor="white", alpha=0.8, edgecolor="silver"
+        )
+
+        ax.text(
+            0.05,
+            0.95,
+            text_str,
+            transform=ax.transAxes,
+            fontsize=12,
+            verticalalignment="top",
+            bbox=props,
+        )
+
+        # Formatting
+        ax.set_title(f"Optimizer: {label}")
+        ax.set_xlabel("True Values")
+        if i == 0:
+            ax.set_ylabel("Predicted Values")
+        ax.grid(True, linestyle=":", alpha=0.7)
+
+    return fig, axes

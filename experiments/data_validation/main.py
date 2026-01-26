@@ -78,7 +78,10 @@ def quality_value(x: xr.DataArray, g_min: float) -> xr.DataArray:
 
     # scaling
     sf = (
-        1 / qv.isel({BUDGET: 0}).quantile(q=0.5, skipna=True)
+        1
+        / qv.isel({BUDGET: 0})
+        .quantile(q=0.5, skipna=True)
+        .drop_vars("quantile")
     ) * DEFAULT_TARGETS[-1]
     return qv * sf
 

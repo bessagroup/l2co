@@ -34,8 +34,19 @@ JOB_CREATE="job_create.sh"
 JOB_RUN="job_run.sh"
 JOB_POST="job_post.sh"
 
+if [[ $1 == project_job=* ]]; then
+    # Extract the ID after the "=" sign (e.g., 123456)
+    id_create="${1#*=}"
+    echo "Resuming existing project. Running: sbatch $JOB_CREATE project_job=$id_create"
+    
+    # Run the create script with the existing job ID
+    sbatch $JOB_CREATE project_job=$id_create
+else
+    # Case: Fresh start. Capture the ID from the new sbatch call
+    id_create=$(sbatch $JOB_CREATE | awk '{print $4}')
+    echo "Started new project with Job ID: $id_create"
+fi
 
-id_create=$(sbatch $JOB_CREATE | awk '{print $4}')
 
 projectfolder=$(basename $(pwd))
 jobs_file="${HOME}/scratch/${projectfolder}/${id_create}/experiment_data/jobs.csv"

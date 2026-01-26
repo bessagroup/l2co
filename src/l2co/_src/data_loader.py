@@ -46,6 +46,8 @@ from .naming import (
     PROBLEM,
     REALIZATION,
     SCHEDULE,
+    SUCCESS,
+    TARGET,
     TASK_ID,
     TASK_LABELS,
 )
@@ -352,6 +354,31 @@ class DataLoader:
             {OUTPUT_DIM: 0}, drop=True
         )
 
+        # Get the global minimum per problem
+        global_min = self.task_labels.sel({FEATURE: "global_min"}).astype(
+            float
+        )
+        # Calculate emperical minimum per problem
+        emperical_min = self.data.unstack(PROBLEM)[OUTPUT_MIN].min(
+            [BUDGET, SCHEDULE, OUTPUT_DIM, REALIZATION]
+        )
+        emperical_min = emperical_min.expand_dims(
+            {REALIZATION: np.arange(self.n_realization)}
+        )
+
+        # mask nans of global_min with values of emperical_min
+        global_min = self.task_labels.sel({FEATURE: "global_min"}).astype(
+            float
+        )
+        global_min = global_min.unstack(PROBLEM).fillna(emperical_min)
+
+        # broadcast to another dim SCHEDULE
+        global_min = global_min.expand_dims({SCHEDULE: self.data[SCHEDULE]})
+
+        global_min = global_min.stack(
+            {"batch": (SCHEDULE, TASK_ID, REALIZATION)}
+        )
+
         x_min = data_reset[OUTPUT_MIN].stack(
             {"batch": (SCHEDULE, TASK_ID, REALIZATION)}
         )
@@ -359,7 +386,9 @@ class DataLoader:
             {"batch": (SCHEDULE, TASK_ID, REALIZATION)}
         )
 
-        out = jax.vmap(traj_and_stair)(x_mean.values.T, x_min.values.T)
+        out = jax.vmap(traj_and_stair)(
+            x_mean.values.T, x_min.values.T, global_min.values.T
+        )
 
         y = xr.DataArray(
             out,
@@ -398,6 +427,7 @@ class DataLoader:
         )
 
         y = _ertd.sel({"metric": cost_metric}).mean("cost_per_dim")
+        y = y - y.mean(SCHEDULE)
         return y.rename({SCHEDULE: "label"})
 
     #                                                                Properties
@@ -818,6 +848,11 @@ class DataLoader:
         xr.DataArray
             ERTD profile.
         """
+        if include_best:
+            sbs = self.data[SUCCESS].sum(TARGET).idxmax(SCHEDULE)
+            d = self.create_strategy(choices=sbs, name="sbs")
+        else:
+            d = self
         # TODO : include best
         # p = self._performance(
         #     include_best=include_best, exclude_optimizer=exclude_optimizer
@@ -827,7 +862,7 @@ class DataLoader:
         ).astype(int)
 
         _ertd = ertd(
-            performance=self.data,
+            performance=d.data,
             dims=dims,
             cost_values=cost_values,
         )

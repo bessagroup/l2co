@@ -268,6 +268,20 @@ class HistoryModel(AbstractModel):
         )
         return model, metrics
 
+    def pred_logits(self, data: OptimizationDynamics):
+        x = (
+            jnp.array(data.x_features_task),
+            jnp.array(data.x_features_optimizer),
+            jnp.array(data.x_history),
+        )
+        logits = eqx.filter_vmap(self)(x)
+        y = xr.DataArray(
+            logits,
+            coords=data.y.coords,
+            dims=data.y.dims,
+        )
+        return y
+
     def evaluate(
         self,
         data: OptimizationDynamics,
@@ -291,24 +305,23 @@ class HistoryModel(AbstractModel):
 
         return y
 
-    def predict_logits(
-        self,
-        x_feature: dict[str, Any],
-        x_history: jax.Array,
-    ) -> jax.Array:
-        x = (self.feature_processor_task.transform(x_feature), x_history)
-        return self(x)
-
     def predict(
         self,
-        x_feature: dict[str, Any],
+        x_feature_task: jax.Array,
+        x_feature_optimizer: jax.Array,
         x_history: jax.Array,
         key: PRNGKeyArray,
     ) -> OptimizationStep:
-        logits = self.predict_logits(x_feature, x_history)
-        action = jr.categorical(key, logits)
-        step = self.optimizers[int(action)]
-        return step
+        x = (
+            self.feature_processor_task.transform(x_feature_task),
+            self.feature_processor_optimizer.transform(x_feature_optimizer),
+            x_history,
+        )
+
+        logits = self(x)
+        action: jax.Array = jnp.argmax(logits, axis=-1)
+        optimizer = self.optimizers[action]
+        return optimizer
 
     def reconstruct() -> HistoryModel: ...
 

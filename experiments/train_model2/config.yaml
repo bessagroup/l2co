@@ -7,10 +7,10 @@ hydra:
     dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
 
 # Data & Core Settings
-path: /Volumes/T7/data/118028
-t: 0.1
+path: /Volumes/T7/data/156726
+t: 0.01
 t_end: 10000
-opts: ["lbfgs", "sepcmaes"]
+opts: ["lbfgs", "sepcmaes", "adam_learning_rate=0.01", "pso"]
 
 # Data Filtering Schema
 schema:
@@ -33,6 +33,6 @@ model:
 # Training Hyperparameters
 train:
   learning_rate: 1e-2
-  num_steps: 100
-  seed: 3
+  num_steps: 1000
+  seed: 2
   verbose: True
