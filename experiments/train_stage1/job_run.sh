@@ -6,10 +6,9 @@
 #SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
 #SBATCH --mem=8GB
 
-# Clean up library paths to avoid conflicts between host and container
+# 1. Clean up library paths to avoid host/container conflicts
 echo "Original LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
 unset LD_LIBRARY_PATH
-echo "Cleaned LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
 
 echo "======================================="
 echo " Slurm Job Information"
@@ -24,30 +23,30 @@ echo "CPUs per Task:   $SLURM_CPUS_PER_TASK"
 echo "Memory per CPU:  $SLURM_MEM_PER_CPU"
 echo "======================================="
 
-# 1. Load LaTeX module on the host
+# 2. Load LaTeX module and find paths
 module load texlive
-
-# 2. Dynamically find the LaTeX installation path
-# This finds the directory containing 'pdflatex' and its root
 LATEX_BIN_PATH=$(dirname $(which pdflatex))
 TEXLIVE_ROOT=$(dirname $(dirname $LATEX_BIN_PATH))
+TEXMF_PATH=$(kpsewhich -var-value=TEXMFDIST)
 
 echo "======================================="
 echo " Environment Information"
 echo "======================================="
 echo "Loaded Modules:"
 module list 2>&1
-echo "LaTeX Path:      $LATEX_BIN_PATH"
+echo "LaTeX Bin Path:  $LATEX_BIN_PATH"
+echo "TEXMF Dist Path: $TEXMF_PATH"
 echo "======================================="
 
-# 3. Configure Apptainer Paths
-# We add $TEXLIVE_ROOT to the bind path so the container can see the fonts/styles
-export APPTAINER_BINDPATH="/oscar/home/$USER,/oscar/scratch/$USER,/oscar/data,$TEXLIVE_ROOT"
+# 3. Configure Apptainer Paths & Environment
+# Bind host directories + LaTeX distribution
+export APPTAINER_BINDPATH="/oscar/home/$USER,/oscar/scratch/$USER,/oscar/data,$TEXLIVE_ROOT,$TEXMF_PATH"
 
-# We append the bin path to the container's PATH so 'pdflatex' is executable
+# Inject LaTeX variables into the container
 export APPTAINERENV_APPEND_PATH="$LATEX_BIN_PATH"
+export APPTAINERENV_TEXMFDIST="$TEXMF_PATH"
 
-# Set a writable directory for Matplotlib/LaTeX cache to avoid permission errors
+# Setup writable Matplotlib/LaTeX cache
 export MPLCONFIGDIR="/oscar/scratch/$USER/.matplotlib"
 mkdir -p $MPLCONFIGDIR
 
@@ -61,19 +60,19 @@ project_dir="${HOME}/scratch/${projectfolder}/"
 dataset_dir="${HOME}/scratch/create_optimization_dataset_new/"
 run_dir="${HOME}/scratch/${projectfolder}/${id_create}"
 
+# 5. JAX Configuration
+export JAX_PLATFORM_NAME=cpu
+export JAX_LOG_LEVEL=error
+
 echo "======================================="
 echo " Execution Information"
 echo "======================================="
 echo "Project Folder:   $projectfolder"
 echo "Run Directory:    $run_dir"
+echo "Executing: apptainer exec $CONTAINER python3 -u $SCRIPT ..."
 echo "======================================="
 
-# 5. JAX Configuration
-export JAX_PLATFORM_NAME=cpu
-export JAX_LOG_LEVEL=error
-
 # 6. Execute
-# Note: We use 'exec' to run the python script inside the container
 apptainer exec $CONTAINER python3 -u $SCRIPT \
     ++hydra.run.dir=$run_dir \
     ++project_dir=$project_dir \
