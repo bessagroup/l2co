@@ -147,11 +147,14 @@ class Stage1Trainer(DataGenerator):
                 label=label,
             )
 
-            savefig(
-                fig=fig,
-                name=f"r2_stage1_{label}_{id}",
-                n_side_by_side=4,
-                span_columns=True,
+            experiment_sample.store(
+                name=f"r2_plot_stage1_{label}",
+                object=l2co.plotting.set_size(
+                    fig=fig, n_side_by_side=4, span_columns=True
+                ),
+                to_disk=True,
+                store_function=l2co.plotting.FigureSaver.store,
+                load_function=l2co.plotting.FigureSaver.load,
             )
 
         for key, value in r2_dict.items():

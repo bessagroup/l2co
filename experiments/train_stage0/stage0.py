@@ -103,13 +103,15 @@ class Stage0Trainer(DataGenerator):
                 y_pred=y_pred_logits,
                 label=label,
             )
-
-            savefig(
-                fig=fig,
-                name=f"r2_stage0_{label}_{id}",
-                n_side_by_side=4,
-                span_columns=True,
-            )
+        experiment_sample.store(
+            name=f"r2_plot_stage0_{label}",
+            object=l2co.plotting.set_size(
+                fig=fig, n_side_by_side=4, span_columns=True
+            ),
+            to_disk=True,
+            store_function=l2co.plotting.FigureSaver.store,
+            load_function=l2co.plotting.FigureSaver.load,
+        )
 
         for key, value in r2_dict.items():
             experiment_sample.store(name=key, object=value)

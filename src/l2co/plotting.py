@@ -13,6 +13,7 @@ from ._src.visualize.bbob_plot import (
 )
 from ._src.visualize.colors import get_schedule_styles
 from ._src.visualize.plotting import (
+    FigureSaver,
     plot_2d_loss_landscape_only,
     plot_2d_loss_landscape_slice_grid,
     plot_3d_loss_landscape_only,
@@ -38,6 +39,7 @@ __all__ = [
     "set_size",
     "plot_ertd_profile",
     "plot_ertd",
+    "FigureSaver",
     "plot_r2",
     "plot_single_r2",
     "plot_2d_loss_landscape_only",

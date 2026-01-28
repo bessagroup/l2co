@@ -6,6 +6,7 @@ Plotting module
 
 # Standard
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Literal
 
 # Third-party
@@ -45,66 +46,18 @@ __status__ = "Stable"
 #                                                                 Aspect ratios
 # =============================================================================
 
-
-def set_size(width, fraction=1, subplots=(1, 1)):
-    """Set figure dimensions to avoid scaling in LaTeX.
-
-    Parameters
-    ----------
-    width: float or string
-            Document width in points, or string of predined document type
-    fraction: float, optional
-            Fraction of the width which you wish the figure to occupy
-    subplots: array-like, optional
-            The number of rows and columns of subplots.
-
-    Returns
-    -------
-    fig_dim: tuple
-            Dimensions of figure in inches
-    """
-    if width == "thesis":
-        width_pt = 426.79135
-    elif width == "paper":
-        width_pt = 345.0
-    elif width == "beamer":
-        width_pt = 307.28987
-    else:
-        width_pt = width
-
-    # Width of figure (in pts)
-    fig_width_pt = width_pt * fraction
-    # Convert from pt to inches
-    inches_per_pt = 1 / 72.27
-
-    # Golden ratio to set aesthetic figure height
-    # https://disq.us/p/2940ij3
-    golden_ratio = (5**0.5 - 1) / 2
-
-    # Figure width in inches
-    fig_width_in = fig_width_pt * inches_per_pt
-    # Figure height in inches
-    fig_height_in = fig_width_in * golden_ratio * (subplots[0] / subplots[1])
-
-    return (fig_width_in, fig_height_in)
-
-
-#                                                           Helper Functions
-# =============================================================================
-
 # 1. Base widths from your IEEEtran.cls / Logs
 SINGLE_COL_WIDTH = 252.0 / 72.27  # 3.486 inches
 DOUBLE_COL_WIDTH = 516.0 / 72.27  # 7.139 inches
 GOLDEN_RATIO = (5**0.5 - 1) / 2
 
 
-def savefig(fig: plt.Figure, name: str, n_side_by_side=1, span_columns=False):
+def set_size(fig: plt.Figure, n_side_by_side=1, span_columns=False):
     """
-    Saves a figure scaled exactly for an IEEE subfigure slot.
+    Set figure size to fit in IEEE column layout.
 
     Parameters:
     - fig: The matplotlib figure object.
-    - name: Filename (e.g., 'ertd_results').
     - n_side_by_side: How many figures will sit horizontally (1, 2, or 3).
     - span_columns: False for single column (3.48"), True for full page (7.14")
     """
@@ -121,6 +74,49 @@ def savefig(fig: plt.Figure, name: str, n_side_by_side=1, span_columns=False):
 
     # 4. Apply dimensions and force 8pt font
     fig.set_size_inches(target_width, target_height)
+    return fig
+
+
+#                                                           Helper Functions
+# =============================================================================
+
+
+class FigureSaver:
+    @staticmethod
+    def load(path: str) -> plt.Figure:
+        """Load a figure from a file."""
+        _path = Path(path).with_suffix(".pdf")
+        return plt.imread(_path)
+
+    @staticmethod
+    def store(object: plt.Figure, path: str):
+        _path = Path(path)
+        """Store a figure to a file."""
+        object.savefig(
+            _path.with_suffix(".pdf"),
+            format="pdf",
+            bbox_inches="tight",
+            pad_inches=0.01,
+            transparent=True,
+            dpi=300,
+        )
+        return str(_path)
+
+
+def savefig(fig: plt.Figure, name: str, n_side_by_side=1, span_columns=False):
+    """
+    Saves a figure scaled exactly for an IEEE subfigure slot.
+
+    Parameters:
+    - fig: The matplotlib figure object.
+    - name: Filename (e.g., 'ertd_results').
+    - n_side_by_side: How many figures will sit horizontally (1, 2, or 3).
+    - span_columns: False for single column (3.48"), True for full page (7.14")
+    """
+
+    fig = set_size(
+        fig, n_side_by_side=n_side_by_side, span_columns=span_columns
+    )
 
     # 5. Save with tight bounding box
     # pad_inches is tiny to ensure the figure maximizes the LaTeX slot
@@ -132,9 +128,7 @@ def savefig(fig: plt.Figure, name: str, n_side_by_side=1, span_columns=False):
         transparent=True,
         dpi=300,
     )
-    print(
-        f"Saved: {name}.pdf at {target_width:.2f} x {target_height:.2f} inches"
-    )
+    print(f"Saved: {name}.pdf")
 
 
 def _get_or_create_axes(
