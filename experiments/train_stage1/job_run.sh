@@ -24,6 +24,7 @@ echo "Memory per CPU:  $SLURM_MEM_PER_CPU"
 echo "======================================="
 
 # Load necessary modules
+module load texlive
 
 echo "======================================="
 echo " Environment Information"
