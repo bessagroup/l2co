@@ -6,7 +6,7 @@
 #SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
 #SBATCH --mem=8GB
 
-# 1. Clean up library paths to avoid host/container conflicts
+# 1. Clean up library paths
 echo "Original LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
 unset LD_LIBRARY_PATH
 
@@ -23,30 +23,36 @@ echo "CPUs per Task:   $SLURM_CPUS_PER_TASK"
 echo "Memory per CPU:  $SLURM_MEM_PER_CPU"
 echo "======================================="
 
-# 2. Load LaTeX module and find paths
+# 2. Load LaTeX module and resolve paths
 module load texlive
+
+# Find the binary path and the specific distribution tree
 LATEX_BIN_PATH=$(dirname $(which pdflatex))
-TEXLIVE_ROOT=$(dirname $(dirname $LATEX_BIN_PATH))
 TEXMF_PATH=$(kpsewhich -var-value=TEXMFDIST)
+
+# The "Atomic" Bind: Find the shared root directory of the entire distribution
+# This usually moves up 2-3 levels from /bin to catch /texmf-dist, /fonts, /texmf-var, etc.
+TEXLIVE_BASE=$(python3 -c "import os; print(os.path.abspath('$LATEX_BIN_PATH/../../..'))")
 
 echo "======================================="
 echo " Environment Information"
 echo "======================================="
 echo "Loaded Modules:"
 module list 2>&1
-echo "LaTeX Bin Path:  $LATEX_BIN_PATH"
-echo "TEXMF Dist Path: $TEXMF_PATH"
+echo "LaTeX Bin Path:   $LATEX_BIN_PATH"
+echo "TEXLIVE Base:     $TEXLIVE_BASE"
+echo "TEXMF Dist Path:  $TEXMF_PATH"
 echo "======================================="
 
 # 3. Configure Apptainer Paths & Environment
-# Bind host directories + LaTeX distribution
-export APPTAINER_BINDPATH="/oscar/home/$USER,/oscar/scratch/$USER,/oscar/data,$TEXLIVE_ROOT,$TEXMF_PATH"
+# Bind host directories + the entire TeX distribution tree
+export APPTAINER_BINDPATH="/oscar/home/$USER,/oscar/scratch/$USER,/oscar/data,$TEXLIVE_BASE"
 
-# Inject LaTeX variables into the container
+# Inject LaTeX variables into the container so kpathsea knows where to look
 export APPTAINERENV_APPEND_PATH="$LATEX_BIN_PATH"
 export APPTAINERENV_TEXMFDIST="$TEXMF_PATH"
 
-# Setup writable Matplotlib/LaTeX cache
+# Setup writable Matplotlib/LaTeX cache to avoid permission errors
 export MPLCONFIGDIR="/oscar/scratch/$USER/.matplotlib"
 mkdir -p $MPLCONFIGDIR
 
