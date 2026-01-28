@@ -47,6 +47,13 @@ __status__ = "Stable"
 
 plt.style.use(["science", "ieee", "bright"])
 
+# With this:
+plt.rcParams.update(
+    {
+        "text.usetex": False,
+    }
+)
+
 __all__ = [
     "DataLoader",
     "HistoryState",

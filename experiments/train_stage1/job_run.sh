@@ -23,11 +23,6 @@ echo "CPUs per Task:   $SLURM_CPUS_PER_TASK"
 echo "Memory per CPU:  $SLURM_MEM_PER_CPU"
 echo "======================================="
 
-# 2. Manual LaTeX Path Setup
-# Based on your provided location for ptmr7t.tfm
-TEXLIVE_ROOT="/oscar/rt/9.6/25/x86_64_v3/texlive-20240312-xnyd4wigfwiqouinutpsmaiirkqqexpw"
-LATEX_BIN_PATH="$TEXLIVE_ROOT/bin/x86_64-linux"
-TEXMF_DIST_PATH="$TEXLIVE_ROOT/texmf-dist"
 
 echo "======================================="
 echo " Environment Information"
@@ -38,14 +33,6 @@ echo "======================================="
 # 3. Configure Apptainer Paths & Environment
 # We bind the root directory where the fonts/binaries live
 export APPTAINER_BINDPATH="/oscar/home/$USER,/oscar/scratch/$USER,/oscar/data,$TEXLIVE_ROOT"
-
-# Inject the paths into the container
-export APPTAINERENV_APPEND_PATH="$LATEX_BIN_PATH"
-export APPTAINERENV_TEXMFDIST="$TEXMF_DIST_PATH"
-
-# Setup writable cache for Matplotlib font-compilation
-export MPLCONFIGDIR="/oscar/scratch/$USER/.matplotlib"
-mkdir -p $MPLCONFIGDIR
 
 # 4. Define Container and Script variables
 CONTAINER=/users/$USER/jax312.simg
