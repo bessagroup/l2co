@@ -18,6 +18,9 @@ Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)
 # =============================================================================
 
 # Local imports
+import matplotlib.pyplot as plt
+import scienceplots
+
 from l2co import naming, optimizers, plotting, sampling
 from l2co._src import tree_utils
 from l2co._src.batching import BatchState
@@ -41,6 +44,8 @@ __author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
 __credits__ = ["Martin van der Schelling"]
 __status__ = "Stable"
 # =============================================================================
+
+plt.style.use(["science", "ieee", "bright"])
 
 __all__ = [
     "DataLoader",

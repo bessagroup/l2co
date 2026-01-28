@@ -1,0 +1,151 @@
+# --- Tree-Based Ensembles (Varied Complexity & Learning) ---
+# HistGradientBoosting (Fast/Robust)
+- _target_: sklearn.ensemble.HistGradientBoostingRegressor
+  max_iter: 100
+  learning_rate: 0.1
+  max_depth: 5
+- _target_: sklearn.ensemble.HistGradientBoostingRegressor
+  max_iter: 300
+  learning_rate: 0.01
+  max_depth: 15
+- _target_: sklearn.ensemble.HistGradientBoostingRegressor
+  max_iter: 500
+  learning_rate: 0.05
+  l2_regularization: 1.0
+- _target_: sklearn.ensemble.HistGradientBoostingRegressor
+  loss: absolute_error
+  max_iter: 200
+  learning_rate: 0.1
+  max_leaf_nodes: 64
+- _target_: sklearn.ensemble.HistGradientBoostingRegressor
+  max_iter: 1000
+  early_stopping: True
+  validation_fraction: 0.1
+
+# RandomForest (Deep vs Wide)
+- _target_: sklearn.ensemble.RandomForestRegressor
+  n_estimators: 50
+  max_depth: 5
+- _target_: sklearn.ensemble.RandomForestRegressor
+  n_estimators: 100
+  max_features: "sqrt"
+- _target_: sklearn.ensemble.RandomForestRegressor
+  n_estimators: 200
+  min_samples_leaf: 10
+- _target_: sklearn.ensemble.RandomForestRegressor
+  n_estimators: 500
+  max_depth: 20
+  n_jobs: -1
+- _target_: sklearn.ensemble.RandomForestRegressor
+  n_estimators: 150
+  criterion: "absolute_error" # Robust to outliers
+
+# ExtraTrees (Higher Randomness)
+- _target_: sklearn.ensemble.ExtraTreesRegressor
+  n_estimators: 100
+  max_depth: null
+- _target_: sklearn.ensemble.ExtraTreesRegressor
+  n_estimators: 200
+  min_samples_split: 5
+- _target_: sklearn.ensemble.ExtraTreesRegressor
+  n_estimators: 300
+  max_features: 1.0
+- _target_: sklearn.ensemble.ExtraTreesRegressor
+  n_estimators: 100
+  bootstrap: True
+- _target_: sklearn.ensemble.ExtraTreesRegressor
+  n_estimators: 500
+  max_depth: 10
+
+# --- Linear & Regularized Models ---
+# Ridge (Alpha Sweep)
+- _target_: sklearn.linear_model.Ridge
+  alpha: 0.01
+- _target_: sklearn.linear_model.Ridge
+  alpha: 0.1
+- _target_: sklearn.linear_model.Ridge
+  alpha: 1.0
+- _target_: sklearn.linear_model.Ridge
+  alpha: 10.0
+- _target_: sklearn.linear_model.Ridge
+  alpha: 100.0
+
+# Lasso & ElasticNet (Sparsity Control)
+- _target_: sklearn.linear_model.Lasso
+  alpha: 0.01
+- _target_: sklearn.linear_model.Lasso
+  alpha: 1.0
+- _target_: sklearn.linear_model.ElasticNet
+  alpha: 0.1
+  l1_ratio: 0.2
+- _target_: sklearn.linear_model.ElasticNet
+  alpha: 0.1
+  l1_ratio: 0.8
+- _target_: sklearn.linear_model.ElasticNet
+  alpha: 1.0
+  l1_ratio: 0.5
+
+# Huber & Bayesian (Robust/Probabilistic)
+- _target_: sklearn.linear_model.HuberRegressor
+  epsilon: 1.1
+- _target_: sklearn.linear_model.HuberRegressor
+  epsilon: 1.5
+- _target_: sklearn.linear_model.BayesianRidge
+  max_iter: 100
+- _target_: sklearn.linear_model.BayesianRidge
+  tol: 1e-6
+- _target_: sklearn.linear_model.BayesianRidge
+  lambda_1: 1e-4
+
+# --- Support Vector & Kernel Methods ---
+# SVR (Kernel & Regularization)
+- _target_: sklearn.svm.SVR
+  kernel: rbf
+  C: 0.1
+- _target_: sklearn.svm.SVR
+  kernel: rbf
+  C: 10.0
+  gamma: "auto"
+- _target_: sklearn.svm.SVR
+  kernel: poly
+  degree: 2
+- _target_: sklearn.svm.SVR
+  kernel: poly
+  degree: 3
+- _target_: sklearn.svm.SVR
+  kernel: sigmoid
+  C: 1.0
+
+# --- Neighbors (Density & Distance) ---
+# KNeighbors (Varying Neighbors/Weights)
+- _target_: sklearn.neighbors.KNeighborsRegressor
+  n_neighbors: 2
+- _target_: sklearn.neighbors.KNeighborsRegressor
+  n_neighbors: 5
+  weights: "distance"
+- _target_: sklearn.neighbors.KNeighborsRegressor
+  n_neighbors: 10
+  algorithm: "ball_tree"
+- _target_: sklearn.neighbors.KNeighborsRegressor
+  n_neighbors: 25
+- _target_: sklearn.neighbors.KNeighborsRegressor
+  n_neighbors: 50
+  p: 1 # Manhattan distance
+
+# --- Neural Networks (Architecture & Regularization) ---
+# MLPRegressor (Depth & Width)
+- _target_: sklearn.neural_network.MLPRegressor
+  hidden_layer_sizes: [32]
+  max_iter: 1000
+- _target_: sklearn.neural_network.MLPRegressor
+  hidden_layer_sizes: [100, 50]
+  activation: "tanh"
+- _target_: sklearn.neural_network.MLPRegressor
+  hidden_layer_sizes: [64, 64, 64]
+  alpha: 0.001
+- _target_: sklearn.neural_network.MLPRegressor
+  hidden_layer_sizes: [256]
+  learning_rate: "adaptive"
+- _target_: sklearn.neural_network.MLPRegressor
+  hidden_layer_sizes: [128, 64]
+  solver: "lbfgs" # Good for small datasets

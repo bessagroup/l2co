@@ -19,6 +19,8 @@ from ._src.visualize.plotting import (
     plot_ertd,
     plot_ertd_profile,
     plot_r2,
+    plot_single_r2,
+    savefig,
     set_size,
 )
 
@@ -37,6 +39,7 @@ __all__ = [
     "plot_ertd_profile",
     "plot_ertd",
     "plot_r2",
+    "plot_single_r2",
     "plot_2d_loss_landscape_only",
     "plot_2d_loss_landscape_slice_grid",
     "plot_3d_loss_landscape_only",
@@ -44,4 +47,5 @@ __all__ = [
     "ertd_per_category",
     "ertd_per_dimension",
     "ertd_per_function_raster",
+    "savefig",
 ]

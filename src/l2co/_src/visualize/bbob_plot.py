@@ -3,6 +3,7 @@ import math
 import matplotlib.pyplot as plt
 
 import l2co.plotting
+from l2co._src.visualize.plotting import savefig
 
 
 def _add_eval_line(ax, line_val):
@@ -74,11 +75,21 @@ def ertd_per_category(d, line=None):
         d_group = d.select_feature(group)
         l2co.plotting.plot_ertd_profile(
             d_group,
-            ax=ax,
             show_legend=(i == len(groups) - 1),
             title_text=names[i],
         )
         _add_eval_line(ax, line)
+
+        fig_print, ax_print = l2co.plotting.plot_ertd_profile(
+            d_group, show_legend=True
+        )
+
+        savefig(
+            fig=fig_print,
+            name=f"rtd_{names[i]}",
+            n_side_by_side=3,
+            span_columns=True,
+        )
     return fig, axes
 
 
@@ -96,6 +107,17 @@ def ertd_per_dimension(d, line=None):
             title_text=f"{dim}D",
         )
         _add_eval_line(ax, line)
+
+        fig_print, ax_print = l2co.plotting.plot_ertd_profile(
+            d_group, show_legend=True
+        )
+
+        savefig(
+            fig=fig_print,
+            name=f"rtd_{dim}d",
+            n_side_by_side=3,
+            span_columns=True,
+        )
     return fig, axes
 
 

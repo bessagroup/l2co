@@ -42,6 +42,25 @@ BASE_OPT_STYLES = {
     )
 }
 
+# Overwrite specific colors/markers if desired
+BASE_OPT_STYLES.update(
+    {
+        "adam": OptStyle(color="#4477AA", marker="o"),
+        "pso": OptStyle(color="#CCBB44", marker="s"),
+        "lbfgs": OptStyle(color="#228833", marker="^"),
+        "sepcmaes": OptStyle(color="#EE6677", marker="x"),
+    }
+)
+
+
+LABEL_MAP = {
+    "sepcmaes": "Sep-CMA-ES",
+    # "l2co": r"\textbf{L2CO (Ours)}",  # You can even use LaTeX bold here
+    "lbfgs": "L-BFGS",
+    "pso": "PSO",
+    "adam_learning_rate=0.01": "Adam",
+}
+
 
 def get_schedule_styles(schedule_names: Iterable[str]) -> dict[str, OptStyle]:
     """

@@ -51,7 +51,8 @@ __status__ = "Planning"
 # =============================================================================
 
 EPSILON = 1e-8
-DEFAULT_COST_VALUES = np.logspace(-1, 6, 100) ** 0.8
+# DEFAULT_COST_VALUES = np.logspace(-1, 6, 100) ** 0.8
+DEFAULT_COST_VALUES = np.append(np.logspace(-1, 6, 1000) ** 0.8, 10**5)
 DEFAULT_TARGETS = np.linspace(0.0, 1.0, 51)
 
 

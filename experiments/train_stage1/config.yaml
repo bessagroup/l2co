@@ -1,0 +1,78 @@
+hydra:
+  job:
+    chdir: True
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+# Data & Core Settings
+dataset_dir: /Volumes/T7/data/
+path_train: 197609
+path_test: 197609
+t: 0.01
+t_end: 10000
+
+optimizers:
+  - optimizer: sepcmaes
+  - optimizer: adam
+    hyperparameters:
+      learning_rate: 1e-2
+  - optimizer: lbfgs
+  - optimizer: pso
+
+seed: 0
+
+# Model Architecture
+stage1_model:
+  history_encoder:
+    hidden_size: 16
+    out_size: 4
+  embedding:
+    dim: 4
+    out_size: 4
+  mlp:
+    width_size: 16
+    depth: 3
+
+# Training Hyperparameters
+train:
+  learning_rate: 1e-2
+  num_steps: 1000
+  seed: 2
+  verbose: False
+
+tasks:
+  schema:
+    dimensionality: continuous
+    separable: boolean
+    unimodal: boolean
+
+# Hyperparameter Search Domain
+domain:
+  input:
+    stage1_model.history_encoder.hidden_size:
+      type: category
+      categories:
+        - 8
+        - 16
+        - 32
+    stage1_model.mlp.width_size:
+      type: category
+      categories:
+        - 8
+        - 16
+        - 32
+    stage1_model.mlp.depth:
+      type: category
+      categories:
+        - 2
+        - 3
+        - 4
+
+plot_strategy: False
+
+path:
+project_dir: /Users/martin/Documents/GitHub/l2co/experiments/create_optimization_dataset_new/outputs
+model_dir: /Users/martin/Documents/GitHub/l2co/experiments/train_model/outputs
+project_job:

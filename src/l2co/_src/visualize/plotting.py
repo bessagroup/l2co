@@ -32,7 +32,7 @@ from l2co._src.naming import (
 from l2co._src.sampler import grid_sampling
 from l2co._src.task import Task
 from l2co._src.update_class import evaluate
-from l2co._src.visualize.colors import get_schedule_styles
+from l2co._src.visualize.colors import LABEL_MAP, get_schedule_styles
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -92,6 +92,50 @@ def set_size(width, fraction=1, subplots=(1, 1)):
 #                                                           Helper Functions
 # =============================================================================
 
+# 1. Base widths from your IEEEtran.cls / Logs
+SINGLE_COL_WIDTH = 252.0 / 72.27  # 3.486 inches
+DOUBLE_COL_WIDTH = 516.0 / 72.27  # 7.139 inches
+GOLDEN_RATIO = (5**0.5 - 1) / 2
+
+
+def savefig(fig: plt.Figure, name: str, n_side_by_side=1, span_columns=False):
+    """
+    Saves a figure scaled exactly for an IEEE subfigure slot.
+
+    Parameters:
+    - fig: The matplotlib figure object.
+    - name: Filename (e.g., 'ertd_results').
+    - n_side_by_side: How many figures will sit horizontally (1, 2, or 3).
+    - span_columns: False for single column (3.48"), True for full page (7.14")
+    """
+
+    total_width = DOUBLE_COL_WIDTH if span_columns else SINGLE_COL_WIDTH
+
+    # 2. Account for LaTeX margins/gutters between subfigures
+    # We use a 2% "safety margin" so LaTeX doesn't force a line break
+    available_fraction = 0.98 / n_side_by_side
+    target_width = total_width * available_fraction
+
+    # 3. Set Height (Golden ratio is standard, but 0.8 is great for ERTD)
+    target_height = target_width * 0.8
+
+    # 4. Apply dimensions and force 8pt font
+    fig.set_size_inches(target_width, target_height)
+
+    # 5. Save with tight bounding box
+    # pad_inches is tiny to ensure the figure maximizes the LaTeX slot
+    fig.savefig(
+        f"{name}.pdf",
+        format="pdf",
+        bbox_inches="tight",
+        pad_inches=0.01,
+        transparent=True,
+        dpi=300,
+    )
+    print(
+        f"Saved: {name}.pdf at {target_width:.2f} x {target_height:.2f} inches"
+    )
+
 
 def _get_or_create_axes(
     ax: plt.Axes | None = None,
@@ -114,9 +158,12 @@ def _get_or_create_axes(
         Matplotlib figure and axes.
     """
     if ax is None:
-        fig, ax = plt.subplots(
-            1, 1, figsize=figsize or set_size(width="paper", subplots=(1, 1))
-        )
+        width = 252.0 / 72.27
+        height = width * 0.8  # This would be ~2.78 inches
+        # fig, ax = plt.subplots(
+        #     1, 1, figsize=figsize or set_size(width="paper", subplots=(1, 1))
+        # )
+        fig, ax = plt.subplots(1, 1, figsize=figsize or (width, height))
     else:
         fig = ax.get_figure()
     return fig, ax
@@ -645,6 +692,7 @@ def plot_ertd(
         color = style[schedule].color
         linestyle = style[schedule].linestyle
         marker = style[schedule].marker
+        pretty_label = LABEL_MAP.get(schedule, schedule)
         y = ertd.sel({SCHEDULE: schedule})
 
         # FAILSAFE: Check if the entire series is NaN
@@ -656,11 +704,11 @@ def plot_ertd(
         ax.plot(
             x,
             y,
-            label=schedule,
+            label=pretty_label,
             color=color,
             linestyle=linestyle,
             marker=marker,
-            markevery=0.1,
+            markevery=0.2,
             linewidth=1.2,
         )
 
@@ -694,18 +742,21 @@ def plot_ertd(
 
     # --- Legend and Limits ---
     if show_legend:
-        # Legend is placed outside to the right to match the provided image
+        # loc="lower right" is usually best for ERTD plots as the curves
+        # go from bottom-left to top-right.
         ax.legend(
-            loc="upper left",
-            bbox_to_anchor=(1.01, 1.0),
-            fontsize=8,
-            frameon=False,
-            labelspacing=0.1,
-            borderaxespad=0.0,
+            loc="best",  # Position inside the axes
+            fontsize=7,  # IEEE standard for legends is often 7pt
+            frameon=True,  # Enable the box
+            fancybox=False,  # IEEE style usually prefers square corners
+            edgecolor="black",  # Explicit frame color
+            framealpha=1.0,  # Make it opaque so grid lines don't bleed through
+            labelspacing=0.2,  # Tighten the vertical space between entries
+            borderaxespad=0.5,  # Distance from the axis edge
         )
 
     ax.set_ylim(0.0, 1.0)
-    ax.set_xlim(left=0.1)  # Starts the x-axis at 10^-1
+    ax.set_xlim(10**-1, 10**5)  # Starts the x-axis at 10^-1
 
     return fig, ax
 
@@ -782,3 +833,67 @@ def plot_r2(y_true: xr.DataArray, y_pred: xr.DataArray):
         ax.grid(True, linestyle=":", alpha=0.7)
 
     return fig, axes
+
+
+def plot_single_r2(
+    y_true: xr.DataArray, y_pred: xr.DataArray, label: str, ax=None
+):
+    """
+    Plots Predicted vs True values for a SINGLE label.
+    Designed for use within a larger subfigure grid.
+    """
+    if ax is None:
+        # Fallback if called standalone (using the 3-across width)
+        fig, ax = plt.subplots(figsize=(3.486 / 3, 3.486 / 3))
+    else:
+        fig = ax.get_figure()
+
+    # Select data for the specific label
+    y_t = y_true.sel({"label": label}).values
+    y_p = y_pred.sel({"label": label}).values
+
+    # Calculate R2 score
+    r2 = r2_score(y_t, y_p)
+
+    # Scatter plot - smaller 's' and lower alpha for dense subfigures
+    ax.scatter(y_t, y_p, s=3, edgecolors="none", color="k")
+
+    # Define the limits for the diagonal line
+    all_vals = np.concatenate([y_t, y_p])
+    low, high = np.min(all_vals), np.max(all_vals)
+
+    # Draw the 1:1 diagonal line
+    ax.plot(
+        [low, high], [low, high], color="#EE6677", linestyle="--", linewidth=1
+    )
+
+    # Add the R2 text box (Font size 7 for IEEE subfigures)
+    text_str = f"$R^2 = {r2:.3f}$"
+    props = dict(
+        boxstyle="square,pad=0.2",
+        facecolor="white",
+        alpha=0.9,
+        edgecolor="silver",
+    )
+
+    ax.text(
+        0.05,
+        0.95,
+        text_str,
+        transform=ax.transAxes,
+        fontsize=7,
+        verticalalignment="top",
+        bbox=props,
+    )
+
+    # IEEE Formatting: Keep titles and labels compact
+    # ax.set_title(label, fontsize=8)
+    ax.set_xlabel("True labels", fontsize=8)
+    ax.set_ylabel("Predicted labels", fontsize=8)
+
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    # ax.grid(True, linestyle=":", alpha=0.6)
+    # ax.tick_params(axis="both", which="major", labelsize=7)
+
+    return fig, ax

@@ -1,0 +1,36 @@
+hydra:
+  job:
+    chdir: True
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+defaults:
+  - models: best
+
+# Data & Core Settings
+project_dir: /Volumes/T7/data/
+path_train: 197609
+path_test: 197609
+t: 0.01
+t_end: 10000
+
+optimizers:
+  - optimizer: sepcmaes
+  - optimizer: adam
+    hyperparameters:
+      learning_rate: 1e-2
+  - optimizer: lbfgs
+  - optimizer: pso
+
+seed: 0
+
+tasks:
+  schema:
+    dimensionality: continuous
+    separable: boolean
+    unimodal: boolean
+
+
+plot_strategy: False
