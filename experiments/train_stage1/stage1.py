@@ -49,10 +49,10 @@ class Stage1Trainer(DataGenerator):
         self.__post_init__()
 
     def __post_init__(self):
-        _path_train = Path(self.config.project_dir) / str(
+        _path_train = Path(self.config.dataset_dir) / str(
             self.config.path_train
         )
-        _path_test = Path(self.config.project_dir) / str(self.config.path_test)
+        _path_test = Path(self.config.dataset_dir) / str(self.config.path_test)
         self.d_train = l2co.DataLoader.from_file(
             _path_train / "entire_dataset.odata"
         )

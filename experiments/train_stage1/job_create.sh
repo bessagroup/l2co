@@ -39,11 +39,11 @@ export APPTAINER_BINDPATH="/oscar/home/$USER,/oscar/scratch/$USER,/oscar/data"
 CONTAINER=/users/$USER/jax312.simg
 SCRIPT=main_create.py
 
-model_dir="${HOME}/scratch/train_model/"
-project_dir="${HOME}/scratch/create_optimization_dataset_new/"
-
 # Get project folder
 projectfolder=$(basename $(pwd))
+
+project_dir="${HOME}/scratch/${projectfolder}/"
+
 run_dir="${HOME}/scratch/${projectfolder}/${SLURM_JOB_ID}"
 
 echo "======================================="
@@ -51,10 +51,10 @@ echo " Execution Information"
 echo "======================================="
 echo "Project Folder:   $projectfolder"
 echo "Run Directory:    $run_dir"
-echo "Executing: apptainer exec $CONTAINER python3 -u $SCRIPT ++hydra.run.dir=$run_dir ++model_dir=$model_dir ++project_dir=$project_dir $@" 
+echo "Executing: apptainer exec $CONTAINER python3 -u $SCRIPT ++hydra.run.dir=$run_dir ++project_dir=$project_dir $@" 
 echo "======================================="
 
 export JAX_PLATFORM_NAME=cpu
 
 # Run the Python script with MPI
-apptainer exec $CONTAINER python3 -u $SCRIPT ++hydra.run.dir=$run_dir ++model_dir=$model_dir ++project_dir=$project_dir $@
+apptainer exec $CONTAINER python3 -u $SCRIPT ++hydra.run.dir=$run_dir ++project_dir=$project_dir $@
