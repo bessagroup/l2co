@@ -23,36 +23,27 @@ echo "CPUs per Task:   $SLURM_CPUS_PER_TASK"
 echo "Memory per CPU:  $SLURM_MEM_PER_CPU"
 echo "======================================="
 
-# 2. Load LaTeX module and resolve paths
-module load texlive
-
-# Find the binary path and the specific distribution tree
-LATEX_BIN_PATH=$(dirname $(which pdflatex))
-TEXMF_PATH=$(kpsewhich -var-value=TEXMFDIST)
-
-# The "Atomic" Bind: Find the shared root directory of the entire distribution
-# This usually moves up 2-3 levels from /bin to catch /texmf-dist, /fonts, /texmf-var, etc.
-TEXLIVE_BASE=$(python3 -c "import os; print(os.path.abspath('$LATEX_BIN_PATH/../../..'))")
+# 2. Manual LaTeX Path Setup
+# Based on your provided location for ptmr7t.tfm
+TEXLIVE_ROOT="/oscar/rt/9.6/25/x86_64_v3/texlive-20240312-xnyd4wigfwiqouinutpsmaiirkqqexpw"
+LATEX_BIN_PATH="$TEXLIVE_ROOT/bin/x86_64-linux"
+TEXMF_DIST_PATH="$TEXLIVE_ROOT/texmf-dist"
 
 echo "======================================="
 echo " Environment Information"
 echo "======================================="
-echo "Loaded Modules:"
-module list 2>&1
-echo "LaTeX Bin Path:   $LATEX_BIN_PATH"
-echo "TEXLIVE Base:     $TEXLIVE_BASE"
-echo "TEXMF Dist Path:  $TEXMF_PATH"
+echo "Using Manual LaTeX Root: $TEXLIVE_ROOT"
 echo "======================================="
 
 # 3. Configure Apptainer Paths & Environment
-# Bind host directories + the entire TeX distribution tree
-export APPTAINER_BINDPATH="/oscar/home/$USER,/oscar/scratch/$USER,/oscar/data,$TEXLIVE_BASE"
+# We bind the root directory where the fonts/binaries live
+export APPTAINER_BINDPATH="/oscar/home/$USER,/oscar/scratch/$USER,/oscar/data,$TEXLIVE_ROOT"
 
-# Inject LaTeX variables into the container so kpathsea knows where to look
+# Inject the paths into the container
 export APPTAINERENV_APPEND_PATH="$LATEX_BIN_PATH"
-export APPTAINERENV_TEXMFDIST="$TEXMF_PATH"
+export APPTAINERENV_TEXMFDIST="$TEXMF_DIST_PATH"
 
-# Setup writable Matplotlib/LaTeX cache to avoid permission errors
+# Setup writable cache for Matplotlib font-compilation
 export MPLCONFIGDIR="/oscar/scratch/$USER/.matplotlib"
 mkdir -p $MPLCONFIGDIR
 
@@ -60,7 +51,7 @@ mkdir -p $MPLCONFIGDIR
 CONTAINER=/users/$USER/jax312.simg
 SCRIPT=main_run.py
 
-# Get project folders
+# Resolve project folders
 projectfolder=$(basename $(pwd))
 project_dir="${HOME}/scratch/${projectfolder}/"
 dataset_dir="${HOME}/scratch/create_optimization_dataset_new/"
