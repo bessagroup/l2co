@@ -9,7 +9,7 @@ from hydra.utils import instantiate
 from omegaconf import DictConfig
 
 # Local
-from experiments.train_stage0.stage0 import Stage0Trainer
+from stage0 import Stage0Trainer
 from l2co import RunOptimization
 
 # =============================================================================
