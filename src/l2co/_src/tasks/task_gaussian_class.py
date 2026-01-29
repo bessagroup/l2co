@@ -174,7 +174,7 @@ def create_gaussian_task(
     tag["loss_fn"] = "cross_entropy_loss"
     tag["l2_regularization"] = l2_regularization
 
-    global_min = 0.3  # Taken as target value from L2O paper
+    global_min = 0.32  # Taken as target value from L2O paper
 
     return Task(
         model=model,
