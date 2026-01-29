@@ -69,6 +69,9 @@ class FeatureProcessor(eqx.Module):
         """
         feats = []
         for name, ftype in self.schema.items():
+            if name not in x:
+                feats.append(jnp.nan)
+                continue
             if ftype == "boolean":
                 val = str(x[name]).lower()
             else:
