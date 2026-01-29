@@ -1,7 +1,7 @@
 defaults:
 - tasks: gaussian_classification
-- budgets: based_on_dim
-- samplers: normal
+- budgets: gaussian_classification
+- samplers: xavier
 - optimizers: medium
 - stage0_models: histgradientboostingregressor
 - stage1_models: default
@@ -26,7 +26,7 @@ train:
   num_steps: 1000
   verbose: True
 
-verbose: False
+verbose: True
 clear_jax_cache: True
 save_input_parameters: False
 

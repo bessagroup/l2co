@@ -186,7 +186,7 @@ def create_gaussian_task(
     return Task(
         model=model,
         loss_fn=loss_fn,
-        dataset={"dataset_path": _path, "batch_size": 32, "seed": seed},
+        dataset={"dataset_path": _path, "batch_size": None, "seed": seed},
         tag=tag,
         global_min=global_min,
     )

@@ -228,7 +228,9 @@ class DataLoader:
     # =========================================================================
 
     def task_features(
-        self, schema: dict[str, str]
+        self,
+        schema: dict[str, str],
+        feature_processor: FeatureProcessor | None = None,
     ) -> tuple[xr.DataArray, FeatureProcessor]:
         tags_list = [
             {
@@ -240,9 +242,12 @@ class DataLoader:
             for xi in self.task_labels
         ]
 
-        feature_processor_task = FeatureProcessor.init(
-            schema=schema, tags=tags_list
-        )
+        if feature_processor is None:
+            feature_processor_task = FeatureProcessor.init(
+                schema=schema, tags=tags_list
+            )
+        else:
+            feature_processor_task = feature_processor
 
         x_features = np.stack(
             [feature_processor_task.transform(xi) for xi in tags_list]
@@ -253,14 +258,16 @@ class DataLoader:
                 x_features,
                 coords={
                     PROBLEM: self.problems,
-                    FEATURE: list(schema.keys()),
+                    FEATURE: list(feature_processor_task.schema.keys()),
                 },
                 dims=[PROBLEM, FEATURE],
             ),
             feature_processor_task,
         )
 
-    def optimizer_features(self) -> tuple[xr.DataArray, FeatureProcessor]:
+    def optimizer_features(
+        self, feature_processor: FeatureProcessor | None = None
+    ) -> tuple[xr.DataArray, FeatureProcessor]:
         # OPTIMIZER FEATURES
         opt_labels = self.optimizers.broadcast_like(self.problems)
 
@@ -269,10 +276,13 @@ class DataLoader:
         ]
 
         # OPTIMIZER FEATURES
-        feature_processor_optimizer = FeatureProcessor.init(
-            schema={"optimizer": "categorical"},
-            tags=[{"optimizer": str(xi)} for xi in self.optimizers.values],
-        )
+        if feature_processor is None:
+            feature_processor_optimizer = FeatureProcessor.init(
+                schema={"optimizer": "categorical"},
+                tags=[{"optimizer": str(xi)} for xi in self.optimizers.values],
+            )
+        else:
+            feature_processor_optimizer = feature_processor
 
         x_features_optimizer = np.stack(
             [
@@ -299,6 +309,8 @@ class DataLoader:
         t: float,
         t_end: int,
         schema: dict[str, str],
+        feature_processor_task: FeatureProcessor | None = None,
+        feature_processor_optimizer: FeatureProcessor | None = None,
         cost_metric: Literal["fevals", "iterations"] = "fevals",
     ) -> OptimizationDynamics:
         """
@@ -314,6 +326,10 @@ class DataLoader:
             Schema for feature processing.
         cost_metric : {'fevals', 'iterations'}, optional
             Cost metric to use, by default 'fevals'.
+        feature_processor_task : FeatureProcessor | None, optional
+            Feature processor for task features, by default None.
+        feature_processor_optimizer : FeatureProcessor | None, optional
+            Feature processor for optimizer features, by default None.
 
         Returns
         -------
@@ -322,10 +338,13 @@ class DataLoader:
         """
 
         x_features_task, feature_processor_task = self.task_features(
-            schema=schema
+            schema=schema,
+            feature_processor=feature_processor_task,
         )
         x_features_optimizer, feature_processor_optimizer = (
-            self.optimizer_features()
+            self.optimizer_features(
+                feature_processor=feature_processor_optimizer
+            )
         )
         x_history = self.select_t(t=t).to_traj_and_stair()
 

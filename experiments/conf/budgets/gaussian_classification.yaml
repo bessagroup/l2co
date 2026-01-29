@@ -1,0 +1,3 @@
+_partial_: True
+_target_: l2co._src.budget.based_on_dimensionality
+budget_per_dimension: 100

@@ -13,14 +13,14 @@ experimentdata:
       hidden_size:
         type: category
         categories:
-          - 2
-          - 4
+          # - 2
+          # - 4
           - 6
       num_layers:
         type: category
         categories:
-          - 2
-          - 3
+          # - 2
+          # - 3
           - 4
 
 

@@ -39,7 +39,7 @@ def ertd_per_category(d, line=None):
                 "discuss",
                 "bent_cigar",
                 "sharp_ridge",
-                "sum_of_different_power",
+                "sum_of_different_powers",
             ]
         },
         {
@@ -142,7 +142,7 @@ def ertd_per_function_raster(d, cols=6, line=None):
             "discuss",
             "bent_cigar",
             "sharp_ridge",
-            "sum_of_different_power",
+            "sum_of_different_powers",
         ]
         + [
             "rastrigin",
@@ -172,9 +172,9 @@ def ertd_per_function_raster(d, cols=6, line=None):
         ax = axes_flat[i]
         d_fn = d.select_feature({"fn_name": [fn_name]})
 
-        if d_fn.n_realization == 0:
-            ax.axis("off")
-            continue
+        # if d_fn.n_realization == 0:
+        #     ax.axis("off")
+        #     continue
 
         # We handle legend visibility manually or let the library decide
         l2co.plotting.plot_ertd_profile(
@@ -183,9 +183,20 @@ def ertd_per_function_raster(d, cols=6, line=None):
 
         _add_eval_line(ax, line)
 
-    # Hide unused trailing axes
-    for j in range(i + 1, len(axes_flat)):
-        axes_flat[j].axis("off")
+        fig_print, ax_print = l2co.plotting.plot_ertd_profile(
+            d_fn, show_legend=False
+        )
+
+        savefig(
+            fig=fig_print,
+            name=f"rtd_{fn_name}",
+            n_side_by_side=4,
+            span_columns=True,
+        )
+
+    # # Hide unused trailing axes
+    # for j in range(i + 1, len(axes_flat)):
+    #     axes_flat[j].axis("off")
 
     plt.tight_layout()
     return fig, axes
