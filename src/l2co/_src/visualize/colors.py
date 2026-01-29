@@ -49,6 +49,8 @@ BASE_OPT_STYLES.update(
         "pso": OptStyle(color="#CCBB44", marker="s"),
         "lbfgs": OptStyle(color="#228833", marker="^"),
         "sepcmaes": OptStyle(color="#EE6677", marker="x"),
+        "stage0": OptStyle(color="#BBBBBB", marker=None, linestyle="--"),
+        "l2co": OptStyle(color="#000000", marker=None, linestyle="-"),
     }
 )
 
@@ -59,6 +61,8 @@ LABEL_MAP = {
     "lbfgs": "L-BFGS",
     "pso": "PSO",
     "adam_learning_rate=0.01": "Adam",
+    "stage0": r"First decision ($g_\text{first}$)",
+    "l2co": r"L2CO ($g_\text{first} \rightarrow g_\text{second}$)",
 }
 
 
@@ -80,6 +84,11 @@ def get_schedule_styles(schedule_names: Iterable[str]) -> dict[str, OptStyle]:
         # 2. Retrieve base color/marker from the global registry
         # Fallback to a default if the optimizer is not in the imported list
         base_style = BASE_OPT_STYLES.get(base_name, OptStyle())
+
+        # if linestyle is already defined in base_style, use it directly
+        if base_style.linestyle != "-":
+            schedule_styles[full_name] = base_style
+            continue
 
         # 3. Handle Linestyle cycling for variants
         idx = variant_tracker.get(base_name, 0)

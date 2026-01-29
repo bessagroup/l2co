@@ -132,6 +132,13 @@ class DataLoader:
             ),
         )
 
+    def join(self, __o: DataLoader) -> DataLoader:
+        return replace(
+            self,
+            data=xr.concat([self.data, __o.data], dim=SCHEDULE),
+            task_labels=self.task_labels,
+        )
+
     #                                                  Alternative Constructors
     # =========================================================================
 

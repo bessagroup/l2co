@@ -1,4 +1,5 @@
 import math
+from collections.abc import Iterable
 
 import matplotlib.pyplot as plt
 
@@ -81,7 +82,7 @@ def ertd_per_category(d, line=None):
         _add_eval_line(ax, line)
 
         fig_print, ax_print = l2co.plotting.plot_ertd_profile(
-            d_group, show_legend=True
+            d_group, show_legend=False
         )
 
         savefig(
@@ -93,8 +94,8 @@ def ertd_per_category(d, line=None):
     return fig, axes
 
 
-def ertd_per_dimension(d, line=None):
-    dims = [2, 3, 5, 10, 20, 40]
+def ertd_per_dimension(d, line=None, dims: Iterable[int] | None = None):
+    dims = dims if dims is not None else [2, 3, 5, 10, 20, 40]
     # Hardcoded figure size
     fig, axes = plt.subplots(1, len(dims), figsize=(25, 4), sharey=True)
 
@@ -109,7 +110,7 @@ def ertd_per_dimension(d, line=None):
         _add_eval_line(ax, line)
 
         fig_print, ax_print = l2co.plotting.plot_ertd_profile(
-            d_group, show_legend=True
+            d_group, show_legend=False
         )
 
         savefig(

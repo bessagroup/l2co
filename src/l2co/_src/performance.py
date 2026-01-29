@@ -369,7 +369,7 @@ def ertd(
     ds = xr.Dataset(
         {
             COST: performance[COST],
-            SUCCESS: performance[SUCCESS],
+            SUCCESS: performance[SUCCESS].fillna(False),
             "dims": dims,
         }
     )

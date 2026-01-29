@@ -1,8 +1,8 @@
 defaults:
-- tasks: bbob
+- tasks: gaussian_classification
 - budgets: based_on_dim
 - samplers: normal
-- optimizers: l2co
+- optimizers: medium
 - stage0_models: histgradientboostingregressor
 - stage1_models: default
 - experimentdata: default

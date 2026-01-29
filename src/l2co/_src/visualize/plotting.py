@@ -685,7 +685,8 @@ def plot_ertd(
     for schedule in ertd[SCHEDULE].values:
         color = style[schedule].color
         linestyle = style[schedule].linestyle
-        marker = style[schedule].marker
+        # marker = style[schedule].marker
+        marker = None
         pretty_label = LABEL_MAP.get(schedule, schedule)
         y = ertd.sel({SCHEDULE: schedule})
 
@@ -743,7 +744,7 @@ def plot_ertd(
             fontsize=7,  # IEEE standard for legends is often 7pt
             frameon=True,  # Enable the box
             fancybox=False,  # IEEE style usually prefers square corners
-            edgecolor="black",  # Explicit frame color
+            edgecolor="#BBBBBB",  # Explicit frame color
             framealpha=1.0,  # Make it opaque so grid lines don't bleed through
             labelspacing=0.2,  # Tighten the vertical space between entries
             borderaxespad=0.5,  # Distance from the axis edge
