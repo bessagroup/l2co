@@ -86,7 +86,7 @@ num_jobs=$(( num_jobs > 900 ? 900 : num_jobs ))
 # echo number of jobs
 echo "Number of jobs to run: $num_jobs"
 
-id_run=$(sbatch --array=0-$(($num_jobs-1))%64 -o "slurm-${project_job}.out"  --dependency=afterok:$id_create --export=id_create=$id_create $JOB_RUN  ++project_job=$project_job | awk '{print $4}')
+id_run=$(sbatch --array=0-$(($num_jobs-1))%64 -o "job_%A_%a.out"  --dependency=afterok:$id_create --export=id_create=$id_create $JOB_RUN  ++project_job=$project_job | awk '{print $4}')
 
 id_post=$(sbatch -o "slurm-${project_job}.out" --dependency=afterany:$id_run --export=id_create=$id_create $JOB_POST ++project_job=$project_job | awk '{print $4}')
 
