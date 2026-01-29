@@ -403,17 +403,26 @@ class RunOptimization(DataGenerator):
             bounded=self.bounded,
             verbose=self.verbose,
         )
+        # Stage0
+        stage0 = rollout_wrapper.batch_evaluate(
+            key=key,
+            n_iterations=n_iterations_stage0,
+            n_realizations=self.n_realizations,
+        )
+
+        stage0_individual = [
+            jax.tree_util.tree_map(lambda x, i=i: x[i], stage0)
+            for i in range(self.n_realizations)
+        ]
+
         keys = jr.split(key, num=self.n_realizations)
-
         histories = []
-        for k in keys:
-            run_state_stage0, batch_state, history_state_stage0 = (
-                rollout_wrapper.evaluate(
-                    key=k,
-                    n_iterations=n_iterations_stage0,
-                )
-            )
-
+        # for k in keys:
+        for (run_state_stage0, batch_state, history_state_stage0), k in zip(
+            stage0_individual,
+            keys,
+            strict=True,
+        ):
             data_xarr_stage0 = history_state_stage0.to_xarray()
 
             stage1_optimizer: OptimizationStep = model.predict_stage1(
