@@ -4,7 +4,7 @@
 #SBATCH --time=00:30:00
 #SBATCH --account=default
 #SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
-#SBATCH --mem=8GB
+#SBATCH --mem=4GB
 
 # 1. Clean up library paths
 echo "Original LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
