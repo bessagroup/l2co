@@ -20,6 +20,7 @@ from sklearn.multioutput import MultiOutputRegressor
 from tqdm import tqdm
 
 from .data_loader import OptimizationDynamics
+from .naming import FEATURE
 from .optimizerschedule import OptimizationStep
 from .task_features import FeatureProcessor, MixedEmbedding
 from .tree_utils import traj_and_stair
@@ -176,7 +177,10 @@ class ScikitStage0Model(Stage0Model):
         return jnp.array(preds)
 
     def pred_logits(self, data: OptimizationDynamics) -> xr.DataArray:
-        x = jnp.array(data.x_features_task)
+        task_features = data.x_features_task.reindex(
+            {FEATURE: self.feature_processor_task.schema.keys()}
+        )
+        x = jnp.array(task_features)
         logits = jnp.array(self.model.predict(x))
 
         y = xr.DataArray(
