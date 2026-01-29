@@ -98,6 +98,8 @@ def create_gaussian_task(
     num_samples_per_gaussian: int,
     dim_points: int,
     l2_regularization: float,
+    hidden_size: int = 2,
+    num_layers: int = 2,
 ) -> Task:
     """
     Create a Gaussian classification task.
@@ -116,7 +118,10 @@ def create_gaussian_task(
         Dimensionality of the data points.
     l2_regularization : float
         L2 regularization parameter for the loss function.
-
+    hidden_size : int, optional
+        Size of the hidden layers in the MLP, by default 2.
+    num_layers : int, optional
+        Number of layers in the MLP, by default 2.
     Returns
     -------
     Task
@@ -139,12 +144,14 @@ def create_gaussian_task(
     tag["num_gaussians"] = num_gaussians
     tag["num_samples_per_gaussian"] = num_samples_per_gaussian
     tag["dim_points"] = dim_points
+    tag["hidden_size"] = hidden_size
+    tag["num_layers"] = num_layers
 
     model, model_tags = mlp(
         in_size=dim_points,
         out_size=2,
-        hidden_size=2,
-        num_layers=2,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
         hidden_activation=jax.nn.relu,
         output_activation=jax.nn.softmax,
         key=model_key,

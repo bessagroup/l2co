@@ -1,9 +1,7 @@
 sampler:
   _target_: f3dasm.create_sampler
-  sampler: 'random'
-  seed: ${seed}
+  sampler: 'grid'
 sampler_kwargs:
-  n_samples: 80
 
 experimentdata:
   domain:
@@ -11,7 +9,21 @@ experimentdata:
       seed:
         type: int
         low: 0
-        high: 10000
+        high: 10
+      hidden_size:
+        type: categorical
+        categories:
+          - 2
+          - 4
+          - 6
+      num_layers:
+        type: categorical
+        categories:
+          - 2
+          - 3
+          - 4
+
+
 
 task_kwargs:
   dim_points: 2
