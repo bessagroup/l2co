@@ -1,6 +1,6 @@
 defaults:
 - tasks: gaussian_classification
-- budgets: gaussian_classification
+- budgets: fixed
 - samplers: xavier
 - optimizers: medium
 - stage0_models: histgradientboostingregressor
