@@ -7,10 +7,10 @@ hydra:
     dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
 
 defaults:
-  - models: best
+  - models: all
 
 # Data & Core Settings
-project_dir: /Volumes/T7/data/
+dataset_dir: /Volumes/T7/data/
 path_train: 197609
 path_test: 197609
 t: 0.01
@@ -34,3 +34,8 @@ tasks:
 
 
 plot_strategy: False
+
+path:
+project_dir: /Users/martin/Documents/GitHub/l2co/experiments/create_optimization_dataset_new/outputs
+model_dir: /Users/martin/Documents/GitHub/l2co/experiments/train_model/outputs
+project_job:
