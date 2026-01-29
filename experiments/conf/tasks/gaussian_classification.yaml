@@ -11,13 +11,13 @@ experimentdata:
         low: 0
         high: 10
       hidden_size:
-        type: categorical
+        type: category
         categories:
           - 2
           - 4
           - 6
       num_layers:
-        type: categorical
+        type: category
         categories:
           - 2
           - 3
