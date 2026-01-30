@@ -180,6 +180,8 @@ def create_gaussian_task(
 
     tag["loss_fn"] = "cross_entropy_loss"
     tag["l2_regularization"] = l2_regularization
+    tag["separable"] = False
+    tag["unimodal"] = False
 
     global_min = 0.322  # Taken as target value from L2O paper
 
