@@ -43,7 +43,7 @@ train:
   learning_rate: 1e-2
   num_steps: 1000
   seed: 2
-  verbose: False
+  verbose: True
 
 tasks:
   schema:

@@ -433,6 +433,12 @@ class RunOptimization(DataGenerator):
                 global_min=task.global_min,
             )
 
+            ## HACK for now
+            if stage1_optimizer.optimizer == "adam":
+                stage1_optimizer = OptimizationStep(
+                    optimizer="adam", hyperparameters={"learning_rate": 0.03}
+                )
+
             # Stage 1
             _, k1 = jr.split(k)
             run_state_stage1: RolloutWrapper = RolloutWrapper.init_from_stage0(
