@@ -97,3 +97,13 @@ echo -e "$id_create\tFirst Job: Creating the ExperimentData"
 echo -e "$id_run\tSecond Job: Running the experiments"
 echo -e "$id_post\tThird Job: Post-processing the experiments"
 echo -e "------------------------------------------------------"
+
+# Define the path to the validation script
+VALIDATION_SCRIPT="../data_validation/singularity_brown_mpi.sh"
+
+# Submit the validation job with dependency on id_post
+id_validate=$(sbatch --dependency=afterany:$id_post $VALIDATION_SCRIPT path=$project_job | awk '{print $4}')
+
+# Update the Job ID table to include the validation step
+echo -e "$id_validate\tFinal Job: Data Validation (Singularity)"
+echo -e "------------------------------------------------------"
