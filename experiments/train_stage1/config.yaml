@@ -6,6 +6,9 @@ hydra:
   sweep:
     dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
 
+defaults:
+  - domain: best
+
 # Data & Core Settings
 dataset_dir: /Volumes/T7/data/
 path_train: 197609
@@ -47,28 +50,6 @@ tasks:
     dimensionality: continuous
     separable: boolean
     unimodal: boolean
-
-# Hyperparameter Search Domain
-domain:
-  input:
-    stage1_model.history_encoder.hidden_size:
-      type: category
-      categories:
-        - 8
-        - 16
-        - 32
-    stage1_model.mlp.width_size:
-      type: category
-      categories:
-        - 8
-        - 16
-        - 32
-    stage1_model.mlp.depth:
-      type: category
-      categories:
-        - 2
-        - 3
-        - 4
 
 plot_strategy: False
 
