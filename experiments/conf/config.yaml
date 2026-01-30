@@ -2,7 +2,7 @@ defaults:
 - tasks: gaussian_classification
 - budgets: gaussian_classification
 - samplers: normal
-- optimizers: medium
+- optimizers: gaussian_classification
 - stage0_models: histgradientboostingregressor
 - stage1_models: default
 - experimentdata: default

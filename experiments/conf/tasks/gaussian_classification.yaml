@@ -10,19 +10,19 @@ experimentdata:
       seed:
         type: int
         low: 0
-        high: 80
-      # hidden_size:
-      #   type: category
-      #   categories:
-      #     - 2
-      #     - 4
-      #     - 6
-      # num_layers:
-      #   type: category
-      #   categories:
-      #     - 2
-      #     - 3
-      #     - 4
+        high: 10
+      hidden_size:
+        type: category
+        categories:
+          - 2
+          - 4
+          - 6
+      num_layers:
+        type: category
+        categories:
+          - 2
+          - 3
+          - 4
 
 
 
