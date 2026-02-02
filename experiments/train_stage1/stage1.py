@@ -29,6 +29,7 @@ from l2co.plotting import (
     ertd_per_function_raster,
     plot_single_r2,
     savefig,
+    plot_metrics,
 )
 
 import xarray as xr
@@ -135,6 +136,16 @@ class Stage1Trainer(DataGenerator):
             optimizer=optax.adam(config.train.learning_rate),
             num_steps=config.train.num_steps,
             verbose=config.train.verbose,
+        )
+
+        fig, ax = plot_metrics(metrics)
+
+        experiment_sample.store(
+            name=f"metrics",
+            object=l2co.plotting.set_size(fig=fig),
+            to_disk=True,
+            store_function=l2co.plotting.FigureSaver.store,
+            load_function=l2co.plotting.FigureSaver.load,
         )
 
         y_pred_logits = stage1model.pred_logits(data=self.o_test.filter())

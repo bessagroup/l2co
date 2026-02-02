@@ -19,6 +19,7 @@ from ._src.visualize.plotting import (
     plot_3d_loss_landscape_only,
     plot_ertd,
     plot_ertd_profile,
+    plot_metrics,
     plot_r2,
     plot_single_r2,
     savefig,
@@ -38,6 +39,7 @@ __status__ = "Stable"
 __all__ = [
     "set_size",
     "plot_ertd_profile",
+    "plot_metrics",
     "plot_ertd",
     "FigureSaver",
     "plot_r2",
