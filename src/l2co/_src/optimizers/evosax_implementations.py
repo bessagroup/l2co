@@ -496,6 +496,9 @@ normalized_evosax = {normalize_key(k): v for k, v in algorithms.items()}
 # treatment
 _ = normalized_evosax.pop("svcmaes", None)
 _ = normalized_evosax.pop("svopenes", None)
+_ = normalized_evosax.pop("evotfes", None)
+_ = normalized_evosax.pop("les", None)
+_ = normalized_evosax.pop("lga", None)
 
 
 evosax_mapping = {
