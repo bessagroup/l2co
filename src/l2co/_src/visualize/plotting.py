@@ -52,7 +52,9 @@ DOUBLE_COL_WIDTH = 516.0 / 72.27  # 7.139 inches
 GOLDEN_RATIO = (5**0.5 - 1) / 2
 
 
-def set_size(fig: plt.Figure, n_side_by_side=1, span_columns=False):
+def set_size(
+    fig: plt.Figure, n_side_by_side=1, span_columns=False, height: float = 0.8
+):
     """
     Set figure size to fit in IEEE column layout.
 
@@ -70,7 +72,7 @@ def set_size(fig: plt.Figure, n_side_by_side=1, span_columns=False):
     target_width = total_width * available_fraction
 
     # 3. Set Height (Golden ratio is standard, but 0.8 is great for ERTD)
-    target_height = target_width * 0.8
+    target_height = target_width * height
 
     # 4. Apply dimensions and force 8pt font
     fig.set_size_inches(target_width, target_height)
@@ -103,7 +105,13 @@ class FigureSaver:
         return str(_path)
 
 
-def savefig(fig: plt.Figure, name: str, n_side_by_side=1, span_columns=False):
+def savefig(
+    fig: plt.Figure,
+    name: str,
+    n_side_by_side=1,
+    span_columns=False,
+    height=0.8,
+):
     """
     Saves a figure scaled exactly for an IEEE subfigure slot.
 
@@ -115,7 +123,10 @@ def savefig(fig: plt.Figure, name: str, n_side_by_side=1, span_columns=False):
     """
 
     fig = set_size(
-        fig, n_side_by_side=n_side_by_side, span_columns=span_columns
+        fig,
+        n_side_by_side=n_side_by_side,
+        span_columns=span_columns,
+        height=height,
     )
 
     # 5. Save with tight bounding box
@@ -726,7 +737,7 @@ def plot_ertd(
         case "iterations":
             ax.set_xlabel("Iterations / dimension")
         case "fevals":
-            ax.set_xlabel("Number of function evaluations / dimension")
+            ax.set_xlabel("Function evaluations / dimension")
         case _:
             raise ValueError(
                 f"Invalid cost_metric: {cost_metric}. "
@@ -890,5 +901,28 @@ def plot_single_r2(
     ax.set_yticklabels([])
     # ax.grid(True, linestyle=":", alpha=0.6)
     # ax.tick_params(axis="both", which="major", labelsize=7)
+
+    return fig, ax
+
+
+def plot_metrics(metrics: dict[str, Iterable[float]]):
+    fig, ax = _get_or_create_axes()
+
+    ax.plot(metrics["train_loss"], label="Train loss", color="#000000")
+    ax.plot(metrics["val_loss"], label="Validation loss", color="#CC3311")
+    ax.set_xlabel("Epochs")
+    ax.set_ylabel("Loss")
+    ax.set_yscale("log")
+
+    ax.legend(
+        loc="best",  # Position inside the axes
+        fontsize=7,  # IEEE standard for legends is often 7pt
+        frameon=True,  # Enable the box
+        fancybox=False,  # IEEE style usually prefers square corners
+        edgecolor="#BBBBBB",  # Explicit frame color
+        framealpha=1.0,  # Make it opaque so grid lines don't bleed through
+        labelspacing=0.2,  # Tighten the vertical space between entries
+        borderaxespad=0.5,  # Distance from the axis edge
+    )
 
     return fig, ax

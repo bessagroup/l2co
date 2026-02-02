@@ -61,6 +61,7 @@ LABEL_MAP = {
     "lbfgs": "L-BFGS",
     "pso": "PSO",
     "adam_learning_rate=0.01": "Adam",
+    "adam_learning_rate=0.3": "Adam",
     "stage0": r"L2CO ($g_\text{first}$)",
     "l2co": r"L2CO ($g_\text{first} \rightarrow g_\text{second}$)",
 }

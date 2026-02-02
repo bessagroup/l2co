@@ -88,8 +88,9 @@ def ertd_per_category(d, line=None):
         savefig(
             fig=fig_print,
             name=f"rtd_{names[i]}",
-            n_side_by_side=3,
+            n_side_by_side=4,
             span_columns=True,
+            height=1.0,
         )
     return fig, axes
 
@@ -116,8 +117,9 @@ def ertd_per_dimension(d, line=None, dims: Iterable[int] | None = None):
         savefig(
             fig=fig_print,
             name=f"rtd_{dim}d",
-            n_side_by_side=3,
+            n_side_by_side=4,
             span_columns=True,
+            height=1.0,
         )
     return fig, axes
 
