@@ -1,9 +1,10 @@
 defaults:
-- tasks: bbob
-- budgets: based_on_dim
+- tasks: gaussian_classification
+- budgets: gaussian_classification
 - samplers: normal
-- optimizers: standard
-- models: histgradientboostingregressor
+- optimizers: gaussian_classification
+- stage0_models: histgradientboostingregressor
+- stage1_models: default
 - experimentdata: default
 
 n_realizations: 25
@@ -14,11 +15,18 @@ seed: 467
 mode: cluster
 
 cost_metric: fevals
-t: 1000
+t: 0.01
+t_end: 10000
 
 log_level: 20
 
-verbose: False
+# Training Hyperparameters
+train:
+  learning_rate: 1e-2
+  num_steps: 1000
+  verbose: True
+
+verbose: True
 clear_jax_cache: True
 save_input_parameters: False
 

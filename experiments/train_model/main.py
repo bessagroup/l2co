@@ -17,8 +17,8 @@ from f3dasm.hydra_tools import update_config_with_experiment_sample
 # Local
 from l2co import (
     DataLoader,
-    L2COLoader,
-    L2COModel,
+    Stage0Loader,
+    Stage0Model,
     OptimizationStep,
     FeatureProcessor,
     RunOptimization,
@@ -67,7 +67,7 @@ class ModelTrainer(DataGenerator):
         )
 
         # Initialize model
-        l2co_model = L2COModel.init(
+        l2co_model = Stage0Model.init(
             feature_processor=feature_processor,
             optimizers=optimizers,
             model=instantiate(config.models.model),
@@ -90,8 +90,8 @@ class ModelTrainer(DataGenerator):
             name="l2co_model",
             object=l2co_model,
             to_disk=True,
-            store_function=L2COLoader.store,
-            load_function=L2COLoader.load,
+            store_function=Stage0Loader.store,
+            load_function=Stage0Loader.load,
         )
 
         logger.info(

@@ -1,3 +1,5 @@
+- optimizer: snes
+- optimizer: simulatedannealing
 - optimizer: cmaes
   stopping_criteria:
     type: covariance_matrix
@@ -17,7 +19,7 @@
     grad_tol: 1e-3
     loss_tol: 1e-6
 - optimizer: pso
-- optimizer: lbfgsb
+- optimizer: lbfgs
   stopping_criteria:
     type: combined
     grad_tol: 1e-3

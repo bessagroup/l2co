@@ -6,23 +6,23 @@ Plotting module
 # =============================================================================
 
 # Local
-from ._src.plotting import (
-    OPTIMIZER_COLORS,
-    OPTIMIZER_LINESTYLES,
-    change_colors_and_style,
-    format_plot,
+from ._src.visualize.bbob_plot import (
+    ertd_per_category,
+    ertd_per_dimension,
+    ertd_per_function_raster,
+)
+from ._src.visualize.colors import get_schedule_styles
+from ._src.visualize.plotting import (
+    FigureSaver,
     plot_2d_loss_landscape_only,
     plot_2d_loss_landscape_slice_grid,
-    plot_2d_trajectories,
     plot_3d_loss_landscape_only,
-    plot_actions,
     plot_ertd,
     plot_ertd_profile,
-    plot_perf_profile,
-    plot_pp,
-    plot_rtd,
-    plot_rtd_profile,
-    plot_trajectories,
+    plot_metrics,
+    plot_r2,
+    plot_single_r2,
+    savefig,
     set_size,
 )
 
@@ -37,21 +37,19 @@ __status__ = "Stable"
 
 
 __all__ = [
-    "OPTIMIZER_COLORS",
-    "OPTIMIZER_LINESTYLES",
-    "change_colors_and_style",
-    "format_plot",
+    "set_size",
+    "plot_ertd_profile",
+    "plot_metrics",
+    "plot_ertd",
+    "FigureSaver",
+    "plot_r2",
+    "plot_single_r2",
     "plot_2d_loss_landscape_only",
     "plot_2d_loss_landscape_slice_grid",
-    "plot_2d_trajectories",
     "plot_3d_loss_landscape_only",
-    "plot_actions",
-    "plot_ertd",
-    "plot_ertd_profile",
-    "plot_perf_profile",
-    "plot_pp",
-    "plot_rtd",
-    "plot_rtd_profile",
-    "plot_trajectories",
-    "set_size",
+    "get_schedule_styles",
+    "ertd_per_category",
+    "ertd_per_dimension",
+    "ertd_per_function_raster",
+    "savefig",
 ]

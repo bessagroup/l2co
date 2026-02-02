@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from abc import abstractmethod
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 
@@ -15,17 +15,15 @@ import numpy as np
 import optax
 import xarray as xr
 from jax_tqdm import scan_tqdm
-from jaxtyping import PRNGKeyArray
 from sklearn.base import BaseEstimator
 from sklearn.multioutput import MultiOutputRegressor
 from tqdm import tqdm
 
-from l2co.naming import SCHEDULE
-
 from .data_loader import OptimizationDynamics
-from .naming import BUDGET, KIND, PROBLEM
+from .naming import FEATURE
 from .optimizerschedule import OptimizationStep
 from .task_features import FeatureProcessor, MixedEmbedding
+from .tree_utils import traj_and_stair
 
 # =============================================================================
 
@@ -52,7 +50,7 @@ class AbstractModel(eqx.Module):
 
     @classmethod
     @abstractmethod
-    def reconstruct(cls: type[T], data: dict[str, Any]) -> T:
+    def reconstruct(cls: type[T], **kwargs) -> T:
         """
         Reconstruct model from dictionary.
 
@@ -69,219 +67,457 @@ class AbstractModel(eqx.Module):
         raise NotImplementedError
 
 
+class Stage0Model(AbstractModel):
+    feature_processor_task: FeatureProcessor
+    optimizers: Iterable[OptimizationStep]
+
+    @classmethod
+    @abstractmethod
+    def init(
+        cls,
+        feature_processor_task: FeatureProcessor,
+        model: Any,
+        optimizers: Iterable[OptimizationStep],
+    ) -> Stage0Model:
+        """Initialize a Stage0Model instance.
+
+        Parameters
+        ----------
+        feature_processor_task : FeatureProcessor
+            Feature processor for task features.
+        model : Any
+            Underlying model (e.g., scikit-learn or Equinox model).
+        optimizers : Iterable[OptimizationStep]
+            List of possible optimization steps.
+
+        Returns
+        -------
+        Stage0Model
+            Initialized Stage0Model instance.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def __call__(self, x: jax.Array) -> jax.Array:
+        """Forward pass returning logits."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def pred_logits(self, data: OptimizationDynamics) -> xr.DataArray:
+        raise NotImplementedError
+
+    def evaluate(self, data: OptimizationDynamics) -> xr.DataArray:
+        """Shared logic for mapping logits to OptimizationSteps."""
+        logits_xr = self.pred_logits(data)
+        actions = jnp.argmax(logits_xr.values, axis=-1)
+
+        # Map indices to the actual OptimizationStep objects
+        optimizers = [data.y["label"].values[int(k)] for k in actions]
+
+        return xr.DataArray(
+            np.array(optimizers),
+            coords={"sample": data.y["sample"].coords["sample"]},
+            dims=["sample"],
+        )
+
+    @classmethod
+    def reconstruct(
+        cls,
+        feature_processor_task: dict,
+        model: eqx.Module | BaseEstimator,
+        optimizers: Iterable[OptimizationStep],
+    ) -> Stage0Model:
+        feature_processor_task = FeatureProcessor.reconstruct(
+            **feature_processor_task
+        )
+        optimizers = [OptimizationStep.from_dict(step) for step in optimizers]
+        return cls(
+            feature_processor_task=feature_processor_task,
+            model=model,
+            optimizers=optimizers,
+        )
+
+    def predict(
+        self,
+        x_feature_task: dict[str, Any],
+    ) -> OptimizationStep:
+        x = self.feature_processor_task.transform(x_feature_task)
+        logits = self(x)
+        action: jax.Array = jnp.argmax(logits)
+        optimizer = self.optimizers[action]
+        return optimizer
+
+
 # =============================================================================
 
 
-class L2COModel(AbstractModel):
-    feature_processor: FeatureProcessor
-    model: BaseEstimator | AbstractModel
-    type: Literal["scikit", "equinox"]
-    optimizers: Iterable[OptimizationStep]
+class ScikitStage0Model(Stage0Model):
+    model: MultiOutputRegressor
 
     @classmethod
     def init(
         cls,
-        feature_processor: FeatureProcessor,
-        model: BaseEstimator | AbstractModel,
-        type: Literal["scikit", "equinox"],
+        feature_processor_task: FeatureProcessor,
+        model: BaseEstimator,
         optimizers: Iterable[OptimizationStep],
-    ) -> L2COModel:
-        if type not in ["scikit", "equinox"]:
-            raise ValueError(f"Unknown model type {type}")
-
-        if type == "scikit":
-            model = MultiOutputRegressor(model)
-
+    ) -> ScikitStage0Model:
+        model = MultiOutputRegressor(model)
         return cls(
-            feature_processor=feature_processor,
+            feature_processor_task=feature_processor_task,
             model=model,
-            type=type,
             optimizers=optimizers,
         )
 
+    def __call__(self, x: jax.Array) -> jax.Array:
+        # Scikit-learn expects 2D numpy arrays
+        if x.ndim == 1:
+            x = x.reshape(1, -1)
+
+        preds = self.model.predict(x)
+        return jnp.array(preds)
+
+    def pred_logits(self, data: OptimizationDynamics) -> xr.DataArray:
+        task_features = data.x_features_task.reindex(
+            {FEATURE: self.feature_processor_task.schema.keys()}
+        )
+        x = jnp.array(task_features)
+        logits = jnp.array(self.model.predict(x))
+
+        y = xr.DataArray(
+            logits,
+            coords=data.y.coords,
+            dims=data.y.dims,
+        )
+        return y
+
     def train(
         self, data: OptimizationDynamics, **kwargs
-    ) -> tuple[L2COModel, dict]:
-        if self.type == "scikit":
-            model, metrics = train_scikit(
-                model=self.model,
-                x=jnp.array(data.x_features),
-                y=jnp.array(data.y),
-                **kwargs,
-            )
-        elif self.type == "equinox":
-            model, metrics = train_equinox(
-                model=self.model,
-                x=jnp.array(data.x_features),
-                y=jnp.array(data.y),
-                **kwargs,
-            )
-        else:
-            raise ValueError(f"Unknown model type {self.type}")
+    ) -> tuple[ScikitStage0Model, dict]:
+        data_filtered = data.filter()
+        x = np.array(data_filtered.x_features_task)
+        y = np.array(data_filtered.y)
 
-        l2co_model = L2COModel(
-            feature_processor=self.feature_processor,
+        self.model.fit(x, y)
+        return self, {}
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "feature_processor_task": self.feature_processor_task.to_dict(),
+            "type": "scikit",
+            "model": self.model,
+            "optimizers": [step.to_dict() for step in self.optimizers],
+        }
+
+
+class EquinoxStage0Model(Stage0Model):
+    model: AbstractModel  # This would be your MLP or other Equinox module
+
+    @classmethod
+    def init(
+        cls,
+        feature_processor_task: FeatureProcessor,
+        model: AbstractModel,
+        optimizers: Iterable[OptimizationStep],
+    ) -> EquinoxStage0Model:
+        return cls(
+            feature_processor_task=feature_processor_task,
             model=model,
-            type=self.type,
+            optimizers=optimizers,
+        )
+
+    def __call__(self, x: jax.Array) -> jax.Array:
+        return self.model(x)
+
+    def pred_logits(self, data: OptimizationDynamics) -> xr.DataArray:
+        x = jnp.array(data.x_features_task)
+        logits = eqx.filter_vmap(self)(x)
+
+        y = xr.DataArray(
+            logits,
+            coords=data.y.coords,
+            dims=data.y.dims,
+        )
+        return y
+
+    def train(
+        self,
+        data: OptimizationDynamics,
+        optimizer: optax.GradientTransformation,
+        num_steps: int = 100,
+        verbose: bool = False,
+        scan: bool = True,
+        **kwargs,
+    ) -> tuple[EquinoxStage0Model, dict]:
+        data_filtered = data.filter()
+
+        data_train, data_val = data_filtered.train_test_split(
+            train_fraction=0.8, seed=42
+        )
+        x_train = jnp.array(data_train.x_features_task)
+        y_train = jnp.array(data_train.y)
+
+        x_val = jnp.array(data_val.x_features_task)
+        y_val = jnp.array(data_val.y)
+
+        # Re-using your existing train_equinox utility
+        model, metrics = train_equinox(
+            model=self.model,
+            optimizer=optimizer,
+            train_data=(x_train, y_train),
+            val_data=(x_val, y_val),
+            num_steps=num_steps,
+            verbose=verbose,
+            scan=scan,
+            **kwargs,
+        )
+        l2co_model = EquinoxStage0Model(
+            feature_processor_task=self.feature_processor_task,
+            model=model,
             optimizers=self.optimizers,
         )
 
         return l2co_model, metrics
 
-    def predict_logits(self, x: dict[str, Any]) -> jax.Array:
-        x_array = self.feature_processor.transform(x)
-        if self.type == "scikit":
-            logits = predict_scikit(self.model, x_array)
-        elif self.type == "equinox":
-            logits = predict_equinox(self.model, x_array)
-        else:
-            raise ValueError(f"Unknown model type {self.type}")
-
-        return logits
-
-    def predict(
-        self, x: dict[str, Any], key: PRNGKeyArray, n_realizations: int = 1
-    ) -> OptimizationStep:
-        logits = self.predict_logits(x)
-        keys = jr.split(key, num=n_realizations)
-        actions = jax.vmap(jr.categorical, in_axes=(0, None))(keys, logits)
-
-        action_list = list(map(int, actions))
-        steps = [self.optimizers[i] for i in action_list]
-        return steps
-
-    def batch_predict(self, x: dict[str, Any], key: PRNGKeyArray) -> jax.Array:
-        x_array = jnp.stack([self.predict_logits(xi) for xi in x])
-        if self.type == "scikit":
-            logits = predict_scikit(self.model, x_array)
-        elif self.type == "equinox":
-            logits = predict_equinox(self.model, x_array)
-        else:
-            raise ValueError(f"Unknown model type {self.type}")
-
-        # Sample from logits
-        keys = jr.split(key, num=len(x))
-        actions = jax.vmap(jr.categorical)(keys, logits)
-        action_list = list(map(int, actions))
-        steps = [self.optimizers[i] for i in action_list]
-        return steps
-
     def to_dict(self) -> dict[str, Any]:
-        match self.type:
-            case "scikit":
-                model = self.model
-            case "equinox":
-                model = self.model.to_dict()
-
         return {
-            "feature_processor": self.feature_processor.to_dict(),
-            "model": model,
-            "type": self.type,
+            "type": "equinox",
+            "feature_processor_task": self.feature_processor_task.to_dict(),
+            "model": self.model.to_dict(),
             "optimizers": [step.to_dict() for step in self.optimizers],
         }
 
-    @classmethod
-    def reconstruct(
-        cls,
-        feature_processor: dict,
-        optimizers: Iterable[dict],
-        model: dict | BaseEstimator,
-        type: Literal["scikit", "equinox"],
-        key: PRNGKeyArray,
-        **kwargs,
-    ) -> L2COModel:
-        feature_processor = FeatureProcessor.reconstruct(**feature_processor)
-        optimizers = [
-            OptimizationStep.from_yaml(step_dict) for step_dict in optimizers
-        ]
-        match type:
-            case "scikit":
-                pass
-            case "equinox":
-                model = make(key=key, **model)
-            case _:
-                raise ValueError(f"Unknown model type {type}")
 
-        return cls(
-            feature_processor=feature_processor,
-            model=model,
-            optimizers=optimizers,
-            type=type,
-            **kwargs,
-        )
+class Stage0Loader:
+    """
+    Utility class for loading and storing Stage0Model instances.
+    """
+
+    @staticmethod
+    def load(path: str) -> Stage0Model:
+        """
+        Load model from file.
+
+        Parameters
+        ----------
+        path : str
+            Path to model file (without extension).
+
+        Returns
+        -------
+        Stage0Model
+            Loaded model instance.
+        """
+        _path = Path(path)
+
+        with open(_path.with_suffix(".eqx"), "rb") as f:
+            hyperparams: dict = json.loads(f.readline().decode())
+            type = hyperparams.pop("type")
+            match type:
+                case "scikit":
+                    hyperparams["model"] = joblib.load(
+                        _path.with_suffix(".joblib")
+                    )
+                    model = ScikitStage0Model.reconstruct(**hyperparams)
+                    return model
+                case _:
+                    raise ValueError(f"Unknown model type {type}")
+
+    @staticmethod
+    def store(object: Stage0Model, path: str):
+        """
+        Store model to file.
+
+        Parameters
+        ----------
+        object : Stage0Model
+            Model instance to store.
+        path : str
+            Path to save model (without extension).
+
+        Returns
+        -------
+        str
+            Path to saved model file.
+        """
+        _path = Path(path)
+        hyperparams = object.to_dict()
+
+        if hyperparams["type"] == "scikit":
+            joblib_path = _path.with_suffix(".joblib")
+            joblib.dump(hyperparams["model"], filename=joblib_path)
+            hyperparams["model"] = str(joblib_path)
+
+        with open(_path.with_suffix(".eqx"), "wb") as f:
+            hyperparams_str = json.dumps(hyperparams)
+            f.write((hyperparams_str + "\n").encode())
+            if hyperparams["type"] == "equinox":
+                eqx.tree_serialise_leaves(f, object.model)
+
+        return str(_path)
 
 
-class HistoryModel(AbstractModel):
-    mixed_embedding: MixedEmbedding
-    feature_processor: FeatureProcessor
+# =============================================================================
+
+
+class Stage1Model(AbstractModel):
+    mixed_embedding_task: MixedEmbedding
+    mixed_embedding_optimizer: MixedEmbedding
+    feature_processor_task: FeatureProcessor
+    feature_processor_optimizer: FeatureProcessor
     history_encoder: eqx.Module
     model: eqx.Module
     optimizers: Iterable[OptimizationStep]
 
-    def __call__(self, x: tuple[jax.Array, jax.Array]) -> jax.Array:
-        x_features, x_history = x
+    @classmethod
+    @abstractmethod
+    def init(
+        cls,
+        feature_processor_task: FeatureProcessor,
+        feature_processor_optimizer: FeatureProcessor,
+        mixed_embedding_task: MixedEmbedding,
+        mixed_embedding_optimizer: MixedEmbedding,
+        history_encoder: eqx.Module,
+        model: eqx.Module,
+        optimizers: Iterable[OptimizationStep],
+    ) -> Stage1Model:
+        """Initialize a Stage1Model instance.
+
+        Parameters
+        ----------
+        feature_processor_task : FeatureProcessor
+            Feature processor for task features.
+        feature_processor_optimizer : FeatureProcessor
+            Feature processor for optimizer features.
+        mixed_embedding_task : MixedEmbedding
+            Mixed embedding for task features.
+        mixed_embedding_optimizer : MixedEmbedding
+            Mixed embedding for optimizer features.
+        history_encoder : eqx.Module
+            Encoder for optimization history.
+        model : eqx.Module
+            Underlying model (e.g., MLP).
+        optimizers : Iterable[OptimizationStep]
+            List of possible optimization steps.
+
+        Returns
+        -------
+        Stage1Model
+            Initialized Stage1Model instance.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def __call__(self, x: tuple[jax.Array, jax.Array, jax.Array]) -> jax.Array:
+        """Forward pass returning logits."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def pred_logits(self, data: OptimizationDynamics) -> xr.DataArray:
+        raise NotImplementedError
+
+    def predict(
+        self,
+        x_feature_task: dict[str, Any],
+        x_feature_optimizer: dict[str, Any],
+        x_output_mean: jax.Array,
+        x_output_min: jax.Array,
+        global_min: jax.Array,
+    ) -> OptimizationStep:
+        x = (
+            self.feature_processor_task.transform(x_feature_task),
+            self.feature_processor_optimizer.transform(x_feature_optimizer),
+            traj_and_stair(x_output_mean, x_output_min, global_min),
+        )
+
+        logits = self(x)
+        action: jax.Array = jnp.argmax(logits)
+        optimizer = self.optimizers[action]
+        return optimizer
+
+    def evaluate(self, data: OptimizationDynamics) -> xr.DataArray:
+        """Shared logic for mapping logits to OptimizationSteps."""
+        logits_xr = self.pred_logits(data)
+        actions = jnp.argmax(logits_xr.values, axis=-1)
+
+        # Map indices to the actual OptimizationStep objects
+        step_results = [data.y["label"].values[int(k)] for k in actions]
+
+        return xr.DataArray(
+            np.array(step_results),
+            coords={"sample": data.y["sample"].coords["sample"]},
+            dims=["sample"],
+        )
+
+
+class EquinoxStage1Model(Stage1Model):
+    mixed_embedding_task: MixedEmbedding
+    mixed_embedding_optimizer: MixedEmbedding
+    feature_processor_task: FeatureProcessor
+    feature_processor_optimizer: FeatureProcessor
+    history_encoder: LSTM_Encoder
+    model: MLP
+    optimizers: Iterable[OptimizationStep]
+
+    @classmethod
+    def init(
+        cls,
+        feature_processor_task: FeatureProcessor,
+        feature_processor_optimizer: FeatureProcessor,
+        mixed_embedding_task: MixedEmbedding,
+        mixed_embedding_optimizer: MixedEmbedding,
+        history_encoder: LSTM_Encoder,
+        model: MLP,
+        optimizers: Iterable[OptimizationStep],
+    ) -> EquinoxStage1Model:
+        return cls(
+            feature_processor_task=feature_processor_task,
+            feature_processor_optimizer=feature_processor_optimizer,
+            mixed_embedding_task=mixed_embedding_task,
+            mixed_embedding_optimizer=mixed_embedding_optimizer,
+            history_encoder=history_encoder,
+            model=model,
+            optimizers=optimizers,
+        )
+
+    def __call__(self, x: tuple[jax.Array, jax.Array, jax.Array]) -> jax.Array:
+        x_features_task, x_features_optimizer, x_history = x
         history_emb = self.history_encoder(x_history)
-        features_emb = self.mixed_embedding(x_features)
-        combined = jnp.concatenate([features_emb, history_emb], axis=-1)
+        features_task_emb = self.mixed_embedding_task(x_features_task)
+        features_optimizer_emb = self.mixed_embedding_optimizer(
+            x_features_optimizer
+        )
+        combined = jnp.concatenate(
+            [features_task_emb, features_optimizer_emb, history_emb], axis=-1
+        )
         return self.model(combined)
 
     def train(
         self,
         data: OptimizationDynamics,
-        i: int | None,
         optimizer: optax.GradientTransformation,
         num_steps: int = 100,
         verbose: bool = False,
         scan: bool = True,
-    ) -> tuple[HistoryModel, dict]:
-        # 1. Filter problems with invalid targets (must be valid for all
-        # # schedules)
-        # Note: We assume the model predicts the full y vector, so y must
-        # be valid.
-        y_mask = ~data.y.isnull().any(SCHEDULE)
-        data = data.select(problems=y_mask)
-
+    ) -> tuple[EquinoxStage1Model, dict]:
         # 2. Split by problem to prevent leakage
-        data_train, data_val = data.train_test_split(
+        data_train, data_val = data.filter().train_test_split(
             train_fraction=0.8, seed=42
         )
 
-        def make_dataset(d: OptimizationDynamics) -> tuple[tuple, jax.Array]:
-            if i is not None:
-                # Single schedule mode
-                xh = d.x_history.isel({SCHEDULE: i}, drop=True)  # (P, B, K)
+        x_train = (
+            jnp.array(data_train.x_features_task),
+            jnp.array(data_train.x_features_optimizer),
+            jnp.array(data_train.x_history),
+        )
 
-                # Filter indices with valid history
-                valid_mask = ~xh.isnull().any([BUDGET, KIND])
-                xh = xh.where(valid_mask, drop=True)
+        x_val = (
+            jnp.array(data_val.x_features_task),
+            jnp.array(data_val.x_features_optimizer),
+            jnp.array(data_val.x_history),
+        )
 
-                # Align features and targets
-                xf = d.x_features.sel({PROBLEM: xh[PROBLEM]})
-                y = d.y.sel({PROBLEM: xh[PROBLEM]})
-
-                return (jnp.array(xf), jnp.array(xh)), jnp.array(y)
-            else:
-                # All schedules mode
-                # Stack (PROBLEM, SCHEDULE) into a single sample dimension
-                xh = d.x_history.stack(sample=(PROBLEM, SCHEDULE))
-
-                # Filter indices with valid history
-                valid_mask = ~xh.isnull().any([BUDGET, KIND])
-                xh = xh.where(valid_mask, drop=True)
-
-                # Align features and targets
-                # xh[PROBLEM] gives the problem index for each valid sample
-                xf = d.x_features.sel({PROBLEM: xh[PROBLEM]})
-                y = d.y.sel({PROBLEM: xh[PROBLEM]})
-
-                # Transpose xh to (sample, B, K) to match expected input
-                #  shape for batching
-                xh = xh.transpose("sample", BUDGET, "kind")
-
-                return (jnp.array(xf), jnp.array(xh)), jnp.array(y)
-
-        x_train, y_train = make_dataset(data_train)
-        x_val, y_val = make_dataset(data_val)
+        y_train = jnp.array(data_train.y)
+        y_val = jnp.array(data_val.y)
 
         model, metrics = train_equinox(
             model=self,
@@ -294,90 +530,193 @@ class HistoryModel(AbstractModel):
         )
         return model, metrics
 
+    def pred_logits(self, data: OptimizationDynamics) -> xr.DataArray:
+        x = (
+            jnp.array(data.x_features_task),
+            jnp.array(data.x_features_optimizer),
+            jnp.array(data.x_history),
+        )
+        logits = eqx.filter_vmap(self)(x)
+        y = xr.DataArray(
+            logits,
+            coords=data.y.coords,
+            dims=data.y.dims,
+        )
+        return y
+
     def evaluate(
         self,
-        key: PRNGKeyArray,
         data: OptimizationDynamics,
-        i: int | None,
-    ) -> jax.Array:
-        if i is not None:
-            x_eval = (
-                jnp.array(
-                    data.x_features,
-                ),
-                jnp.array(data.x_history.isel(schedule=i, drop=True)),
-            )
+    ) -> xr.DataArray:
+        x_eval = (
+            jnp.array(data.x_features_task),
+            jnp.array(data.x_features_optimizer),
+            jnp.array(data.x_history),
+        )
 
-            logits = eqx.filter_vmap(self)(x_eval)
-            # actions: jax.Array = jr.categorical(key, logits)
-            actions: jax.Array = jnp.argmax(logits, axis=-1)
+        logits = eqx.filter_vmap(self)(x_eval)
+        actions: jax.Array = jnp.argmax(logits, axis=-1)
 
-            optimizers = [self.optimizers[k] for k in actions]
-            y = (
-                xr.DataArray(
-                    optimizers,
-                    dims="problem",
-                    coords={"problem": data.x_features[PROBLEM]},
-                )
-                .assign_coords({PROBLEM: data.x_features[PROBLEM]})
-                .drop_vars(PROBLEM)
-            )
-        else:
-            # i is None: Evaluate on ALL (Problem, Schedule) pairs
+        optimizers = [data.y["label"].values[int(k)] for k in actions]
 
-            # Stack to create single sample dimension
-            xh_stacked = data.x_history.stack(sample=(PROBLEM, SCHEDULE))
-
-            # Align features
-            # xh_stacked[PROBLEM] gives the problem index for each sample
-            xf_aligned = data.x_features.sel({PROBLEM: xh_stacked[PROBLEM]})
-            x_eval = (
-                jnp.array(xf_aligned),
-                jnp.array(xh_stacked.transpose("sample", BUDGET, "kind")),
-            )
-
-            logits = eqx.filter_vmap(self)(x_eval)
-            actions: jax.Array = jnp.argmax(logits, axis=-1)
-
-            optimizers = [self.optimizers[k] for k in actions]
-
-            # Create DataArray with stacked coord
-            y_flat = xr.DataArray(
-                optimizers,
-                dims="sample",
-                coords={"sample": xh_stacked["sample"]},
-            )
-
-            # Unstack back to (PROBLEM, SCHEDULE)
-            y = y_flat.unstack("sample")
+        y = xr.DataArray(
+            np.array(optimizers),
+            coords={"sample": data.y["sample"].coords["sample"]},
+            dims=["sample"],
+        )
 
         return y
 
-    def predict_logits(
-        self,
-        x_feature: dict[str, Any],
-        x_history: jax.Array,
-    ) -> jax.Array:
-        x = (self.feature_processor.transform(x_feature), x_history)
-        return self(x)
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "feature_processor_task": self.feature_processor_task.to_dict(),
+            "feature_processor_optimizer": self.feature_processor_optimizer.to_dict(),  # noqa
+            "mixed_embedding_task": self.mixed_embedding_task.to_dict(),
+            "mixed_embedding_optimizer": self.mixed_embedding_optimizer.to_dict(),  # noqa
+            "history_encoder": self.history_encoder.to_dict(),
+            "model": self.model.to_dict(),
+            "optimizers": [step.to_dict() for step in self.optimizers],
+        }
 
-    def predict(
-        self,
-        x_feature: dict[str, Any],
-        x_history: jax.Array,
-        key: PRNGKeyArray,
+    @classmethod
+    def reconstruct(
+        cls,
+        feature_processor_task: dict,
+        feature_processor_optimizer: dict,
+        mixed_embedding_task: dict,
+        mixed_embedding_optimizer: dict,
+        history_encoder: dict,
+        model: dict,
+        optimizers: Iterable[dict],
+    ) -> EquinoxStage1Model:
+        feature_processor_task = FeatureProcessor.reconstruct(
+            **feature_processor_task
+        )
+
+        feature_processor_optimizer = FeatureProcessor.reconstruct(
+            **feature_processor_optimizer
+        )
+
+        mixed_embedding_task = MixedEmbedding.reconstruct(
+            **mixed_embedding_task
+        )
+        mixed_embedding_optimizer = MixedEmbedding.reconstruct(
+            **mixed_embedding_optimizer
+        )
+
+        history_encoder = LSTM_Encoder.reconstruct(**history_encoder)
+
+        model = MLP.reconstruct(**model)
+
+        optimizers = [OptimizationStep.from_dict(step) for step in optimizers]
+
+        return cls(
+            feature_processor_task=feature_processor_task,
+            feature_processor_optimizer=feature_processor_optimizer,
+            mixed_embedding_task=mixed_embedding_task,
+            mixed_embedding_optimizer=mixed_embedding_optimizer,
+            history_encoder=history_encoder,
+            model=model,
+            optimizers=optimizers,
+        )
+
+
+class Stage1Loader:
+    """
+    Utility class for loading and storing Stage1Model instances.
+    """
+
+    @staticmethod
+    def load(path: str) -> Stage1Model:
+        """
+        Load model from file.
+
+        Parameters
+        ----------
+        path : str
+            Path to model file (without extension).
+
+        Returns
+        -------
+        Stage1Model
+            Loaded model instance.
+        """
+        _path = Path(path)
+
+        with open(_path.with_suffix(".eqx"), "rb") as f:
+            hyperparams: dict = json.loads(f.readline().decode())
+            model = EquinoxStage1Model.reconstruct(**hyperparams)
+            model = eqx.tree_deserialise_leaves(f, model)
+            return model
+
+    @staticmethod
+    def store(object: Stage1Model, path: str):
+        """
+        Store model to file.
+
+        Parameters
+        ----------
+        object : Stage1Model
+            Model instance to store.
+        path : str
+            Path to save model (without extension).
+
+        Returns
+        -------
+        str
+            Path to saved model file.
+        """
+        _path = Path(path)
+        hyperparams = object.to_dict()
+
+        with open(_path.with_suffix(".eqx"), "wb") as f:
+            hyperparams_str = json.dumps(hyperparams)
+            f.write((hyperparams_str + "\n").encode())
+            eqx.tree_serialise_leaves(f, object)
+
+        return str(_path)
+
+
+# ============================================================================
+
+
+class L2COModel(eqx.Module):
+    stage0_model: Stage0Model
+    stage1_model: Stage1Model
+
+    def predict_stage0(
+        self, task_features: dict[str, Any]
     ) -> OptimizationStep:
-        logits = self.predict_logits(x_feature, x_history)
-        action = jr.categorical(key, logits)
-        step = self.optimizers[int(action)]
-        return step
+        return self.stage0_model.predict(task_features)
 
-    def reconstruct() -> HistoryModel: ...
+    def predict_stage1(
+        self,
+        task_features: dict[str, Any],
+        optimizer_features: dict[str, Any],
+        x_output_mean: jax.Array,
+        x_output_min: jax.Array,
+        global_min: jax.Array,
+    ) -> OptimizationStep:
+        return self.stage1_model.predict(
+            x_feature_task=task_features,
+            x_feature_optimizer=optimizer_features,
+            x_output_mean=jnp.array(x_output_mean),
+            x_output_min=jnp.array(x_output_min),
+            global_min=jnp.array(global_min),
+        )
 
-    def to_dict(self) -> dict[str, Any]: ...
+    @classmethod
+    def load(cls, stage0_model: str, stage1_model: str) -> L2COModel:
+        stage0_model_loaded = Stage0Loader.load(stage0_model)
+        stage1_model_loaded = Stage1Loader.load(stage1_model)
+        return cls(
+            stage0_model=stage0_model_loaded,
+            stage1_model=stage1_model_loaded,
+        )
 
 
-class LSTM_Encoder(eqx.Module):
+# =============================================================================
+class LSTM_Encoder(AbstractModel):
     """
     LSTM Encoder module.
 
@@ -401,6 +740,7 @@ class LSTM_Encoder(eqx.Module):
     """
 
     hidden_size: int
+    in_size: int
     out_size: int
     cell: eqx.nn.LSTMCell
     linear: eqx.nn.Linear
@@ -408,7 +748,7 @@ class LSTM_Encoder(eqx.Module):
     def __init__(self, in_size, hidden_size, out_size, *, key):
         self.hidden_size = hidden_size
         self.out_size = out_size
-        # self.cell = eqx.nn.GRUCell(in_size, hidden_size, key=key)
+        self.in_size = in_size
         self.cell = eqx.nn.LSTMCell(in_size, hidden_size, key=key)
         self.linear = eqx.nn.Linear(hidden_size, out_size, key=key)
 
@@ -441,79 +781,37 @@ class LSTM_Encoder(eqx.Module):
         h = self.linear(h)
         return h
 
+    def to_dict(self) -> dict[str, Any]:
+        """
+        Serialize LSTM encoder configuration.
+
+        Returns
+        -------
+        dict[str, Any]
+            Configuration dictionary.
+        """
+        return {
+            "in_size": self.in_size,
+            "hidden_size": self.hidden_size,
+            "out_size": self.out_size,
+        }
+
+    @classmethod
+    def reconstruct(
+        cls,
+        in_size: int,
+        hidden_size: int,
+        out_size: int,
+    ) -> LSTM_Encoder:
+        return cls(
+            in_size=in_size,
+            hidden_size=hidden_size,
+            out_size=out_size,
+            key=jr.key(0),
+        )
+
 
 # =============================================================================
-
-
-class L2COLoader:
-    """
-    Utility class for loading and storing Equinox models.
-    """
-
-    @staticmethod
-    def load(path: str) -> L2COModel:
-        """
-        Load model from file.
-
-        Parameters
-        ----------
-        path : str
-            Path to model file (without extension).
-
-        Returns
-        -------
-        eqx.Module
-            Loaded model instance.
-        """
-        _path = Path(path)
-        key = jr.key(0)
-
-        with open(_path.with_suffix(".eqx"), "rb") as f:
-            hyperparams = json.loads(f.readline().decode())
-            if hyperparams["type"] == "equinox":
-                model = make(key=key, **hyperparams)
-                return eqx.tree_deserialise_leaves(f, model)
-            elif hyperparams["type"] == "scikit":
-                hyperparams["model"] = joblib.load(hyperparams["model"])
-                model = make(key=key, **hyperparams)
-                return model
-            else:
-                raise ValueError(f"Unknown model type {hyperparams['type']}")
-
-    @staticmethod
-    def store(object: L2COModel, path: str):
-        """
-        Store model to file.
-
-        Parameters
-        ----------
-        object : AbstractModel
-            Model instance to store.
-        path : str
-            Path to save model (without extension).
-
-        Returns
-        -------
-        str
-            Path to saved model file.
-        """
-        _path = Path(path)
-        hyperparams = object.to_dict()
-        hyperparams["model_type"] = object.__class__.__name__.lower()
-
-        if hyperparams["type"] == "scikit":
-            joblib_path = _path.with_suffix(".joblib")
-            joblib.dump(object.model, filename=joblib_path)
-            hyperparams["model"] = str(joblib_path)
-
-        with open(_path.with_suffix(".eqx"), "wb") as f:
-            hyperparams_str = json.dumps(hyperparams)
-            f.write((hyperparams_str + "\n").encode())
-            if hyperparams["type"] == "equinox":
-                eqx.tree_serialise_leaves(f, object)
-
-        return str(_path)
-
 
 # =============================================================================
 
@@ -543,7 +841,7 @@ def make(*, model_type: str, **kwargs) -> AbstractModel:
         case "mlp":
             return MLP.reconstruct(**kwargs)
         case "l2comodel":
-            return L2COModel.reconstruct(**kwargs)
+            return Stage0Model.reconstruct(**kwargs)
         case _:
             raise ValueError(f"Unknown model type: {model_type}")
 
@@ -580,22 +878,40 @@ def predict_equinox(
 
 
 class MLP(AbstractModel):
-    mixed_embedding: MixedEmbedding
     model: eqx.nn.MLP
 
     def __init__(
         self,
-        mixed_embedding: MixedEmbedding,
         model: eqx.Module,
     ):
-        self.mixed_embedding = mixed_embedding
         self.model = model
+
+    @classmethod
+    def init(
+        cls,
+        in_size: int,
+        out_size: int,
+        width_size: int,
+        depth: int,
+        activation: Callable = jax.nn.relu,
+        *,
+        key,
+    ):
+        model = eqx.nn.MLP(
+            in_size=in_size,
+            out_size=out_size,
+            width_size=width_size,
+            depth=depth,
+            activation=activation,
+            key=key,
+        )
+        return cls(model=model)
 
     def __call__(
         self,
-        x: dict[str, Any],
+        x: jax.Array,
     ) -> jax.Array:
-        return self.model(self.mixed_embedding(x))
+        return self.model(x)
 
     def to_dict(self) -> dict[str, Any]:
         match self.model.activation:
@@ -604,89 +920,51 @@ class MLP(AbstractModel):
             case jax.nn.tanh:
                 activation_str = "tanh"
         return {
-            "model_type": self.__class__.__name__.lower(),
-            "mixed_embedding": self.mixed_embedding.to_dict(),
-            "model": {
-                "in_size": self.model.in_size,
-                "out_size": self.model.out_size,
-                "width_size": self.model.width_size,
-                "depth": self.model.depth,
-                "activation": activation_str,
-            },
+            "in_size": self.model.in_size,
+            "out_size": self.model.out_size,
+            "width_size": self.model.width_size,
+            "depth": self.model.depth,
+            "activation": activation_str,
         }
 
     @classmethod
     def reconstruct(
         cls,
-        mixed_embedding: dict,
-        model: dict,
-        key: PRNGKeyArray,
+        activation: Literal["relu", "tanh"],
         **kwargs,
     ) -> MLP:
-        mixed_embedding = MixedEmbedding.reconstruct(
-            **mixed_embedding, key=key
-        )
-
-        match model["activation"]:
+        match activation:
             case "relu":
-                model["activation"] = jax.nn.relu
+                activation_fn = jax.nn.relu
             case "tanh":
-                model["activation"] = jax.nn.tanh
-
-        mlp_model = eqx.nn.MLP(
-            **model,
-            key=key,
+                activation_fn = jax.nn.tanh
+        model = eqx.nn.MLP(
+            **kwargs,
+            activation=activation_fn,
+            key=jr.key(0),
         )
 
         return cls(
-            mixed_embedding=mixed_embedding,
-            model=mlp_model,
+            model=model,
         )
 
 
-def mse_loss(
-    model: AbstractModel, x: dict[str, Any], y: jax.Array
-) -> jax.Array:
+def mse_loss(model: AbstractModel, x, y) -> jax.Array:
     """Mean squared error between model predictions and targets."""
     preds = eqx.filter_vmap(model)(x)
     return jnp.mean((preds - y) ** 2)
 
 
-# def train_equinox(
-#     model: AbstractModel,
-#     x: jax.Array,
-#     y: jax.Array,
-#     optimizer: optax.GradientTransformation,
-#     num_steps: int = 100,
-#     verbose: bool = False,
-# ) -> tuple[AbstractModel, list[float]]:
-#     """Train the model with Adam on an iterable of (x, y) batches."""
-#     opt_state = optimizer.init(eqx.filter(model, eqx.is_inexact_array))
-#     loss_and_grad = eqx.filter_value_and_grad(mse_loss)
-
-#     loss_history: list[float] = []
-
-#     for _ in tqdm(range(num_steps), disable=not verbose):
-#         loss, grads = loss_and_grad(model, x, y)
-#         updates, opt_state = optimizer.update(grads, opt_state, model)
-#         model = eqx.apply_updates(model, updates)
-
-#         loss_history.append(float(loss))
-
-#     return model, loss_history
-
-
 def train_equinox(
     model: eqx.Module,
     optimizer: optax.GradientTransformation,
-    train_data: tuple[jax.Array, jax.Array],
-    val_data: tuple[jax.Array, jax.Array] | None = None,  # Optional validation
+    train_data: tuple[tuple[jax.Array, jax.Array, jax.Array], jax.Array],
+    val_data: tuple[tuple[jax.Array, jax.Array, jax.Array], jax.Array]
+    | None = None,  # Optional validation
     num_steps: int = 100,
     verbose: bool = False,
     scan: bool = True,
 ) -> tuple[eqx.Module, dict[str, jax.Array]]:
-    x_train, y_train = train_data
-
     params, static = eqx.partition(model, eqx.is_inexact_array)
     opt_state = optimizer.init(params)
 

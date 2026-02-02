@@ -24,8 +24,6 @@ create_performance_profile
 # Standard
 from __future__ import annotations
 
-from typing import Literal
-
 # Third-party
 import numpy as np
 import xarray as xr
@@ -33,8 +31,7 @@ import xarray as xr
 from .naming import (
     BUDGET,
     COST,
-    FEVALS,
-    ITERATIONS,
+    GLOBAL_MIN,
     OUTPUT_DIM,
     OUTPUT_MIN,
     PROBLEM,
@@ -54,7 +51,8 @@ __status__ = "Planning"
 # =============================================================================
 
 EPSILON = 1e-8
-DEFAULT_COST_VALUES = np.logspace(-1, 6, 100) ** 0.8
+# DEFAULT_COST_VALUES = np.logspace(-1, 6, 100) ** 0.8
+DEFAULT_COST_VALUES = np.append(np.logspace(-1, 6, 1000) ** 0.8, 10**5)
 DEFAULT_TARGETS = np.linspace(0.0, 1.0, 51)
 
 
@@ -151,20 +149,52 @@ def cap_value(data: xr.DataArray, cap: float = EPSILON) -> xr.DataArray:
     return data.where((data >= cap) | (data <= 0.0) | data.isnull(), other=cap)
 
 
-def min_custom(x: xr.DataArray) -> xr.DataArray:
-    p = x - np.nanmin(x)
-    eps = (np.where(p > 0.0, p, np.nanmax(p) + EPSILON)).min() + EPSILON
+# def min_custom(x: xr.DataArray) -> xr.DataArray:
+#     p = x - np.nanmin(x)
+#     eps = (np.where(p > 0.0, p, np.nanmax(p) + EPSILON)).min() + EPSILON
+#     x_log10 = np.log10(p + eps)
+#     # 5. Min-max scaling of the data
+#     x_min = np.nanmin(x_log10)
+#     x_max = np.nanmax(x_log10)
+#     return (x_log10 - x_min) / (x_max - x_min + EPSILON)
+
+
+def min_custom(ds: xr.Dataset) -> xr.DataArray:
+    """
+    Applies custom log scaling to 'output_min' based on the presence
+    of 'global_min' within the dataset slice.
+    """
+    x = ds[OUTPUT_MIN]
+    g_min = ds[GLOBAL_MIN]
+
+    # 1. Determine p based on whether global_min is NaN
+    # We check if all values in g_min are NaN (assuming one g_min per task)
+    if g_min.isnull().all():
+        p = x - x.min(skipna=True)
+    else:
+        p = x - g_min
+
+    # 2. Calculate epsilon for the log shift
+    # We find the smallest positive value to avoid log(0)
+    p_positive = p.where(p > 0)
+    eps = p_positive.min(skipna=True) + EPSILON
+
+    # 3. Apply log10 scaling
     x_log10 = np.log10(p + eps)
-    # 5. Min-max scaling of the data
-    x_min = np.nanmin(x_log10)
-    x_max = np.nanmax(x_log10)
+
+    # 4. Min-max scaling
+    x_min = x_log10.min(skipna=True)
+    x_max = x_log10.max(skipna=True)
+
     return (x_log10 - x_min) / (x_max - x_min + EPSILON)
 
 
 # =============================================================================
 
 
-def scale_by_task(data: xr.DataArray) -> xr.DataArray:
+def scale_by_task(
+    data: xr.DataArray, global_min: xr.DataArray
+) -> xr.DataArray:
     """
     Scale the given data array using a custom scaling method.
 
@@ -184,7 +214,9 @@ def scale_by_task(data: xr.DataArray) -> xr.DataArray:
     min-max scaling for each realization in the data.
     """
     # Cap the loss value at 1e-8
-    ds_output = cap_value(data, cap=EPSILON)
+    ds_output = xr.Dataset(
+        {OUTPUT_MIN: cap_value(data, cap=EPSILON), GLOBAL_MIN: global_min}
+    )
 
     ds_log10_positive = ds_output.groupby(TASK_ID).map(min_custom)
 
@@ -331,26 +363,69 @@ def rtd(performance: xr.DataArray) -> xr.DataArray:
 
 def ertd(
     performance: xr.Dataset,
-    cost_measure: Literal[FEVALS, ITERATIONS],
     dims: xr.DataArray,
     cost_values: np.ndarray = DEFAULT_COST_VALUES,
 ) -> xr.DataArray:
-    targets = xr.DataArray(DEFAULT_TARGETS, dims=TARGET)
-    solved = performance[OUTPUT_MIN] <= targets
-    success = solved.any(BUDGET)
-    first_solved = solved.argmax(BUDGET).where(
-        success, other=solved[BUDGET].argmax()
-    )
-
     ds = xr.Dataset(
         {
-            COST: performance[cost_measure].isel({BUDGET: first_solved}),
-            SUCCESS: success,
+            COST: performance[COST],
+            SUCCESS: performance[SUCCESS].fillna(False),
             "dims": dims,
         }
     )
 
-    ert_multi = compute_ert_multi_seed(ds, n_seeds=50, n_picks=50)
+    ds = ds.unstack(PROBLEM)
+
+    samples = np.stack(
+        [
+            draw_samples(
+                seed=s, n_realizations=ds[REALIZATION].size, n_picks=50
+            )
+            for s in np.arange(50)
+        ],
+        axis=0,
+    )
+
+    samples_da = xr.DataArray(
+        samples,
+        dims=(SEED, REALIZATION),
+    )
+
+    ds_selected = ds.isel({REALIZATION: samples_da})
+
+    # # Find index of first True along "problem"
+    first_true = ds_selected[SUCCESS].argmax(REALIZATION)
+
+    # # Handle case where there is no True at all
+    first_true = first_true.where(
+        ds_selected[SUCCESS].any(REALIZATION), other=-1
+    )
+
+    # # Coordinate index
+    idx = xr.DataArray(
+        np.arange(ds_selected.sizes[REALIZATION]), dims=REALIZATION
+    )
+
+    # # Mask up to first True
+    mask = (idx <= first_true).fillna(False)
+
+    # # Sum cost up to first True
+    ert = ds_selected[COST].where(mask, 0).sum(REALIZATION)
+    # # If not any success, put NaN
+    ert = ert.where(ds_selected[SUCCESS].any(REALIZATION))
+
+    # # Divide by the dimensionality of the problem
+    ert = ert / ds_selected["dims"].mean(REALIZATION)
+
+    ert_multi = ert.mean(SEED)
+    values = np.unique(DEFAULT_COST_VALUES)
+    budgets = xr.DataArray(
+        values,
+        dims="cost_per_dim",
+        coords={"cost_per_dim": values},
+    )
+
+    ertd = (ert_multi <= budgets).mean([OUTPUT_DIM, TARGET])
 
     values = np.unique(cost_values)
 
@@ -368,10 +443,10 @@ def draw_samples(seed: int, n_realizations: int, n_picks: int):
     rng = np.random.default_rng(seed)
     return np.concatenate(
         [
-            rng.permutation(n_realizations + 1),
+            rng.permutation(n_realizations),
             rng.integers(
                 0,
-                n_realizations + 1,
+                n_realizations,
                 size=max(n_picks - n_realizations, 0),
             ),
         ]
@@ -431,6 +506,7 @@ def compute_ert_multi_seed(
         dims=(SEED, PROBLEM),
     )
 
+    # TODO: is this necessary?
     ert_all = ds.groupby(TASK_ID).map(compute_ert_group, samples=samples_da)
 
     ert_full = ert_all.sel({TASK_ID: ds[TASK_ID]})

@@ -5,7 +5,7 @@ from l2co._src.performance import output_cummin, scale_by_task, ertd
 from l2co._src.tree_utils import traj_and_stair
 import l2co.plotting
 import jax.random as jr
-from l2co._src.models import MLP, HistoryModel, LSTM_Encoder
+from l2co._src.models import MLP, EquinoxStage1Model, LSTM_Encoder
 import numpy as np
 import optax
 import xarray as xr
@@ -47,7 +47,7 @@ def main(i: int, t_end: float):
     )
 
     mixed_embedding = MixedEmbedding.from_feature_processor(
-        feature_processor=o.feature_processor,
+        feature_processor=o.feature_processor_task,
         embed_dim=4,
         output_dim=8,
         key=jr.key(3),
@@ -61,9 +61,9 @@ def main(i: int, t_end: float):
         key=jr.key(4),
     )
 
-    history_model = HistoryModel(
-        feature_processor=o.feature_processor,
-        mixed_embedding=mixed_embedding,
+    history_model = EquinoxStage1Model(
+        feature_processor_task=o.feature_processor_task,
+        mixed_embedding_task=mixed_embedding,
         history_encoder=history_encoder,
         model=model,
         optimizers=d.optimizers.values,

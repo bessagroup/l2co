@@ -209,40 +209,10 @@ def minmax_scale(x: jax.Array, min: jax.Array, max: jax.Array) -> jax.Array:
     return jnp.clip(normed, min=None, max=1.0)
 
 
-def log_stabilized_minmax_scale(x: jax.Array) -> jax.Array:
-    """Apply log-stabilized min-max scaling.
-
-    Parameters
-    ----------
-    x : jax.Array
-        Input array to scale.
-
-    Returns
-    -------
-    jax.Array
-        Log-stabilized scaled array in range [0, 1].
-    """
-    p = x - jnp.min(x)
-
-    # Only take positive entries for epsilon computation
-    pos_vals = jnp.where(p > 0, p, jnp.inf)
-    eps = jnp.min(pos_vals)
-    eps = jnp.where(jnp.isinf(eps), EPSILON, eps) + EPSILON
-
-    x_log10 = jnp.log10(p + eps)
-    x_min = jnp.min(x_log10)
-    x_max = jnp.max(x_log10)
-
-    normed = (x_log10 - x_min) / (x_max - x_min + EPSILON)
-
-    # Do this to avoid floating point issues with jitting
-    return jnp.clip(normed, 0.0, 1.0)
-
-
-def log_stabilized_minmax_scale_with_global_min(
+def log_stabilized_minmax_scale(
     x: jax.Array, global_min: jax.Array
 ) -> jax.Array:
-    """Apply log-stabilized min-max scaling with global minimum reference.
+    """Apply log-stabilized min-max scaling.
 
     Parameters
     ----------
@@ -256,8 +226,7 @@ def log_stabilized_minmax_scale_with_global_min(
     jax.Array
         Log-stabilized scaled array in range [0, 1].
     """
-    shift = jnp.minimum(jnp.min(x), global_min)
-    p = x - shift
+    p = x - global_min
 
     # Only take positive entries for epsilon computation
     pos_vals = jnp.where(p > 0, p, jnp.inf)
@@ -265,9 +234,7 @@ def log_stabilized_minmax_scale_with_global_min(
     eps = jnp.where(jnp.isinf(eps), EPSILON, eps) + EPSILON
 
     x_log10 = jnp.log10(p + eps)
-
-    # x_min = jnp.min(x_log10)
-    x_min = jnp.log10(global_min - shift + EPSILON)
+    x_min = jnp.min(x_log10)
     x_max = jnp.max(x_log10)
 
     normed = (x_log10 - x_min) / (x_max - x_min + EPSILON)
@@ -296,10 +263,38 @@ def output_cummin(x: jax.Array) -> jax.Array:
 # =============================================================================
 
 
-def traj_and_stair(x_output_mean, x_output_min):
+def log_stabilized_minmax_scale_with_global_min(
+    x: jax.Array, global_min: jax.Array
+) -> jax.Array:
+    """Apply log-stabilized min-max scaling with global minimum reference.
+
+    Parameters
+    ----------
+    x : jax.Array
+        Input array to scale.
+    global_min : jax.Array
+        Global minimum value for reference.
+
+    Returns
+    -------
+    jax.Array
+        Log-stabilized scaled array in range [0, 1].
+    """
+    p = x - global_min
+    p_log10 = jnp.log10(p + EPSILON)
+    normed = (p_log10 - jnp.log10(EPSILON)) / (
+        jnp.max(p_log10, axis=0) - jnp.log10(EPSILON) + EPSILON
+    )
+    return jnp.clip(normed, 0.0, 1.0)
+
+
+def traj_and_stair(x_output_mean, x_output_min, global_min):
     traj = ffill(bfill(x_output_mean))
     stair = output_cummin(ffill(bfill(x_output_min)))
-    return log_stabilized_minmax_scale(jnp.stack((traj, stair), axis=1))
+    return log_stabilized_minmax_scale_with_global_min(
+        jnp.stack((traj, stair), axis=1),
+        global_min,
+    )
 
 
 # =============================================================================

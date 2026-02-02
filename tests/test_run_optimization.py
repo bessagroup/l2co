@@ -19,7 +19,7 @@ from l2co._src.tasks.pde import create_pde_task
 from l2co.sampling import normal_sampling
 from l2co import Task
 
-from . import OPTIMIZATION_STEPS
+from . import OPTIMIZATION_STEPS, ALL_OPTIMIZERS
 
 # =============================================================================
 
@@ -97,6 +97,21 @@ def test_bbob(
     )
     run(
         optimizer=optimizer,
+        task=task,
+        sampler=normal_sampling,
+        include_input_mean=False,
+    )
+
+
+@pytest.mark.parametrize("optimizer", ALL_OPTIMIZERS)
+def test_all_optimizers(optimizer: str):
+    task = create_bbob_task(
+        fn_name="rastrigin",
+        seed=0,
+        dimensionality=2,
+    )
+    run(
+        optimizer=OptimizationStep(optimizer=optimizer),
         task=task,
         sampler=normal_sampling,
         include_input_mean=False,

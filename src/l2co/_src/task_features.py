@@ -69,6 +69,9 @@ class FeatureProcessor(eqx.Module):
         """
         feats = []
         for name, ftype in self.schema.items():
+            if name not in x:
+                feats.append(jnp.nan)
+                continue
             if ftype == "boolean":
                 val = str(x[name]).lower()
             else:
@@ -91,7 +94,7 @@ class FeatureProcessor(eqx.Module):
             Configuration dictionary.
         """
         return {
-            "schema": self.schema,
+            "schema": dict(self.schema),
             "means": self.means,
             "stds": self.stds,
             "vocabs": self.vocabs,
@@ -254,9 +257,7 @@ class MixedEmbedding(eqx.Module):
         return {"embedders": embed_list, "final_proj": final_dict}
 
     @classmethod
-    def reconstruct(
-        cls, embedders, final_proj, key: jax.Array, **kwargs
-    ) -> MixedEmbedding:
+    def reconstruct(cls, embedders, final_proj, **kwargs) -> MixedEmbedding:
         """
         Reconstruct embedding from configuration.
 
@@ -276,6 +277,7 @@ class MixedEmbedding(eqx.Module):
         MixedEmbedding
             Reconstructed embedding instance.
         """
+        key = jr.key(0)
         k1, k2 = jr.split(key)
 
         embedders_list = []
@@ -300,6 +302,7 @@ class MixedEmbedding(eqx.Module):
             else:
                 raise ValueError(f"Unknown embedder type {emb['_type']}")
 
+        out_features = final_proj["out_features"]
         final_proj = eqx.nn.Linear(
             in_features=final_proj["in_features"],
             out_features=final_proj["out_features"],
@@ -308,6 +311,6 @@ class MixedEmbedding(eqx.Module):
         return cls(
             embedders=embedders_list,
             final_proj=final_proj,
-            out_size=final_proj["out_features"],
+            out_size=out_features,
             **kwargs,
         )

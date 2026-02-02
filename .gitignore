@@ -133,6 +133,7 @@ dmypy.json
 
 # Output files
 outputs/
+multirun/
 *.csv
 *.pkl
 *.json
@@ -166,3 +167,6 @@ notebooks/
 ARCHITECT_PLAN.md
 AUDIT_REPORT.md
 NEXT_PROMPT.md
+
+# PDF files
+*.pdf

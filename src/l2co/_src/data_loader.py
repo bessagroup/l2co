@@ -20,9 +20,7 @@ create_entire_dataset
 # Standard
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Callable, Iterable
-from copy import deepcopy
 from dataclasses import dataclass, replace
 from pathlib import Path
 from time import perf_counter
@@ -31,34 +29,32 @@ from typing import Literal
 # Third-party
 import jax
 import numpy as np
-import pandas as pd
 import xarray as xr
 from scipy.linalg import svd
-from sklearn.model_selection import train_test_split
 
 # Local
 from .naming import (
     BUDGET,
     FEATURE,
     FEVALS,
-    OPT_STEPS,
+    GLOBAL_MIN,
+    ITERATIONS,
+    KIND,
     OUTPUT_DIM,
     OUTPUT_MEAN,
     OUTPUT_MIN,
     PROBLEM,
     REALIZATION,
     SCHEDULE,
+    SUCCESS,
+    TARGET,
     TASK_ID,
     TASK_LABELS,
-    UPDATE_STEP,
 )
 from .optimizationdynamics import OptimizationDynamics
 from .performance import (
     ertd,
     output_cummin,
-    performance_profile,
-    rtd,
-    scale_by_problem_and_schedule,
     scale_by_task,
 )
 from .task_features import FeatureProcessor
@@ -77,7 +73,8 @@ __status__ = "Stable"
 
 INVALID_PERFORMANCE_VALUE = 1.0
 PADDING_VALUE = 1.0
-DEFAULT_COST_VALUES = np.logspace(-1, 6, 100) ** 0.8
+# DEFAULT_COST_VALUES = np.logspace(-1, 6, 100) ** 0.8
+DEFAULT_COST_VALUES = np.append(np.logspace(-1, 6, 1000) ** 0.8, 10**5)
 
 #                                                                   Data Loader
 # =============================================================================
@@ -135,6 +132,13 @@ class DataLoader:
             ),
         )
 
+    def join(self, __o: DataLoader) -> DataLoader:
+        return replace(
+            self,
+            data=xr.concat([self.data, __o.data], dim=SCHEDULE),
+            task_labels=self.task_labels,
+        )
+
     #                                                  Alternative Constructors
     # =========================================================================
 
@@ -156,6 +160,7 @@ class DataLoader:
         DataLoader
             Instantiated DataLoader object.
         """
+        data = data.stack({PROBLEM: (REALIZATION, TASK_ID)}, create_index=True)
 
         def parse_mixed_value(val: str):
             """Try to convert a string into int, float, or leave as string."""
@@ -163,6 +168,8 @@ class DataLoader:
                 return True
             elif val.lower() == "false":
                 return False
+            elif val == "None":
+                return None
             try:
                 if "." in val or "e" in val.lower():
                     return float(val)
@@ -173,8 +180,8 @@ class DataLoader:
         task_labels = xr.apply_ufunc(
             np.vectorize(parse_mixed_value),
             data[TASK_LABELS],
-            input_core_dims=[[PROBLEM]],
-            output_core_dims=[[PROBLEM]],
+            input_core_dims=[[PROBLEM]],  # PROBLEM
+            output_core_dims=[[PROBLEM]],  # PROBLEM
             vectorize=True,
             dask="allowed",
             output_dtypes=[object],
@@ -213,24 +220,99 @@ class DataLoader:
         _path = Path(path)
 
         # Retrieve the optimization dynamics data
-        if (_path / data_filename).with_suffix(".odata").exists():
-            data = xr.open_dataset(
-                (_path / data_filename).with_suffix(".odata")
-            )
-        else:
-            data = xr.open_dataset(_path)
+        data = xr.open_dataset(_path.with_suffix(".odata"))
+
         return cls.from_xarray(data=data)
 
     #                                                                 Exporting
     # =========================================================================
+
+    def task_features(
+        self,
+        schema: dict[str, str],
+        feature_processor: FeatureProcessor | None = None,
+    ) -> tuple[xr.DataArray, FeatureProcessor]:
+        tags_list = [
+            {
+                str(k): v
+                for k, v in zip(
+                    self.task_labels[FEATURE].values, xi.values, strict=True
+                )
+            }
+            for xi in self.task_labels
+        ]
+
+        if feature_processor is None:
+            feature_processor_task = FeatureProcessor.init(
+                schema=schema, tags=tags_list
+            )
+        else:
+            feature_processor_task = feature_processor
+
+        x_features = np.stack(
+            [feature_processor_task.transform(xi) for xi in tags_list]
+        )
+
+        return (
+            xr.DataArray(
+                x_features,
+                coords={
+                    PROBLEM: self.problems,
+                    FEATURE: list(feature_processor_task.schema.keys()),
+                },
+                dims=[PROBLEM, FEATURE],
+            ),
+            feature_processor_task,
+        )
+
+    def optimizer_features(
+        self, feature_processor: FeatureProcessor | None = None
+    ) -> tuple[xr.DataArray, FeatureProcessor]:
+        # OPTIMIZER FEATURES
+        opt_labels = self.optimizers.broadcast_like(self.problems)
+
+        tags_optimizer = [
+            {"optimizer": str(xi)} for xi in opt_labels.values.flatten()
+        ]
+
+        # OPTIMIZER FEATURES
+        if feature_processor is None:
+            feature_processor_optimizer = FeatureProcessor.init(
+                schema={"optimizer": "categorical"},
+                tags=[{"optimizer": str(xi)} for xi in self.optimizers.values],
+            )
+        else:
+            feature_processor_optimizer = feature_processor
+
+        x_features_optimizer = np.stack(
+            [
+                feature_processor_optimizer.transform(xi)
+                for xi in tags_optimizer
+            ]
+        ).reshape(*opt_labels.shape, -1)
+
+        return (
+            xr.DataArray(
+                x_features_optimizer,
+                coords={
+                    PROBLEM: self.problems,
+                    SCHEDULE: self.optimizers,
+                    "optimizer_feature": ["optimizer"],
+                },
+                dims=[PROBLEM, SCHEDULE, "optimizer_feature"],
+            ),
+            feature_processor_optimizer,
+        )
 
     def to_params(
         self,
         t: float,
         t_end: int,
         schema: dict[str, str],
+        feature_processor_task: FeatureProcessor | None = None,
+        feature_processor_optimizer: FeatureProcessor | None = None,
         cost_metric: Literal["fevals", "iterations"] = "fevals",
-    ):
+    ) -> OptimizationDynamics:
         """
         Return task parameters and labels for a given budget.
 
@@ -244,93 +326,96 @@ class DataLoader:
             Schema for feature processing.
         cost_metric : {'fevals', 'iterations'}, optional
             Cost metric to use, by default 'fevals'.
+        feature_processor_task : FeatureProcessor | None, optional
+            Feature processor for task features, by default None.
+        feature_processor_optimizer : FeatureProcessor | None, optional
+            Feature processor for optimizer features, by default None.
 
         Returns
         -------
-        tuple
-            (task parameters, labels)
+        OptimizationDynamics
+            Optimization dynamics data.
         """
-        dict_features = self.task_labels.transpose(PROBLEM, FEATURE)
 
-        tags_list = [
+        x_features_task, feature_processor_task = self.task_features(
+            schema=schema,
+            feature_processor=feature_processor_task,
+        )
+        x_features_optimizer, feature_processor_optimizer = (
+            self.optimizer_features(
+                feature_processor=feature_processor_optimizer
+            )
+        )
+        x_history = self.select_t(t=t).to_traj_and_stair()
+
+        y = self.to_labels(t=t_end, cost_metric=cost_metric)
+
+        ds = xr.Dataset(
             {
-                str(k): v
-                for k, v in zip(
-                    self.task_labels[FEATURE].values, xi.values, strict=True
-                )
+                "x_features_task": x_features_task,
+                "x_features_optimizer": x_features_optimizer,
+                "x_history": x_history,
+                "y": y,
             }
-            for xi in self.task_labels
-        ]
-
-        feature_processor = FeatureProcessor.init(
-            schema=schema, tags=tags_list
         )
 
-        x_features = np.stack(
-            [feature_processor.transform(xi) for xi in tags_list]
-        )
-
-        x_features = xr.DataArray(
-            x_features,
-            coords={
-                PROBLEM: self.problems,
-                FEATURE: list(schema.keys()),
-            },
-            dims=dict_features.dims,
-        )
-
-        x_features = x_features.assign_coords({PROBLEM: self.problems}).sortby(
-            TASK_ID
-        )
-
-        x_features = x_features.drop_vars(PROBLEM)
-
-        x_history = (
-            self.select_t(t=t)
-            .to_traj_and_stair()
-            .sortby(TASK_ID)
-            .transpose(PROBLEM, BUDGET, SCHEDULE, "kind")
-        )
-
-        # Add one-hot encoded schedule to x_history
-        n_schedules = x_history.sizes[SCHEDULE]
-        one_hot = np.eye(n_schedules)
-        new_kind_coords = [f"schedule_{i}" for i in range(n_schedules)]
-        one_hot_da = xr.DataArray(
-            one_hot,
-            dims=[SCHEDULE, "kind"],
-            coords={SCHEDULE: x_history[SCHEDULE], "kind": new_kind_coords},
-        )
-        # Broadcast to match x_history dimensions (except kind)
-        one_hot_expanded = one_hot_da.broadcast_like(
-            x_history.isel(kind=0, drop=True)
-        )
-        x_history = xr.concat([x_history, one_hot_expanded], dim="kind")
-
-        y = (
-            self.to_labels(t=t_end, cost_metric=cost_metric)
-            .sortby(TASK_ID)
-            .transpose(PROBLEM, SCHEDULE)
+        ds = (
+            ds.unstack(PROBLEM)
+            .stack({"sample": (TASK_ID, REALIZATION, SCHEDULE)})
+            .transpose("sample", BUDGET, KIND, ...)
         )
 
         return OptimizationDynamics(
-            x_features=x_features,
-            x_history=x_history,
-            y=y,
-            feature_processor=feature_processor,
+            x_features_task=ds["x_features_task"],
+            x_features_optimizer=ds["x_features_optimizer"],
+            x_history=ds["x_history"],
+            y=ds["y"],
+            feature_processor_task=feature_processor_task,
+            feature_processor_optimizer=feature_processor_optimizer,
         )
 
-    def to_traj_and_stair(
-        self,
-    ) -> xr.DataArray:
-        x_min = self.data[OUTPUT_MIN].stack(
-            {"batch": (SCHEDULE, OUTPUT_DIM, PROBLEM)}
-        )
-        x_mean = self.data[OUTPUT_MEAN].stack(
-            {"batch": (SCHEDULE, OUTPUT_DIM, PROBLEM)}
+    def to_traj_and_stair(self) -> xr.DataArray:
+        # 1. Reset the index on PROBLEM to remove the existing MultiIndex
+        # This turns taskID and realization back into normal coordinates
+        data_reset = self.data.unstack(PROBLEM).isel(
+            {OUTPUT_DIM: 0}, drop=True
         )
 
-        out = jax.vmap(traj_and_stair)(x_mean.values.T, x_min.values.T)
+        # Get the global minimum per problem
+        global_min = self.task_labels.sel({FEATURE: "global_min"}).astype(
+            float
+        )
+        # Calculate emperical minimum per problem
+        emperical_min = self.data.unstack(PROBLEM)[OUTPUT_MIN].min(
+            [BUDGET, SCHEDULE, OUTPUT_DIM, REALIZATION]
+        )
+        emperical_min = emperical_min.expand_dims(
+            {REALIZATION: np.arange(self.n_realization)}
+        )
+
+        # mask nans of global_min with values of emperical_min
+        global_min = self.task_labels.sel({FEATURE: "global_min"}).astype(
+            float
+        )
+        global_min = global_min.unstack(PROBLEM).fillna(emperical_min)
+
+        # broadcast to another dim SCHEDULE
+        global_min = global_min.expand_dims({SCHEDULE: self.data[SCHEDULE]})
+
+        global_min = global_min.stack(
+            {"batch": (SCHEDULE, TASK_ID, REALIZATION)}
+        )
+
+        x_min = data_reset[OUTPUT_MIN].stack(
+            {"batch": (SCHEDULE, TASK_ID, REALIZATION)}
+        )
+        x_mean = data_reset[OUTPUT_MEAN].stack(
+            {"batch": (SCHEDULE, TASK_ID, REALIZATION)}
+        )
+
+        out = jax.vmap(traj_and_stair)(
+            x_mean.values.T, x_min.values.T, global_min.values.T
+        )
 
         y = xr.DataArray(
             out,
@@ -341,12 +426,9 @@ class DataLoader:
                 "kind": ["trajectory", "staircase"],
             },
         )
+
         y = y.unstack("batch")
-        return (
-            y.assign_coords({PROBLEM: self.data[PROBLEM]})
-            .reset_index(PROBLEM, drop=True)
-            .isel({OUTPUT_DIM: 0}, drop=True)
-        )
+        return y.stack({PROBLEM: (REALIZATION, TASK_ID)})
 
     def to_labels(
         self, t: int, cost_metric: Literal["fevals", "iterations"] = "fevals"
@@ -368,138 +450,46 @@ class DataLoader:
         """
         _ertd = self.ertd_profile(
             include_best=False,
-            cost_metric=cost_metric,
             cost_values=np.array([t]),
         )
 
-        return _ertd.mean("cost_per_dim")
-
-    def to_spreadsheet(self, criteria: Literal["min", "mean"] = "min"):
-        """
-        Generate a spreadsheet summarizing optimization results.
-
-        Parameters
-        ----------
-        criteria : {'min', 'mean'}, optional
-            Criteria for summarizing results, by default 'min'.
-
-        Returns
-        -------
-        pd.DataFrame
-            Styled DataFrame for visualization.
-        """
-
-        ds = xr.Dataset(
-            {TASK_LABELS: self.task_labels, OUTPUT_MIN: self.data[OUTPUT_MIN]}
-        )
-
-        if criteria == "min":
-            df = (
-                ds.groupby(TASK_ID)
-                .min()
-                .min(BUDGET)
-                .isel({OUTPUT_DIM: 0})[OUTPUT_MIN]
-                .to_pandas()
-            )
-        elif criteria == "mean":
-            df = (
-                ds.groupby(TASK_ID)
-                .mean()
-                .min(BUDGET)
-                .isel({OUTPUT_DIM: 0})[OUTPUT_MIN]
-                .to_pandas()
-            )
-
-        df.index = (
-            ds.groupby(TASK_ID)
-            .min()
-            .min(BUDGET)
-            .isel({OUTPUT_DIM: 0})[TASK_LABELS]
-        )
-
-        # Function to highlight the smallest value per row
-        def highlight_min_row(row):
-            min_val = row.min()
-            return [
-                "font-weight: bold" if val == min_val else "" for val in row
-            ]
-
-        # Apply styling and scientific notation formatting
-        styled_df = (
-            df.style
-            # Highlight smallest value per row
-            .apply(highlight_min_row, axis=1).format(
-                "{:.2e}"
-            )  # Display in scientific notation
-        )
-
-        return styled_df
-
-    def display_sbs_table(
-        self, exclude_optimizer: str | Iterable[str]
-    ) -> pd.DataFrame:
-        """
-        Display a table of SBS (Single Best Solver) choices.
-
-        Parameters
-        ----------
-        exclude_optimizer : str or Iterable[str]
-            Optimizers to exclude from the SBS calculation.
-
-        Returns
-        -------
-        pd.DataFrame
-            DataFrame containing SBS choices.
-        """
-
-        sbs = calculate_sbs(
-            performance=self.performance, exclude_optimizer=exclude_optimizer
-        )
-        ds = xr.Dataset(
-            {
-                "sbs": sbs,
-                TASK_LABELS: self.task_labels,
-            }
-        )
-
-        df_task_labels = ds.groupby(TASK_ID).min()[TASK_LABELS].to_pandas()
-        df_sbs = ds.groupby(TASK_ID).min()["sbs"].to_pandas().rename("sbs")
-
-        return pd.concat([df_task_labels, df_sbs], axis=1)
+        y = _ertd.sel({"metric": cost_metric}).mean("cost_per_dim")
+        y = y - y.mean(SCHEDULE)
+        return y.rename({SCHEDULE: "label"})
 
     #                                                                Properties
     # =========================================================================
 
-    @property
-    def hash_opt_step(self) -> xr.DataArray:
-        """
-        Returns a hash for each optimization step.
+    # @property
+    # def hash_opt_step(self) -> xr.DataArray:
+    #     """
+    #     Returns a hash for each optimization step.
 
-        Returns
-        -------
-        xarray.DataArray
-            Hash values for optimization steps.
-        """
-        return xr.apply_ufunc(
-            lambda x: int(hashlib.sha256(x.tobytes()).hexdigest()[:8], 16)
-            % (2**31 - 1),
-            self.data[UPDATE_STEP],
-            input_core_dims=[[BUDGET]],
-            output_core_dims=[[]],
-            vectorize=True,
-        )
+    #     Returns
+    #     -------
+    #     xarray.DataArray
+    #         Hash values for optimization steps.
+    #     """
+    #     return xr.apply_ufunc(
+    #         lambda x: int(hashlib.sha256(x.tobytes()).hexdigest()[:8], 16)
+    #         % (2**31 - 1),
+    #         self.data[UPDATE_STEP],
+    #         input_core_dims=[[BUDGET]],
+    #         output_core_dims=[[]],
+    #         vectorize=True,
+    #     )
 
-    @property
-    def n_iterations(self) -> int:
-        """
-        Returns the number of iterations (budget size).
+    # @property
+    # def n_iterations(self) -> int:
+    #     """
+    #     Returns the number of iterations (budget size).
 
-        Returns
-        -------
-        int
-            Number of iterations.
-        """
-        return self.data[BUDGET].size
+    #     Returns
+    #     -------
+    #     int
+    #         Number of iterations.
+    #     """
+    #     return self.data[BUDGET].size
 
     @property
     def n_realization(self) -> int:
@@ -513,24 +503,24 @@ class DataLoader:
         """
         return np.unique(self.data[REALIZATION]).size
 
-    @property
-    def features(self) -> xr.DataArray:
-        """
-        Returns the features coordinate.
+    # @property
+    # def features(self) -> xr.DataArray:
+    #     """
+    #     Returns the features coordinate.
 
-        Returns
-        -------
-        xarray.DataArray
-            The features coordinate."""
-        """
-        Property method to return the features coordinate
+    #     Returns
+    #     -------
+    #     xarray.DataArray
+    #         The features coordinate."""
+    #     """
+    #     Property method to return the features coordinate
 
-        Returns
-        -------
-        xarray.DataArray
-            The features coordinate.
-        """
-        return self.task_labels[FEATURE]
+    #     Returns
+    #     -------
+    #     xarray.DataArray
+    #         The features coordinate.
+    #     """
+    #     return self.task_labels[FEATURE]
 
     @property
     def problems(self) -> xr.DataArray:
@@ -581,64 +571,6 @@ class DataLoader:
         """
         return self._performance(include_best=False, exclude_optimizer=None)
 
-    @property
-    def performance_per_realization(self) -> xr.DataArray:
-        """
-        Returns the performance data per realization.
-
-        Returns
-        -------
-        xarray.DataArray
-            Performance data per realization.
-        """
-        t_start = perf_counter()
-        print("Triggered performance")
-        performance = scale_by_problem_and_schedule(
-            output_cummin(self.data[OUTPUT_MIN])
-        ).ffill(BUDGET)
-        # performance = scaling3(self.data).ffill(BUDGET)
-        print(f"Performance calculation took: {perf_counter() - t_start:0.2f}")
-        return performance
-
-    #                                                        Selecting problems
-    # =========================================================================
-
-    def select_itemIDs(self, itemIDs: str | Iterable[str]) -> DataLoader:
-        """
-        Select tasks by their item IDs.
-
-        Parameters
-        ----------
-        itemIDs : str or Iterable[str]
-            Item IDs to select.
-
-        Returns
-        -------
-        DataLoader
-            DataLoader containing selected tasks.
-        """
-
-        if len(itemIDs) == 0:
-            return deepcopy(self)
-
-        if isinstance(itemIDs, str):
-            itemIDs = [itemIDs]
-
-        task_labels = xr.concat(
-            [
-                group
-                for i, group in self.task_labels.groupby(TASK_ID)
-                if i in itemIDs
-            ],
-            dim=PROBLEM,
-        )
-        data = xr.concat(
-            [group for i, group in self.data.groupby(TASK_ID) if i in itemIDs],
-            dim=PROBLEM,
-        )
-
-        return replace(self, data=data, task_labels=task_labels)
-
     def select_problems(self, problem_indices: xr.DataArray) -> DataLoader:
         """
         Select a subset of problems of the data loader.
@@ -680,12 +612,15 @@ class DataLoader:
                 current_mask = feature_data == feature_value
             mask = current_mask if mask is None else (mask & current_mask)
 
-        problems = feature_data[PROBLEM].where(mask, drop=True).astype(int)
+        problems = feature_data[PROBLEM].where(mask, drop=True)  # .astype(int)
         return self.select_problems(problems)
 
     def create_strategy(self, choices: xr.DataArray, name: str) -> DataLoader:
+        # Align coordinates
+        choices = choices.sortby(TASK_ID).assign_coords(
+            {PROBLEM: self.problems.sortby(TASK_ID)}
+        )
         strategy = self.data.sel({SCHEDULE: choices}).drop_vars(SCHEDULE)
-        strategy[OPT_STEPS] = strategy[OPT_STEPS].isel({PROBLEM: 0}, drop=True)
         strategy = strategy.expand_dims({SCHEDULE: [name]})
 
         data = xr.concat([self.data, strategy], dim=SCHEDULE)
@@ -718,34 +653,34 @@ class DataLoader:
             task_labels=self.task_labels.isel({PROBLEM: problems}),
         )
 
-    def train_test_split(
-        self, test_size: float = 0.2, random_state: int | None = None
-    ) -> tuple[DataLoader, DataLoader]:
-        """
-        Split the data into train and test sets.
+    # def train_test_split(
+    #     self, test_size: float = 0.2, random_state: int | None = None
+    # ) -> tuple[DataLoader, DataLoader]:
+    #     """
+    #     Split the data into train and test sets.
 
-        Parameters
-        ----------
-        test_size : float, optional
-            The size of the test set, by default 0.2
-        random_state : int, optional
-            The random state, by default None
+    #     Parameters
+    #     ----------
+    #     test_size : float, optional
+    #         The size of the test set, by default 0.2
+    #     random_state : int, optional
+    #         The random state, by default None
 
-        Returns
-        -------
-        Tuple[DataLoader, DataLoader]
-            The train and test data loaders.
-        """
-        (
-            _X_train_indices,
-            _X_test_indices,
-        ) = train_test_split(
-            range(len(self.problems)),
-            test_size=test_size,
-            random_state=random_state,
-        )
+    #     Returns
+    #     -------
+    #     Tuple[DataLoader, DataLoader]
+    #         The train and test data loaders.
+    #     """
+    #     (
+    #         _X_train_indices,
+    #         _X_test_indices,
+    #     ) = train_test_split(
+    #         range(len(self.problems)),
+    #         test_size=test_size,
+    #         random_state=random_state,
+    #     )
 
-        return (self.isel(_X_train_indices), self.isel(_X_test_indices))
+    #     return (self.isel(_X_train_indices), self.isel(_X_test_indices))
 
     #                                                          Selecting budget
     # =========================================================================
@@ -846,20 +781,11 @@ class DataLoader:
         if isinstance(optimizers, str):
             optimizers = [optimizers]
 
-        if squash:
-            data = xr.concat(
-                [
-                    squash_optimizer(data=self.data, target_optimizer=opt)
-                    for opt in optimizers
-                ],
-                dim=SCHEDULE,
-            )
-        else:
-            data = self.data.sel({SCHEDULE: optimizers})
+        data = self.data.sel({SCHEDULE: optimizers})
 
         return replace(
             self,
-            data=data.sortby(SCHEDULE),
+            data=data,
         )
 
     #                                                       Performance metrics
@@ -894,9 +820,13 @@ class DataLoader:
         performance = xr.Dataset(
             {
                 OUTPUT_MIN: scale_by_task(
-                    output_cummin(self.data[OUTPUT_MIN])
+                    data=output_cummin(self.data[OUTPUT_MIN]),
+                    global_min=self.task_labels.sel(
+                        {FEATURE: GLOBAL_MIN}
+                    ).astype(float),
                 ).ffill(BUDGET),
                 FEVALS: self.data[FEVALS],
+                ITERATIONS: self.data[ITERATIONS],
             }
         )
 
@@ -924,69 +854,10 @@ class DataLoader:
         print(f"Performance calculation took: {perf_counter() - t_start:0.2f}")
         return performance
 
-    def performance_profile(
-        self,
-        max_f_value: int = 2.0,
-        include_best: bool = False,
-        exclude_optimizer: str | None = None,
-    ) -> xr.DataArray:
-        """
-        Create a performance profile for the given performance data.
-
-        Parameters
-        ----------
-        max_f_value : int, optional
-            Maximum performance ratio, by default 2.0.
-        include_best : bool, optional
-            Whether to include the best optimizer, by default False.
-        exclude_optimizer : str, optional
-            Optimizer to exclude, by default None.
-
-        Returns
-        -------
-        xr.DataArray
-            Performance profile.
-        """
-
-        # Trigger performance
-        p = self._performance(
-            include_best=include_best, exclude_optimizer=exclude_optimizer
-        )
-
-        return performance_profile(performance=p, max_f_value=max_f_value)
-
-    def rtd_profile(
-        self,
-        include_best: bool = False,
-        exclude_optimizer: str | None = None,
-    ) -> xr.DataArray:
-        """
-        Compute the runtime distribution (RTD) profile.
-
-        Parameters
-        ----------
-        include_best : bool, optional
-            Whether to include the best optimizer, by default False.
-        exclude_optimizer : str, optional
-            Optimizer to exclude, by default None.
-
-        Returns
-        -------
-        xr.DataArray
-            RTD profile.
-        """
-
-        p = self._performance(
-            include_best=include_best, exclude_optimizer=exclude_optimizer
-        )
-
-        return rtd(performance=p)
-
     def ertd_profile(
         self,
         include_best: bool = False,
         exclude_optimizer: str | None = None,
-        cost_metric: Literal["fevals", "iterations"] = "fevals",
         cost_values: np.ndarray = DEFAULT_COST_VALUES,
     ) -> xr.DataArray:
         """
@@ -998,27 +869,35 @@ class DataLoader:
             Whether to include the best optimizer, by default False.
         exclude_optimizer : str, optional
             Optimizer to exclude, by default None.
-        cost_metric : {'fevals', 'iterations'}, optional
-            Cost metric to use, by default 'fevals'.
 
         Returns
         -------
         xr.DataArray
             ERTD profile.
         """
-        p = self._performance(
-            include_best=include_best, exclude_optimizer=exclude_optimizer
-        )
+        if include_best:
+            sbs = self.data[SUCCESS].sum(TARGET).idxmax(SCHEDULE)
+            d = self.create_strategy(choices=sbs, name="sbs")
+        else:
+            d = self
+        # TODO : include best
+        # p = self._performance(
+        #     include_best=include_best, exclude_optimizer=exclude_optimizer
+        # )
         dims = self.task_labels.sel(
             {FEATURE: "dimensionality"}, drop=True
         ).astype(int)
 
         _ertd = ertd(
-            performance=p,
-            cost_measure=cost_metric,
+            performance=d.data,
             dims=dims,
             cost_values=cost_values,
         )
+
+        # Expand realization and stack dimensions to match valid_files
+        _ertd = _ertd.expand_dims(
+            {REALIZATION: np.arange(self.n_realization)}
+        ).stack({PROBLEM: (REALIZATION, TASK_ID)})
 
         # 1. Get the base mask from valid_files
         mask = self.valid_files.isel({OUTPUT_DIM: 0}, drop=True)

@@ -5,33 +5,43 @@ from dataclasses import dataclass
 import numpy as np
 import xarray as xr
 
-from .naming import PROBLEM
+from .naming import BUDGET, FEATURE
 from .task_features import FeatureProcessor
 
 
 @dataclass
 class OptimizationDynamics:
-    x_features: xr.DataArray
+    x_features_task: xr.DataArray
+    x_features_optimizer: xr.DataArray
     x_history: xr.DataArray
     y: xr.DataArray
-    feature_processor: FeatureProcessor
+    feature_processor_task: FeatureProcessor
+    feature_processor_optimizer: FeatureProcessor
 
     def y_to_array(self) -> xr.DataArray:
         return self.y.values
 
     def select(self, problems: xr.DataArray) -> OptimizationDynamics:
         return OptimizationDynamics(
-            x_features=self.x_features.isel(problem=problems, drop=True),
-            x_history=self.x_history.isel(problem=problems, drop=True),
-            y=self.y.isel(problem=problems, drop=True),
-            feature_processor=self.feature_processor,
+            x_features_task=self.x_features_task.isel(
+                {"sample": problems}, drop=True
+            ),
+            x_features_optimizer=self.x_features_optimizer.isel(
+                {"sample": problems}, drop=True
+            ),
+            x_history=self.x_history.isel({"sample": problems}, drop=True),
+            y=self.y.isel({"sample": problems}, drop=True),
+            feature_processor_task=self.feature_processor_task,
+            feature_processor_optimizer=self.feature_processor_optimizer,
         )
 
     def train_test_split(
         self, train_fraction: float = 0.8, seed: int = 42
     ) -> tuple[OptimizationDynamics, OptimizationDynamics]:
         rng = np.random.default_rng(seed)
-        shuffled_problems = rng.permutation(self.x_features[PROBLEM].size)
+        shuffled_problems = rng.permutation(
+            self.x_features_task["sample"].size
+        )
 
         # 3. Split the shuffled list
         n_train = int(len(shuffled_problems) * train_fraction)
@@ -43,3 +53,21 @@ class OptimizationDynamics:
         test_data = self.select(test_problems_list)
 
         return train_data, test_data
+
+    def filter(self):
+        y_mask = ~self.y.isnull().any("label")
+        x_features_task_mask = ~self.x_features_task.isnull().any(FEATURE)
+        x_features_optimizer_mask = ~self.x_features_optimizer.isnull().any(
+            "optimizer_feature"
+        )
+        x_history_mask = ~self.x_history.isnull().any([BUDGET, "kind"])
+
+        # combine masks
+        combined_mask = (
+            y_mask
+            & x_features_task_mask
+            & x_features_optimizer_mask
+            & x_history_mask
+        )
+
+        return self.select(combined_mask.values)

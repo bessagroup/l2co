@@ -6,4 +6,4 @@
   hyperparameters:
     learning_rate: 1e-1
 - optimizer: pso
-- optimizer: lbfgsb
+- optimizer: lbfgs

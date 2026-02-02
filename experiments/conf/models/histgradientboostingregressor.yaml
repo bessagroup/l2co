@@ -1,6 +1,0 @@
-model:
-  _target_: sklearn.ensemble.HistGradientBoostingRegressor
-
-train_kwargs:
-
-type: scikit

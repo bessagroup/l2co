@@ -1,9 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name="RunTaskOnSchedule"
 #SBATCH --partition=batch
-#SBATCH --time=00:30:00
+#SBATCH --time=00:15:00
 #SBATCH --account=default
 #SBATCH --mail-user=m.p.vanderschelling@tudelft.nl
+#SBATCH --mem=2GB
 
 echo $LD_LIBRARY_PATH
 unset LD_LIBRARY_PATH
