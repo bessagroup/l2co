@@ -752,6 +752,15 @@ class LSTM_Encoder(AbstractModel):
         self.cell = eqx.nn.LSTMCell(in_size, hidden_size, key=key)
         self.linear = eqx.nn.Linear(hidden_size, out_size, key=key)
 
+    @classmethod
+    def init(self, in_size: int, hidden_size: int, out_size: int, *, key):
+        return LSTM_Encoder(
+            in_size=in_size,
+            hidden_size=hidden_size,
+            out_size=out_size,
+            key=key,
+        )
+
     def __call__(self, x):
         """
         Encode sequence using LSTM.

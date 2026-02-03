@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
 import equinox as eqx
@@ -25,8 +27,8 @@ class FeatureProcessor(eqx.Module):
         schema : dict[str, str]
             Mapping of feature names to types ('continuous',
             'categorical', 'ordinal').
-        tasks : Iterable[Task]
-            Task objects containing feature data.
+        tags : Iterable[dict[str, Any]]
+            Iterable of feature dictionaries for tasks.
         """
         means = {}
         stds = {}
@@ -116,6 +118,55 @@ class FeatureProcessor(eqx.Module):
             Reconstructed feature processor instance.
         """
         return cls(**kwargs)
+
+    @classmethod
+    def load(cls, path: str) -> FeatureProcessor:
+        """
+        Load model from file.
+
+        Parameters
+        ----------
+        path : str
+            Path to model file (without extension).
+
+        Returns
+        -------
+        FeatureProcessor
+            Loaded model instance.
+        """
+        _path = Path(path)
+
+        with open(_path.with_suffix(".eqx"), "rb") as f:
+            hyperparams: dict = json.loads(f.readline().decode())
+            feature_processor = cls.reconstruct(**hyperparams)
+            feature_processor = eqx.tree_deserialise_leaves(
+                f, feature_processor
+            )
+            return feature_processor
+
+    def store(self, path: str):
+        """
+        Store model to file.
+
+        Parameters
+        ----------
+        path : str
+            Path to save model (without extension).
+
+        Returns
+        -------
+        str
+            Path to saved model file.
+        """
+        _path = Path(path)
+        hyperparams = self.to_dict()
+
+        with open(_path.with_suffix(".eqx"), "wb") as f:
+            hyperparams_str = json.dumps(hyperparams)
+            f.write((hyperparams_str + "\n").encode())
+            eqx.tree_serialise_leaves(f, self)
+
+        return str(_path)
 
 
 # =============================================================================
