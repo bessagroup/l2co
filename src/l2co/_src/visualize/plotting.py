@@ -17,19 +17,26 @@ import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 from matplotlib.colors import (
+    ListedColormap,
     LogNorm,
 )
+from matplotlib.lines import Line2D
 from scipy.interpolate import griddata
 from sklearn.metrics import r2_score
 
-from l2co._src.batching import BatchState
-
 # Local
+from l2co._src.batching import BatchState
 from l2co._src.data_loader import DataLoader
 from l2co._src.naming import (
+    FEATURE,
+    FEVALS,
+    ITERATIONS,
+    OUTPUT_DIM,
     PROBLEM,
     SCHEDULE,
+    UPDATE_STEP,
 )
+from l2co._src.optimizerschedule import OptimizationStep
 from l2co._src.sampler import grid_sampling
 from l2co._src.task import Task
 from l2co._src.update_class import evaluate
@@ -924,5 +931,132 @@ def plot_metrics(metrics: dict[str, Iterable[float]]):
         labelspacing=0.2,  # Tighten the vertical space between entries
         borderaxespad=0.5,  # Distance from the axis edge
     )
+
+    return fig, ax
+
+
+def plot_update_step(
+    d: DataLoader,
+    schedule: str,
+    optimizers: Iterable[OptimizationStep],
+    cost_metric: Literal["fevals", "iterations"] | None = None,
+    ax: plt.Axes | None = None,
+    show_legend: bool = True,
+):
+    dims = d.task_labels.sel({FEATURE: "dimensionality"}, drop=True).astype(
+        int
+    )
+    update_step = (
+        d.data[UPDATE_STEP].isel({OUTPUT_DIM: 0}).sel({SCHEDULE: schedule})
+    )
+    match cost_metric:
+        case "fevals":
+            cost_metric = (
+                d.data[FEVALS].isel({OUTPUT_DIM: 0}).sel({SCHEDULE: schedule})
+                / dims
+            )
+            x_label = "Function evaluations / dimension"
+        case "iterations":
+            cost_metric = (
+                d.data[ITERATIONS]
+                .isel({OUTPUT_DIM: 0})
+                .sel({SCHEDULE: schedule})
+                / dims
+            )
+            x_label = "Iterations / dimension"
+        case None:
+            cost_metric = None
+            x_label = "Steps"
+        case _:
+            raise ValueError(f"Invalid cost_metric: {cost_metric}. ")
+
+    # 1. Align Dimensions
+    # We want (Problems, Steps) for the plot
+    # If your xarray is (Steps, Problems), we transpose it
+    if update_step.dims[0] != "problem":
+        update_step = update_step.transpose("problem", ...)
+        if cost_metric is not None:
+            cost_metric = cost_metric.transpose("problem", ...)
+
+    # 2. Prepare Mappings
+    opt_hashes = [opt.hash for opt in optimizers]
+    styles = get_schedule_styles([opt.name for opt in optimizers])
+    hex_colors = [styles[opt.name].color for opt in optimizers]
+    display_names = [LABEL_MAP[opt.name] for opt in optimizers]
+
+    # 3. Reclassification
+    z_data = update_step.astype(int).values
+    indexed_data = np.zeros_like(z_data, dtype=int)
+    for i, opt_hash in enumerate(opt_hashes):
+        indexed_data[z_data == opt_hash] = i
+
+    n_problems, n_steps = indexed_data.shape
+
+    # 4. Coordinate Logic
+    if cost_metric is not None:
+        X = cost_metric.values
+        problem_indices = np.arange(n_problems)
+        # Broadcast Y to match X: (n_problems, n_steps)
+        Y = np.broadcast_to(
+            problem_indices[:, np.newaxis], (n_problems, n_steps)
+        )
+        Z = indexed_data
+    else:
+        # Meshgrid creates (n_problems, n_steps) grids
+        X, Y = np.meshgrid(
+            np.linspace(0.0, 1.0, n_steps), np.arange(n_problems)
+        )
+        Z = indexed_data
+
+    # 5. Plotting
+    fig, ax = _get_or_create_axes(ax=ax)
+    cmap = ListedColormap(hex_colors)
+
+    # Use shading="nearest" to center colors on coordinates
+    ax.pcolormesh(
+        X,
+        Y,
+        Z,
+        cmap=cmap,
+        shading="nearest",
+        edgecolors="none",
+    )
+
+    # 6. IEEE Style Legend
+    if show_legend:
+        legend_elements = [
+            Line2D(
+                [0],
+                [0],
+                marker="s",
+                color="w",
+                label=name,
+                markerfacecolor=color,
+                markersize=8,
+                linestyle="None",
+            )
+            for color, name in zip(hex_colors, display_names, strict=True)
+        ]
+        ax.legend(
+            handles=legend_elements,
+            loc="best",
+            fontsize=7,
+            frameon=True,
+            fancybox=False,
+            edgecolor="#BBBBBB",
+            framealpha=1.0,
+            labelspacing=0.2,
+            borderaxespad=0.5,
+        )
+
+    # 7. Scientific Polish
+    ax.set_ylabel("Problems")
+    ax.set_xlabel(x_label)
+
+    # Clean up Y-axis
+    ax.set_yticks([])
+    ax.set_yticklabels([])
+
+    ax.invert_yaxis()
 
     return fig, ax

@@ -22,6 +22,7 @@ from ._src.visualize.plotting import (
     plot_metrics,
     plot_r2,
     plot_single_r2,
+    plot_update_step,
     savefig,
     set_size,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "plot_ertd",
     "FigureSaver",
     "plot_r2",
+    "plot_update_step",
     "plot_single_r2",
     "plot_2d_loss_landscape_only",
     "plot_2d_loss_landscape_slice_grid",

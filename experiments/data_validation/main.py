@@ -101,11 +101,6 @@ def calculate_ert(data: xr.Dataset) -> xr.Dataset:
     )
     solved = qv <= targets
     success = solved.any(BUDGET)
-    # first_solved = (
-    #     solved.argmax(BUDGET)
-    #     .where(success, other=solved[BUDGET].argmax())
-    #     .compute()
-    # )
 
     stopping_budget = (qv.argmin(BUDGET) + 1).clip(max=data.sizes[BUDGET] - 1)
 

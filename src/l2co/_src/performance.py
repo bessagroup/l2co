@@ -31,7 +31,9 @@ import xarray as xr
 from .naming import (
     BUDGET,
     COST,
+    FEVALS,
     GLOBAL_MIN,
+    ITERATIONS,
     OUTPUT_DIM,
     OUTPUT_MIN,
     PROBLEM,
@@ -515,3 +517,56 @@ def compute_ert_multi_seed(
 
 
 # =============================================================================
+
+
+def quality_value(x: xr.DataArray, g_min: float) -> xr.DataArray:
+    if np.isnan(g_min):
+        g_min = x.min(skipna=True)
+    qv = x - g_min
+
+    # scaling
+    sf = (
+        1
+        / qv.isel({BUDGET: 0})
+        .quantile(q=0.5, skipna=True)
+        .drop_vars("quantile")
+    ) * DEFAULT_TARGETS[-1]
+    return qv * sf
+
+
+def calculate_ert(data: xr.Dataset, global_min: float) -> xr.Dataset:
+    data = data.as_numpy()
+    x = output_cummin(data[OUTPUT_MIN]).ffill(BUDGET)
+    qv = quality_value(x, global_min)
+
+    qv = qv.fillna(np.inf)
+
+    targets = xr.DataArray(
+        DEFAULT_TARGETS, dims=TARGET, coords={TARGET: DEFAULT_TARGETS}
+    )
+    solved = qv <= targets
+    success = solved.any(BUDGET)
+
+    stopping_budget = (qv.argmin(BUDGET) + 1).clip(max=data.sizes[BUDGET] - 1)
+
+    first_solved = (
+        solved.argmax(BUDGET).where(success, other=stopping_budget).compute()
+    )
+
+    # Extract the scalar values at the 'first_solved' budget step
+    fevals = data[FEVALS].isel({BUDGET: first_solved})
+    iterations = data[ITERATIONS].isel({BUDGET: first_solved})
+
+    # Combine metrics into a single DataArray named 'COST'
+    # with a new dimension 'metric'
+    cost_da = xr.concat(
+        [fevals, iterations],
+        dim=xr.DataArray([FEVALS, ITERATIONS], dims="metric", name="metric"),
+    )
+
+    return xr.Dataset(
+        {
+            COST: cost_da,
+            SUCCESS: success,
+        }
+    )

@@ -13,20 +13,29 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as onp
+import pandas as pd
 import xarray as xr
 from jaxtyping import Array, Float, Int
 
+from .data_loader import DataLoader
 from .naming import (
     BUDGET,
+    FEATURE,
     FEVALS,
+    GLOBAL_MIN,
     ITERATIONS,
     OUTPUT_DIM,
     OUTPUT_MEAN,
     OUTPUT_MIN,
     OUTPUT_STD,
     REALIZATION,
+    SCHEDULE,
+    TASK_ID,
+    TASK_LABELS,
     UPDATE_STEP,
 )
+from .performance import calculate_ert
+from .task import Task
 from .typing import OptHistoryType
 
 #                                                          Authorship & Credits
@@ -271,3 +280,31 @@ class HistoryState(eqx.Module):
                 dims=[REALIZATION],
             ),
         )
+
+    def to_dataloader(
+        self, task: Task, name: str, budget_steps: int | None = None
+    ) -> DataLoader:
+        xarr = self.to_xarray_realizations()
+        ert = calculate_ert(xarr, task.global_min)
+
+        labels_data = pd.DataFrame(
+            [
+                {**task.tag, GLOBAL_MIN: task.global_min}
+                for _ in xarr[REALIZATION]
+            ],
+        )
+        xarr_task_labels = xr.DataArray(
+            labels_data.values,
+            coords={
+                REALIZATION: xarr[REALIZATION],
+                FEATURE: labels_data.columns,
+            },
+            dims=[REALIZATION, FEATURE],
+            name=TASK_LABELS,
+        ).astype(str)
+
+        comb = xr.merge([xarr, ert], compat="override")
+        comb = comb.expand_dims({SCHEDULE: [name]})
+        comb_labels = xr.merge([comb, xarr_task_labels], compat="override")
+        comb_labels = comb_labels.expand_dims({TASK_ID: [task.hash]})
+        return DataLoader.from_xarray(comb_labels)
