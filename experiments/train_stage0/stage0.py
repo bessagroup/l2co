@@ -21,6 +21,7 @@ from l2co._src.models import (
     Stage1Loader,
     ScikitStage0Model,
 )
+from bessaplots import FigureSaver
 from sklearn.ensemble import HistGradientBoostingRegressor
 from l2co.naming import TASK_ID, REALIZATION, PROBLEM, SCHEDULE
 from l2co.plotting import (
