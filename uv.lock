@@ -96,15 +96,30 @@ wheels = [
 
 [[package]]
 name = "bessaplots"
-version = "0.2.0"
-source = { registry = "https://pypi.org/simple" }
+version = "0.4.0"
+source = { editable = "../bessaplots" }
 dependencies = [
     { name = "matplotlib" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2d/5e/d1ae400b733dcdea6017e470247a3aefb239ef1fca3e0fb957b04a662b76/bessaplots-0.2.0.tar.gz", hash = "sha256:022026f311fc19c30436ae793675d09760b4606a8f5a6ebe154bd33f5228bd13", size = 7164, upload-time = "2026-02-06T09:29:50.356Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6e/e9/8136877fdc5a8491e997b70f8719a7f435d334528c54630d4c62025be042/bessaplots-0.2.0-py3-none-any.whl", hash = "sha256:3607684f6879307352ff54c40cadfd0cf7ec3e169f897f7891fddb4d1d81c1eb", size = 6784, upload-time = "2026-02-06T09:29:49.605Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "build", marker = "extra == 'dev'" },
+    { name = "matplotlib", specifier = ">=3.10.8" },
+    { name = "mkdocs-gen-files", marker = "extra == 'docs'", specifier = ">=0.5.0" },
+    { name = "mkdocs-include-exclude-files", marker = "extra == 'docs'", specifier = ">=0.1.0" },
+    { name = "mkdocs-ipynb", marker = "extra == 'docs'", specifier = ">=0.1.1" },
+    { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.6.20" },
+    { name = "mkdocstrings", marker = "extra == 'docs'", specifier = ">=0.30.1" },
+    { name = "mkdocstrings-python", marker = "extra == 'docs'", specifier = ">=1.18.2" },
+    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.4.0" },
+    { name = "pymdown-extensions", marker = "extra == 'docs'", specifier = ">=10.16.1" },
+    { name = "pytest", marker = "extra == 'tests'", specifier = ">=8.4.1" },
+    { name = "pytest-cov", marker = "extra == 'tests'", specifier = ">=6.2.1" },
+    { name = "setuptools", marker = "extra == 'dev'", specifier = ">=43.0.0" },
+    { name = "wheel", marker = "extra == 'dev'" },
 ]
+provides-extras = ["dev", "docs", "tests"]
 
 [[package]]
 name = "bleach"
@@ -701,7 +716,7 @@ wheels = [
 
 [[package]]
 name = "f3dasm"
-version = "2.2.2"
+version = "2.2.3"
 source = { editable = "../f3dasm" }
 dependencies = [
     { name = "filelock" },
@@ -1285,7 +1300,7 @@ tests = [
 [package.metadata]
 requires-dist = [
     { name = "bbob-jax", specifier = ">=1.3.0" },
-    { name = "bessaplots", specifier = ">=0.2.0" },
+    { name = "bessaplots", editable = "../bessaplots" },
     { name = "bottleneck", specifier = ">=1.5.0" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.3.0" },
     { name = "cloudpickle", specifier = ">=3.1.1" },

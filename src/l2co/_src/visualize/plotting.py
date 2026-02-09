@@ -6,7 +6,6 @@ Plotting module
 
 # Standard
 from collections.abc import Iterable
-from pathlib import Path
 from typing import Literal
 
 # Third-party
@@ -88,65 +87,6 @@ def set_size(
 
 #                                                           Helper Functions
 # =============================================================================
-
-
-class FigureSaver:
-    @staticmethod
-    def load(path: str) -> plt.Figure:
-        """Load a figure from a file."""
-        _path = Path(path).with_suffix(".pdf")
-        return plt.imread(_path)
-
-    @staticmethod
-    def store(object: plt.Figure, path: str):
-        _path = Path(path)
-        """Store a figure to a file."""
-        object.savefig(
-            _path.with_suffix(".pdf"),
-            format="pdf",
-            bbox_inches="tight",
-            pad_inches=0.01,
-            transparent=True,
-            dpi=300,
-        )
-        return str(_path)
-
-
-def savefig(
-    fig: plt.Figure,
-    name: str,
-    n_side_by_side=1,
-    span_columns=False,
-    height=0.8,
-):
-    """
-    Saves a figure scaled exactly for an IEEE subfigure slot.
-
-    Parameters:
-    - fig: The matplotlib figure object.
-    - name: Filename (e.g., 'ertd_results').
-    - n_side_by_side: How many figures will sit horizontally (1, 2, or 3).
-    - span_columns: False for single column (3.48"), True for full page (7.14")
-    """
-
-    fig = set_size(
-        fig,
-        n_side_by_side=n_side_by_side,
-        span_columns=span_columns,
-        height=height,
-    )
-
-    # 5. Save with tight bounding box
-    # pad_inches is tiny to ensure the figure maximizes the LaTeX slot
-    fig.savefig(
-        f"{name}.pdf",
-        format="pdf",
-        bbox_inches="tight",
-        pad_inches=0.01,
-        transparent=True,
-        dpi=300,
-    )
-    print(f"Saved: {name}.pdf")
 
 
 def _get_or_create_axes(

@@ -18,8 +18,8 @@ Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)
 # =============================================================================
 
 # Local imports
+import bessaplots
 import matplotlib.pyplot as plt
-import scienceplots
 
 from l2co import naming, optimizers, plotting, sampling
 from l2co._src import tree_utils
@@ -51,14 +51,7 @@ __credits__ = ["Martin van der Schelling"]
 __status__ = "Stable"
 # =============================================================================
 
-plt.style.use(["science", "ieee", "bright"])
-
-# With this:
-plt.rcParams.update(
-    {
-        "text.usetex": False,
-    }
-)
+plt.style.use(["bessaplots"])
 
 __all__ = [
     "DataLoader",

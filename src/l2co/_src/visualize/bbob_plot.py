@@ -2,9 +2,9 @@ import math
 from collections.abc import Iterable
 
 import matplotlib.pyplot as plt
+from bessaplots import savefig
 
 import l2co.plotting
-from l2co._src.visualize.plotting import savefig
 
 
 def _add_eval_line(ax, line_val):

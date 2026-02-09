@@ -90,25 +90,41 @@ vmapped_loss_with_rng = eqx.filter_vmap(
 )
 
 
+# def ffill(x: jnp.ndarray) -> jnp.ndarray:
+#     """Forward fill NaN values in array.
+
+#     Parameters
+#     ----------
+#     x : jnp.ndarray
+#         Input array with potential NaN values.
+
+#     Returns
+#     -------
+#     jnp.ndarray
+#         Array with NaN values forward filled.
+#     """
+
+#     def scan_fn(carry, xi):
+#         carry = jnp.where(jnp.isnan(xi), carry, xi)
+#         return carry, carry
+
+#     _, filled = jax.lax.scan(scan_fn, jnp.nan, x)
+#     return filled
+
+
 def ffill(x: jnp.ndarray) -> jnp.ndarray:
-    """Forward fill NaN values in array.
-
-    Parameters
-    ----------
-    x : jnp.ndarray
-        Input array with potential NaN values.
-
-    Returns
-    -------
-    jnp.ndarray
-        Array with NaN values forward filled.
-    """
+    """Forward fill NaN values in a 2D array along axis 0."""
 
     def scan_fn(carry, xi):
-        carry = jnp.where(jnp.isnan(xi), carry, xi)
-        return carry, carry
+        # xi is a row of shape (2,)
+        # carry is also a row of shape (2,)
+        new_carry = jnp.where(jnp.isnan(xi), carry, xi)
+        return new_carry, new_carry
 
-    _, filled = jax.lax.scan(scan_fn, jnp.nan, x)
+    # Initialize carry with NaNs matching the inner dimension
+    init_carry = jnp.full(x.shape[1:], jnp.nan)
+
+    _, filled = jax.lax.scan(scan_fn, init_carry, x)
     return filled
 
 
@@ -291,10 +307,11 @@ def log_stabilized_minmax_scale_with_global_min(
 def traj_and_stair(x_output_mean, x_output_min, global_min):
     traj = ffill(bfill(x_output_mean))
     stair = output_cummin(ffill(bfill(x_output_min)))
-    return log_stabilized_minmax_scale_with_global_min(
+    y = log_stabilized_minmax_scale_with_global_min(
         jnp.stack((traj, stair), axis=1),
         global_min,
     )
+    return ffill(bfill(y))
 
 
 # =============================================================================

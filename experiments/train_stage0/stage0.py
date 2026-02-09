@@ -29,9 +29,8 @@ from l2co.plotting import (
     ertd_per_dimension,
     ertd_per_function_raster,
     plot_single_r2,
-    savefig,
 )
-
+from bessaplots import savefig
 import xarray as xr
 from sklearn.metrics import r2_score
 
