@@ -1263,6 +1263,15 @@ def compute_fitting(
         Parameters for fitting.
     basis_function : Callable
         Basis function for fitting.
+
+    Returns
+    -------
+    None
+
+    Notes
+    -----
+    This function computes fitted values but does not currently
+    return them. It appears incomplete and may need revision.
     """
     x_input = np.linspace(0.0, 1.0, trajectory.coords[BUDGET].size)
 

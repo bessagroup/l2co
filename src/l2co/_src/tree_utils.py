@@ -305,6 +305,30 @@ def log_stabilized_minmax_scale_with_global_min(
 
 
 def traj_and_stair(x_output_mean, x_output_min, global_min):
+    """
+    Process trajectory and staircase from optimization outputs.
+
+    Parameters
+    ----------
+    x_output_mean : jax.Array
+        Mean output trajectory with shape (n_steps, n_features).
+    x_output_min : jax.Array
+        Minimum output trajectory with shape (n_steps, n_features).
+    global_min : jax.Array
+        Global minimum value for scaling reference.
+
+    Returns
+    -------
+    jax.Array
+        Stacked and scaled trajectory and staircase arrays with
+        shape (n_steps, 2, n_features).
+
+    Notes
+    -----
+    Applies forward-backward fill to handle missing values,
+    computes cumulative minimum for staircase, and applies
+    log-stabilized min-max scaling.
+    """
     traj = ffill(bfill(x_output_mean))
     stair = output_cummin(ffill(bfill(x_output_min)))
     y = log_stabilized_minmax_scale_with_global_min(

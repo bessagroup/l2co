@@ -45,6 +45,30 @@ class RNN(eqx.Module):
 def rnn(
     in_size: int, out_size: int, hidden_size: int, *, key
 ) -> tuple[eqx.Module, dict[str, Any]]:
+    """
+    Create a recurrent neural network (RNN) model with GRU cells.
+
+    Parameters
+    ----------
+    in_size : int
+        Input size for the RNN.
+    out_size : int
+        Output size for the RNN.
+    hidden_size : int
+        Hidden state size for the GRU cell.
+    key : jax.random.PRNGKey
+        Random key for initialization.
+
+    Returns
+    -------
+    tuple[eqx.Module, dict[str, Any]]
+        The RNN model and its metadata dictionary.
+
+    Notes
+    -----
+    Uses GRU cells for recurrent processing and applies sigmoid
+    activation to output for binary classification.
+    """
     return (
         RNN(
             in_size=in_size,
@@ -270,6 +294,41 @@ def cnn(
     *,
     key,
 ) -> tuple[eqx.Module, dict[str, Any]]:
+    """
+    Create a convolutional neural network (CNN) model.
+
+    Parameters
+    ----------
+    in_size : int
+        Input size (total number of features).
+    out_size : int
+        Output size (number of classes).
+    hidden_channels : int
+        Number of channels in convolutional layers.
+    num_layers : int
+        Number of convolutional layers.
+    kernel_size : int
+        Size of the convolutional kernel.
+    height : int
+        Height of the input (unused in current implementation).
+    width : int
+        Width/sequence length of the input.
+    in_channels : int
+        Number of input channels.
+    key : jax.random.PRNGKey
+        Random key for initialization.
+
+    Returns
+    -------
+    tuple[eqx.Module, dict[str, Any]]
+        The CNN model and its metadata dictionary.
+
+    Notes
+    -----
+    Architecture includes Conv1d layers with max pooling and ReLU
+    activation, followed by flattening and a fully connected layer
+    with log-softmax output.
+    """
     return (
         CNN(
             in_size=in_size,

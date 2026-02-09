@@ -77,6 +77,30 @@ class CEC2019Sampler(Block):
 
 
 def scale_input(domain_bounds: jax.Array, function_bounds: jax.Array):
+    """
+    Create a decorator to scale input parameters between different bounds.
+
+    Parameters
+    ----------
+    domain_bounds : jax.Array
+        Domain bounds with shape (n_dims, 2), where each row contains
+        [lower, upper] for normalization.
+    function_bounds : jax.Array
+        Target function bounds with shape (n_dims, 2), where each row
+        contains [lower, upper] for scaling.
+
+    Returns
+    -------
+    Callable
+        Decorator that scales function inputs from domain_bounds to
+        function_bounds.
+
+    Notes
+    -----
+    Performs two-step transformation: first normalizes input to [0, 1]
+    using domain_bounds, then scales to function_bounds.
+    """
+
     def decorator(func):
         def wrapper(x, *args, **kwargs):
             # Extract bounds
@@ -100,6 +124,29 @@ def scale_input(domain_bounds: jax.Array, function_bounds: jax.Array):
 
 
 def add_noise(noise_level: float):
+    """
+    Create a decorator to add multiplicative Gaussian noise to function
+    output.
+
+    Parameters
+    ----------
+    noise_level : float
+        Standard deviation of the Gaussian noise relative to the
+        function value.
+
+    Returns
+    -------
+    Callable
+        Decorator that adds noise to function output using provided
+        random key.
+
+    Notes
+    -----
+    The noise is multiplicative: $y_{noisy} = y + y \\cdot \\epsilon$,
+    where $\\epsilon \\sim \\mathcal{N}(0, \\text{noise_level})$.
+    Requires a 'key' argument in the wrapped function signature.
+    """
+
     def decorator(func):
         @functools.wraps(func)
         def wrapper(x, key, *args, **kwargs):
@@ -115,6 +162,32 @@ def add_noise(noise_level: float):
 def create_bbob_task(
     fn_name: str, seed: int, dimensionality: int, noise: float = 0.0
 ) -> Task:
+    """
+    Create an optimization task from a BBOB benchmark function.
+
+    Parameters
+    ----------
+    fn_name : str
+        Name of the BBOB benchmark function.
+    seed : int
+        Random seed for function instance generation.
+    dimensionality : int
+        Dimensionality of the optimization problem.
+    noise : float, optional
+        Multiplicative noise level (standard deviation), by default 0.0.
+
+    Returns
+    -------
+    Task
+        Configured optimization task with scaled and optionally noisy
+        objective function.
+
+    Notes
+    -----
+    Input domain is [0, 1]^d which is scaled to BBOB's standard
+    [-5, 5]^d range. If noise > 0, the function requires a random
+    key and applies multiplicative Gaussian noise.
+    """
     fn_scale_input = scale_input(
         domain_bounds=jnp.tile(jnp.array([0.0, 1.0]), (dimensionality, 2)),
         function_bounds=jnp.tile(jnp.array([-5.0, 5.0]), (dimensionality, 2)),

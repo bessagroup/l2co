@@ -89,6 +89,27 @@ def output_cummin(da: xr.DataArray) -> xr.DataArray:
 
 
 def adaptive_worst_quantile_1d(x, q=0.99):
+    """
+    Compute adaptive worst quantile along a 1D array.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        Input array with shape (T,).
+    q : float, optional
+        Quantile value between 0 and 1, by default 0.99.
+
+    Returns
+    -------
+    np.ndarray
+        Array of worst quantile values computed with adaptive
+        window size, shape (T,).
+
+    Notes
+    -----
+    The window size k grows logarithmically with the index:
+    $k = \\lceil \\log(t + 3)^2 / 2 \\rceil$.
+    """
     T = x.shape[0]
     out = np.empty(T, dtype=x.dtype)
     ks = np.ceil(np.log(np.arange(T) + 3) ** 2 / 2).astype(int)
@@ -163,8 +184,23 @@ def cap_value(data: xr.DataArray, cap: float = EPSILON) -> xr.DataArray:
 
 def min_custom(ds: xr.Dataset) -> xr.DataArray:
     """
-    Applies custom log scaling to 'output_min' based on the presence
-    of 'global_min' within the dataset slice.
+    Apply custom log scaling to output_min based on global_min.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Dataset containing 'output_min' and 'global_min' variables.
+
+    Returns
+    -------
+    xr.DataArray
+        Min-max scaled log-transformed output values in range [0, 1].
+
+    Notes
+    -----
+    Applies log10 transformation after shifting by global minimum,
+    adding small epsilon to avoid log(0), then min-max scales the
+    result.
     """
     x = ds[OUTPUT_MIN]
     g_min = ds[GLOBAL_MIN]
@@ -442,6 +478,29 @@ def ertd(
 
 
 def draw_samples(seed: int, n_realizations: int, n_picks: int):
+    """
+    Draw random samples with replacement for bootstrap sampling.
+
+    Parameters
+    ----------
+    seed : int
+        Random seed for reproducibility.
+    n_realizations : int
+        Total number of realizations available.
+    n_picks : int
+        Number of samples to draw.
+
+    Returns
+    -------
+    np.ndarray
+        Array of sampled indices with shape (n_picks,).
+
+    Notes
+    -----
+    First draws a random permutation of all realizations, then
+    draws additional random samples with replacement if
+    n_picks > n_realizations.
+    """
     rng = np.random.default_rng(seed)
     return np.concatenate(
         [
@@ -459,6 +518,26 @@ def compute_ert_group(
     ds: xr.Dataset,
     samples: xr.DataArray,
 ) -> xr.DataArray:
+    """
+    Compute Expected Runtime (ERT) for a group of problems.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Dataset containing 'cost', 'success', and 'dims' variables.
+    samples : xr.DataArray
+        Sample indices for problem selection.
+
+    Returns
+    -------
+    xr.DataArray
+        Mean ERT across seeds, normalized by problem dimensionality.
+
+    Notes
+    -----
+    Computes ERT as the sum of costs until first success, divided
+    by problem dimensionality. Returns NaN if no success achieved.
+    """
     ds = ds.isel({PROBLEM: samples})
 
     # Find index of first True along "problem"
@@ -489,8 +568,26 @@ def compute_ert_multi_seed(
     ds: xr.Dataset, n_seeds: int, n_picks: int
 ) -> xr.DataArray:
     """
-    Compute ERT across multiple random seeds and return an xarray
-    with dimensions (seed, taskID, ...).
+    Compute ERT across multiple random seeds.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Dataset containing cost, success, and dims variables.
+    n_seeds : int
+        Number of random seeds to use for bootstrap sampling.
+    n_picks : int
+        Number of problem samples per seed.
+
+    Returns
+    -------
+    xr.DataArray
+        ERT values with dimensions (seed, taskID, ...).
+
+    Notes
+    -----
+    Performs bootstrap sampling of problems for each seed to
+    estimate ERT distribution.
     """
     n_realizations = int(ds[REALIZATION].max())
     samples = np.stack(
@@ -520,6 +617,26 @@ def compute_ert_multi_seed(
 
 
 def quality_value(x: xr.DataArray, g_min: float) -> xr.DataArray:
+    """
+    Compute scaled quality value relative to global minimum.
+
+    Parameters
+    ----------
+    x : xr.DataArray
+        Input data array with objective values.
+    g_min : float
+        Global minimum value. If NaN, uses minimum from x.
+
+    Returns
+    -------
+    xr.DataArray
+        Scaled quality values where 0 indicates optimal solution.
+
+    Notes
+    -----
+    Quality value is scaled such that the median initial quality
+    equals the maximum target value from DEFAULT_TARGETS.
+    """
     if np.isnan(g_min):
         g_min = x.min(skipna=True)
     qv = x - g_min
@@ -535,6 +652,29 @@ def quality_value(x: xr.DataArray, g_min: float) -> xr.DataArray:
 
 
 def calculate_ert(data: xr.Dataset, global_min: float) -> xr.Dataset:
+    """
+    Calculate Expected Running Time (ERT) metrics.
+
+    Parameters
+    ----------
+    data : xr.Dataset
+        Optimization dataset with 'output_min', 'fevals', and
+        'iterations' variables.
+    global_min : float
+        Global minimum value for quality calculation.
+
+    Returns
+    -------
+    xr.Dataset
+        Dataset with 'cost' and 'success' variables across multiple
+        target quality levels.
+
+    Notes
+    -----
+    ERT is computed for DEFAULT_TARGETS quality levels. Cost
+    includes both function evaluations (fevals) and iterations,
+    stored as separate metrics in the 'cost' variable.
+    """
     data = data.as_numpy()
     x = output_cummin(data[OUTPUT_MIN]).ffill(BUDGET)
     qv = quality_value(x, global_min)

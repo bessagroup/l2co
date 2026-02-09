@@ -8,6 +8,20 @@ import l2co.plotting
 
 
 def _add_eval_line(ax, line_val):
+    """
+    Add a vertical evaluation line to an axis.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Matplotlib axes to add the line to.
+    line_val : float or None
+        X-coordinate for the vertical line. If None, no line is added.
+
+    Returns
+    -------
+    None
+    """
     if line_val is not None:
         ax.axvline(
             x=line_val, color="black", linestyle="--", linewidth=2, zorder=5
@@ -15,6 +29,27 @@ def _add_eval_line(ax, line_val):
 
 
 def ertd_per_category(d, line=None):
+    """
+    Plot ERTD profiles grouped by BBOB function category.
+
+    Parameters
+    ----------
+    d : DataLoader
+        DataLoader containing BBOB benchmark function results.
+    line : float or None, optional
+        X-coordinate for a vertical reference line, by default None.
+
+    Returns
+    -------
+    tuple[matplotlib.figure.Figure, np.ndarray]
+        Figure and array of axes for the category plots.
+
+    Notes
+    -----
+    Creates 5 subplots for BBOB categories: separable, low conditioning,
+    high conditioning, multimodal adequate, and multimodal weak.
+    Also saves individual plots for each category.
+    """
     groups = [
         {
             "fn_name": [
@@ -96,6 +131,29 @@ def ertd_per_category(d, line=None):
 
 
 def ertd_per_dimension(d, line=None, dims: Iterable[int] | None = None):
+    """
+    Plot ERTD profiles grouped by problem dimensionality.
+
+    Parameters
+    ----------
+    d : DataLoader
+        DataLoader containing optimization results.
+    line : float or None, optional
+        X-coordinate for a vertical reference line, by default None.
+    dims : Iterable[int] or None, optional
+        List of dimensions to plot. If None, uses [2, 3, 5, 10, 20, 40].
+
+    Returns
+    -------
+    tuple[matplotlib.figure.Figure, np.ndarray]
+        Figure and array of axes for the dimension plots.
+
+    Notes
+    -----
+    Creates subplots for each specified dimension, showing ERTD
+    profiles for problems of that dimensionality. Also saves
+    individual plots for each dimension.
+    """
     dims = dims if dims is not None else [2, 3, 5, 10, 20, 40]
     # Hardcoded figure size
     fig, axes = plt.subplots(1, len(dims), figsize=(25, 4), sharey=True)
@@ -125,6 +183,30 @@ def ertd_per_dimension(d, line=None, dims: Iterable[int] | None = None):
 
 
 def ertd_per_function_raster(d, cols=6, line=None):
+    """
+    Create raster plot of ERTD profiles for all BBOB functions.
+
+    Parameters
+    ----------
+    d : DataLoader
+        DataLoader containing BBOB benchmark function results.
+    cols : int, optional
+        Number of columns in the raster grid, by default 6.
+    line : float or None, optional
+        X-coordinate for a vertical reference line, by default None.
+
+    Returns
+    -------
+    tuple[matplotlib.figure.Figure, np.ndarray]
+        Figure and array of axes for the function plots.
+
+    Notes
+    -----
+    Creates a grid layout with one subplot per BBOB function,
+    displaying ERTD profiles. Rows are calculated based on the
+    number of functions and specified columns. Also saves
+    individual plots for each function.
+    """
     all_fns = (
         [
             "sphere",

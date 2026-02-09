@@ -118,6 +118,18 @@ dataloader = None
 
 
 def update_single_optimizer_options(event=None):
+    """
+    Update the single optimizer options based on available data folders.
+
+    Parameters
+    ----------
+    event : optional
+        Event triggered by the UI interaction, by default None.
+
+    Returns
+    -------
+    None
+    """
     base_path = Path(path_widget.value) / DEFAULT_DATA_FOLDER
     if not base_path.exists():
         experiment_single_optimizer_widget.options = []
@@ -130,6 +142,18 @@ path_widget.param.watch(update_single_optimizer_options, "value")
 
 
 def update_l2co_files(event=None):
+    """
+    Update the L2CO file options based on the selected optimizer.
+
+    Parameters
+    ----------
+    event : optional
+        Event triggered by the UI interaction, by default None.
+
+    Returns
+    -------
+    None
+    """
     base_path = Path(path_widget.value) / DEFAULT_L2CO_FOLDER
     if not experiment_single_optimizer_widget.value:
         experiment_l2co_widget.options = []
@@ -228,6 +252,15 @@ load_button.on_click(load_dataloader)
 
 
 def retrieve_task_df():
+    """
+    Retrieve a DataFrame of unique task labels from the dataloader.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing unique task labels indexed by task ID,
+        or empty DataFrame if dataloader is None.
+    """
     global dataloader
     if dataloader is None:
         return pd.DataFrame()
@@ -241,6 +274,15 @@ def retrieve_task_df():
 
 
 def retrieve_task_df_individual():
+    """
+    Retrieve a DataFrame of all individual task labels from dataloader.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing all task labels (including duplicates),
+        or empty DataFrame if dataloader is None.
+    """
     global dataloader
     if dataloader is None:
         return pd.DataFrame()
@@ -280,6 +322,23 @@ spreadsheet_button.on_click(generate_spreadsheet)
 
 
 def generate_opt_choices(event=None):
+    """
+    Generate and display the single best solver (SBS) table.
+
+    Parameters
+    ----------
+    event : optional
+        Event triggered by the UI interaction, by default None.
+
+    Returns
+    -------
+    None
+
+    Notes
+    -----
+    Updates the opt_choices_output widget with the SBS table or
+    error message.
+    """
     global dataloader
 
     if dataloader is None:
@@ -317,6 +376,23 @@ opt_choices_button.on_click(generate_opt_choices)
 
 
 def generate_l2co_choices(event=None):
+    """
+    Generate and display the L2CO optimizer schedules table.
+
+    Parameters
+    ----------
+    event : optional
+        Event triggered by the UI interaction, by default None.
+
+    Returns
+    -------
+    None
+
+    Notes
+    -----
+    Updates the l2co_choices_output widget with the schedules table
+    or error message.
+    """
     global dataloader
 
     if dataloader is None:
@@ -350,10 +426,42 @@ MAX_LABEL_LENGTH = 20  # Adjust as needed
 
 
 def trim_label(label, max_len=MAX_LABEL_LENGTH):
+    """
+    Trim label to maximum length with ellipsis if needed.
+
+    Parameters
+    ----------
+    label : str
+        Label text to trim.
+    max_len : int, optional
+        Maximum label length, by default MAX_LABEL_LENGTH.
+
+    Returns
+    -------
+    str
+        Trimmed label with ellipsis if exceeds max_len.
+    """
     return label if len(label) <= max_len else label[: max_len - 1] + "…"
 
 
 def update_plot(event=None):
+    """
+    Update the performance plots (RTD and PP) based on selections.
+
+    Parameters
+    ----------
+    event : optional
+        Event triggered by the UI interaction, by default None.
+
+    Returns
+    -------
+    None
+
+    Notes
+    -----
+    Generates Runtime Distribution (RTD) and Performance Profile (PP)
+    plots for selected tasks and optimizers, updating plot_output.
+    """
     global dataloader
     global optimizer_line_style
     global optimizer_color_map
@@ -465,6 +573,23 @@ plot_button.on_click(update_plot)
 
 
 def update_single_plot(event=None):
+    """
+    Update the single problem plot showing optimizer performance.
+
+    Parameters
+    ----------
+    event : optional
+        Event triggered by the UI interaction, by default None.
+
+    Returns
+    -------
+    None
+
+    Notes
+    -----
+    Generates minimum and mean loss plots for a single selected
+    problem across all optimizers, updating single_plot_output.
+    """
     global dataloader
     if dataloader is None:
         single_plot_output.objects = [
