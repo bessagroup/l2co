@@ -69,6 +69,8 @@ class Task(eqx.Module):
         The model used for the task.
     loss_fn : Callable
         The loss function for the task.
+    global_min : float
+        The global minimum value for the task, if known.
     pass_rng : bool
         Whether to pass a random key to the loss function.
     has_aux : bool
@@ -149,8 +151,9 @@ class Task(eqx.Module):
 
         Returns
         -------
-        frozenset
-            Hashable version of the tag dictionary.
+        frozenset of tuple[str, Any]
+            Hashable version of the tag dictionary as a frozenset of
+            key-value pairs.
         """
 
         def make_hashable(value):

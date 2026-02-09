@@ -141,12 +141,16 @@ def reset(
     ----------
     run_state : RunState
         Current run state.
+    batch_state : BatchState
+        Current batch state.
     static : PyTree
         Model of the task to optimize.
     dataset : dict[str, jax.Array]
         Dataset for evaluation.
     loss_fn : Callable
         Loss function for evaluation.
+    pass_rng : bool
+        Whether to pass RNG keys to the loss function.
     sampler : SamplerFunction
         Sampling function for generating new parameters.
     key : PRNGKeyArray
@@ -351,7 +355,7 @@ def evaluate(
         Current run state.
     batch_state : BatchState
         Current batch state.
-    model : PyTree
+    static : PyTree
         Model of the task to optimize.
     dataset : dict[str, jax.Array]
         Dataset for evaluation.
@@ -361,6 +365,8 @@ def evaluate(
         Sampling function for generating new parameters.
     n_iterations : int
         Number of iterations to run.
+    pass_rng : bool
+        Whether to pass RNG keys to the loss function.
     key : PRNGKeyArray
         PRNG key for random operations.
     verbose : bool
@@ -368,9 +374,9 @@ def evaluate(
 
     Returns
     -------
-    tuple[RunState, HistoryState]
-        Tuple of updated RunState, BatchState and History state after complete
-        optimization run.
+    tuple[RunState, BatchState, HistoryState]
+        Tuple of updated RunState, BatchState and History state after
+        complete optimization run.
     """
     run_state = reset(
         run_state=run_state,
