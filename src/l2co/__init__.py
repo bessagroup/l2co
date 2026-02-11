@@ -29,6 +29,7 @@ from l2co._src.history_state import HistoryState
 from l2co._src.models import (
     MLP,
     AbstractModel,
+    L2COModel,
     LSTM_Encoder,
     Stage0Loader,
     Stage0Model,
@@ -70,6 +71,7 @@ __all__ = [
     "OptHistory",
     "optimizer_mapping",
     "validation_fn",
+    "L2COModel",
     "preprocessing_factory",
     "plotting",
     "sampling",
