@@ -298,9 +298,9 @@ def log_stabilized_minmax_scale_with_global_min(
     """
     p = x - global_min
     p_log10 = jnp.log10(p + EPSILON)
-    normed = (p_log10 - jnp.log10(EPSILON)) / (
-        jnp.max(p_log10, axis=0) - jnp.log10(EPSILON) + EPSILON
-    )
+    min_value = jnp.log10(EPSILON)
+    max_value = jnp.min(p_log10[0])  # jnp.max(p_log10, axis=0)
+    normed = (p_log10 - min_value) / (max_value - min_value + EPSILON)
     return jnp.clip(normed, 0.0, 1.0)
 
 
