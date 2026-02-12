@@ -181,26 +181,33 @@ def signed_softlog(x: jax.Array, alpha: float = EPSILON) -> jax.Array:
     return y
 
 
-def interpolate(x: jnp.ndarray, n_points: int) -> jnp.ndarray:
-    """Interpolate array to specified number of points.
+def get_interpolation_matrix(input_len: int, target_len: int):
+    """Computes a static matrix M such that x_interp = x @ M."""
+    # The positions we want to sample
+    query_points = jnp.linspace(0, 1, target_len)
+    # The positions we actually have
+    ref_points = jnp.linspace(0, 1, input_len)
 
-    Parameters
-    ----------
-    x : jnp.ndarray
-        Input array to interpolate.
-    n_points : int
-        Target number of points.
+    # Calculate indices and weights for linear interpolation
+    # This logic mimics jnp.interp but produces a reusable matrix
+    def get_weights(q):
+        # Find which two ref points the query point falls between
+        idx = jnp.searchsorted(ref_points, q, side="right") - 1
+        idx = jnp.clip(idx, 0, input_len - 2)
 
-    Returns
-    -------
-    jnp.ndarray
-        Interpolated array with n_points elements.
-    """
-    return jax.vmap(
-        lambda xi: jnp.interp(
-            jnp.linspace(0, 1, n_points), jnp.linspace(0, 1, len(xi)), xi
-        )
-    )(x)
+        low = ref_points[idx]
+        high = ref_points[idx + 1]
+
+        weight_high = (q - low) / (high - low)
+        weight_low = 1.0 - weight_high
+
+        # Create a row for the matrix
+        row = jnp.zeros((input_len,))
+        row = row.at[idx].set(weight_low)
+        row = row.at[idx + 1].set(weight_high)
+        return row
+
+    return jax.vmap(get_weights)(query_points).T
 
 
 def minmax_scale(x: jax.Array, min: jax.Array, max: jax.Array) -> jax.Array:
