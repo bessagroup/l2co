@@ -264,6 +264,7 @@ class MixedEmbedding(eqx.Module):
         for xi, mo in zip(x, self.embedders, strict=True):
             if isinstance(mo, eqx.nn.Embedding):
                 xi_input = xi.astype(jnp.int32)
+
             else:
                 xi_input = xi[None]
             outputs.append(mo(xi_input))
