@@ -220,15 +220,15 @@ class Task(eqx.Module):
         PyTree
             Skeleton with the same structure as the original model.
         """
-        if hyperparams["model_type"] == "eqx_module":
+        if "model_shape_hex" in hyperparams:
             return cloudpickle.loads(
                 bytes.fromhex(hyperparams["model_shape_hex"])
             )
-        else:
-            return jax.ShapeDtypeStruct(
-                tuple(hyperparams["model_shape"]),
-                jnp.dtype(hyperparams["model_dtype"]),
-            )
+        # Legacy fallback: old files stored shape/dtype as plain JSON
+        return jax.ShapeDtypeStruct(
+            tuple(hyperparams["model_shape"]),
+            jnp.dtype(hyperparams["model_dtype"]),
+        )
 
     @classmethod
     def _from_header(cls, hyperparams: dict, model) -> Task:
@@ -413,19 +413,11 @@ class Task(eqx.Module):
         """
         loss_fn_hex = cloudpickle.dumps(self.loss_fn).hex()
 
-        if isinstance(self.model, eqx.Module):
-            model_shape = eqx.filter_eval_shape(lambda: self.model, None)
-            model_info = {
-                "model_type": "eqx_module",
-                "model_shape_hex": cloudpickle.dumps(model_shape).hex(),
-            }
-        else:
-            arr = jnp.asarray(self.model)
-            model_info = {
-                "model_type": "jnp_array",
-                "model_shape": list(arr.shape),
-                "model_dtype": str(arr.dtype),
-            }
+        # Both eqx.Module and jnp.ndarray are pytrees;
+        # filter_eval_shape replaces every array leaf with a
+        # ShapeDtypeStruct, giving us a serialisable skeleton.
+        model_shape = eqx.filter_eval_shape(lambda _: self.model, None)
+        model_shape_hex = cloudpickle.dumps(model_shape).hex()
 
         if self.dataset.get("dataset_path") is None:
             dataset = None
@@ -434,7 +426,7 @@ class Task(eqx.Module):
             dataset["dataset_path"] = str(Path(self.dataset["dataset_path"]))
 
         return {
-            **model_info,
+            "model_shape_hex": model_shape_hex,
             "loss_fn": loss_fn_hex,
             "pass_rng": self.pass_rng,
             "has_aux": self.has_aux,
