@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import warnings
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypedDict
@@ -17,6 +19,8 @@ from typing import Any, TypedDict
 # Third-party
 import cloudpickle
 import equinox as eqx
+import jax
+import jax.numpy as jnp
 import jax.tree_util as jtu
 from jaxtyping import PyTree
 
@@ -199,19 +203,80 @@ class Task(eqx.Module):
         t = sorted(self.tag_hashable)
         return hashlib.sha256(str(t).encode()).hexdigest()[:16]
 
+    @staticmethod
+    def _reconstruct_model_skeleton(hyperparams: dict):
+        """
+        Reconstruct a model skeleton (PyTree of ShapeDtypeStructs) from header
+        metadata, ready for use as the target of
+        ``eqx.tree_deserialise_leaves``.
+
+        Parameters
+        ----------
+        hyperparams : dict
+            Decoded JSON header produced by :meth:`to_dict`.
+
+        Returns
+        -------
+        PyTree
+            Skeleton with the same structure as the original model.
+        """
+        if "model_shape_hex" in hyperparams:
+            return cloudpickle.loads(
+                bytes.fromhex(hyperparams["model_shape_hex"])
+            )
+        # Legacy fallback: old files stored shape/dtype as plain JSON
+        return jax.ShapeDtypeStruct(
+            tuple(hyperparams["model_shape"]),
+            jnp.dtype(hyperparams["model_dtype"]),
+        )
+
+    @classmethod
+    def _from_header(cls, hyperparams: dict, model) -> Task:
+        """
+        Assemble a Task from a decoded JSON header and an already-loaded model.
+
+        Parameters
+        ----------
+        hyperparams : dict
+            Decoded JSON header produced by :meth:`to_dict`.
+        model : PyTree
+            Model with weights filled in by ``eqx.tree_deserialise_leaves``.
+
+        Returns
+        -------
+        Task
+            Fully assembled Task.
+        """
+        loss_fn = cloudpickle.loads(bytes.fromhex(hyperparams["loss_fn"]))
+        dataset = hyperparams.get("dataset") or {}
+        return cls(
+            model=model,
+            loss_fn=loss_fn,
+            global_min=hyperparams.get("global_min"),
+            pass_rng=hyperparams["pass_rng"],
+            has_aux=hyperparams["has_aux"],
+            dataset=dataset,
+            tag=hyperparams.get("tag", {}),
+        )
+
     @classmethod
     def from_dict(
         cls, data: dict[str, Any], filepath: str | None = None
     ) -> Task:
         """
-        Create a Task instance from a dictionary.
+        Create a Task from a legacy JSON-format dictionary.
+
+        This supports the old multi-file format (produced by the old
+        ``to_dict(path)`` / ``save_to_json`` methods). For new code use
+        :meth:`Task.load` with a ``.eqx`` path.
 
         Parameters
         ----------
         data : dict[str, Any]
-            Dictionary containing task data.
+            Dictionary as written by the old ``to_dict(path)`` method,
+            containing a ``model_path`` key with file-path references.
         filepath : str or None, optional
-            Path to resolve model files, by default None.
+            Path used to resolve relative model file paths, by default None.
 
         Returns
         -------
@@ -270,99 +335,156 @@ class Task(eqx.Module):
 
     def save_to_json(self, filepath: Path):
         """
-        Save the task to a JSON file.
+        Save the task to disk.
+
+        .. deprecated::
+            Use :meth:`Task.save` instead. This method now delegates to
+            ``Task.save`` and writes a single ``.eqx`` file rather than
+            a JSON file.
 
         Parameters
         ----------
         filepath : Path
-            Path to save the JSON file.
+            Base path (extension is ignored; ``.eqx`` will be used).
         """
-        with open(filepath.with_suffix(".json"), "w") as f:
-            json.dump(self.to_dict(filepath), f, indent=4)
+        warnings.warn(
+            "save_to_json is deprecated; use Task.save() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        Task.save(self, str(filepath))
 
     @staticmethod
     def save(object: Task, path: str) -> str:
         """
-        Save a Task object to a JSON file.
+        Save a Task to a single self-contained ``.eqx`` file.
+
+        The file format mirrors :class:`Stage1Loader`: the first line is a
+        UTF-8 JSON header containing all metadata (loss function, dataset
+        reference, tags, model shape), followed immediately by the binary
+        leaf data written by ``eqx.tree_serialise_leaves``.  The dataset
+        ``.npz`` file is **not** copied — only its path is stored in the
+        header, so the dataset is stored only once on disk.
 
         Parameters
         ----------
         object : Task
             Task object to save.
         path : str
-            Path to save the JSON file.
+            Base path for the output file (extension is replaced with
+            ``.eqx``).
 
         Returns
         -------
         str
-            Path to the saved JSON file.
+            Path to the saved ``.eqx`` file.
         """
-        object.save_to_json(Path(path))
-        return Path(path).with_suffix(".json")
+        _path = Path(path)
+        hyperparams = object.to_dict()
+        # Store dataset_path relative to the .eqx file so the task is
+        # portable: moving the .eqx and .npz files together keeps the
+        # reference valid regardless of machine or working directory.
+        if hyperparams.get("dataset") and hyperparams["dataset"].get(
+            "dataset_path"
+        ):
+            abs_dataset = Path(
+                hyperparams["dataset"]["dataset_path"]
+            ).resolve()
+            abs_task_dir = _path.resolve().parent
+            hyperparams["dataset"]["dataset_path"] = os.path.relpath(
+                abs_dataset, abs_task_dir
+            )
+        with open(_path.with_suffix(".eqx"), "wb") as f:
+            f.write((json.dumps(hyperparams) + "\n").encode())
+            eqx.tree_serialise_leaves(f, object.model)
+        return str(_path.with_suffix(".eqx"))
 
-    def to_dict(self, path: Path) -> dict:
+    def to_dict(self) -> dict:
         """
-        Convert the task to a dictionary representation for serialization.
+        Convert the task to a metadata dictionary for serialization.
 
-        Parameters
-        ----------
-        path : Path
-            Path used for saving model files.
+        No files are written by this method. Model weights are stored
+        separately via ``eqx.tree_serialise_leaves`` in :meth:`save`.
 
         Returns
         -------
         dict
-            Dictionary representation of the task.
+            Metadata dictionary suitable for use as a JSON header.
         """
-        path = path.resolve()  # Ensure absolute path
+        loss_fn_hex = cloudpickle.dumps(self.loss_fn).hex()
 
-        # if model is eqx.Module, save as eqx.Module
-        if isinstance(self.model, eqx.Module):
-            save_model(self.model, path)
-            model_path = {
-                "model": str(path.with_suffix(".eqx").resolve()),
-                "shape": str(path.with_suffix(".pkl").resolve()),
-            }
-        else:
-            save_jnparray(self.model, path)
-            model_path = {"array": str(path.with_suffix(".npy").resolve())}
-
-        loss_fn = cloudpickle.dumps(self.loss_fn).hex()
+        # Both eqx.Module and jnp.ndarray are pytrees;
+        # filter_eval_shape replaces every array leaf with a
+        # ShapeDtypeStruct, giving us a serialisable skeleton.
+        model_shape = eqx.filter_eval_shape(lambda _: self.model, None)
+        model_shape_hex = cloudpickle.dumps(model_shape).hex()
 
         if self.dataset.get("dataset_path") is None:
             dataset = None
         else:
-            dataset = self.dataset.copy()
+            dataset = dict(self.dataset)
             dataset["dataset_path"] = str(Path(self.dataset["dataset_path"]))
 
         return {
-            "model_path": model_path,
-            "loss_fn": loss_fn,
+            "model_shape_hex": model_shape_hex,
+            "loss_fn": loss_fn_hex,
             "pass_rng": self.pass_rng,
-            "dataset": dataset,
-            "tag": self.tag,
             "has_aux": self.has_aux,
             "global_min": self.global_min,
+            "dataset": dataset,
+            "tag": self.tag,
         }
 
     @classmethod
     def load(cls, filepath: str) -> Task:
         """
-        Load a task from a JSON file.
+        Load a Task from disk.
+
+        Supports both the new single-file ``.eqx`` format and the legacy
+        multi-file ``.json`` format for backward compatibility.
 
         Parameters
         ----------
         filepath : str
-            Path to the JSON file.
+            Path to the task file.  For the new format supply either the
+            base path or the ``.eqx`` path; for the legacy format supply
+            the ``.json`` path.
 
         Returns
         -------
         Task
             The loaded task.
         """
-        with open(filepath) as f:
-            data = json.load(f)
-        return cls.from_dict(data, filepath)
+        _path = Path(filepath)
+        if _path.suffix == ".json":
+            # Legacy multi-file format: .json + .eqx/.pkl or .npy
+            warnings.warn(
+                f"Loading legacy .json Task format from {filepath!r}. "
+                "Re-save with Task.save() to migrate to the new single-file "
+                ".eqx format.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            with open(_path) as f:
+                data = json.load(f)
+            return cls.from_dict(data, filepath)
+        # New single-file format
+        eqx_path = _path.with_suffix(".eqx").resolve()
+        with open(eqx_path, "rb") as f:
+            hyperparams = json.loads(f.readline().decode())
+            # Resolve a relative dataset_path against the .eqx file's
+            # directory so loading works regardless of CWD or machine.
+            if hyperparams.get("dataset") and hyperparams["dataset"].get(
+                "dataset_path"
+            ):
+                ds_path = Path(hyperparams["dataset"]["dataset_path"])
+                if not ds_path.is_absolute():
+                    hyperparams["dataset"]["dataset_path"] = str(
+                        (eqx_path.parent / ds_path).resolve()
+                    )
+            skeleton = cls._reconstruct_model_skeleton(hyperparams)
+            model = eqx.tree_deserialise_leaves(f, skeleton)
+        return cls._from_header(hyperparams, model)
 
     def __repr__(self):
         """
