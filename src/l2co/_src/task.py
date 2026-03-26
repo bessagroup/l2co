@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import warnings
 from collections.abc import Callable
 from pathlib import Path
@@ -380,6 +381,19 @@ class Task(eqx.Module):
         """
         _path = Path(path)
         hyperparams = object.to_dict()
+        # Store dataset_path relative to the .eqx file so the task is
+        # portable: moving the .eqx and .npz files together keeps the
+        # reference valid regardless of machine or working directory.
+        if hyperparams.get("dataset") and hyperparams["dataset"].get(
+            "dataset_path"
+        ):
+            abs_dataset = Path(
+                hyperparams["dataset"]["dataset_path"]
+            ).resolve()
+            abs_task_dir = _path.resolve().parent
+            hyperparams["dataset"]["dataset_path"] = os.path.relpath(
+                abs_dataset, abs_task_dir
+            )
         with open(_path.with_suffix(".eqx"), "wb") as f:
             f.write((json.dumps(hyperparams) + "\n").encode())
             eqx.tree_serialise_leaves(f, object.model)
@@ -463,8 +477,19 @@ class Task(eqx.Module):
                 data = json.load(f)
             return cls.from_dict(data, filepath)
         # New single-file format
-        with open(_path.with_suffix(".eqx"), "rb") as f:
+        eqx_path = _path.with_suffix(".eqx").resolve()
+        with open(eqx_path, "rb") as f:
             hyperparams = json.loads(f.readline().decode())
+            # Resolve a relative dataset_path against the .eqx file's
+            # directory so loading works regardless of CWD or machine.
+            if hyperparams.get("dataset") and hyperparams["dataset"].get(
+                "dataset_path"
+            ):
+                ds_path = Path(hyperparams["dataset"]["dataset_path"])
+                if not ds_path.is_absolute():
+                    hyperparams["dataset"]["dataset_path"] = str(
+                        (eqx_path.parent / ds_path).resolve()
+                    )
             skeleton = cls._reconstruct_model_skeleton(hyperparams)
             model = eqx.tree_deserialise_leaves(f, skeleton)
         return cls._from_header(hyperparams, model)
