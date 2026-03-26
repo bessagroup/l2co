@@ -29,8 +29,6 @@ from .tree_utils import (
     load_dataset,
     load_jnparray,
     load_model,
-    save_jnparray,
-    save_model,
 )
 
 #                                                          Authorship & Credits
