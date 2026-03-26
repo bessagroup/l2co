@@ -7,6 +7,9 @@ Plotting module
 
 # Local
 from ._src.visualize.bbob_plot import (
+    actions_per_category,
+    actions_per_dimension,
+    actions_per_function_raster,
     ertd_per_category,
     ertd_per_dimension,
     ertd_per_function_raster,
@@ -50,4 +53,7 @@ __all__ = [
     "ertd_per_category",
     "ertd_per_dimension",
     "ertd_per_function_raster",
+    "actions_per_category",
+    "actions_per_dimension",
+    "actions_per_function_raster",
 ]

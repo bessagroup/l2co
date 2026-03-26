@@ -51,6 +51,7 @@ BASE_OPT_STYLES.update(
         "sepcmaes": OptStyle(color="#EE6677", marker="x"),
         "stage0": OptStyle(color="#BBBBBB", marker=None, linestyle="--"),
         "l2co": OptStyle(color="#000000", marker=None, linestyle="-"),
+        "rl2co": OptStyle(color="#FF0000", marker=None, linestyle="-"),
     }
 )
 
@@ -64,6 +65,7 @@ LABEL_MAP = {
     "adam_learning_rate=0.3": "Adam",
     "stage0": r"L2CO ($g_\text{first}$)",
     "l2co": r"L2CO ($g_\text{first} \rightarrow g_\text{second}$)",
+    "rl2co": "RL2CO",
 }
 
 
