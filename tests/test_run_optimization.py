@@ -103,6 +103,35 @@ def test_bbob(
     )
 
 
+def test_optimization_step_name_rl2co_with_extension():
+    step = OptimizationStep(
+        "rl2co",
+        hyperparameters={
+            "model": "/some/long/path/my_model.eqx",
+            "n_steps": 10,
+            "sequence_length": 50,
+        },
+    )
+    assert step.name == "rl2co_my_model"
+
+
+def test_optimization_step_name_rl2co_no_extension():
+    step = OptimizationStep(
+        "rl2co", hyperparameters={"model": "/path/to/model"}
+    )
+    assert step.name == "rl2co_model"
+
+
+def test_optimization_step_name_rl2co_no_model():
+    step = OptimizationStep("rl2co", hyperparameters={})
+    assert step.name == "rl2co_unknown"
+
+
+def test_optimization_step_name_non_rl2co_unchanged():
+    step = OptimizationStep("adam", hyperparameters={"learning_rate": 0.01})
+    assert step.name == "adam_learning_rate=0.01"
+
+
 @pytest.mark.parametrize("optimizer", ALL_OPTIMIZERS)
 def test_all_optimizers(optimizer: str):
     task = create_bbob_task(
