@@ -34,6 +34,7 @@ from .naming import (
     TASK_LABELS,
     UPDATE_STEP,
 )
+from .optimizerschedule import OptimizationStep
 from .performance import calculate_ert
 from .task import Task
 from .typing import OptHistoryType
@@ -282,9 +283,12 @@ class HistoryState(eqx.Module):
         )
 
     def to_dataloader(
-        self, task: Task, name: str, budget_steps: int | None = None
+        self,
+        task: Task,
+        optimizer: OptimizationStep,
+        budget_steps: int | None = None,
     ) -> DataLoader:
-        xarr = self.to_xarray_realizations()
+        xarr = self.to_xarray_realizations(budget_steps=budget_steps)
         ert = calculate_ert(xarr, task.global_min)
 
         labels_data = pd.DataFrame(
@@ -304,7 +308,7 @@ class HistoryState(eqx.Module):
         ).astype(str)
 
         comb = xr.merge([xarr, ert], compat="override")
-        comb = comb.expand_dims({SCHEDULE: [name]})
+        comb = comb.expand_dims({SCHEDULE: [optimizer.name]})
         comb_labels = xr.merge([comb, xarr_task_labels], compat="override")
         comb_labels = comb_labels.expand_dims({TASK_ID: [task.hash]})
         return DataLoader.from_xarray(comb_labels)
