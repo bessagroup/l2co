@@ -219,3 +219,69 @@ def create_bbob_task(
         loss_fn=loss_fn,
         tag=tag,
     )
+
+
+def create_cec2005_task(
+    fn_name: str, seed: int, dimensionality: int, noise: float = 0.0
+) -> Task:
+    """
+    Create an optimization task from a CEC2005 benchmark function.
+
+    Parameters
+    ----------
+    fn_name : str
+        Name of the CEC2005 benchmark function.
+    seed : int
+        Random seed for function instance generation.
+    dimensionality : int
+        Dimensionality of the optimization problem.
+    noise : float, optional
+        Multiplicative noise level (standard deviation), by default 0.0.
+
+    Returns
+    -------
+    Task
+        Configured optimization task with scaled and optionally noisy
+        objective function.
+
+    Notes
+    -----
+    Input domain is [0, 1]^d which is scaled to CEC2005's bounds.
+    If noise > 0, the function requires a random
+    key and applies multiplicative Gaussian noise.
+    """
+
+    fn_scale_input = scale_input(
+        domain_bounds=jnp.tile(jnp.array([0.0, 1.0]), (dimensionality, 2)),
+        function_bounds=jnp.tile(
+            jnp.array(bbob_jax.bounds.cec2005_bounds[fn_name]),
+            (dimensionality, 2),
+        ),
+    )
+
+    if noise > 0.0:
+        fn_noise = add_noise(noise_level=noise)
+        pass_rng = True
+    else:
+        fn_noise = lambda f: f
+        pass_rng = False
+
+    bbob_fn, global_min = bbob_jax.cec2005_registry[fn_name](
+        ndim=dimensionality, key=jr.key(seed)
+    )
+
+    loss_fn = fn_noise(fn_scale_input(bbob_fn))
+    model = jnp.zeros(dimensionality)
+    tag = bbob_jax.cec2005_function_characteristics[fn_name].copy()
+    tag["dimensionality"] = dimensionality
+    tag["fn_name"] = fn_name
+    tag["seed"] = seed
+    tag["noise"] = noise
+
+    return Task(
+        model=model,
+        global_min=float(global_min),
+        pass_rng=pass_rng,
+        loss_fn=loss_fn,
+        tag=tag,
+    )
