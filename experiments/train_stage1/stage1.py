@@ -23,13 +23,7 @@ from l2co._src.models import (
 )
 from sklearn.ensemble import HistGradientBoostingRegressor
 from l2co.naming import TASK_ID, REALIZATION, PROBLEM, SCHEDULE
-from l2co.plotting import (
-    ertd_per_category,
-    ertd_per_dimension,
-    ertd_per_function_raster,
-    plot_single_r2,
-    plot_metrics,
-)
+from l2co.plotting import bbob, plot_metrics, plot_single_r2
 
 from bessaplots import savefig
 

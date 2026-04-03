@@ -24,12 +24,7 @@ from l2co._src.models import (
 )
 from sklearn.ensemble import HistGradientBoostingRegressor
 from l2co.naming import TASK_ID, REALIZATION, PROBLEM, SCHEDULE
-from l2co.plotting import (
-    ertd_per_category,
-    ertd_per_dimension,
-    ertd_per_function_raster,
-    plot_r2,
-)
+from l2co.plotting import bbob, plot_r2
 
 from f3dasm.hydra_tools import update_config_with_experiment_sample
 from f3dasm import ExperimentData

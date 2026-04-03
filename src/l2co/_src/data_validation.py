@@ -105,12 +105,15 @@ def calculate_ert(data: xr.Dataset) -> xr.Dataset:
         dim=xr.DataArray([FEVALS, ITERATIONS], dims="metric", name="metric"),
     )
 
-    return xr.Dataset(
+    result = xr.Dataset(
         {
             COST: cost_da,
             SUCCESS: success,
         }
     )
+    if GLOBAL_MIN in result.coords:
+        result = result.drop_vars(GLOBAL_MIN)
+    return result
 
 
 # =============================================================================
@@ -248,6 +251,7 @@ def create_combined_odata(
         preprocess=partial(validation_fn, budget_steps=budget_steps),
         coords="minimal",
         join="outer",
+        compat="override",
     )
 
     # Create task labels

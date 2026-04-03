@@ -259,6 +259,10 @@ def create_cec2005_task(
         ),
     )
 
+    # These functions have built-in stochasticity.
+    if fn_name in ["f4", "f17", "f24", "f25"]:
+        pass_rng = True
+
     if noise > 0.0:
         fn_noise = add_noise(noise_level=noise)
         pass_rng = True

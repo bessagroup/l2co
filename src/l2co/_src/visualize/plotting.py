@@ -6,6 +6,7 @@ Plotting module
 
 # Standard
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Literal
 
 # Third-party
@@ -15,6 +16,7 @@ import jax.random as jr
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
+from bessaplots import TypstReport, savefig
 from matplotlib.colors import (
     ListedColormap,
     LogNorm,
@@ -688,7 +690,7 @@ def plot_ertd(
         case _:
             raise ValueError(
                 f"Invalid cost_metric: {cost_metric}. "
-                "Choose 'fevals' or 'iterations'."
+                f"Choose 'fevals' or 'iterations'."
             )
 
     ax.set_ylabel("Fraction of function, target pairs")
@@ -1000,3 +1002,153 @@ def plot_update_step(
     ax.invert_yaxis()
 
     return fig, ax
+
+
+# =============================================================================
+#                                              Grouped ERTD plotting utilities
+# =============================================================================
+
+
+def _add_eval_line(ax, line_val):
+    if line_val is not None:
+        ax.axvline(
+            x=line_val,
+            color="black",
+            linestyle="--",
+            linewidth=2,
+            zorder=5,
+        )
+
+
+def _save_and_collect(
+    fig: plt.Figure,
+    name: str,
+    caption: str,
+    save_dir: Path,
+    figures: list,
+    paths: list,
+    captions: list,
+    **savefig_kwargs,
+):
+    """Save a figure and append to collection lists."""
+    save_path = save_dir / f"{name}.pdf"
+    savefig(fig=fig, path=str(save_path), **savefig_kwargs)
+    paths.append(save_path.resolve())
+    figures.append(fig)
+    captions.append(caption)
+    plt.close(fig)
+
+
+def ertd_per_group(
+    d,
+    groups: list[tuple[dict, str]],
+    plot_actions: str | None = None,
+    optimizers=None,
+    line: float | None = None,
+    save_dir: Path | None = None,
+) -> tuple[list[plt.Figure], list[Path], list[str]]:
+    """Plot and save ERTD profiles for each group.
+
+    Parameters
+    ----------
+    d : DataLoader
+        DataLoader containing optimization results.
+    groups : list[tuple[dict, str]]
+        Each entry is (filter_dict, name) where filter_dict is
+        passed to ``d.select_feature`` and name is used for
+        file naming and captions.
+    plot_actions : str or None, optional
+        If not None, also plot actions for the specified schedule.
+    optimizers : optional
+        Optimizers to pass to ``plot_update_step``.
+    line : float or None, optional
+        X-coordinate for a vertical reference line.
+    save_dir : Path or None, optional
+        Directory to save plots to. Defaults to cwd.
+
+    Returns
+    -------
+    tuple[list[Figure], list[Path], list[str]]
+        List of figures, list of absolute paths, list of captions.
+    """
+    save_dir = Path(save_dir) if save_dir is not None else Path.cwd()
+    figures, paths, captions = [], [], []
+
+    for filter_dict, name in groups:
+        d_group = d.select_feature(filter_dict)
+
+        fig, ax = plot_ertd_profile(d_group, show_legend=False)
+        _add_eval_line(ax, line)
+
+        _save_and_collect(
+            fig,
+            f"rtd_{name}",
+            f"{name}",
+            save_dir,
+            figures,
+            paths,
+            captions,
+            n_side_by_side=4,
+            span_columns=True,
+            height=1.0,
+        )
+
+        if plot_actions is not None:
+            fig_act, ax_act = plot_update_step(
+                d_group,
+                schedule=plot_actions,
+                optimizers=optimizers,
+                cost_metric="iterations",
+                show_legend=False,
+            )
+
+            _save_and_collect(
+                fig_act,
+                f"actions_{plot_actions}_{name}",
+                f"Actions {plot_actions}: {name}",
+                save_dir,
+                figures,
+                paths,
+                captions,
+                n_side_by_side=4,
+                span_columns=True,
+                height=1.0,
+            )
+
+    return figures, paths, captions
+
+
+def generate_report(
+    paths: list[str | Path],
+    captions: list[str],
+    title: str = "",
+    author: str = "",
+    columns: int = 2,
+    save_path: str | Path = "report",
+) -> Path:
+    """Generate a Typst PDF report from a grid of figures.
+
+    Parameters
+    ----------
+    paths : list of str or Path
+        Paths to figure files (e.g. PDF or PNG).
+    captions : list of str
+        Per-figure captions. Must have the same length as *paths*.
+    title : str, optional
+        Report title. The default is ``""``.
+    author : str, optional
+        Author name. The default is ``""``.
+    columns : int, optional
+        Number of grid columns. The default is ``2``.
+    save_path : str or Path, optional
+        Output path stem (without extension). The default is
+        ``"report"``.
+
+    Returns
+    -------
+    Path
+        Path to the compiled PDF.
+    """
+    report = TypstReport(title=title, author=author)
+    report.add_figures(paths, columns=columns, subcaptions=captions)
+    return report.save(save_path)
