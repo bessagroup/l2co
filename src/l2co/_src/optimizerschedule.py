@@ -155,8 +155,8 @@ class OptimizationStep:
         """
         if self.optimizer == "rl2co":
             model_path = self.hyperparameters.get("model", "")
-            stem = Path(model_path).stem if model_path else "unknown"
-            return f"rl2co_{stem}"
+            stem = Path(model_path).stem if model_path else ""
+            return f"rl2co_{stem}".strip("_")
 
         hyperparameters = "_".join(
             [f"{k}={v}" for k, v in self.hyperparameters.items()]
