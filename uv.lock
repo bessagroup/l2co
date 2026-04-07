@@ -73,16 +73,16 @@ wheels = [
 
 [[package]]
 name = "bbob-jax"
-version = "1.5.0"
+version = "1.6.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jax" },
     { name = "jaxtyping" },
     { name = "softjax" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/68/43/60e6dedb54fd86f4cce06e12edcaf2b918672d8f41e99bd7be53a8c6381b/bbob_jax-1.5.0.tar.gz", hash = "sha256:fc6d4e326c419d71c39c62b08c3759be98f3eb0ea07596e7bdfc224600b877bf", size = 29593, upload-time = "2026-04-02T14:35:31.575Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e7/c1/9e01eb5dcafccdb50e6a01443f4d4fbdb0c7bce0b10a136f5fa2caeef605/bbob_jax-1.6.1.tar.gz", hash = "sha256:d3b93b2f1b2b414b1700b9bfd943d3dd89d6dab4cd4d2a90c7a9bbddb01373df", size = 31961, upload-time = "2026-04-07T08:42:40.923Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c8/ee/51be24315a22d0a09c3e7bdf0e6576fde40712fde09ede59117acb23bdbc/bbob_jax-1.5.0-py3-none-any.whl", hash = "sha256:1659e826a0a07664379e2bf0efd15e51fc795484739be0746208de5aa3b6873c", size = 26554, upload-time = "2026-04-02T14:35:30.656Z" },
+    { url = "https://files.pythonhosted.org/packages/92/63/317f4788b1275343380868fb525381740849781d34eda6cc384552228c15/bbob_jax-1.6.1-py3-none-any.whl", hash = "sha256:b9ded05c4f5393da6f5369b0ee3cd4cbe0e995f31e49b46393ce92dc29f94566", size = 27653, upload-time = "2026-04-07T08:42:39.966Z" },
 ]
 
 [[package]]
@@ -96,7 +96,7 @@ wheels = [
 
 [[package]]
 name = "bessaplots"
-version = "0.5.0"
+version = "0.5.1"
 source = { editable = "../bessaplots" }
 dependencies = [
     { name = "matplotlib" },
@@ -1209,7 +1209,7 @@ tests = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bbob-jax", specifier = ">=1.5.0" },
+    { name = "bbob-jax", specifier = ">=1.6.1" },
     { name = "bessaplots", editable = "../bessaplots" },
     { name = "bottleneck", specifier = ">=1.5.0" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.3.0" },
