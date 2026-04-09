@@ -259,16 +259,16 @@ def create_cec2005_task(
         ),
     )
 
-    # These functions have built-in stochasticity.
-    if fn_name in ["f4", "f17", "f24", "f25"]:
-        pass_rng = True
-
     if noise > 0.0:
         fn_noise = add_noise(noise_level=noise)
         pass_rng = True
     else:
         fn_noise = lambda f: f
         pass_rng = False
+
+    # These functions have built-in stochasticity.
+    if fn_name in ["f4", "f17", "f24", "f25"]:
+        pass_rng = True
 
     bbob_fn, global_min = bbob_jax.cec2005_registry[fn_name](
         ndim=dimensionality, key=jr.key(seed)
