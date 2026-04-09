@@ -856,24 +856,30 @@ def plot_single_r2(
 
 def plot_metrics(metrics: dict[str, Iterable[float]]):
     fig, ax = _get_or_create_axes()
-
     ax.plot(metrics["train_loss"], label="Train loss", color="#000000")
     ax.plot(metrics["val_loss"], label="Validation loss", color="#CC3311")
+
     ax.set_xlabel("Epochs")
-    ax.set_ylabel("Loss")
-    ax.set_yscale("log")
+    ax.set_xticklabels([])
+
+    ax.set_ylabel("")
+    # formatter = ScalarFormatter(useMathText=True)
+    # formatter.set_powerlimits((-2, -2))
+    # ax.yaxis.set_major_formatter(formatter)
 
     ax.legend(
-        loc="best",  # Position inside the axes
-        fontsize=7,  # IEEE standard for legends is often 7pt
-        frameon=True,  # Enable the box
-        fancybox=False,  # IEEE style usually prefers square corners
-        edgecolor="#BBBBBB",  # Explicit frame color
-        framealpha=1.0,  # Make it opaque so grid lines don't bleed through
-        labelspacing=0.2,  # Tighten the vertical space between entries
-        borderaxespad=0.5,  # Distance from the axis edge
+        loc="best",
+        fontsize=7,
+        frameon=True,
+        fancybox=False,
+        edgecolor="#BBBBBB",
+        framealpha=1.0,
+        labelspacing=0.2,
+        borderaxespad=0.5,
+        handlelength=1.5,
+        handletextpad=0.4,
+        borderpad=0.3,
     )
-
     return fig, ax
 
 
