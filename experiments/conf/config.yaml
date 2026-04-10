@@ -1,39 +1,30 @@
 defaults:
-- tasks: gaussian_classification
-- budgets: gaussian_classification
-- samplers: normal
-- optimizers: gaussian_classification
-- stage0_models: histgradientboostingregressor
-- stage1_models: default
-- experimentdata: default
+- tasks: gaussian_classification         # task distribution (see conf/tasks/)
+- budgets: gaussian_classification     # evaluation budget function (see conf/budgets/)
+- samplers: normal          # initial sampling strategy (see conf/samplers/)
+- optimizers: l2co        # set of optimizers to run (see conf/optimizers/)
+- experimentdata: default   # f3dasm ExperimentData domain definition
+- cluster: local            # cluster settings (see conf/cluster/); override with cluster=brown
+- _self_
 
+# Number of independent optimization runs per task (different random seeds)
 n_realizations: 25
 
-combination_fraction:
+# Global random seed for reproducibility
+seed: 469
 
-seed: 467
-mode: cluster
+# Number of discrete timesteps used when interpolating trajectories into the combined dataset
+budget_steps: 1000
 
-cost_metric: fevals
-t: 0.01
-t_end: 10000
-
-log_level: 20
-
-# Training Hyperparameters
-train:
-  learning_rate: 1e-2
-  num_steps: 1000
-  verbose: True
-
-verbose: True
+# Print per-job progress to stdout
+verbose: False
+# Clear JAX compilation cache between jobs to limit memory growth
 clear_jax_cache: True
+# Store the initial sample points alongside the loss history in the output
 save_input_parameters: False
 
-f3dasm_sampler:
-  _target_: f3dasm.design.grid
+# Root directory for pipeline outputs; null uses the pipeline default (cwd/outputs)
+rootdir: null
 
-path:
-model_dir: /Users/martin/Documents/GitHub/l2co/experiments/train_model/outputs
-project_dir: /Users/martin/Documents/GitHub/l2co/experiments/create_optimization_dataset_new/outputs
-project_job:
+# mode of executing the pipeline. This is overwritten if on a cluster
+mode: local

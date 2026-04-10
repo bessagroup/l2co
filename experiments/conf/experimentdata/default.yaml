@@ -1,6 +1,7 @@
+# Minimal domain for f3dasm ExperimentData: a single fixed seed category
 domain:
   input:
     seed:
       type: category
       categories:
-        - 0
+        - 0  # Single seed → one row in ExperimentData before task sampling

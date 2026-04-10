@@ -1,0 +1,10 @@
+enabled: true
+partition: batch
+account: default
+runner: uv run
+env_setup:
+  - unset LD_LIBRARY_PATH
+env_vars:
+  JAX_LOG_LEVEL: error
+  HYDRA_FULL_ERROR: "1"
+  XLA_FLAGS: "--xla_gpu_cuda_data_dir=/usr/local/cuda-12.4"

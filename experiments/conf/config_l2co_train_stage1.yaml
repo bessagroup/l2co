@@ -1,0 +1,44 @@
+defaults:
+- stage1_models: best    # hyperparameter search domain (see conf/stage1_models/)
+- tasks: bbob     # task distribution used as training/test data
+- optimizers: medium    # optimizers whose trajectories form the training targets
+- cluster: local        # cluster settings (see conf/cluster/); override with cluster=brown
+- _self_
+
+# Temperature for L2CO stage0 softmax strategy selection (lower = more greedy)
+t: 0.01
+# Final temperature at end of annealing schedule
+t_end: 100000
+
+# Relative path (within the Hydra run output dir) to the training dataset
+path_train: /Volumes/T7/data/wcci/trainingset2/
+# Relative path to the test dataset (defaults to same as train)
+path_test: ${path_train}
+
+# Global random seed for reproducibility
+seed: 0
+
+# Default model architecture (overrides the grid in stage1_models: all when not doing a sweep)
+stage1_models:
+  history_encoder:
+    hidden_size: 16   # LSTM hidden state dimension
+    out_size: 4       # LSTM output (embedding) dimension
+  embedding:
+    dim: 4            # Per-category embedding dimension
+    out_size: 4       # Embedding MLP output dimension
+  mlp:
+    width_size: 16    # Hidden layer width of the policy MLP
+    depth: 3          # Number of hidden layers in the policy MLP
+
+# Adam learning rate for stage1 model training
+learning_rate: 1e-2
+# Number of gradient update steps
+num_steps: 1000
+# Print training loss each step
+verbose: True
+
+# Root directory for pipeline outputs; null uses the pipeline default (cwd/outputs)
+rootdir: null
+
+# mode of executing the pipeline. This is overwritten if on a cluster
+mode: local

@@ -1,2 +1,3 @@
+# Sample initial points using Xavier/Glorot uniform initialization
 _partial_: true
 _target_: l2co.sampling.xavier_sampling

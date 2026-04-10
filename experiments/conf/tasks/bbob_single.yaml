@@ -1,3 +1,5 @@
+# Single BBOB function config; override fn_name and fn_dim via Hydra CLI
+# e.g. tasks=bbob_single tasks.fn_name=sphere tasks.fn_dim=10
 sampler:
   _target_: f3dasm.create_sampler
   sampler: "grid"
@@ -21,6 +23,7 @@ data_generator:
   _target_: l2co._src.tasks.benchmark_task.create_bbob_task
   _partial_: True
 
+# Default values (override via CLI)
 fn_name: rastrigin
 fn_dim: 5
 

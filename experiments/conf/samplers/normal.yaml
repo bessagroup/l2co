@@ -1,4 +1,5 @@
+# Sample initial points from an isotropic Gaussian
 _partial_: true
 _target_: l2co.sampling.normal_sampling
-mean: 0.0
-std: 1.0
+mean: 0.0  # Distribution mean (applied per dimension)
+std: 1.0   # Distribution standard deviation

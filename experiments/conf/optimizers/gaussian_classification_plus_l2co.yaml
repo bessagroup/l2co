@@ -1,0 +1,14 @@
+# Medium optimizer set extended with both L2CO and RL2CO learned optimizers
+# Update model paths before use
+- optimizer: sepcmaes
+- optimizer: adam
+  hyperparameters:
+    learning_rate: 3e-1
+- optimizer: lbfgs
+- optimizer: pso
+- optimizer: l2co
+  hyperparameters:
+    stage0_model: /users/mvander7/scratch/l2co_train_stage0/1775721970/experiment_data/model/10
+    stage1_model: /users/mvander7/scratch/l2co_train_stage1/1775721941/experiment_data/model/25
+    t: 0.1  # Softmax temperature for strategy selection (lower = more greedy)
+    swap_optimizers: true

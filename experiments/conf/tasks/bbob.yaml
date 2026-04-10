@@ -1,7 +1,8 @@
+# Full BBOB benchmark suite: 24 functions × 6 dimensions × 1 seed
 sampler:
   _target_: f3dasm.create_sampler
-  sampler: "grid"
-sampler_kwargs:
+  sampler: "grid"  # Create one row per (fn_name × dimensionality × seed) combination
+sampler_kwargs:    # Extra keyword args forwarded to the sampler call (null = none)
 
 experimentdata:
   domain:
@@ -35,7 +36,7 @@ experimentdata:
           - 'weierstrass'
       dimensionality:
         type: category
-        categories: 
+        categories:
           - 2
           - 3
           - 5
@@ -47,13 +48,15 @@ experimentdata:
         low: 0
         high: 0
 
-task_kwargs:
+task_kwargs:  # Extra keyword args forwarded to the task factory (null = none)
 
 data_generator:
+  # Factory function that creates a Task object from each ExperimentData row
   _target_: l2co._src.tasks.benchmark_task.create_bbob_task
   _partial_: True
 
 schema:
+  # Feature schema used by FeatureProcessor to encode task metadata for the model
   dimensionality: continuous
   separable: boolean
   unimodal: boolean
