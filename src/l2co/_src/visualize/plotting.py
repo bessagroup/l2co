@@ -55,8 +55,10 @@ __status__ = "Stable"
 # =============================================================================
 
 # 1. Base widths from your IEEEtran.cls / Logs
-SINGLE_COL_WIDTH = 252.0 / 72.27  # 3.486 inches
-DOUBLE_COL_WIDTH = 516.0 / 72.27  # 7.139 inches
+# 3.486 inches
+SINGLE_COL_WIDTH = 252.0 / 72.27
+# 7.139 inches
+DOUBLE_COL_WIDTH = 516.0 / 72.27
 GOLDEN_RATIO = (5**0.5 - 1) / 2
 
 
@@ -113,7 +115,8 @@ def _get_or_create_axes(
     """
     if ax is None:
         width = 252.0 / 72.27
-        height = width * 0.8  # This would be ~2.78 inches
+        # ~2.78 inches
+        height = width * 0.8
         # fig, ax = plt.subplots(
         #     1, 1, figsize=figsize or set_size(width="paper", subplots=(1, 1))
         # )
@@ -713,18 +716,26 @@ def plot_ertd(
         # loc="lower right" is usually best for ERTD plots as the curves
         # go from bottom-left to top-right.
         ax.legend(
-            loc="best",  # Position inside the axes
-            fontsize=7,  # IEEE standard for legends is often 7pt
-            frameon=True,  # Enable the box
-            fancybox=False,  # IEEE style usually prefers square corners
-            edgecolor="#BBBBBB",  # Explicit frame color
-            framealpha=1.0,  # Make it opaque so grid lines don't bleed through
-            labelspacing=0.2,  # Tighten the vertical space between entries
-            borderaxespad=0.5,  # Distance from the axis edge
+            # Position inside the axes
+            loc="best",
+            # IEEE standard for legends is often 7pt
+            fontsize=7,
+            # Enable the box
+            frameon=True,
+            # IEEE style usually prefers square corners
+            fancybox=False,
+            # Explicit frame color
+            edgecolor="#BBBBBB",
+            # Make it opaque so grid lines don't bleed
+            framealpha=1.0,
+            # Tighten vertical space between entries
+            labelspacing=0.2,
+            # Distance from the axis edge
+            borderaxespad=0.5,
         )
 
     ax.set_ylim(0.0, 1.0)
-    ax.set_xlim(*xlim)  # Starts the x-axis at 10^-1
+    ax.set_xlim(*xlim)
 
     return fig, ax
 
@@ -868,6 +879,18 @@ def plot_single_r2(
 
 
 def plot_metrics(metrics: dict[str, Iterable[float]]):
+    """Plot training and validation loss curves.
+
+    Parameters
+    ----------
+    metrics : dict[str, Iterable[float]]
+        Must contain ``'train_loss'`` and ``'val_loss'`` keys.
+
+    Returns
+    -------
+    tuple[plt.Figure, plt.Axes]
+        Matplotlib figure and axes with log-scaled y-axis.
+    """
     fig, ax = _get_or_create_axes()
     ax.plot(metrics["train_loss"], label="Train loss", color="#000000")
     ax.plot(metrics["val_loss"], label="Validation loss", color="#CC3311")
@@ -905,6 +928,31 @@ def plot_update_step(
     ax: plt.Axes | None = None,
     show_legend: bool = True,
 ):
+    """Plot a colour-coded raster of optimizer selections.
+
+    Each row represents a problem and each column a budget
+    step, coloured by which optimizer was active.
+
+    Parameters
+    ----------
+    d : DataLoader
+        Loaded optimisation data.
+    schedule : str
+        Schedule name to visualise.
+    optimizers : Iterable[OptimizationStep]
+        Optimizers whose hashes map to colours.
+    cost_metric : {'fevals', 'iterations'} or None, optional
+        X-axis metric. ``None`` uses raw step index.
+    ax : plt.Axes or None, optional
+        Existing axes. Creates new figure when ``None``.
+    show_legend : bool, optional
+        Whether to display a legend, by default True.
+
+    Returns
+    -------
+    tuple[plt.Figure, plt.Axes]
+        Matplotlib figure and axes.
+    """
     dims = d.task_labels.sel({FEATURE: "dimensionality"}, drop=True).astype(
         int
     )

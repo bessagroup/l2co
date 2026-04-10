@@ -171,9 +171,11 @@ class BatchState(eqx.Module):
         pred = (self.pos + self.batch_size) <= self.dataset_size
 
         # Check if pred is scalar or batched
-        if pred.shape == ():  # scalar
+        # Scalar
+        if pred.shape == ():
             return _next_single(self, key)
-        else:  # batched
+        # Batched
+        else:
             return jax.vmap(_next_single, in_axes=(0, None))(self, key)
 
 

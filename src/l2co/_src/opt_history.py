@@ -89,6 +89,16 @@ class OptHistory(OptHistoryType):
         )
 
     def flatten(self) -> OptHistory:
+        """Flatten the first two dimensions of loss, params, and grads.
+
+        Merges the iteration and population dimensions into a
+        single leading dimension.
+
+        Returns
+        -------
+        OptHistory
+            Flattened optimization history.
+        """
         loss = jax.tree.map(
             lambda x: x.reshape((x.shape[0] * x.shape[1],) + x.shape[2:]),
             self.loss,
@@ -128,6 +138,12 @@ class OptHistory(OptHistoryType):
 
 
 class RecentHistory(eqx.Module):
+    """Rolling window of recent optimization history.
+
+    Stores the most recent gradients and loss values,
+    maintained as a fixed-size FIFO buffer.
+    """
+
     grads: Float[PyTree, " memory_size dim"]
     loss: Float[Array, " memory_size"]
 

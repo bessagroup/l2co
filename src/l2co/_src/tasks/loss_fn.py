@@ -1,3 +1,5 @@
+"""Loss function definitions for optimization tasks (MSE, cross-entropy)."""
+
 # Third-party
 import jax
 import jax.numpy as jnp

@@ -178,7 +178,8 @@ class Task(eqx.Module):
                 return frozenset(
                     (k, make_hashable(v)) for k, v in value.items()
                 )
-            return value  # Leave other types unchanged
+            # Leave other types unchanged
+            return value
 
         tag_hashable = {k: make_hashable(v) for k, v in self.tag.items()}
 

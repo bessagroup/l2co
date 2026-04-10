@@ -1,3 +1,9 @@
+"""Visualization utilities for CEC 2005 benchmark results.
+
+Provides functions to plot ERTD profiles and optimizer actions grouped
+by CEC 2005 function category, dimensionality, or individual function.
+"""
+
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -55,6 +61,17 @@ def actions_per_category(
     strategy: str | None = None,
     optimizers=None,
 ):
+    """Plot optimizer action rasters grouped by CEC2005 category.
+
+    Parameters
+    ----------
+    d : DataLoader
+        Loaded optimisation data.
+    strategy : str or None, optional
+        Schedule name to plot.
+    optimizers : list or None, optional
+        Optimizers to include in the plot.
+    """
     for group, name in zip(
         CEC2005_CATEGORY_GROUPS,
         CEC2005_CATEGORY_NAMES,
@@ -132,6 +149,19 @@ def actions_per_dimension(
     optimizers=None,
     dims: Iterable[int] | None = None,
 ):
+    """Plot optimizer action rasters grouped by dimensionality.
+
+    Parameters
+    ----------
+    d : DataLoader
+        Loaded optimisation data.
+    strategy : str or None, optional
+        Schedule name to plot.
+    optimizers : list or None, optional
+        Optimizers to include in the plot.
+    dims : Iterable[int] or None, optional
+        Dimensionalities to plot. Defaults to ``[10, 30, 50]``.
+    """
     dims = dims if dims is not None else [10, 30, 50]
 
     for dim in dims:
@@ -178,6 +208,17 @@ def actions_per_function_raster(
     strategy: str | None = None,
     optimizers=None,
 ):
+    """Plot optimizer action rasters for each CEC2005 function.
+
+    Parameters
+    ----------
+    d : DataLoader
+        Loaded optimisation data.
+    strategy : str or None, optional
+        Schedule name to plot.
+    optimizers : list or None, optional
+        Optimizers to include in the plot.
+    """
     for fn_name in CEC2005_ALL_FNS:
         d_fn = d.select_feature({"fn_name": [fn_name]})
         fig_print, ax_print = l2co.plotting.plot_update_step(

@@ -1,3 +1,5 @@
+"""PDE optimization tasks for convection, reaction, and wave equations."""
+
 # Standard
 from collections.abc import Callable
 from copy import deepcopy
@@ -42,7 +44,27 @@ def mse(x: Array, y: Array) -> Array:
 
 
 def u_(x: jax.Array, t: jax.Array, model: eqx.Module):
-    xt = jnp.concatenate([x, t], axis=-1)  # (N, 2) or (B, N, 2)
+    """Evaluate the neural network solution u(x, t).
+
+    Handles both single ``(N, 2)`` and batched ``(B, N, 2)``
+    inputs by applying the appropriate number of vmaps.
+
+    Parameters
+    ----------
+    x : jax.Array
+        Spatial coordinates.
+    t : jax.Array
+        Temporal coordinates.
+    model : eqx.Module
+        Neural network approximating the PDE solution.
+
+    Returns
+    -------
+    jax.Array
+        Model predictions at the given ``(x, t)`` points.
+    """
+    # (N, 2) or (B, N, 2)
+    xt = jnp.concatenate([x, t], axis=-1)
 
     # If batched (B, N, 2): vmap twice
     if xt.ndim == 3:
@@ -68,6 +90,30 @@ def convection_pde_loss(
     loss_fn_ic: Callable[[Array, Array], Array],
     beta: float,
 ) -> jnp.ndarray:
+    """Compute the physics-informed loss for the convection PDE.
+
+    PDE: ``u_t + beta * u_x = 0`` with periodic BCs and
+    ``u(x, 0) = sin(x)`` as initial condition.
+
+    Parameters
+    ----------
+    model : PyTree
+        Neural network approximating the solution.
+    x_res, x_ic, x_bc_left, x_bc_right : Array
+        Spatial collocation points for residual, initial, and
+        boundary conditions.
+    t_res, t_ic, t_bc : Array
+        Temporal collocation points.
+    loss_fn_res, loss_fn_bc, loss_fn_ic : Callable
+        Loss functions for residual, boundary, and initial terms.
+    beta : float
+        Convection speed coefficient.
+
+    Returns
+    -------
+    jnp.ndarray
+        Combined PDE residual, boundary, and initial loss.
+    """
     # Vectorize the model, since it processes only one point
     # Also note that the model takes in both x and t as input
 
@@ -80,9 +126,8 @@ def convection_pde_loss(
     u_bc_right = u(x_bc_right, t_bc)
 
     # Compute first-order derivatives using jacobian reverse mode
-    du_dxt = jax.jacrev(
-        lambda x, t: u(x, t).sum(), argnums=(0, 1)
-    )  # Computes [∂u/∂x, ∂u/∂t]
+    # Computes [du/dx, du/dt]
+    du_dxt = jax.jacrev(lambda x, t: u(x, t).sum(), argnums=(0, 1))
 
     u_x, u_t = du_dxt(x_res, t_res)
 
@@ -116,6 +161,30 @@ def reaction_pde_loss(
     loss_fn_ic: Callable[[Array, Array], Array],
     rho: float,
 ) -> jnp.ndarray:
+    """Compute the physics-informed loss for the reaction PDE.
+
+    PDE: ``u_t - rho * u * (1 - u) = 0`` with periodic BCs
+    and a Gaussian initial condition.
+
+    Parameters
+    ----------
+    model : PyTree
+        Neural network approximating the solution.
+    x_res, x_ic, x_bc_left, x_bc_right : Array
+        Spatial collocation points.
+    t_res, t_ic, t_bc : Array
+        Temporal collocation points.
+    loss_fn_res, loss_fn_bc, loss_fn_ic : Callable
+        Loss functions for residual, boundary, and initial
+        terms.
+    rho : float
+        Reaction rate coefficient.
+
+    Returns
+    -------
+    jnp.ndarray
+        Combined PDE residual, boundary, and initial loss.
+    """
     # Vectorize the model
     u = partial(u_, model=model)
 
@@ -162,6 +231,34 @@ def wave_pde_loss(
     loss_fn_ic_dt: Callable[[Array, Array], Array],
     beta: float,
 ) -> jnp.ndarray:
+    """Compute the physics-informed loss for the wave PDE.
+
+    PDE: ``u_tt - 4 * u_xx = 0`` with Dirichlet BCs, a
+    mixed-frequency sine initial condition, and zero initial
+    velocity.
+
+    Parameters
+    ----------
+    model : PyTree
+        Neural network approximating the solution.
+    x_res, x_ic, x_bc_left, x_bc_right : Array
+        Spatial collocation points.
+    t_res, t_ic, t_bc : Array
+        Temporal collocation points.
+    loss_fn_res, loss_fn_bc, loss_fn_ic : Callable
+        Loss functions for residual, boundary, and initial
+        terms.
+    loss_fn_ic_dt : Callable
+        Loss for the initial velocity condition.
+    beta : float
+        Frequency parameter for the second sine term in the
+        initial condition.
+
+    Returns
+    -------
+    jnp.ndarray
+        Combined PDE residual, boundary, and initial loss.
+    """
     u = partial(u_, model=model)
 
     # Compute predictions
@@ -273,6 +370,15 @@ def create_points_dataset(
 
 
 def save_dataset(dataset: dict[str, jnp.ndarray], path: str | Path):
+    """Save a PDE collocation-point dataset to ``.npz``.
+
+    Parameters
+    ----------
+    dataset : dict[str, jnp.ndarray]
+        Dictionary of arrays to persist.
+    path : str or Path
+        Destination file path.
+    """
     _path = Path(path)
     _path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -415,6 +521,26 @@ def create_pde_task(
 
 
 class PDETaskSampler(Block):
+    """f3dasm Block that generates PDE optimization tasks.
+
+    Produces convection, reaction, and wave PDE tasks across
+    multiple hidden-size configurations for use in the L2CO
+    experiment pipeline.
+
+    Parameters
+    ----------
+    num_ic_points : int, optional
+        Number of initial condition points, by default 257.
+    num_bc_points : int, optional
+        Number of boundary condition points, by default 101.
+    num_res_points : int, optional
+        Number of residual points, by default 10000.
+    xgrid_resolution : int, optional
+        Spatial grid resolution, by default 255.
+    tgrid_resolution : int, optional
+        Temporal grid resolution, by default 101.
+    """
+
     def __init__(
         self,
         num_ic_points: int = 257,
@@ -454,6 +580,22 @@ class PDETaskSampler(Block):
         )
 
     def call(self, data: ExperimentData, seed: int) -> ExperimentData:
+        """Generate PDE tasks for each hidden size and PDE type.
+
+        Parameters
+        ----------
+        data : ExperimentData
+            Input experiment data with a ``hidden_size``
+            categorical parameter.
+        seed : int
+            Random seed for dataset generation.
+
+        Returns
+        -------
+        ExperimentData
+            Experiment data containing all PDE task
+            configurations.
+        """
         hidden_size = data.domain.input_space["hidden_size"].categories
 
         task_list = []

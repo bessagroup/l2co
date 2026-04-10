@@ -404,6 +404,27 @@ def ertd(
     dims: xr.DataArray,
     cost_values: np.ndarray = DEFAULT_COST_VALUES,
 ) -> xr.DataArray:
+    """Compute the Expected Runtime Distribution (ERTD).
+
+    Estimates the fraction of problems solved within
+    each cost budget, normalized by problem dimensionality,
+    using bootstrap sampling over realizations.
+
+    Parameters
+    ----------
+    performance : xr.Dataset
+        Dataset with ``cost`` and ``success`` variables.
+    dims : xr.DataArray
+        Problem dimensionalities for normalization.
+    cost_values : np.ndarray, optional
+        Cost budget thresholds, by default
+        ``DEFAULT_COST_VALUES``.
+
+    Returns
+    -------
+    xr.DataArray
+        ERTD profile indexed by ``cost_per_dim``.
+    """
     ds = xr.Dataset(
         {
             COST: performance[COST],

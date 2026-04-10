@@ -1,3 +1,5 @@
+"""Data validation and quality checking utilities for optimization datasets."""
+
 #                                                                       Modules
 # =============================================================================
 
@@ -58,6 +60,20 @@ DEFAULT_TARGETS = np.logspace(-8, 2, 51)
 
 
 def quality_value(x: xr.DataArray, g_min: float) -> xr.DataArray:
+    """Compute scaled quality value relative to global minimum.
+
+    Parameters
+    ----------
+    x : xr.DataArray
+        Cumulative-minimum output values.
+    g_min : float
+        Global minimum. If NaN, the data minimum is used.
+
+    Returns
+    -------
+    xr.DataArray
+        Scaled quality values where 0 indicates the optimum.
+    """
     if np.isnan(g_min):
         g_min = x.min(skipna=True)
     qv = x - g_min
@@ -73,6 +89,20 @@ def quality_value(x: xr.DataArray, g_min: float) -> xr.DataArray:
 
 
 def calculate_ert(data: xr.Dataset) -> xr.Dataset:
+    """Calculate Expected Running Time (ERT) metrics.
+
+    Parameters
+    ----------
+    data : xr.Dataset
+        Optimization dataset with ``output_min``, ``fevals``,
+        and ``iterations`` variables.
+
+    Returns
+    -------
+    xr.Dataset
+        Dataset with ``cost`` and ``success`` variables
+        across target quality levels.
+    """
     raw_g_min = data.coords.get(GLOBAL_MIN, np.nan)
     raw_g_min = raw_g_min if raw_g_min is not None else np.nan
     g_min = raw_g_min if not np.isnan(raw_g_min) else np.nan
@@ -122,6 +152,20 @@ def calculate_ert(data: xr.Dataset) -> xr.Dataset:
 def create_combined_odata(
     experiment_data: f3dasm.ExperimentData, budget_steps: int
 ):
+    """Build a combined optimization dataset from experiment data.
+
+    Loads per-task loss histories, computes ERT performance
+    metrics and validation trajectories, merges them with
+    task labels, and saves the result to disk.
+
+    Parameters
+    ----------
+    experiment_data : f3dasm.ExperimentData
+        Experiment data with finished optimization runs.
+    budget_steps : int
+        Number of budget interpolation steps for
+        trajectory validation.
+    """
     # Only select finished experiments and reset the index
     experiment_data = experiment_data.select_with_status(
         "finished"

@@ -5,7 +5,7 @@ The package is currently not available on PyPI. To install the package, follow t
 ### Installation instructions for users
 
 
-1. Create a new virtual environment (optional) with Python 3.10+
+1. Create a new virtual environment (optional) with Python 3.12+
 
 
 2. Clone the repository:
@@ -22,10 +22,10 @@ pip install -e .
 
 ### Installation instructions for developers
 
-To install the package for development (or for building the sphinx documentation), install the development dependencies after normal installation:
+To install the package for development (or for building the mkdocs documentation), install the development dependencies after normal installation:
 
 ```bash
-pip install -e '.[dev,docs,tests,app]'
+pip install -e '.[dev,docs,tests]'
 ```
 
 > For detailed instructions on how to develop on this package, please refer to the Contributing Guide on the [GitHub repository](https://github.com/bessagroup/l2co).

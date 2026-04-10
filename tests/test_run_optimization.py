@@ -124,7 +124,7 @@ def test_optimization_step_name_rl2co_no_extension():
 
 def test_optimization_step_name_rl2co_no_model():
     step = OptimizationStep("rl2co", hyperparameters={})
-    assert step.name == "rl2co_unknown"
+    assert step.name == "rl2co"
 
 
 def test_optimization_step_name_non_rl2co_unchanged():

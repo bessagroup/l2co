@@ -1,3 +1,5 @@
+"""Optimizer color, marker, and linestyle definitions for plots."""
+
 # Standard
 import itertools
 from collections.abc import Iterable
@@ -30,6 +32,18 @@ line_styles = ["-", "--", "-.", ":"]
 
 @dataclass
 class OptStyle:
+    """Visual style for a single optimizer in plots.
+
+    Attributes
+    ----------
+    color : str
+        Hex colour code, by default ``"#000000"``.
+    marker : str or None
+        Matplotlib marker symbol, by default ``None``.
+    linestyle : str
+        Matplotlib linestyle string, by default ``"-"``.
+    """
+
     color: str = "#000000"
     marker: str | None = None
     linestyle: str = "-"

@@ -1,3 +1,5 @@
+"""Feature processing, normalization, and mixed embeddings for task inputs."""
+
 from __future__ import annotations
 
 import json
@@ -12,6 +14,14 @@ import jax.random as jr
 
 
 class FeatureProcessor(eqx.Module):
+    """Normalizes and encodes task/optimizer features.
+
+    Stores per-feature statistics (means, stds) for
+    continuous features and vocabularies for categorical
+    features, enabling consistent transformation of raw
+    feature dictionaries into numeric arrays.
+    """
+
     schema: dict[str, str] = eqx.field(static=True)
     means: dict[str, float] = eqx.field(static=True)
     stds: dict[str, float] = eqx.field(static=True)
@@ -81,7 +91,8 @@ class FeatureProcessor(eqx.Module):
             if ftype == "continuous":
                 normed = (float(val) - self.means[name]) / self.stds[name]
                 feats.append(normed)
-            else:  # categorical or ordinal
+            # Categorical or ordinal
+            else:
                 feats.append(float(self.vocabs[name][val]))
 
         return jnp.array(feats, dtype=jnp.float32)
@@ -345,8 +356,6 @@ class MixedEmbedding(eqx.Module):
             List of embedder configurations.
         final_proj : dict
             Final projection configuration.
-        key : jax.Array
-            Random key for initialization.
         **kwargs
             Additional arguments (unused).
 

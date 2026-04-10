@@ -1,5 +1,25 @@
 # API Reference
 
+## Models
+
+::: l2co.AbstractModel
+
+::: l2co.MLP
+
+::: l2co.LSTM_Encoder
+
+::: l2co.L2COModel
+
+::: l2co.Stage0Model
+
+::: l2co.Stage0Loader
+
+## Feature Processing
+
+::: l2co.FeatureProcessor
+
+::: l2co.MixedEmbedding
+
 ## Optimizers
 
 ::: l2co.OptimizationStep
@@ -14,38 +34,48 @@
 
 ## States
 
-::: l2co.HistoryState
+::: l2co.RunState
 
 ::: l2co.BatchState
 
+::: l2co.HistoryState
+
 ::: l2co.OptHistory
 
-## Samplers
-
-::: l2co.sampling.random_sampling
-
-::: l2co.sampling.normal_sampling
-
-::: l2co.sampling.xavier_sampling
-
-::: l2co.sampling.grid_sampling
-
-## Running optimization
-
-::: l2co.RunState
+## Running Optimization
 
 ::: l2co.RolloutWrapper
 
 ::: l2co.RunOptimization
 
-## Processing
+::: l2co.reset
+
+::: l2co.run
+
+::: l2co.evaluate
+
+## Data Processing
+
+::: l2co.create_combined_odata
 
 ::: l2co.DataLoader
 
 ::: l2co.validation_fn
 
-## Utilities
+::: l2co.preprocessing_factory
+
+## Sampling
+
+::: l2co.sampling
+
+## Plotting
 
 ::: l2co.plotting
 
+## Naming
+
 ::: l2co.naming
+
+## Tree Utilities
+
+::: l2co.tree_utils

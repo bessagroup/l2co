@@ -116,8 +116,7 @@ def ffill(x: jnp.ndarray) -> jnp.ndarray:
     """Forward fill NaN values in a 2D array along axis 0."""
 
     def scan_fn(carry, xi):
-        # xi is a row of shape (2,)
-        # carry is also a row of shape (2,)
+        """Replace NaN entries in xi with the carry value."""
         new_carry = jnp.where(jnp.isnan(xi), carry, xi)
         return new_carry, new_carry
 
@@ -191,7 +190,7 @@ def get_interpolation_matrix(input_len: int, target_len: int):
     # Calculate indices and weights for linear interpolation
     # This logic mimics jnp.interp but produces a reusable matrix
     def get_weights(q):
-        # Find which two ref points the query point falls between
+        """Build one row of the interpolation matrix for query point q."""
         idx = jnp.searchsorted(ref_points, q, side="right") - 1
         idx = jnp.clip(idx, 0, input_len - 2)
 
@@ -393,6 +392,7 @@ def tree_where(pred, true, false):
     """
 
     def keep(a, b):
+        """Select elements from a or b based on pred."""
         return jnp.where(pred, a, b)
 
     return jax.tree.map(keep, true, false)

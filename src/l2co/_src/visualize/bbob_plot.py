@@ -1,3 +1,9 @@
+"""Visualization utilities for BBOB benchmark results.
+
+Provides functions to plot ERTD profiles and optimizer actions grouped
+by BBOB function category, dimensionality, or individual function.
+"""
+
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -72,6 +78,17 @@ def actions_per_category(
     strategy: str | None = None,
     optimizers=None,
 ):
+    """Plot optimizer action rasters grouped by BBOB category.
+
+    Parameters
+    ----------
+    d : DataLoader
+        Loaded optimisation data.
+    strategy : str or None, optional
+        Schedule name to plot.
+    optimizers : list or None, optional
+        Optimizers to include in the plot.
+    """
     for group, name in zip(
         BBOB_CATEGORY_GROUPS, BBOB_CATEGORY_NAMES, strict=True
     ):
@@ -141,6 +158,20 @@ def actions_per_dimension(
     optimizers=None,
     dims: Iterable[int] | None = None,
 ):
+    """Plot optimizer action rasters grouped by dimensionality.
+
+    Parameters
+    ----------
+    d : DataLoader
+        Loaded optimisation data.
+    strategy : str or None, optional
+        Schedule name to plot.
+    optimizers : list or None, optional
+        Optimizers to include in the plot.
+    dims : Iterable[int] or None, optional
+        Dimensionalities to plot. Defaults to
+        ``[2, 3, 5, 10, 20, 40]``.
+    """
     dims = dims if dims is not None else [2, 3, 5, 10, 20, 40]
 
     for dim in dims:
@@ -187,6 +218,17 @@ def actions_per_function_raster(
     strategy: str | None = None,
     optimizers=None,
 ):
+    """Plot optimizer action rasters for each BBOB function.
+
+    Parameters
+    ----------
+    d : DataLoader
+        Loaded optimisation data.
+    strategy : str or None, optional
+        Schedule name to plot.
+    optimizers : list or None, optional
+        Optimizers to include in the plot.
+    """
     for fn_name in BBOB_ALL_FNS:
         d_fn = d.select_feature({"fn_name": [fn_name]})
         fig_print, ax_print = l2co.plotting.plot_update_step(

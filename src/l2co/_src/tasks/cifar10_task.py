@@ -1,3 +1,5 @@
+"""CIFAR-10 dataset downloading, processing, and task creation."""
+
 import pickle
 import tarfile
 import urllib.request
@@ -16,6 +18,14 @@ extract_path = Path("./cifar10")
 
 
 def download_cifar10():
+    """Download, extract, and merge CIFAR-10 training batches.
+
+    Returns
+    -------
+    dict[str, np.ndarray]
+        ``'x'`` images ``(N, 32, 32, 3)`` and ``'y'`` labels
+        ``(N,)``.
+    """
     urllib.request.urlretrieve(url, file_name)
 
     with tarfile.open(file_name, "r:gz") as tar:
@@ -29,7 +39,8 @@ def download_cifar10():
     data_dict = {b"data": [], b"labels": []}
 
     # Loop over batch files and load them
-    for i in range(1, 6):  # CIFAR-10 has 5 training batches
+    # CIFAR-10 has 5 training batches
+    for i in range(1, 6):
         batch_file = cifar_path / f"data_batch_{i}"
         # batch_file = os.path.join(cifar_path, f"data_batch_{i}")
         with open(batch_file, "rb") as fo:
@@ -37,7 +48,8 @@ def download_cifar10():
 
         # Append data and labels
         data_dict[b"data"].append(batch[b"data"])
-        data_dict[b"labels"].extend(batch[b"labels"])  # Labels are lists
+        # Labels are lists
+        data_dict[b"labels"].extend(batch[b"labels"])
         batch_file.unlink()
 
     (cifar_path / "batches.meta").unlink()
@@ -58,6 +70,15 @@ def download_cifar10():
 
 
 def save_dataset(dataset: dict[str, jnp.ndarray], path: str | Path):
+    """Save a dataset dictionary to an ``.npz`` file.
+
+    Parameters
+    ----------
+    dataset : dict[str, jnp.ndarray]
+        Dictionary of arrays to persist.
+    path : str or Path
+        Destination file path.
+    """
     _path = Path(path)
     _path.parent.mkdir(parents=True, exist_ok=True)
 

@@ -1,3 +1,5 @@
+"""Benchmark optimization task creation for BBOB and CEC2005 functions."""
+
 from __future__ import annotations
 
 import functools
@@ -102,7 +104,10 @@ def scale_input(domain_bounds: jax.Array, function_bounds: jax.Array):
     """
 
     def decorator(func):
+        """Wrap a function to scale its first argument."""
+
         def wrapper(x, *args, **kwargs):
+            """Apply domain-to-function bound scaling."""
             # Extract bounds
             dmn_lower = domain_bounds[:, 0]
             dmn_upper = domain_bounds[:, 1]
@@ -148,8 +153,11 @@ def add_noise(noise_level: float):
     """
 
     def decorator(func):
+        """Wrap a function to inject multiplicative noise."""
+
         @functools.wraps(func)
         def wrapper(x, key, *args, **kwargs):
+            """Evaluate function with added noise."""
             noise = jr.normal(key, shape=()) * noise_level
             y = func(x, *args, **kwargs)
             return y + y * noise

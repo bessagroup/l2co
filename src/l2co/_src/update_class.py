@@ -474,8 +474,10 @@ def _evaluate_one(
         Loss function.
     pass_rng : bool
         Whether to pass RNG key to the loss function.
-    key : PRNGKeyArray
-        PRNG key for random operations.
+    batch_key : PRNGKeyArray
+        PRNG key for batch sampling.
+    loss_key : PRNGKeyArray
+        PRNG key for the loss function.
 
     Returns
     -------

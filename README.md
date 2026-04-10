@@ -27,11 +27,34 @@ We propose a new approach called "Learning to Choose Optimizers" (L2CO). Our met
 
 In this study, we train our model offline on a diverse set of benchmark loss-functions and apply a range of gradient-based, population-based, and probabilistic model-based optimizers. The potential of this approach is demonstrated by comparing its performance to classical optimizers and established L2O-architectures on benchmark loss-functions and simple material design studies. The results suggest that L2CO can be a useful tool and exhibits better generalization.
 
-<div align="center"><img src="img/overview.png" width="800"/></div>
+<div align="center"><img src="img/overview.svg" width="800"/></div>
+
+## Key Features
+
+- **30+ optimizers** -- gradient-based (Optax: Adam, SGD, L-BFGS, ...) and evolutionary (EvoSax: CMA-ES, PSO, DE, ...)
+- **Two-stage selection** -- Stage 0 (cold-start from task features) + Stage 1 (trajectory-aware reassessment via LSTM)
+- **Built on JAX/Equinox** -- JIT-compiled, vmappable, functional
+- **Multiple benchmarks** -- BBOB, CEC 2005, PDE, neural network training tasks
+- **Hydra + f3dasm pipeline** -- reproducible experiment orchestration with HPC/SLURM support
+
+## Dependencies
+
+L2CO builds on the following packages:
+
+| Package | Description |
+| --- | --- |
+| [f3dasm](https://github.com/bessagroup/f3dasm) | Framework for data-driven design and analysis of structures and materials |
+| [bbob-jax](https://github.com/bessagroup/bbob-jax) | JAX implementation of the BBOB benchmark functions |
+| [bessaplots](https://github.com/bessagroup/bessaplots) | Plotting utilities |
+| [JAX](https://github.com/jax-ml/jax) | Composable transformations of NumPy programs |
+| [Equinox](https://github.com/patrick-kidger/equinox) | Neural networks and more for JAX |
+| [Optax](https://github.com/google-deepmind/optax) | Gradient-based optimization in JAX |
+| [EvoSax](https://github.com/RobertTLange/evosax) | Evolutionary strategies in JAX |
+| [scikit-learn](https://github.com/scikit-learn/scikit-learn) | Machine learning in Python |
 
 ## Authorship
 
-* Current created and developer: [M.P. van der Schelling](https://github.com/mpvanderschelling/) (M.P.vanderSchelling@tudelft.nl)
+* Current creator and developer: [M.P. van der Schelling](https://github.com/mpvanderschelling/) (M.P.vanderSchelling@tudelft.nl)
 
 ## Getting started
 
@@ -40,13 +63,13 @@ The package is currently not available on PyPI. To install the package, follow t
 ### Installation instructions for users
 
 
-1. Create a new virtual environment (optional) with Python 3.10+
+1. Create a new virtual environment (optional) with Python 3.12+
 
 
 2. Clone the repository:
 
 ```bash
-git clone https://github.com/bessagroup/L2CO.git
+git clone https://github.com/bessagroup/l2co.git
 ```
 
 3. Navigate to the repository and install the package using `pip`:
@@ -60,7 +83,7 @@ pip install -e .
 To install the package for development (or for building the mkdocs documentation), install the development dependencies after normal installation:
 
 ```bash
-pip install -e '.[dev,docs,tests,app]'
+pip install -e '.[dev,docs,tests]'
 ```
 
 > For detailed instructions on how to develop on this package, please refer to the [Contributing Guide](CONTRIBUTING.md).
@@ -69,13 +92,15 @@ After installation, start by looking at the [Getting Started Guide](./docs/usage
 
 ## Experiments
 
-This package includes 3 experiments that demonstrate the capabilities of the package. These studies are available in the `/experiments/` folder:
+The experimental pipeline consists of three stages, available in the `/experiments/` folder:
 
-| Experiment | Description | Status |
-| ---------- | ----------- | ------ |
-| [`create_optimization_dataset_new`](https://github.com/bessagroup/L2CO/tree/main/experiments/create_optimization_dataset_new) | Creates the training data for the optimization experiments. | Stable |
-| [`data_validation`](https://github.com/bessagroup/L2CO/tree/main/experiments/data_validation) | Scripts that validate the optimization data created in `create_optimization_dataset_new`. | Stable |
-| [`train_model`](https://github.com/bessagroup/L2CO/tree/main/experiments/train_model) | Trains the L2CO model using the generated dataset. | Stable |
+| Experiment | Description |
+| --- | --- |
+| [`create_optimization_dataset`](https://github.com/bessagroup/l2co/tree/main/experiments/create_optimization_dataset) | Run algorithm portfolio on benchmark tasks, collect RTD trajectories |
+| [`l2co_train_stage0`](https://github.com/bessagroup/l2co/tree/main/experiments/l2co_train_stage0) | Train cold-start algorithm selection model (sklearn regressors) |
+| [`l2co_train_stage1`](https://github.com/bessagroup/l2co/tree/main/experiments/l2co_train_stage1) | Train trajectory-aware reassessment model (LSTM + MLP) |
+
+The `experiments/` folder also includes `generate_figures.py` for ERTD plot generation and `submit_job.sh` for SLURM cluster submission. See [`experiments/README.md`](experiments/README.md) for full documentation on configuration, parameters, and Hydra overrides.
 
 ## Community Support
 

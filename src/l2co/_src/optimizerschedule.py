@@ -114,7 +114,7 @@ class OptimizationStep:
             Hash value based on the tag.
         """
         t = sorted(self.tag.items())
-        return int(hashlib.sha256(str(t).encode()).hexdigest()[:6], 16)  #:8
+        return int(hashlib.sha256(str(t).encode()).hexdigest()[:6], 16)
 
     @property
     def tag_hashable(self) -> tuple[tuple[str, Any]]:
@@ -134,7 +134,8 @@ class OptimizationStep:
                 return frozenset(
                     (k, make_hashable(v)) for k, v in value.items()
                 )
-            return value  # Leave other types unchanged
+            # Leave other types unchanged
+            return value
 
         tag_hashable = {
             "opt_name": make_hashable(self.name),

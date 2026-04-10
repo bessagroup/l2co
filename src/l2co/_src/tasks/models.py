@@ -1,3 +1,7 @@
+"""
+Neural network model architectures (RNN, MLP, CNN) for optimization tasks.
+"""
+
 from collections.abc import Callable
 from typing import Any
 
@@ -14,6 +18,20 @@ TagDict = dict[str, Any]
 
 
 class RNN(eqx.Module):
+    """Recurrent neural network with GRU cell for sequence tasks.
+
+    Parameters
+    ----------
+    in_size : int
+        Input feature size per time step.
+    out_size : int
+        Output size.
+    hidden_size : int
+        Hidden state size for the GRU cell.
+    key : jax.random.PRNGKey
+        Random key for parameter initialization.
+    """
+
     hidden_size: int = eqx.field(static=True)
     cell: eqx.Module
     linear: eqx.nn.Linear
@@ -31,10 +49,23 @@ class RNN(eqx.Module):
         self.in_size = in_size
 
     def __call__(self, x):
+        """Forward pass through the RNN.
+
+        Parameters
+        ----------
+        x : jax.Array
+            Input tensor, reshaped to ``(-1, in_size)``.
+
+        Returns
+        -------
+        jax.Array
+            Sigmoid-activated output for binary classification.
+        """
         x = x.reshape(-1, self.in_size)
         hidden = jnp.zeros((self.hidden_size,))
 
         def f(carry, inp):
+            """Scan body: advance GRU one step."""
             return self.cell(inp, carry), None
 
         out, _ = jax.lax.scan(f, hidden, x)
@@ -132,7 +163,8 @@ class MLP(eqx.Module):
         *,
         key,
     ):
-        keys = jrd.split(key, num_layers + 1)  # Separate keys for each layer
+        # Separate keys for each layer
+        keys = jrd.split(key, num_layers + 1)
         self.layers = []
         self.layers.append(eqx.nn.Linear(in_size, hidden_size, key=keys[0]))
 
@@ -147,7 +179,20 @@ class MLP(eqx.Module):
         self.output_activation = output_activation
 
     def __call__(self, x):
-        for layer in self.layers[:-1]:  # Apply activation for hidden layers
+        """Forward pass through the MLP.
+
+        Parameters
+        ----------
+        x : jax.Array
+            Input tensor.
+
+        Returns
+        -------
+        jax.Array
+            Output after hidden and output activations.
+        """
+        # Apply activation for hidden layers
+        for layer in self.layers[:-1]:
             x = self.hidden_activation(layer(x))
         # Apply output activation
         return self.output_activation(self.layers[-1](x))
@@ -216,6 +261,31 @@ def mlp(
 
 
 class CNN(eqx.Module):
+    """1-D convolutional neural network for sequence classification.
+
+    Architecture: stacked Conv1d layers with max pooling and ReLU,
+    followed by a fully-connected layer with log-softmax output.
+
+    Parameters
+    ----------
+    in_size : int
+        Total input feature count.
+    out_size : int
+        Number of output classes.
+    hidden_channels : int
+        Channels in each convolutional layer.
+    num_layers : int
+        Number of convolutional layers.
+    kernel_size : int
+        Convolution kernel size.
+    width : int
+        Sequence length of the input.
+    in_channels : int
+        Number of input channels.
+    key : jax.random.PRNGKey
+        Random key for parameter initialization.
+    """
+
     conv_layers: list
     width: int
     in_channels: int
@@ -251,27 +321,42 @@ class CNN(eqx.Module):
                         key=keys[i],
                     ),
                     eqx.nn.MaxPool1d(kernel_size=2),
-                    jax.nn.relu,  # Apply ReLU activation
+                    # Apply ReLU activation
+                    jax.nn.relu,
                 ]
             )
-            in_channels = hidden_channels  # Set in_channels for the next layer
+            # Set in_channels for the next layer
+            in_channels = hidden_channels
 
         # Final layer: Flatten the result and apply a fully connected layer
         self.conv_layers.extend(
             [
-                jnp.ravel,  # Flatten the output
+                # Flatten the output
+                jnp.ravel,
+                # Linear layer
                 eqx.nn.Linear(
                     hidden_channels * (width - num_layers),
                     out_size,
                     key=keys[-1],
-                ),  # Linear layer
-                jax.nn.log_softmax,  # Log softmax for output probabilities
+                ),
+                # Log softmax for output probabilities
+                jax.nn.log_softmax,
             ]
         )
 
     def __call__(self, x):
-        """
-        x: (features,) -> Reshaped to (sequence_length, channels)
+        """Forward pass through the CNN.
+
+        Parameters
+        ----------
+        x : jax.Array
+            Flat input with shape ``(features,)``, reshaped
+            internally to ``(in_channels, width)``.
+
+        Returns
+        -------
+        jax.Array
+            Log-softmax class probabilities.
         """
         # Reshape (features,) to (sequence_length, channels)
         x = x.reshape(self.in_channels, self.width)

@@ -1,3 +1,5 @@
+"""Gaussian meta-learning task for learning Adam hyperparameters."""
+
 from functools import partial
 from pathlib import Path
 
@@ -14,6 +16,19 @@ from .task_gaussian_class import generate_one_gaussian_dataset, save_dataset
 
 
 def scale_adam_params(unit_params: jax.Array) -> PyTree:
+    """Map unit-interval parameters to Adam hyperparameters.
+
+    Parameters
+    ----------
+    unit_params : jax.Array
+        Array of length 3 with values in ``[0, 1]``.
+
+    Returns
+    -------
+    PyTree
+        Dict with ``learning_rate`` (log-scaled), ``b1``,
+        and ``b2`` (linearly scaled to ``[0.85, 1.0]``).
+    """
     learning_rate = 10 ** (-5 + unit_params[0] * (2 - (-5)))
 
     # Scale b1 and b2 linearly between 0.85 and 1.0
@@ -36,6 +51,34 @@ def create_gaussian_meta_task(
     inner_steps: int,
     l2_regularization: float,
 ) -> Task:
+    """Create a meta-learning task for Adam hyperparameter tuning.
+
+    The outer loop optimises three unit-interval parameters
+    (learning rate, beta1, beta2) while the inner loop trains
+    a small MLP on a Gaussian classification dataset.
+
+    Parameters
+    ----------
+    seed : int
+        Random seed for reproducibility.
+    dataset_path : str
+        Path prefix for the generated dataset file.
+    num_gaussians : int
+        Number of Gaussian clusters in the dataset.
+    num_samples_per_gaussian : int
+        Samples drawn from each Gaussian.
+    dim_points : int
+        Dimensionality of the data points.
+    inner_steps : int
+        Number of inner-loop Adam optimisation steps.
+    l2_regularization : float
+        L2 penalty weight for the inner-loop loss.
+
+    Returns
+    -------
+    Task
+        Configured meta-learning task.
+    """
     tag = {}
     tag["task_name"] = "gaussian_classification_meta"
     tag["num_gaussians"] = num_gaussians
@@ -62,6 +105,7 @@ def create_gaussian_meta_task(
         save_dataset(dataset, _path)
 
     def loss_fn(model, x, y, l2_lambda=l2_regularization):
+        """Cross-entropy loss with L2 regularisation."""
         # Predict
         y_pred = jax.nn.softmax(jax.vmap(model)(x), axis=-1)
 
@@ -87,6 +131,7 @@ def create_gaussian_meta_task(
         y: jax.Array,
         inner_steps: int,
     ):
+        """Run the inner optimisation loop and return final loss."""
         model = eqx.nn.MLP(
             in_size=2,
             out_size=2,
@@ -108,6 +153,7 @@ def create_gaussian_meta_task(
         opt_state = optimizer.init(params)
 
         def update_step(_, carry):
+            """Single Adam update step for fori_loop."""
             inner_params, opt_state, _ = carry
             model = eqx.combine(inner_params, static)
             loss, grads = eqx.filter_value_and_grad(loss_fn)(model, x=x, y=y)

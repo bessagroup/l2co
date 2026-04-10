@@ -52,6 +52,7 @@ def _sample(
     keys = jax.random.split(key, len(jax.tree.leaves(params)))
 
     def init_leaf(x: jax.Array, k: PRNGKeyArray) -> jax.Array:
+        """Sample a single leaf using the initializer."""
         return init_fn(k, (n_samples,) + x.shape, x.dtype)
 
     return jax.tree.map(
@@ -227,9 +228,11 @@ def grid_sampling(
     """
     grid_params = []
     for param in jax.tree_util.tree_leaves(params):
-        if param.ndim == 0:  # Scalar parameter
+        # Scalar parameter
+        if param.ndim == 0:
             grid = jnp.linspace(lower_bound, upper_bound, num=n_points_per_dim)
-        else:  # Tensor parameter
+        # Tensor parameter
+        else:
             grid = jnp.meshgrid(
                 *[jnp.linspace(lower_bound, upper_bound, num=n_points_per_dim)]
                 * param.size

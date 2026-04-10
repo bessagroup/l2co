@@ -1,3 +1,5 @@
+"""Task continuation utilities for resuming from saved experiment data."""
+
 import pandas as pd
 from f3dasm import ExperimentData
 from f3dasm.design import Domain

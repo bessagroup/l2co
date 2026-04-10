@@ -1,3 +1,5 @@
+"""Per-optimizer mutable run state used during optimization rollouts."""
+
 #                                                                       Modules
 # =============================================================================
 
@@ -54,7 +56,8 @@ class RunState(eqx.Module):
     """
 
     params: InputParameters
-    best_params: InputParameters  ## TODO this has shape (dim,) not (1, dim)
+    # TODO: this has shape (dim,) not (1, dim)
+    best_params: InputParameters
     best_loss: Array[Float, ""]
     opt_state: PyTree
     update_class: UpdateClass = eqx.field(static=True)

@@ -1,3 +1,5 @@
+"""Gaussian classification task with synthetic multi-class datasets."""
+
 # Standard
 from functools import partial
 from pathlib import Path
@@ -85,6 +87,15 @@ def generate_one_gaussian_dataset(
 
 
 def save_dataset(dataset: dict[str, jnp.ndarray], path: str | Path):
+    """Save a dataset dictionary to an ``.npz`` file.
+
+    Parameters
+    ----------
+    dataset : dict[str, jnp.ndarray]
+        Dictionary of arrays to persist.
+    path : str or Path
+        Destination file path.
+    """
     _path = Path(path)
     _path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -183,7 +194,8 @@ def create_gaussian_task(
     tag["separable"] = False
     tag["unimodal"] = False
 
-    global_min = 0.322  # Taken as target value from L2O paper
+    # Taken as target value from L2O paper
+    global_min = 0.322
 
     return Task(
         model=model,

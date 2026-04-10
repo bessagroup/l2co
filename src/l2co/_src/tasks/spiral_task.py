@@ -1,3 +1,5 @@
+"""Spiral dataset classification task using RNN models."""
+
 # Local
 import math
 from pathlib import Path
@@ -16,6 +18,21 @@ from .models import rnn
 
 
 def spiral_dataset(dataset_size, *, key: jrd.PRNGKey):
+    """Generate a two-class spiral dataset.
+
+    Parameters
+    ----------
+    dataset_size : int
+        Total number of samples (split evenly between classes).
+    key : jrd.PRNGKey
+        Random key for offset sampling.
+
+    Returns
+    -------
+    dict[str, jnp.ndarray]
+        ``'x'`` features ``(N, 16, 2)`` and ``'y'`` binary
+        labels ``(N, 1)``.
+    """
     t = jnp.linspace(0, 2 * math.pi, 16)
     offset = jrd.uniform(key, (dataset_size, 1), minval=0, maxval=2 * math.pi)
     x1 = jnp.sin(t + offset) / (1 + t)
@@ -31,6 +48,15 @@ def spiral_dataset(dataset_size, *, key: jrd.PRNGKey):
 
 
 def save_dataset(dataset: dict[str, jnp.ndarray], path: str | Path):
+    """Save a dataset dictionary to an ``.npz`` file.
+
+    Parameters
+    ----------
+    dataset : dict[str, jnp.ndarray]
+        Dictionary of arrays to persist.
+    path : str or Path
+        Destination file path.
+    """
     _path = Path(path)
     _path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -44,6 +70,26 @@ def create_spiral_task(
     seed: int,
     batch_size: int,
 ) -> Task:
+    """Create a spiral binary classification task using an RNN.
+
+    Parameters
+    ----------
+    hidden_size : int
+        RNN hidden state size.
+    dataset_size : int
+        Number of spiral samples.
+    dataset_path : str
+        Path prefix for the dataset file.
+    seed : int
+        Random seed for reproducibility.
+    batch_size : int
+        Mini-batch size for training.
+
+    Returns
+    -------
+    Task
+        Configured spiral classification task.
+    """
     key = jrd.key(int(seed))
 
     model_key, dataset_key, batch_key = jrd.split(key, 3)

@@ -1,3 +1,5 @@
+"""MNIST-1D classification task creation and dataset handling."""
+
 from pathlib import Path
 
 import jax.numpy as jnp
@@ -11,6 +13,20 @@ from .models import mlp
 
 
 def mnist1d_dataset(dataset_size, seed: int):
+    """Generate an MNIST-1D dataset.
+
+    Parameters
+    ----------
+    dataset_size : int
+        Number of samples to generate.
+    seed : int
+        Random seed for dataset generation.
+
+    Returns
+    -------
+    dict[str, np.ndarray]
+        ``'x'`` features and ``'y'`` labels.
+    """
     defaults = get_dataset_args()
     defaults.num_samples = dataset_size
     defaults.seed = seed
@@ -19,6 +35,15 @@ def mnist1d_dataset(dataset_size, seed: int):
 
 
 def save_dataset(dataset: dict[str, jnp.ndarray], path: str | Path):
+    """Save a dataset dictionary to an ``.npz`` file.
+
+    Parameters
+    ----------
+    dataset : dict[str, jnp.ndarray]
+        Dictionary of arrays to persist.
+    path : str or Path
+        Destination file path.
+    """
     _path = Path(path)
     _path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -28,6 +53,24 @@ def save_dataset(dataset: dict[str, jnp.ndarray], path: str | Path):
 def create_mnist1d_task(
     dataset_path: str, dataset_size: int, seed: int, batch_size: int
 ) -> Task:
+    """Create an MNIST-1D classification task.
+
+    Parameters
+    ----------
+    dataset_path : str
+        Path prefix for the dataset file.
+    dataset_size : int
+        Number of samples in the dataset.
+    seed : int
+        Random seed for reproducibility.
+    batch_size : int
+        Mini-batch size for training.
+
+    Returns
+    -------
+    Task
+        Configured MNIST-1D classification task.
+    """
     tag = {"task_name": "mnist1d"}
     tag["seed"] = seed
 

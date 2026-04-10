@@ -1,3 +1,7 @@
+"""
+Wrapper for optimization dynamics data including features and trajectories.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,6 +15,13 @@ from .task_features import FeatureProcessor
 
 @dataclass
 class OptimizationDynamics:
+    """Container for optimization dynamics training data.
+
+    Holds processed task features, optimizer features,
+    trajectory histories, and target labels ready for
+    model training or evaluation.
+    """
+
     x_features_task: xr.DataArray
     x_features_optimizer: xr.DataArray
     x_history: xr.DataArray
@@ -19,9 +30,22 @@ class OptimizationDynamics:
     feature_processor_optimizer: FeatureProcessor
 
     def y_to_array(self) -> xr.DataArray:
+        """Return target labels as a NumPy array."""
         return self.y.values
 
     def select(self, problems: xr.DataArray) -> OptimizationDynamics:
+        """Select a subset of samples by index.
+
+        Parameters
+        ----------
+        problems : xr.DataArray
+            Indices or boolean mask along the sample dim.
+
+        Returns
+        -------
+        OptimizationDynamics
+            Subset containing only the selected samples.
+        """
         return OptimizationDynamics(
             x_features_task=self.x_features_task.isel(
                 {"sample": problems}, drop=True
@@ -38,6 +62,20 @@ class OptimizationDynamics:
     def train_test_split(
         self, train_fraction: float = 0.8, seed: int = 42
     ) -> tuple[OptimizationDynamics, OptimizationDynamics]:
+        """Split data into training and test sets.
+
+        Parameters
+        ----------
+        train_fraction : float, optional
+            Fraction of samples for training, by default 0.8.
+        seed : int, optional
+            Random seed for shuffling, by default 42.
+
+        Returns
+        -------
+        tuple[OptimizationDynamics, OptimizationDynamics]
+            Training and test subsets.
+        """
         rng = np.random.default_rng(seed)
         shuffled_problems = rng.permutation(
             self.x_features_task["sample"].size
@@ -55,6 +93,13 @@ class OptimizationDynamics:
         return train_data, test_data
 
     def filter(self):
+        """Remove samples containing any NaN values.
+
+        Returns
+        -------
+        OptimizationDynamics
+            Filtered data with NaN-free samples only.
+        """
         y_mask = ~self.y.isnull().any("label")
         x_features_task_mask = ~self.x_features_task.isnull().any(FEATURE)
         x_features_optimizer_mask = ~self.x_features_optimizer.isnull().any(

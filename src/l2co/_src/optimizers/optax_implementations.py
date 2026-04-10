@@ -84,6 +84,7 @@ def optax_fn(
     def init_fn(
         params: InputParameters, key: PRNGKeyArray | None = None, **sample
     ) -> OptaxState:
+        """Initialise the Optax optimizer state."""
         opt_state = optimizer.init(params)
         return opt_state
 
@@ -93,6 +94,7 @@ def optax_fn(
         *args,
         **kwargs,
     ) -> tuple[tuple[InputParameters, OptaxState, PRNGKeyArray], OptHistory]:
+        """Perform one gradient-based Optax step."""
         input_params, opt_state, key = carry
 
         if pass_rng:
@@ -170,6 +172,7 @@ def optax_extra_args_fn(
     def init_fn(
         params: InputParameters, key: PRNGKeyArray = None, **sample
     ) -> OptaxState:
+        """Initialise the extra-args Optax optimizer state."""
         params = jax.tree.map(lambda x: x[0], params)
         opt_state = optimizer.init(params)
         return opt_state
@@ -180,6 +183,7 @@ def optax_extra_args_fn(
         *args,
         **kwargs,
     ) -> tuple[tuple[InputParameters, OptaxState, PRNGKeyArray], OptHistory]:
+        """Perform one extra-args Optax step (e.g. L-BFGS)."""
         input_params, opt_state, key = carry
 
         input_params = jax.tree.map(
@@ -344,6 +348,27 @@ def learning_rate_optimizer(
     learning_rate: float | None = None,
     **kwargs,
 ) -> UpdateClass:
+    """Create an Optax UpdateClass with a configurable learning rate.
+
+    Automatically selects ``optax_update`` or
+    ``optax_update_extra_args`` depending on the optimizer type.
+
+    Parameters
+    ----------
+    task : Task
+        Task containing the model and loss function.
+    optax_optimizer : optax.GradientTransformation
+        Optax optimizer constructor.
+    learning_rate : float or None, optional
+        Learning rate. Defaults to ``1e-3`` when ``None``.
+    **kwargs
+        Forwarded to the underlying update function.
+
+    Returns
+    -------
+    UpdateClass
+        Configured optimizer update class.
+    """
     if optax_optimizer in normalized_optax_normal.values():
         update_fn = optax_update
     elif optax_optimizer in normalized_optax_from_state.values():

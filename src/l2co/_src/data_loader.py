@@ -107,13 +107,13 @@ class DataLoader:
         self.data = self.data.sortby(TASK_ID)
         self.task_labels = self.task_labels.sortby(TASK_ID)
 
-    def __add__(self, __o: DataLoader) -> DataLoader:
+    def __add__(self, other: DataLoader) -> DataLoader:
         """
         Concatenate two DataLoader objects.
 
         Parameters
         ----------
-        __o : DataLoader
+        other : DataLoader
             DataLoader to concatenate.
 
         Returns
@@ -121,21 +121,33 @@ class DataLoader:
         DataLoader
             Concatenated DataLoader.
         """
-        if __o is None:
+        if other is None:
             return self
 
         return replace(
             self,
-            data=xr.concat([self.data, __o.data], dim=PROBLEM),
+            data=xr.concat([self.data, other.data], dim=PROBLEM),
             task_labels=xr.concat(
-                [self.task_labels, __o.task_labels], dim=PROBLEM
+                [self.task_labels, other.task_labels], dim=PROBLEM
             ),
         )
 
-    def join(self, __o: DataLoader) -> DataLoader:
+    def join(self, other: DataLoader) -> DataLoader:
+        """Join another DataLoader along the schedule dimension.
+
+        Parameters
+        ----------
+        other : DataLoader
+            DataLoader to join with.
+
+        Returns
+        -------
+        DataLoader
+            Combined DataLoader with concatenated schedules.
+        """
         return replace(
             self,
-            data=xr.concat([self.data, __o.data], dim=SCHEDULE),
+            data=xr.concat([self.data, other.data], dim=SCHEDULE),
             task_labels=self.task_labels,
         )
 
@@ -180,8 +192,8 @@ class DataLoader:
         task_labels = xr.apply_ufunc(
             np.vectorize(parse_mixed_value),
             data[TASK_LABELS],
-            input_core_dims=[[PROBLEM]],  # PROBLEM
-            output_core_dims=[[PROBLEM]],  # PROBLEM
+            input_core_dims=[[PROBLEM]],
+            output_core_dims=[[PROBLEM]],
             vectorize=True,
             dask="allowed",
             output_dtypes=[object],
@@ -232,6 +244,21 @@ class DataLoader:
         schema: dict[str, str],
         feature_processor: FeatureProcessor | None = None,
     ) -> tuple[xr.DataArray, FeatureProcessor]:
+        """Extract and transform task features from labels.
+
+        Parameters
+        ----------
+        schema : dict[str, str]
+            Feature name to type mapping for the processor.
+        feature_processor : FeatureProcessor | None, optional
+            Pre-fitted processor. If None, a new one is
+            initialized from the data, by default None.
+
+        Returns
+        -------
+        tuple[xr.DataArray, FeatureProcessor]
+            Transformed feature array and the processor used.
+        """
         tags_list = [
             {
                 str(k): v
@@ -268,6 +295,21 @@ class DataLoader:
     def optimizer_features(
         self, feature_processor: FeatureProcessor | None = None
     ) -> tuple[xr.DataArray, FeatureProcessor]:
+        """Extract and transform optimizer features.
+
+        Parameters
+        ----------
+        feature_processor : FeatureProcessor | None, optional
+            Pre-fitted processor. If None, a new one is
+            initialized from the optimizer labels,
+            by default None.
+
+        Returns
+        -------
+        tuple[xr.DataArray, FeatureProcessor]
+            Transformed optimizer feature array and the
+            processor used.
+        """
         # OPTIMIZER FEATURES
         opt_labels = self.optimizers.broadcast_like(self.problems)
 
@@ -375,6 +417,18 @@ class DataLoader:
         )
 
     def to_traj_and_stair(self) -> xr.DataArray:
+        """Compute trajectory and staircase arrays.
+
+        Applies log-stabilized min-max scaling to the mean
+        and cumulative-min output histories, producing a
+        normalized (trajectory, staircase) representation.
+
+        Returns
+        -------
+        xr.DataArray
+            Scaled trajectory and staircase data with
+            shape (batch, budget, kind).
+        """
         # 1. Reset the index on PROBLEM to remove the existing MultiIndex
         # This turns taskID and realization back into normal coordinates
         data_reset = self.data.unstack(PROBLEM).isel(
@@ -598,6 +652,20 @@ class DataLoader:
         )
 
     def select_feature(self, feature: dict) -> DataLoader:
+        """Select problems matching given feature values.
+
+        Parameters
+        ----------
+        feature : dict
+            Mapping of feature names to target values.
+            Values may be scalars or iterables.
+
+        Returns
+        -------
+        DataLoader
+            Filtered DataLoader containing only matching
+            problems.
+        """
         mask = None
         for feature_name, feature_value in feature.items():
             # extract the 1D array for this feature
@@ -612,10 +680,25 @@ class DataLoader:
                 current_mask = feature_data == feature_value
             mask = current_mask if mask is None else (mask & current_mask)
 
-        problems = feature_data[PROBLEM].where(mask, drop=True)  # .astype(int)
+        problems = feature_data[PROBLEM].where(mask, drop=True)
         return self.select_problems(problems)
 
     def create_strategy(self, choices: xr.DataArray, name: str) -> DataLoader:
+        """Create a new optimizer schedule from per-problem choices.
+
+        Parameters
+        ----------
+        choices : xr.DataArray
+            Per-problem schedule selections.
+        name : str
+            Name for the new composite schedule.
+
+        Returns
+        -------
+        DataLoader
+            DataLoader with the new strategy appended along
+            the schedule dimension.
+        """
         # Align coordinates
         choices = choices.sortby(TASK_ID).assign_coords(
             {PROBLEM: self.problems.sortby(TASK_ID)}
@@ -1038,7 +1121,8 @@ def load_dynamics(
     if not isinstance(path, xr.DataTree):
         _path = Path(path)
         datatree = xr.open_datatree(_path.with_suffix(".nc"))
-    else:  # Assume path is already a DataTree
+    # Assume path is already a DataTree
+    else:
         datatree = path
 
     return {
@@ -1147,6 +1231,7 @@ def compute_X_trajectory(data: xr.DataArray) -> xr.DataArray:
     """
 
     def scale(x: np.ndarray) -> np.ndarray:
+        """Log-transform and min-max scale a 1-D array."""
         # 3. Make sure the quality indicator value is non-negative
         p = x - x.min()
         # 4. Add epsilon to make quality indicator value non-zero
@@ -1167,7 +1252,7 @@ def compute_X_trajectory(data: xr.DataArray) -> xr.DataArray:
         output_core_dims=[[BUDGET]],
         vectorize=True,
         dask="parallelized",
-        dask_gufunc_kwargs={"allow_rechunk": True},  # False
+        dask_gufunc_kwargs={"allow_rechunk": True},
     )
 
     # return trajectory.output_mean.isel(
@@ -1194,6 +1279,7 @@ def log_relative_improvement(data: xr.Dataset) -> xr.DataArray:
     """
 
     def compute_log_relative_improvement(x, b):
+        """Compute log relative improvement between endpoints."""
         impv = -(x[0] - x[-1]) / (b[0] - b[-1]) / (abs(x[0]) + 1e-8)
         t = np.log(impv + 1e-8)
         return np.atleast_1d(t)
@@ -1228,6 +1314,7 @@ def _squash(da: xr.DataArray, reduce_dim: str, vector_dim: str = PROBLEM):
     """
 
     def f(x):
+        """Return the first non-NaN value from x."""
         for val in x:
             if not np.isnan(val).any():
                 return val
@@ -1243,7 +1330,7 @@ def _squash(da: xr.DataArray, reduce_dim: str, vector_dim: str = PROBLEM):
         input_core_dims=[[reduce_dim] + keep_dims],
         output_core_dims=[keep_dims],
         vectorize=True,
-        dask="allowed",  # Optional: if using dask
+        dask="allowed",
     )
 
 

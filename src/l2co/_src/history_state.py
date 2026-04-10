@@ -146,9 +146,11 @@ class HistoryState(eqx.Module):
         HistoryState
             New HistoryState with appended values.
         """
-        K = other.output_min.shape[0]  # number of steps to append
+        # Number of steps to append
+        K = other.output_min.shape[0]
 
         def push(a, b):
+            """Shift array a left by K and append b at the end."""
             N = a.shape[0]
 
             # 1. slice tail: a[K:]
@@ -288,6 +290,23 @@ class HistoryState(eqx.Module):
         optimizer: OptimizationStep,
         budget_steps: int | None = None,
     ) -> DataLoader:
+        """Convert history to a DataLoader with task labels.
+
+        Parameters
+        ----------
+        task : Task
+            Task providing labels and global minimum.
+        optimizer : OptimizationStep
+            Optimizer used, added as the schedule label.
+        budget_steps : int | None, optional
+            Budget interpolation steps, by default None.
+
+        Returns
+        -------
+        DataLoader
+            DataLoader containing the optimization
+            trajectories and ERT metrics.
+        """
         xarr = self.to_xarray_realizations(budget_steps=budget_steps)
         ert = calculate_ert(xarr, task.global_min)
 
