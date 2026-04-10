@@ -147,6 +147,14 @@ class Stage0Model(AbstractModel):
         optimizer = self.optimizers[action]
         return optimizer
 
+    def swap_optimizers(
+        self, optimizers: Iterable[OptimizationStep]
+    ) -> Stage0Model:
+        return Stage0Model(
+            feature_processor_task=self.feature_processor_task,
+            optimizers=optimizers,
+        )
+
 
 # =============================================================================
 
@@ -207,6 +215,15 @@ class ScikitStage0Model(Stage0Model):
             "model": self.model,
             "optimizers": [step.to_dict() for step in self.optimizers],
         }
+
+    def swap_optimizers(
+        self, optimizers: Iterable[OptimizationStep]
+    ) -> ScikitStage0Model:
+        return ScikitStage0Model(
+            feature_processor_task=self.feature_processor_task,
+            model=self.model,
+            optimizers=optimizers,
+        )
 
 
 class EquinoxStage0Model(Stage0Model):
@@ -448,6 +465,23 @@ class Stage1Model(AbstractModel):
             dims=["sample"],
         )
 
+    def swap_optimizers(
+        self, optimizers: Iterable[OptimizationStep]
+    ) -> Stage1Model:
+        self.feature_processor_optimizer = (
+            self.feature_processor_optimizer.swap_names(
+                {opt.name: opt.name for opt in optimizers}
+            )
+        )
+        return Stage1Model(
+            mixed_embedding_optimizer=self.mixed_embedding_optimizer,
+            mixed_embedding_task=self.mixed_embedding_task,
+            feature_processor_task=self.feature_processor_task,
+            feature_processor_optimizer=self.feature_processor_optimizer,
+            history_encoder=self.history_encoder,
+            optimizers=optimizers,
+        )
+
 
 class EquinoxStage1Model(Stage1Model):
     mixed_embedding_task: MixedEmbedding
@@ -620,6 +654,24 @@ class EquinoxStage1Model(Stage1Model):
             optimizers=optimizers,
         )
 
+    def swap_optimizers(
+        self, optimizers: Iterable[OptimizationStep]
+    ) -> EquinoxStage1Model:
+        feature_processor_optimizer = (
+            self.feature_processor_optimizer.swap_names(
+                {opt.name: opt.name for opt in optimizers}
+            )
+        )
+        return EquinoxStage1Model(
+            mixed_embedding_optimizer=self.mixed_embedding_optimizer,
+            mixed_embedding_task=self.mixed_embedding_task,
+            feature_processor_task=self.feature_processor_task,
+            feature_processor_optimizer=feature_processor_optimizer,
+            history_encoder=self.history_encoder,
+            model=self.model,
+            optimizers=optimizers,
+        )
+
 
 class Stage1Loader:
     """
@@ -712,6 +764,16 @@ class L2COModel(eqx.Module):
         return cls(
             stage0_model=stage0_model_loaded,
             stage1_model=stage1_model_loaded,
+        )
+
+    def swap_optimizers(
+        self, optimizers: Iterable[OptimizationStep]
+    ) -> L2COModel:
+        new_stage0 = self.stage0_model.swap_optimizers(optimizers)
+        new_stage1 = self.stage1_model.swap_optimizers(optimizers)
+        return L2COModel(
+            stage0_model=new_stage0,
+            stage1_model=new_stage1,
         )
 
 

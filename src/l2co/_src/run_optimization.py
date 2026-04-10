@@ -348,6 +348,19 @@ class RunOptimization(DataGenerator):
                 stage1_model=optimizer.hyperparameters["stage1_model"],
             )
 
+            if optimizer.hyperparameters["swap_optimizers"] is not None:
+                model = model.swap_optimizers(
+                    optimizers=[
+                        OptimizationStep(optimizer="sepcmaes"),
+                        OptimizationStep(
+                            optimizer="adam",
+                            hyperparameters={"learning_rate": 0.03},
+                        ),
+                        OptimizationStep(optimizer="lbfgs"),
+                        OptimizationStep(optimizer="pso"),
+                    ]
+                )
+
             experiment_sample = self.run_optimization_l2co(
                 experiment_sample=experiment_sample,
                 task=task,

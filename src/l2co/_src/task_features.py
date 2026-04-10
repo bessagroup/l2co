@@ -168,6 +168,32 @@ class FeatureProcessor(eqx.Module):
 
         return str(_path)
 
+    def swap_names(self, name_mapping: dict[str, str]) -> FeatureProcessor:
+        """
+        Swap feature names according to mapping.
+
+        Parameters
+        ----------
+        name_mapping : dict[str, str]
+            Mapping of old feature names to new feature names.
+
+        Returns
+        -------
+        FeatureProcessor
+            New instance with swapped feature names.
+        """
+        new_vocabs = {
+            name_mapping.get(name, name): vocab
+            for name, vocab in self.vocabs.items()
+        }
+
+        return FeatureProcessor(
+            schema=self.schema,
+            means=self.means,
+            stds=self.stds,
+            vocabs=new_vocabs,
+        )
+
 
 # =============================================================================
 
