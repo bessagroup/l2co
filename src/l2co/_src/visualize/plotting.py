@@ -267,6 +267,7 @@ def plot_ertd_profile(
     title_text: str | None = None,
     top_left_text: str | None = None,
     show_legend: bool = True,
+    xlim: tuple[float, float] = (10**-1, 10**5),
 ) -> tuple[plt.Figure, plt.Axes]:
     """
     Plot the run-time distribution for the given DataLoader.
@@ -284,6 +285,14 @@ def plot_ertd_profile(
     cost_metric: str, optional
         Cost metric to use for the x-axis, either 'fevals' or 'iterations',
         by default 'fevals'
+    title_text: str, optional
+        Title text to display above the plot, by default None
+    top_left_text: str, optional
+        Text to display in the top-left corner (e.g., "5-D"), by default None
+    show_legend: bool, optional
+        Whether to display the legend on the right side, by default True
+    xlim: tuple[float, float], optional
+        Limits for the x-axis, by default (10**-1, 10**5)
 
     Returns
     -------
@@ -305,6 +314,7 @@ def plot_ertd_profile(
         title_text=title_text,
         top_left_text=top_left_text,
         show_legend=show_legend,
+        xlim=xlim,
     )
 
 
@@ -577,6 +587,7 @@ def plot_ertd(
     title_text: str | None = None,
     top_left_text: str | None = None,
     show_legend: bool = True,
+    xlim: tuple[float, float] = (10**-1, 10**5),
 ) -> tuple[plt.Figure, plt.Axes]:
     """
     Plot the expected run-time distribution for multiple optimizers.
@@ -597,6 +608,8 @@ def plot_ertd(
         Text to display in the top-left corner (e.g., "5-D"), by default None.
     show_legend : bool, optional
         Whether to display the legend on the right side, by default True.
+    xlim : tuple[float, float], optional
+        Limits for the x-axis, by default (10**-1, 10**5).
 
     Returns
     -------
@@ -711,7 +724,7 @@ def plot_ertd(
         )
 
     ax.set_ylim(0.0, 1.0)
-    ax.set_xlim(10**-1, 10**5)  # Starts the x-axis at 10^-1
+    ax.set_xlim(*xlim)  # Starts the x-axis at 10^-1
 
     return fig, ax
 
