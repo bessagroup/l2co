@@ -876,6 +876,7 @@ def plot_metrics(metrics: dict[str, Iterable[float]]):
     ax.set_xticklabels([])
 
     ax.set_ylabel("")
+    ax.set_yscale("log")
     # formatter = ScalarFormatter(useMathText=True)
     # formatter.set_powerlimits((-2, -2))
     # ax.yaxis.set_major_formatter(formatter)
