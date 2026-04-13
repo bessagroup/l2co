@@ -20,6 +20,7 @@ Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)
 # Local imports
 import bessaplots
 import matplotlib.pyplot as plt
+from l2co_tasks import Task
 
 from l2co import budget, naming, optimizers, plotting, sampling, tasks
 from l2co._src import tree_utils
@@ -41,7 +42,6 @@ from l2co._src.optimizerschedule import OptimizationStep
 from l2co._src.preprocessing import preprocessing_factory
 from l2co._src.run_optimization import RolloutWrapper, RunOptimization
 from l2co._src.run_state import RunState, reset, run
-from l2co._src.task import Task
 from l2co._src.task_features import FeatureProcessor, MixedEmbedding
 from l2co._src.update_class import UpdateClass, evaluate
 from l2co._src.validation import validation_fn

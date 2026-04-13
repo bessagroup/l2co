@@ -14,13 +14,13 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Float, PRNGKeyArray, PyTree
+from l2co_tasks import Task
 
 # Local
 from .batching import BatchState
 from .history_state import HistoryState
 from .optimizers import optimizer_mapping
 from .optimizerschedule import OptimizationStep
-from .task import Task
 from .typing import InputParameters, SamplerFunction
 from .update_class import UpdateClass
 from .update_class import evaluate as evaluate_update_class

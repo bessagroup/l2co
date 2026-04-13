@@ -52,7 +52,7 @@ task_kwargs:  # Extra keyword args forwarded to the task factory (null = none)
 
 data_generator:
   # Factory function that creates a Task object from each ExperimentData row
-  _target_: l2co._src.tasks.benchmark_task.create_bbob_task
+  _target_: l2co_tasks.create_bbob_task
   _partial_: True
 
 schema:

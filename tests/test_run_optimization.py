@@ -14,10 +14,10 @@ from l2co._src.run_optimization import (
     RunOptimization,
     RolloutWrapper,
 )
-from l2co._src.tasks.benchmark_task import create_bbob_task
-from l2co._src.tasks.pde import create_pde_task
+from l2co_tasks import create_bbob_task
+from l2co_tasks import create_pde_task
 from l2co.sampling import normal_sampling
-from l2co import Task
+from l2co_tasks import Task
 
 from . import OPTIMIZATION_STEPS, ALL_OPTIMIZERS
 

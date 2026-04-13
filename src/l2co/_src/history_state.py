@@ -16,6 +16,7 @@ import numpy as onp
 import pandas as pd
 import xarray as xr
 from jaxtyping import Array, Float, Int
+from l2co_tasks import Task
 
 from .data_loader import DataLoader
 from .naming import (
@@ -36,7 +37,6 @@ from .naming import (
 )
 from .optimizerschedule import OptimizationStep
 from .performance import calculate_ert
-from .task import Task
 from .typing import OptHistoryType
 
 #                                                          Authorship & Credits

@@ -20,7 +20,7 @@ task_kwargs:
   seed: ${seed}
 
 data_generator:
-  _target_: l2co._src.tasks.benchmark_task.create_bbob_task
+  _target_: l2co_tasks.create_bbob_task
   _partial_: True
 
 # Default values (override via CLI)

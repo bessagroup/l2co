@@ -50,6 +50,7 @@ import xarray as xr
 from f3dasm import ExperimentSample
 from f3dasm.datageneration import DataGenerator
 from jaxtyping import PRNGKeyArray, PyTree
+from l2co_tasks import Task
 
 from l2co._src.batching import BatchState
 
@@ -65,7 +66,6 @@ from l2co._src.run_state import (
     reset_from_stage0,
     run,
 )
-from l2co._src.task import Task
 
 #                                                          Authorship & Credits
 # =============================================================================

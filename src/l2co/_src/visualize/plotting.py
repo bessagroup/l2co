@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 from bessaplots import TypstReport, savefig
+from l2co_tasks import Task
 from matplotlib.colors import (
     ListedColormap,
     LogNorm,
@@ -39,7 +40,6 @@ from l2co._src.naming import (
 )
 from l2co._src.optimizerschedule import OptimizationStep
 from l2co._src.sampler import grid_sampling
-from l2co._src.task import Task
 from l2co._src.update_class import evaluate
 from l2co._src.visualize.colors import LABEL_MAP, get_schedule_styles
 

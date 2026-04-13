@@ -14,12 +14,12 @@ import f3dasm
 import numpy as np
 import pandas as pd
 import xarray as xr
+from l2co_tasks import Task
 from tqdm import tqdm
 
 # Local
 from l2co._src.optimizerschedule import OptimizationStep
 from l2co._src.performance import output_cummin
-from l2co._src.task import Task
 from l2co._src.validation import validation_fn
 from l2co.naming import (
     BUDGET,

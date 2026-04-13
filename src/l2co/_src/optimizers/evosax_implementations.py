@@ -27,12 +27,12 @@ from evosax.algorithms.population_based import population_based_algorithms
 from evosax.algorithms.population_based.base import PopulationBasedAlgorithm
 from jax.tree_util import Partial
 from jaxtyping import PRNGKeyArray, PyTree
+from l2co_tasks import Task
 
 # Local
 from l2co._src.opt_history import OptHistory
 from l2co._src.optimizers.utils import normalize_key
 from l2co._src.sampler import random_sampling
-from l2co._src.task import Task
 from l2co._src.tree_utils import (
     vmapped_loss,
     vmapped_loss_with_rng,

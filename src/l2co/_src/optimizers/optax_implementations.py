@@ -16,12 +16,12 @@ import jax.random as jr
 import optax
 from jax.tree_util import Partial
 from jaxtyping import PRNGKeyArray, PyTree
+from l2co_tasks import Task
 from optax import OptState as OptaxState
 
 # Local
 from l2co._src.opt_history import OptHistory
 from l2co._src.optimizers.utils import normalize_key
-from l2co._src.task import Task
 from l2co._src.tree_utils import (
     vmapped_loss_and_grad,
     vmapped_loss_and_grad_with_rng,

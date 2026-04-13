@@ -1064,6 +1064,7 @@ dependencies = [
     { name = "jax" },
     { name = "jax-tqdm" },
     { name = "jaxtyping" },
+    { name = "l2co-tasks" },
     { name = "matplotlib" },
     { name = "netcdf4" },
     { name = "optax" },
@@ -1105,6 +1106,7 @@ requires-dist = [
     { name = "jax" },
     { name = "jax-tqdm", specifier = ">=0.4.0" },
     { name = "jaxtyping", specifier = ">=0.3.2" },
+    { name = "l2co-tasks", editable = "../l2co-tasks" },
     { name = "matplotlib", specifier = ">=3.10.7" },
     { name = "mkdocs-gen-files", marker = "extra == 'docs'", specifier = ">=0.6.0" },
     { name = "mkdocs-include-exclude-files", marker = "extra == 'docs'", specifier = ">=0.1.0" },
@@ -1120,6 +1122,53 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.14.10" },
     { name = "scikit-learn", specifier = ">=1.7.1" },
     { name = "tqdm", specifier = ">=4.67.1" },
+]
+provides-extras = ["dev", "docs", "tests"]
+
+[[package]]
+name = "l2co-tasks"
+version = "0.1.0"
+source = { editable = "../l2co-tasks" }
+dependencies = [
+    { name = "bbob-jax" },
+    { name = "cloudpickle" },
+    { name = "equinox" },
+    { name = "f3dasm" },
+    { name = "jax" },
+    { name = "jaxtyping" },
+    { name = "mnist1d" },
+    { name = "numpy" },
+    { name = "optax" },
+    { name = "pandas" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "bbob-jax", specifier = ">=1.6.2" },
+    { name = "build", marker = "extra == 'dev'" },
+    { name = "cloudpickle", specifier = ">=3.1.1" },
+    { name = "equinox", specifier = ">=0.13.0" },
+    { name = "f3dasm", editable = "../f3dasm" },
+    { name = "jax" },
+    { name = "jaxtyping", specifier = ">=0.3.2" },
+    { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6.0" },
+    { name = "mkdocs-gen-files", marker = "extra == 'docs'", specifier = ">=0.5.0" },
+    { name = "mkdocs-include-exclude-files", marker = "extra == 'docs'", specifier = ">=0.1.0" },
+    { name = "mkdocs-ipynb", marker = "extra == 'docs'", specifier = ">=0.1.1" },
+    { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.6.20" },
+    { name = "mkdocstrings", marker = "extra == 'docs'", specifier = ">=0.30.1" },
+    { name = "mkdocstrings-python", marker = "extra == 'docs'", specifier = ">=1.18.2" },
+    { name = "mnist1d" },
+    { name = "numpy" },
+    { name = "optax", specifier = "<=0.2.4" },
+    { name = "pandas" },
+    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.4.0" },
+    { name = "pymdown-extensions", marker = "extra == 'docs'", specifier = ">=10.16.1" },
+    { name = "pytest", marker = "extra == 'tests'", specifier = ">=8.4.1" },
+    { name = "pytest-cov", marker = "extra == 'tests'", specifier = ">=6.2.1" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.14.10" },
+    { name = "setuptools", marker = "extra == 'dev'", specifier = ">=43.0.0" },
+    { name = "wheel", marker = "extra == 'dev'" },
 ]
 provides-extras = ["dev", "docs", "tests"]
 
@@ -1495,6 +1544,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/53/21/783dfb51f40d2660afeb9bccf3612b99f6a803d980d2a09132b0f9d216ab/ml_dtypes-0.5.3-cp314-cp314t-macosx_10_13_universal2.whl", hash = "sha256:e12e29764a0e66a7a31e9b8bf1de5cc0423ea72979f45909acd4292de834ccd3", size = 689324, upload-time = "2025-07-29T18:39:07.567Z" },
     { url = "https://files.pythonhosted.org/packages/09/f7/a82d249c711abf411ac027b7163f285487f5e615c3e0716c61033ce996ab/ml_dtypes-0.5.3-cp314-cp314t-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:19f6c3a4f635c2fc9e2aa7d91416bd7a3d649b48350c51f7f715a09370a90d93", size = 5275917, upload-time = "2025-07-29T18:39:09.339Z" },
     { url = "https://files.pythonhosted.org/packages/7f/3c/541c4b30815ab90ebfbb51df15d0b4254f2f9f1e2b4907ab229300d5e6f2/ml_dtypes-0.5.3-cp314-cp314t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:5ab039ffb40f3dc0aeeeba84fd6c3452781b5e15bef72e2d10bcb33e4bbffc39", size = 5285284, upload-time = "2025-07-29T18:39:11.532Z" },
+]
+
+[[package]]
+name = "mnist1d"
+version = "0.0.2.post1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "requests" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/69/34/b8551150c824b4738528bf82edb99a35d81c529c68a2e7e2cbe08b31b1ac/mnist1d-0.0.2.post1.tar.gz", hash = "sha256:e806fcefc9606b3d3a331c2db608740719f326e642b7606407a97488c7bdc13a", size = 280248, upload-time = "2024-05-20T18:13:34.172Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d0/22/3ffa6072425bab0c4b0e90667837df787a389626e3397dc0aafb986acdb4/mnist1d-0.0.2.post1-py3-none-any.whl", hash = "sha256:e780fadc12ab6e45994dcb02bbe728b347243e0a5d13790f2a86992500eceb86", size = 14369, upload-time = "2024-05-20T18:13:32.741Z" },
 ]
 
 [[package]]
