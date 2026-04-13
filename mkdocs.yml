@@ -79,7 +79,7 @@ plugins:
     - mkdocstrings:
         handlers:
             python:
-                paths: [src]
+                paths: [src, ../l2co-tasks/src]
                 options:
                     docstring_style: numpy
                     force_inspection: true

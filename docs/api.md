@@ -28,10 +28,6 @@
 
 ::: l2co.optimizer_mapping
 
-## Tasks
-
-::: l2co.Task
-
 ## States
 
 ::: l2co.RunState

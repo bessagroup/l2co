@@ -82,7 +82,7 @@ Please refer to L2CO's [Code of Conduct](https://github.com/bessagroup/l2co/blob
 
 ## License
 
-Copyright 2025, Martin van der Schelling
+Copyright 2026, Martin van der Schelling
 
 All rights reserved.
 

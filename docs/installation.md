@@ -11,7 +11,7 @@ The package is currently not available on PyPI. To install the package, follow t
 2. Clone the repository:
 
 ```bash
-git clone https://github.com/bessagroup/L2CO.git
+git clone https://github.com/bessagroup/l2co.git
 ```
 
 3. Navigate to the repository and install the package using `pip`:

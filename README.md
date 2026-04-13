@@ -111,7 +111,7 @@ Please refer to L2CO's [Code of Conduct](CODE_OF_CONDUCT.md)
 
 ## License
 
-Copyright 2025, Martin van der Schelling
+Copyright 2026, Martin van der Schelling
 
 All rights reserved.
 
