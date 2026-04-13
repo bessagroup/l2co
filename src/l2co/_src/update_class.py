@@ -17,7 +17,6 @@ import jax.numpy as jnp
 from jax.tree_util import Partial
 from jax_tqdm import scan_tqdm
 from jaxtyping import Array, Float, PRNGKeyArray, PyTree
-from tqdm import tqdm
 
 # Local
 from .batching import BatchState
@@ -411,43 +410,6 @@ class UpdateClass(eqx.Module):
 # =============================================================================
 
 
-def for_loop(carry, scan_fn, n_iterations: int):
-    """Execute optimization loop using Python for loop with progress bar.
-
-    Parameters
-    ----------
-    carry : tuple
-        Initial carry state.
-    scan_fn : Callable
-        Scan function to execute at each iteration.
-    n_iterations : int
-        Number of iterations to perform.
-
-    Returns
-    -------
-    tuple
-        Final carry state and accumulated history buffer.
-    """
-    jitted_scan_fn = jax.jit(scan_fn)
-    carry, history = jitted_scan_fn(carry, None)
-    buffer = jax.tree.map(
-        lambda x: jnp.tile(x[None], (n_iterations, *([1] * x.ndim))),
-        history,
-    )
-
-    # Run the optimization loop
-    for i in tqdm(range(1, n_iterations)):
-        carry, history = jitted_scan_fn(carry, None)
-        buffer = jax.tree.map(
-            lambda buf, new, i=i: buf.at[i].set(new),
-            buffer,
-            history,
-        )
-    return carry, buffer
-
-
-SAMPLING_STEP = 1
-
 # =============================================================================
 
 
@@ -474,8 +436,10 @@ def _evaluate_one(
         Loss function.
     pass_rng : bool
         Whether to pass RNG key to the loss function.
-    key : PRNGKeyArray
-        PRNG key for random operations.
+    batch_key : PRNGKeyArray
+        PRNG key for batch sampling.
+    loss_key : PRNGKeyArray
+        PRNG key for the loss function.
 
     Returns
     -------

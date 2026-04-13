@@ -90,25 +90,40 @@ vmapped_loss_with_rng = eqx.filter_vmap(
 )
 
 
+# def ffill(x: jnp.ndarray) -> jnp.ndarray:
+#     """Forward fill NaN values in array.
+
+#     Parameters
+#     ----------
+#     x : jnp.ndarray
+#         Input array with potential NaN values.
+
+#     Returns
+#     -------
+#     jnp.ndarray
+#         Array with NaN values forward filled.
+#     """
+
+#     def scan_fn(carry, xi):
+#         carry = jnp.where(jnp.isnan(xi), carry, xi)
+#         return carry, carry
+
+#     _, filled = jax.lax.scan(scan_fn, jnp.nan, x)
+#     return filled
+
+
 def ffill(x: jnp.ndarray) -> jnp.ndarray:
-    """Forward fill NaN values in array.
-
-    Parameters
-    ----------
-    x : jnp.ndarray
-        Input array with potential NaN values.
-
-    Returns
-    -------
-    jnp.ndarray
-        Array with NaN values forward filled.
-    """
+    """Forward fill NaN values in a 2D array along axis 0."""
 
     def scan_fn(carry, xi):
-        carry = jnp.where(jnp.isnan(xi), carry, xi)
-        return carry, carry
+        """Replace NaN entries in xi with the carry value."""
+        new_carry = jnp.where(jnp.isnan(xi), carry, xi)
+        return new_carry, new_carry
 
-    _, filled = jax.lax.scan(scan_fn, jnp.nan, x)
+    # Initialize carry with NaNs matching the inner dimension
+    init_carry = jnp.full(x.shape[1:], jnp.nan)
+
+    _, filled = jax.lax.scan(scan_fn, init_carry, x)
     return filled
 
 
@@ -128,63 +143,33 @@ def bfill(x: jnp.ndarray) -> jnp.ndarray:
     return jnp.flip(ffill(jnp.flip(x)))
 
 
-def signlog1p(x: jnp.ndarray) -> jnp.ndarray:
-    """Apply signed log1p transformation.
+def get_interpolation_matrix(input_len: int, target_len: int):
+    """Computes a static matrix M such that x_interp = x @ M."""
+    # The positions we want to sample
+    query_points = jnp.linspace(0, 1, target_len)
+    # The positions we actually have
+    ref_points = jnp.linspace(0, 1, input_len)
 
-    Parameters
-    ----------
-    x : jnp.ndarray
-        Input array.
+    # Calculate indices and weights for linear interpolation
+    # This logic mimics jnp.interp but produces a reusable matrix
+    def get_weights(q):
+        """Build one row of the interpolation matrix for query point q."""
+        idx = jnp.searchsorted(ref_points, q, side="right") - 1
+        idx = jnp.clip(idx, 0, input_len - 2)
 
-    Returns
-    -------
-    jnp.ndarray
-        Transformed array with sign(x) * log1p(|x|).
-    """
-    return jnp.sign(x) * jnp.log1p(jnp.abs(x))
+        low = ref_points[idx]
+        high = ref_points[idx + 1]
 
+        weight_high = (q - low) / (high - low)
+        weight_low = 1.0 - weight_high
 
-def signed_softlog(x: jax.Array, alpha: float = EPSILON) -> jax.Array:
-    """Apply signed soft logarithm transformation.
+        # Create a row for the matrix
+        row = jnp.zeros((input_len,))
+        row = row.at[idx].set(weight_low)
+        row = row.at[idx + 1].set(weight_high)
+        return row
 
-    Parameters
-    ----------
-    x : jax.Array
-        Input array.
-    alpha : float, optional
-        Scaling parameter, by default EPSILON.
-
-    Returns
-    -------
-    jax.Array
-        Transformed array with signed soft log.
-    """
-    scaled = jnp.abs(x) / alpha
-    y = jnp.log1p(scaled) / jnp.log1p(1.0 / alpha)
-    y = jnp.sign(x) * y
-    return y
-
-
-def interpolate(x: jnp.ndarray, n_points: int) -> jnp.ndarray:
-    """Interpolate array to specified number of points.
-
-    Parameters
-    ----------
-    x : jnp.ndarray
-        Input array to interpolate.
-    n_points : int
-        Target number of points.
-
-    Returns
-    -------
-    jnp.ndarray
-        Interpolated array with n_points elements.
-    """
-    return jax.vmap(
-        lambda xi: jnp.interp(
-            jnp.linspace(0, 1, n_points), jnp.linspace(0, 1, len(xi)), xi
-        )
-    )(x)
+    return jax.vmap(get_weights)(query_points).T
 
 
 def minmax_scale(x: jax.Array, min: jax.Array, max: jax.Array) -> jax.Array:
@@ -282,94 +267,49 @@ def log_stabilized_minmax_scale_with_global_min(
     """
     p = x - global_min
     p_log10 = jnp.log10(p + EPSILON)
-    normed = (p_log10 - jnp.log10(EPSILON)) / (
-        jnp.max(p_log10, axis=0) - jnp.log10(EPSILON) + EPSILON
-    )
+    min_value = jnp.log10(EPSILON)
+    # max_value = p_log10[0]
+    max_value = jnp.max(p_log10, axis=0)
+    normed = (p_log10 - min_value) / (max_value - min_value + EPSILON)
     return jnp.clip(normed, 0.0, 1.0)
 
 
 def traj_and_stair(x_output_mean, x_output_min, global_min):
+    """
+    Process trajectory and staircase from optimization outputs.
+
+    Parameters
+    ----------
+    x_output_mean : jax.Array
+        Mean output trajectory with shape (n_steps, n_features).
+    x_output_min : jax.Array
+        Minimum output trajectory with shape (n_steps, n_features).
+    global_min : jax.Array
+        Global minimum value for scaling reference.
+
+    Returns
+    -------
+    jax.Array
+        Stacked and scaled trajectory and staircase arrays with
+        shape (n_steps, 2, n_features).
+
+    Notes
+    -----
+    Applies forward-backward fill to handle missing values,
+    computes cumulative minimum for staircase, and applies
+    log-stabilized min-max scaling.
+    """
     traj = ffill(bfill(x_output_mean))
     stair = output_cummin(ffill(bfill(x_output_min)))
-    return log_stabilized_minmax_scale_with_global_min(
+    y = log_stabilized_minmax_scale_with_global_min(
         jnp.stack((traj, stair), axis=1),
         global_min,
     )
-
-
-# =============================================================================
-
-
-def get_best(params: PyTree, losses: jax.Array):
-    """
-    Retrieve the best parameters and corresponding loss.
-
-    Parameters
-    ----------
-    params : PyTree
-        Parameter tree with shape (n_iters * popsize, dim).
-    losses : jax.Array
-        Loss array with shape (n_iters * popsize, 1).
-
-    Returns
-    -------
-    Tuple[PyTree, jax.Array]
-        Best parameters and corresponding loss.
-    """
-    # params: shape = (n_iters*popsize, dim)
-    # losses: shape = (n_iters*popsize, 1)
-    idx = jnp.argmin(losses)
-    best_params = jax.tree.map(lambda x: x[idx], params)
-    best_loss = losses[idx]
-    return best_params, best_loss
-
-
-def tree_where(pred, true, false):
-    """
-    Apply a conditional operation to a PyTree.
-
-    Parameters
-    ----------
-    pred : jax.Array
-        Boolean array for the condition.
-    true : PyTree
-        PyTree to use when the condition is True.
-    false : PyTree
-        PyTree to use when the condition is False.
-
-    Returns
-    -------
-    PyTree
-        Resulting PyTree after applying the condition.
-    """
-
-    def keep(a, b):
-        return jnp.where(pred, a, b)
-
-    return jax.tree.map(keep, true, false)
+    return ffill(bfill(y))
 
 
 #                                                  Loading and saving functions
 # =============================================================================
-
-
-def save_model(model, path: str | Path) -> None:
-    """Save model to disk using cloudpickle and equinox serialization.
-
-    Parameters
-    ----------
-    model : eqx.Module
-        Model to save.
-    path : str | Path
-        Path to save the model files.
-    """
-    _path = Path(path)
-    model_shape = eqx.filter_eval_shape(lambda x: model, None)
-
-    with open(_path.with_suffix(".pkl"), "wb") as f:
-        cloudpickle.dump(model_shape, f)
-
-    eqx.tree_serialise_leaves(_path.with_suffix(".eqx"), model)
 
 
 def load_model(model_path: str, shape_path: str) -> eqx.Module:
@@ -414,19 +354,6 @@ def load_jnparray(path: str | Path) -> jnp.ndarray:
     """
     # TODO: investigate this flatten behaviour
     return jnp.load(Path(path)).flatten()
-
-
-def save_jnparray(model, path: str | Path) -> None:
-    """Save JAX numpy array to disk.
-
-    Parameters
-    ----------
-    model : jnp.ndarray
-        Array to save.
-    path : str | Path
-        Path to save the array.
-    """
-    jnp.save(path, model)
 
 
 def save_dataset(dataset: dict[str, jnp.ndarray], path: str | Path):

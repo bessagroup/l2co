@@ -1,4 +1,5 @@
+# Sample initial points on a uniform grid (for bounded tasks only)
 _target_: l2co.sampling.grid_sampling
-n_points_per_dim: 100
-lower_bound: ${tasks.bounded.lower_bound}
-upper_bound: ${tasks.bounded.upper_bound}
+n_points_per_dim: 100                      # Grid resolution per dimension
+lower_bound: ${tasks.bounded.lower_bound}  # Domain lower bound (from task config)
+upper_bound: ${tasks.bounded.upper_bound}  # Domain upper bound (from task config)

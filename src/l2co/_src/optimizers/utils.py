@@ -1,3 +1,5 @@
+"""Utility functions for optimizer name normalization and processing."""
+
 import re
 
 

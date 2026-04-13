@@ -114,7 +114,7 @@ class OptimizationStep:
             Hash value based on the tag.
         """
         t = sorted(self.tag.items())
-        return int(hashlib.sha256(str(t).encode()).hexdigest()[:6], 16)  #:8
+        return int(hashlib.sha256(str(t).encode()).hexdigest()[:6], 16)
 
     @property
     def tag_hashable(self) -> tuple[tuple[str, Any]]:
@@ -134,7 +134,8 @@ class OptimizationStep:
                 return frozenset(
                     (k, make_hashable(v)) for k, v in value.items()
                 )
-            return value  # Leave other types unchanged
+            # Leave other types unchanged
+            return value
 
         tag_hashable = {
             "opt_name": make_hashable(self.name),
@@ -153,6 +154,11 @@ class OptimizationStep:
         str
             Name combining optimizer and hyperparameters.
         """
+        if self.optimizer == "rl2co":
+            model_path = self.hyperparameters.get("model", "")
+            stem = Path(model_path).stem if model_path else ""
+            return f"rl2co_{stem}".strip("_")
+
         hyperparameters = "_".join(
             [f"{k}={v}" for k, v in self.hyperparameters.items()]
         )

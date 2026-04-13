@@ -164,9 +164,12 @@ notebooks/
 
 # Agent
 .agent/
+agent-reports/
 ARCHITECT_PLAN.md
 AUDIT_REPORT.md
 NEXT_PROMPT.md
+CLAUDE.md
 
 # PDF files
 *.pdf
+!overview.svg

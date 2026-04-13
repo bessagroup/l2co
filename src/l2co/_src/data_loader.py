@@ -20,7 +20,7 @@ create_entire_dataset
 # Standard
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from time import perf_counter
@@ -30,7 +30,6 @@ from typing import Literal
 import jax
 import numpy as np
 import xarray as xr
-from scipy.linalg import svd
 
 # Local
 from .naming import (
@@ -71,8 +70,6 @@ __status__ = "Stable"
 #                                                                     Constants
 # =============================================================================
 
-INVALID_PERFORMANCE_VALUE = 1.0
-PADDING_VALUE = 1.0
 # DEFAULT_COST_VALUES = np.logspace(-1, 6, 100) ** 0.8
 DEFAULT_COST_VALUES = np.append(np.logspace(-1, 6, 1000) ** 0.8, 10**5)
 
@@ -107,13 +104,13 @@ class DataLoader:
         self.data = self.data.sortby(TASK_ID)
         self.task_labels = self.task_labels.sortby(TASK_ID)
 
-    def __add__(self, __o: DataLoader) -> DataLoader:
+    def __add__(self, other: DataLoader) -> DataLoader:
         """
         Concatenate two DataLoader objects.
 
         Parameters
         ----------
-        __o : DataLoader
+        other : DataLoader
             DataLoader to concatenate.
 
         Returns
@@ -121,21 +118,33 @@ class DataLoader:
         DataLoader
             Concatenated DataLoader.
         """
-        if __o is None:
+        if other is None:
             return self
 
         return replace(
             self,
-            data=xr.concat([self.data, __o.data], dim=PROBLEM),
+            data=xr.concat([self.data, other.data], dim=PROBLEM),
             task_labels=xr.concat(
-                [self.task_labels, __o.task_labels], dim=PROBLEM
+                [self.task_labels, other.task_labels], dim=PROBLEM
             ),
         )
 
-    def join(self, __o: DataLoader) -> DataLoader:
+    def join(self, other: DataLoader) -> DataLoader:
+        """Join another DataLoader along the schedule dimension.
+
+        Parameters
+        ----------
+        other : DataLoader
+            DataLoader to join with.
+
+        Returns
+        -------
+        DataLoader
+            Combined DataLoader with concatenated schedules.
+        """
         return replace(
             self,
-            data=xr.concat([self.data, __o.data], dim=SCHEDULE),
+            data=xr.concat([self.data, other.data], dim=SCHEDULE),
             task_labels=self.task_labels,
         )
 
@@ -180,8 +189,8 @@ class DataLoader:
         task_labels = xr.apply_ufunc(
             np.vectorize(parse_mixed_value),
             data[TASK_LABELS],
-            input_core_dims=[[PROBLEM]],  # PROBLEM
-            output_core_dims=[[PROBLEM]],  # PROBLEM
+            input_core_dims=[[PROBLEM]],
+            output_core_dims=[[PROBLEM]],
             vectorize=True,
             dask="allowed",
             output_dtypes=[object],
@@ -232,6 +241,21 @@ class DataLoader:
         schema: dict[str, str],
         feature_processor: FeatureProcessor | None = None,
     ) -> tuple[xr.DataArray, FeatureProcessor]:
+        """Extract and transform task features from labels.
+
+        Parameters
+        ----------
+        schema : dict[str, str]
+            Feature name to type mapping for the processor.
+        feature_processor : FeatureProcessor | None, optional
+            Pre-fitted processor. If None, a new one is
+            initialized from the data, by default None.
+
+        Returns
+        -------
+        tuple[xr.DataArray, FeatureProcessor]
+            Transformed feature array and the processor used.
+        """
         tags_list = [
             {
                 str(k): v
@@ -268,6 +292,21 @@ class DataLoader:
     def optimizer_features(
         self, feature_processor: FeatureProcessor | None = None
     ) -> tuple[xr.DataArray, FeatureProcessor]:
+        """Extract and transform optimizer features.
+
+        Parameters
+        ----------
+        feature_processor : FeatureProcessor | None, optional
+            Pre-fitted processor. If None, a new one is
+            initialized from the optimizer labels,
+            by default None.
+
+        Returns
+        -------
+        tuple[xr.DataArray, FeatureProcessor]
+            Transformed optimizer feature array and the
+            processor used.
+        """
         # OPTIMIZER FEATURES
         opt_labels = self.optimizers.broadcast_like(self.problems)
 
@@ -375,6 +414,18 @@ class DataLoader:
         )
 
     def to_traj_and_stair(self) -> xr.DataArray:
+        """Compute trajectory and staircase arrays.
+
+        Applies log-stabilized min-max scaling to the mean
+        and cumulative-min output histories, producing a
+        normalized (trajectory, staircase) representation.
+
+        Returns
+        -------
+        xr.DataArray
+            Scaled trajectory and staircase data with
+            shape (batch, budget, kind).
+        """
         # 1. Reset the index on PROBLEM to remove the existing MultiIndex
         # This turns taskID and realization back into normal coordinates
         data_reset = self.data.unstack(PROBLEM).isel(
@@ -598,6 +649,20 @@ class DataLoader:
         )
 
     def select_feature(self, feature: dict) -> DataLoader:
+        """Select problems matching given feature values.
+
+        Parameters
+        ----------
+        feature : dict
+            Mapping of feature names to target values.
+            Values may be scalars or iterables.
+
+        Returns
+        -------
+        DataLoader
+            Filtered DataLoader containing only matching
+            problems.
+        """
         mask = None
         for feature_name, feature_value in feature.items():
             # extract the 1D array for this feature
@@ -612,10 +677,25 @@ class DataLoader:
                 current_mask = feature_data == feature_value
             mask = current_mask if mask is None else (mask & current_mask)
 
-        problems = feature_data[PROBLEM].where(mask, drop=True)  # .astype(int)
+        problems = feature_data[PROBLEM].where(mask, drop=True)
         return self.select_problems(problems)
 
     def create_strategy(self, choices: xr.DataArray, name: str) -> DataLoader:
+        """Create a new optimizer schedule from per-problem choices.
+
+        Parameters
+        ----------
+        choices : xr.DataArray
+            Per-problem schedule selections.
+        name : str
+            Name for the new composite schedule.
+
+        Returns
+        -------
+        DataLoader
+            DataLoader with the new strategy appended along
+            the schedule dimension.
+        """
         # Align coordinates
         choices = choices.sortby(TASK_ID).assign_coords(
             {PROBLEM: self.problems.sortby(TASK_ID)}
@@ -1019,163 +1099,6 @@ def calculate_best_solver(
 
 #                                                          OptimizationDynamics
 # =============================================================================
-def load_dynamics(
-    path: str | Path | xr.DataTree,
-) -> dict[str, OptimizationDynamics]:
-    """
-    Load optimization dynamics from a file or DataTree.
-
-    Parameters
-    ----------
-    path : str, Path, or xr.DataTree
-        Path to the file or DataTree object.
-
-    Returns
-    -------
-    dict[str, OptimizationDynamics]
-        Dictionary of OptimizationDynamics objects.
-    """
-    if not isinstance(path, xr.DataTree):
-        _path = Path(path)
-        datatree = xr.open_datatree(_path.with_suffix(".nc"))
-    else:  # Assume path is already a DataTree
-        datatree = path
-
-    return {
-        name: OptimizationDynamics.from_data(
-            data=dynamics.to_dataset(), previous_step=name
-        )
-        for name, dynamics in datatree.items()
-    }
-
-
-# =============================================================================
-
-
-def squash_optimizer(data: xr.Dataset, target_optimizer: str) -> xr.Dataset:
-    """
-    Squash multiple optimizer runs into a single run for the target optimizer.
-
-    Parameters
-    ----------
-    data : xr.Dataset
-        Dataset containing optimizer runs.
-    target_optimizer : str
-        Optimizer name to squash.
-
-    Returns
-    -------
-    xr.Dataset
-        Squashed dataset for the target optimizer.
-    """
-    _data = data.sel(
-        {
-            SCHEDULE: [
-                o
-                for o in data.optimizer.values
-                if o.startswith(target_optimizer)
-            ]
-        }
-    )
-    mask = (
-        _data.notnull()
-        .any(dim=BUDGET)
-        .idxmax(dim=SCHEDULE)
-        .isel({OUTPUT_DIM: 0}, drop=True)
-        .output_mean
-    )
-
-    return (
-        _data.sel({SCHEDULE: mask})
-        .reset_coords(SCHEDULE, drop=True)
-        .expand_dims({SCHEDULE: np.array([target_optimizer], dtype=object)})
-    )
-
-
-def impute_missing_values_svd(y: np.ndarray, k=2):
-    """
-    Impute missing values in a matrix using SVD.
-
-    Parameters
-    ----------
-    y : np.ndarray
-        Input matrix with missing values (NaNs).
-    k : int, optional
-        Number of SVD components to use, by default 2.
-
-    Returns
-    -------
-    np.ndarray
-        Matrix with imputed values.
-    """
-    mask = ~np.isnan(y)
-    mean_values = np.nanmean(y, axis=0)
-
-    # Center the data (subtract mean from non-nan values)
-    centered_matrix = np.where(mask, y - mean_values, 0)
-
-    # Perform SVD
-    U, s, Vt = svd(centered_matrix, full_matrices=False)
-
-    # Keep only k components
-    S_k = np.diag(s[:k])
-    U_k = U[:, :k]
-    Vt_k = Vt[:k, :]
-
-    # Reconstruct the matrix
-    reconstructed = U_k @ S_k @ Vt_k + mean_values
-
-    # Fill in missing values
-    filled_matrix = np.where(mask, y, reconstructed)
-
-    return filled_matrix
-
-
-# @ lru_cache(maxsize=1)
-def compute_X_trajectory(data: xr.DataArray) -> xr.DataArray:
-    """
-    Select the history of an optimization trajectory.
-
-    Parameters
-    ----------
-    data : xarray.Dataset
-        The optimization trajectory data.
-    Returns
-    -------
-    xarray.DataArray
-        The selected trajectory.
-    """
-
-    def scale(x: np.ndarray) -> np.ndarray:
-        # 3. Make sure the quality indicator value is non-negative
-        p = x - x.min()
-        # 4. Add epsilon to make quality indicator value non-zero
-        eps = np.where(p > 0.0, p, p.max() + 1e-16).min()
-        x_log10 = np.log10(p + eps)
-
-        # 5. Min-max scaling of the data
-        x_min = x_log10.min()
-        x_max = x_log10.max()
-        return (x_log10 - x_min) / (x_max - x_min + 1e-16)
-
-    trajectory: xr.Dataset = xr.apply_ufunc(
-        scale,
-        data,
-        # input_core_dims=[[BUDGET, 'output_dim']],
-        input_core_dims=[[BUDGET]],
-        # output_core_dims=[[BUDGET, 'output_dim']],
-        output_core_dims=[[BUDGET]],
-        vectorize=True,
-        dask="parallelized",
-        dask_gufunc_kwargs={"allow_rechunk": True},  # False
-    )
-
-    # return trajectory.output_mean.isel(
-    #     output_dim=0, drop=True).rename(
-    #         'trajectory').transpose(
-    #             'optimizer', BUDGET, 'problem')
-
-    return trajectory
 
 
 def log_relative_improvement(data: xr.Dataset) -> xr.DataArray:
@@ -1194,6 +1117,7 @@ def log_relative_improvement(data: xr.Dataset) -> xr.DataArray:
     """
 
     def compute_log_relative_improvement(x, b):
+        """Compute log relative improvement between endpoints."""
         impv = -(x[0] - x[-1]) / (b[0] - b[-1]) / (abs(x[0]) + 1e-8)
         t = np.log(impv + 1e-8)
         return np.atleast_1d(t)
@@ -1205,78 +1129,6 @@ def log_relative_improvement(data: xr.Dataset) -> xr.DataArray:
         input_core_dims=[["budget"], ["budget"]],
         # output_core_dims=[["log_relative_improvement"]],
         vectorize=True,
-    )
-
-
-def _squash(da: xr.DataArray, reduce_dim: str, vector_dim: str = PROBLEM):
-    """
-    Squash a DataArray along a dimension, keeping the first non-NaN value.
-
-    Parameters
-    ----------
-    da : xr.DataArray
-        DataArray to squash.
-    reduce_dim : str
-        Dimension to reduce.
-    vector_dim : str, optional
-        Vector dimension, by default PROBLEM.
-
-    Returns
-    -------
-    xr.DataArray
-        Squashed DataArray.
-    """
-
-    def f(x):
-        for val in x:
-            if not np.isnan(val).any():
-                return val
-        return val
-
-    # Define dimension names
-    all_dims = list(da.dims)
-    keep_dims = [d for d in all_dims if d not in [reduce_dim, vector_dim]]
-
-    return xr.apply_ufunc(
-        f,
-        da,
-        input_core_dims=[[reduce_dim] + keep_dims],
-        output_core_dims=[keep_dims],
-        vectorize=True,
-        dask="allowed",  # Optional: if using dask
-    )
-
-
-def compute_fitting(
-    trajectory: xr.DataArray,
-    fit_params: xr.DataArray,
-    basis_function: Callable,
-):
-    """
-    Compute fitted values for a trajectory using a basis function.
-
-    Parameters
-    ----------
-    trajectory : xr.DataArray
-        Trajectory data.
-    fit_params : xr.DataArray
-        Parameters for fitting.
-    basis_function : Callable
-        Basis function for fitting.
-    """
-    x_input = np.linspace(0.0, 1.0, trajectory.coords[BUDGET].size)
-
-    fitted_sigmoid = xr.apply_ufunc(
-        lambda x, x_input: basis_function(x_input, *x),
-        fit_params,
-        kwargs={"x_input": x_input},
-        input_core_dims=[["fit_params"]],
-        output_core_dims=[[BUDGET]],
-        vectorize=True,
-    )
-
-    fitted_sigmoid = fitted_sigmoid.assign_coords(
-        {BUDGET: trajectory.coords[BUDGET]}
     )
 
 

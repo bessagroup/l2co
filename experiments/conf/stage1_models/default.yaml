@@ -1,9 +1,0 @@
-history_encoder:
-  hidden_size: 16
-  out_size: 4
-embedding:
-  dim: 4
-mlp:
-  width_size: 16
-  depth: 3
-  in_size: 12

@@ -6,7 +6,7 @@ Module for determining the budget for optimization tasks.
 # =============================================================================
 
 # Local
-from .task import Task
+from l2co_tasks import Task
 
 #                                                          Authorship & Credits
 # =============================================================================

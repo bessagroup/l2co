@@ -31,9 +31,28 @@ def _sample(
     key: PRNGKeyArray,
     params: PyTree,
 ) -> InputParameters:
+    """Generate samples using a JAX initializer function.
+
+    Parameters
+    ----------
+    init_fn : Callable[[PRNGKeyArray, tuple[int], type], PyTree]
+        JAX initializer function that generates samples.
+    n_samples : int
+        Number of samples to generate.
+    key : PRNGKeyArray
+        Random key for reproducibility.
+    params : PyTree
+        Parameters to sample (used for shape reference).
+
+    Returns
+    -------
+    InputParameters
+        Sampled parameters with shape ``(n_samples, ...)``.
+    """
     keys = jax.random.split(key, len(jax.tree.leaves(params)))
 
     def init_leaf(x: jax.Array, k: PRNGKeyArray) -> jax.Array:
+        """Sample a single leaf using the initializer."""
         return init_fn(k, (n_samples,) + x.shape, x.dtype)
 
     return jax.tree.map(
@@ -189,11 +208,31 @@ def grid_sampling(
     lower_bound: float = 0.0,
     upper_bound: float = 1.0,
 ) -> InputParameters:
+    """Generate grid samples over parameter space.
+
+    Parameters
+    ----------
+    params : PyTree
+        Parameters to sample (used for shape reference).
+    n_points_per_dim : int
+        Number of points per dimension in the grid.
+    lower_bound : float, optional
+        Lower bound for the grid, by default 0.0.
+    upper_bound : float, optional
+        Upper bound for the grid, by default 1.0.
+
+    Returns
+    -------
+    InputParameters
+        Grid-sampled parameters covering the parameter space.
+    """
     grid_params = []
     for param in jax.tree_util.tree_leaves(params):
-        if param.ndim == 0:  # Scalar parameter
+        # Scalar parameter
+        if param.ndim == 0:
             grid = jnp.linspace(lower_bound, upper_bound, num=n_points_per_dim)
-        else:  # Tensor parameter
+        # Tensor parameter
+        else:
             grid = jnp.meshgrid(
                 *[jnp.linspace(lower_bound, upper_bound, num=n_points_per_dim)]
                 * param.size

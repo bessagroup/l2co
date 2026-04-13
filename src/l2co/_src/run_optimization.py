@@ -50,6 +50,7 @@ import xarray as xr
 from f3dasm import ExperimentSample
 from f3dasm.datageneration import DataGenerator
 from jaxtyping import PRNGKeyArray, PyTree
+from l2co_tasks import Task
 
 from l2co._src.batching import BatchState
 
@@ -65,7 +66,6 @@ from l2co._src.run_state import (
     reset_from_stage0,
     run,
 )
-from l2co._src.task import Task
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -80,6 +80,13 @@ logger = logging.getLogger(__name__)
 
 
 class RolloutWrapper(eqx.Module):
+    """Wrapper for running optimization rollouts.
+
+    Bundles a ``RunState``, ``BatchState``, and task
+    configuration so that optimization can be launched
+    via ``evaluate``, ``batch_evaluate``, or ``run``.
+    """
+
     run_state: RunState
     batch_state: BatchState
     static: PyTree
@@ -99,6 +106,29 @@ class RolloutWrapper(eqx.Module):
         bounded: tuple[float, float] = (None, None),
         verbose: float = False,
     ) -> RolloutWrapper:
+        """Create a RolloutWrapper from an optimizer and task.
+
+        Parameters
+        ----------
+        optimizer : OptimizationStep
+            Optimizer configuration.
+        task : Task
+            Optimization task with model and loss function.
+        sampler : Callable
+            Parameter sampling function.
+        key : PRNGKeyArray
+            Random key for initialization.
+        bounded : tuple[float, float], optional
+            Parameter bounds as (lower, upper),
+            by default (None, None).
+        verbose : float, optional
+            Whether to print progress, by default False.
+
+        Returns
+        -------
+        RolloutWrapper
+            Initialized rollout wrapper.
+        """
         run_state = RunState.init(
             optimizer=optimizer,
             task=task,
@@ -142,6 +172,37 @@ class RolloutWrapper(eqx.Module):
         bounded: tuple[float, float] = (None, None),
         verbose: float = False,
     ) -> RolloutWrapper:
+        """Create a RolloutWrapper continuing from a stage-0 run.
+
+        Re-uses the best parameters from ``previous_run_state``
+        when switching optimizers between stages.
+
+        Parameters
+        ----------
+        previous_run_state : RunState
+            Run state from the completed stage-0 run.
+        batch_state : BatchState
+            Batch state from the completed stage-0 run.
+        optimizer : OptimizationStep
+            Stage-1 optimizer configuration.
+        task : Task
+            Optimization task.
+        sampler : Callable
+            Parameter sampling function.
+        key : PRNGKeyArray
+            Random key for initialization.
+        switch : bool
+            If True, reuse the previous run state as-is.
+        bounded : tuple[float, float], optional
+            Parameter bounds, by default (None, None).
+        verbose : float, optional
+            Whether to print progress, by default False.
+
+        Returns
+        -------
+        RolloutWrapper
+            Initialized rollout wrapper for stage 1.
+        """
         dataset = task.loaded_dataset
         _, static = eqx.partition(task.model, eqx.is_inexact_array)
         pass_rng = task.pass_rng
@@ -189,6 +250,22 @@ class RolloutWrapper(eqx.Module):
         n_iterations: int,
         n_realizations: int = 1,
     ) -> tuple[RunState, BatchState, HistoryState]:
+        """Run optimization across multiple realizations.
+
+        Parameters
+        ----------
+        key : PRNGKeyArray
+            Random key, split for each realization.
+        n_iterations : int
+            Number of optimization iterations.
+        n_realizations : int, optional
+            Number of independent runs, by default 1.
+
+        Returns
+        -------
+        tuple[RunState, BatchState, HistoryState]
+            Final states for all realizations.
+        """
         return batch_evaluate(
             self.run_state,
             self.batch_state,
@@ -207,6 +284,20 @@ class RolloutWrapper(eqx.Module):
         key,
         n_iterations: int,
     ) -> tuple[RunState, BatchState, HistoryState]:
+        """Run a single optimization realization.
+
+        Parameters
+        ----------
+        key : PRNGKeyArray
+            Random key.
+        n_iterations : int
+            Number of optimization iterations.
+
+        Returns
+        -------
+        tuple[RunState, BatchState, HistoryState]
+            Final run state, batch state, and history.
+        """
         return evaluate(
             self.run_state,
             self.batch_state,
@@ -225,6 +316,20 @@ class RolloutWrapper(eqx.Module):
         key: PRNGKeyArray,
         n_iterations: int,
     ) -> tuple[RunState, BatchState, HistoryState]:
+        """Run optimization without JIT compilation.
+
+        Parameters
+        ----------
+        key : PRNGKeyArray
+            Random key.
+        n_iterations : int
+            Number of optimization iterations.
+
+        Returns
+        -------
+        tuple[RunState, BatchState, HistoryState]
+            Final run state, batch state, and history.
+        """
         return run(
             run_state=self.run_state,
             batch_state=self.batch_state,
@@ -348,6 +453,19 @@ class RunOptimization(DataGenerator):
                 stage1_model=optimizer.hyperparameters["stage1_model"],
             )
 
+            if optimizer.hyperparameters["swap_optimizers"] is not None:
+                model = model.swap_optimizers(
+                    optimizers=[
+                        OptimizationStep(optimizer="sepcmaes"),
+                        OptimizationStep(
+                            optimizer="adam",
+                            hyperparameters={"learning_rate": 0.03},
+                        ),
+                        OptimizationStep(optimizer="lbfgs"),
+                        OptimizationStep(optimizer="pso"),
+                    ]
+                )
+
             experiment_sample = self.run_optimization_l2co(
                 experiment_sample=experiment_sample,
                 task=task,
@@ -375,6 +493,29 @@ class RunOptimization(DataGenerator):
         model: L2COModel,
         t: float,
     ) -> ExperimentSample:
+        """Run two-stage L2CO optimization.
+
+        Executes stage 0 with the model-predicted initial
+        optimizer, then stage 1 with the model-predicted
+        follow-up optimizer, combining the resulting
+        histories.
+
+        Parameters
+        ----------
+        experiment_sample : ExperimentSample
+            Experiment sample to store results in.
+        task : Task
+            Optimization task.
+        model : L2COModel
+            Trained L2CO model for optimizer selection.
+        t : float
+            Fraction of total budget allocated to stage 0.
+
+        Returns
+        -------
+        ExperimentSample
+            Updated experiment sample with combined history.
+        """
         t1 = time()
 
         key = jr.key(self.seed)
@@ -433,11 +574,11 @@ class RunOptimization(DataGenerator):
                 global_min=task.global_min,
             )
 
-            ## HACK for now
-            if stage1_optimizer.optimizer == "adam":
-                stage1_optimizer = OptimizationStep(
-                    optimizer="adam", hyperparameters={"learning_rate": 0.03}
-                )
+            # ## HACK for now
+            # if stage1_optimizer.optimizer == "adam":
+            #     stage1_optimizer = OptimizationStep(
+            #         optimizer="adam", hyperparameters={"learning_rate": 0.03}
+            #     )
 
             # Stage 1
             _, k1 = jr.split(k)

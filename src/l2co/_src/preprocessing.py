@@ -30,14 +30,6 @@ __credits__ = ["Martin van der Schelling"]
 __status__ = "Stable"
 # =============================================================================
 
-FEATURE_TYPES = {
-    "convex": "categorical",
-    "separable": "categorical",
-    "noise": "categorical",
-    "dim": "scaler",
-    "differentiable": "categorical",
-}
-
 # =============================================================================
 
 
@@ -71,17 +63,51 @@ def transformer_factory(dtype: str) -> Pipeline:
 
 
 class EnsureColumnsTransformer(BaseEstimator, TransformerMixin):
+    """Transformer that ensures a DataFrame has expected columns.
+
+    Missing columns are filled with NaN and extra columns
+    are dropped so the output always matches the column set
+    seen during ``fit``.
+    """
+
     def __init__(self, trained_columns=None):
         # Columns the model was trained on
         self.trained_columns = trained_columns
 
     def fit(self, X, y=None):
+        """Learn the expected column names from X.
+
+        Parameters
+        ----------
+        X : DataFrame
+            Training data.
+        y : ignored
+            Not used, present for API compatibility.
+
+        Returns
+        -------
+        EnsureColumnsTransformer
+            Fitted transformer.
+        """
         if self.trained_columns is None:
             self.trained_columns = list(X.columns)
         return self
 
     def transform(self, X):
-        X = pd.DataFrame(X)  # Ensure DataFrame format
+        """Align columns of X to the trained column set.
+
+        Parameters
+        ----------
+        X : array-like or DataFrame
+            Data to transform.
+
+        Returns
+        -------
+        DataFrame
+            DataFrame with columns matching the trained set.
+        """
+        # Ensure DataFrame format
+        X = pd.DataFrame(X)
 
         # Add missing columns with NaN
         for col in self.trained_columns:

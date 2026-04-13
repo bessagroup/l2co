@@ -13,20 +13,30 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as onp
+import pandas as pd
 import xarray as xr
 from jaxtyping import Array, Float, Int
+from l2co_tasks import Task
 
+from .data_loader import DataLoader
 from .naming import (
     BUDGET,
+    FEATURE,
     FEVALS,
+    GLOBAL_MIN,
     ITERATIONS,
     OUTPUT_DIM,
     OUTPUT_MEAN,
     OUTPUT_MIN,
     OUTPUT_STD,
     REALIZATION,
+    SCHEDULE,
+    TASK_ID,
+    TASK_LABELS,
     UPDATE_STEP,
 )
+from .optimizerschedule import OptimizationStep
+from .performance import calculate_ert
 from .typing import OptHistoryType
 
 #                                                          Authorship & Credits
@@ -136,9 +146,11 @@ class HistoryState(eqx.Module):
         HistoryState
             New HistoryState with appended values.
         """
-        K = other.output_min.shape[0]  # number of steps to append
+        # Number of steps to append
+        K = other.output_min.shape[0]
 
         def push(a, b):
+            """Shift array a left by K and append b at the end."""
             N = a.shape[0]
 
             # 1. slice tail: a[K:]
@@ -271,3 +283,51 @@ class HistoryState(eqx.Module):
                 dims=[REALIZATION],
             ),
         )
+
+    def to_dataloader(
+        self,
+        task: Task,
+        optimizer: OptimizationStep,
+        budget_steps: int | None = None,
+    ) -> DataLoader:
+        """Convert history to a DataLoader with task labels.
+
+        Parameters
+        ----------
+        task : Task
+            Task providing labels and global minimum.
+        optimizer : OptimizationStep
+            Optimizer used, added as the schedule label.
+        budget_steps : int | None, optional
+            Budget interpolation steps, by default None.
+
+        Returns
+        -------
+        DataLoader
+            DataLoader containing the optimization
+            trajectories and ERT metrics.
+        """
+        xarr = self.to_xarray_realizations(budget_steps=budget_steps)
+        ert = calculate_ert(xarr, task.global_min)
+
+        labels_data = pd.DataFrame(
+            [
+                {**task.tag, GLOBAL_MIN: task.global_min}
+                for _ in xarr[REALIZATION]
+            ],
+        )
+        xarr_task_labels = xr.DataArray(
+            labels_data.values,
+            coords={
+                REALIZATION: xarr[REALIZATION],
+                FEATURE: labels_data.columns,
+            },
+            dims=[REALIZATION, FEATURE],
+            name=TASK_LABELS,
+        ).astype(str)
+
+        comb = xr.merge([xarr, ert], compat="override")
+        comb = comb.expand_dims({SCHEDULE: [optimizer.name]})
+        comb_labels = xr.merge([comb, xarr_task_labels], compat="override")
+        comb_labels = comb_labels.expand_dims({TASK_ID: [task.hash]})
+        return DataLoader.from_xarray(comb_labels)

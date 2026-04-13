@@ -1,3 +1,5 @@
+"""Optimizer color, marker, and linestyle definitions for plots."""
+
 # Standard
 import itertools
 from collections.abc import Iterable
@@ -30,6 +32,18 @@ line_styles = ["-", "--", "-.", ":"]
 
 @dataclass
 class OptStyle:
+    """Visual style for a single optimizer in plots.
+
+    Attributes
+    ----------
+    color : str
+        Hex colour code, by default ``"#000000"``.
+    marker : str or None
+        Matplotlib marker symbol, by default ``None``.
+    linestyle : str
+        Matplotlib linestyle string, by default ``"-"``.
+    """
+
     color: str = "#000000"
     marker: str | None = None
     linestyle: str = "-"
@@ -51,6 +65,7 @@ BASE_OPT_STYLES.update(
         "sepcmaes": OptStyle(color="#EE6677", marker="x"),
         "stage0": OptStyle(color="#BBBBBB", marker=None, linestyle="--"),
         "l2co": OptStyle(color="#000000", marker=None, linestyle="-"),
+        "rl2co": OptStyle(color="#FF0000", marker=None, linestyle="-"),
     }
 )
 
@@ -64,15 +79,31 @@ LABEL_MAP = {
     "adam_learning_rate=0.3": "Adam",
     "stage0": r"L2CO ($g_\text{first}$)",
     "l2co": r"L2CO ($g_\text{first} \rightarrow g_\text{second}$)",
+    "rl2co": "RL2CO",
 }
 
 
 def get_schedule_styles(schedule_names: Iterable[str]) -> dict[str, OptStyle]:
     """
-    Maps a list of schedule names to OptStyle objects.
+    Map schedule names to OptStyle objects with appropriate styling.
 
-    Base names (e.g., 'adam') determine color and marker.
-    Variants (e.g., 'adam_lr=0.01') trigger linestyle cycling.
+    Parameters
+    ----------
+    schedule_names : Iterable[str]
+        Collection of schedule/optimizer names to style.
+
+    Returns
+    -------
+    dict[str, OptStyle]
+        Mapping from schedule names to OptStyle objects with assigned
+        colors, markers, and linestyles.
+
+    Notes
+    -----
+    Base optimizer names (e.g., 'adam') determine color and marker
+    from BASE_OPT_STYLES. Variants of the same optimizer
+    (e.g., 'adam_lr=0.01', 'adam_lr=0.3') cycle through linestyles
+    to maintain visual distinction.
     """
     schedule_styles = {}
     # Track how many variants of each base name we have encountered

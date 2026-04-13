@@ -151,7 +151,7 @@ class BatchState(eqx.Module):
         )
 
     def next(self, key: PRNGKeyArray) -> tuple[Int[Array, " N"], BatchState]:
-        """Return a batch from a PyTree dataset and the updated state.
+        """Return batch indices and the updated state.
 
         Parameters
         ----------
@@ -171,9 +171,11 @@ class BatchState(eqx.Module):
         pred = (self.pos + self.batch_size) <= self.dataset_size
 
         # Check if pred is scalar or batched
-        if pred.shape == ():  # scalar
+        # Scalar
+        if pred.shape == ():
             return _next_single(self, key)
-        else:  # batched
+        # Batched
+        else:
             return jax.vmap(_next_single, in_axes=(0, None))(self, key)
 
 
@@ -197,10 +199,8 @@ def take_no_wrap(carry: tuple[BatchState, PRNGKeyArray]):
 
     Parameters
     ----------
-    state : BatchState
-        Current batching state.
-    key : PRNGKeyArray
-        PRNG key used to generate a new permutation.
+    carry : tuple[BatchState, PRNGKeyArray]
+        A tuple containing the current batching state and PRNG key.
 
     Returns
     -------
@@ -235,18 +235,16 @@ def take_wrap(carry: tuple[BatchState, PRNGKeyArray]):
 
     Parameters
     ----------
-    state : BatchState
-        Current batching state.
-    key : PRNGKeyArray
-        PRNG key used to generate a new permutation.
+    carry : tuple[BatchState, PRNGKeyArray]
+        A tuple containing the current batching state and PRNG key.
 
     Returns
     -------
     tuple[BatchState, jax.Array]
-        A tuple ``(new_state, batch_idxs)`` where ``new_state`` contains the
-        split key, a new permutation, and the position set to the number of
-        wrapped elements; ``batch_idxs`` is a 1D array of length
-        ``batch_size`` containing dataset indices.
+        A tuple ``(new_state, batch_idxs)`` where ``new_state`` contains a
+        new permutation and the position set to the number of wrapped
+        elements; ``batch_idxs`` is a 1D array of length ``batch_size``
+        containing dataset indices.
 
     Notes
     -----

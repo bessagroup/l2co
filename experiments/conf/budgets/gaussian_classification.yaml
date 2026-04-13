@@ -1,3 +1,4 @@
+# Fixed budget for Gaussian classification tasks
 _partial_: True
-_target_: l2co._src.budget.fixed_budget
+_target_: l2co.budget.fixed_budget
 budget: 100

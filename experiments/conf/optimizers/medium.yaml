@@ -1,3 +1,4 @@
+# Medium optimizer set: evolutionary (SepCMAES), gradient (Adam), quasi-Newton (L-BFGS), swarm (PSO)
 - optimizer: sepcmaes
 - optimizer: adam
   hyperparameters:

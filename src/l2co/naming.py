@@ -1,3 +1,5 @@
+"""Constants for xarray dimension and coordinate names used throughout l2co."""
+
 from l2co._src.naming import (
     BATCH,
     BUDGET,

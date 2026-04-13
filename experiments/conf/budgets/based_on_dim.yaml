@@ -1,3 +1,5 @@
+# Budget scales linearly with input dimensionality: budget = budget_per_dimension * d
 _partial_: True
-_target_: l2co._src.budget.based_on_dimensionality
+_target_: l2co.budget.based_on_dimensionality
+# Function evaluations allowed per input dimension
 budget_per_dimension: 1000

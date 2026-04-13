@@ -1,0 +1,59 @@
+sampler:
+  _target_: f3dasm.create_sampler
+  sampler: "grid"
+sampler_kwargs:
+
+experimentdata:
+  domain:
+    input:
+      fn_name:
+        type: category
+        categories:
+          - 'f1'
+          - 'f2'
+          - 'f3'
+          - 'f4'
+          - 'f5'
+          - 'f6'
+          - 'f7'
+          - 'f8'
+          - 'f9'
+          - 'f10'
+          - 'f11'
+          - 'f12'
+          - 'f13'
+          - 'f14'
+          - 'f15'
+          - 'f16'
+          - 'f17'
+          - 'f18'
+          - 'f19'
+          - 'f20'
+          - 'f21'
+          - 'f22'
+          - 'f23'
+          - 'f24'
+          - 'f25'
+      dimensionality:
+        type: category
+        categories:
+          - 10
+          - 30
+          - 50
+      seed:
+        type: int
+        low: 0
+        high: 0
+
+task_kwargs:
+
+data_generator:
+  _target_: l2co_tasks.create_cec2005_task
+  _partial_: True
+
+schema:
+  dimensionality: continuous
+  unimodal: boolean
+  multimodal: boolean
+  composition: boolean
+  rotated: boolean

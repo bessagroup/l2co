@@ -36,5 +36,5 @@ task_kwargs:
   dataset_path: './data/gaussian_classification'
 
 data_generator:
-  _target_: l2co._src.tasks.task_gaussian_class.create_gaussian_task
+  _target_: l2co_tasks.create_gaussian_task
   _partial_: True

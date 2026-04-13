@@ -27,12 +27,12 @@ from evosax.algorithms.population_based import population_based_algorithms
 from evosax.algorithms.population_based.base import PopulationBasedAlgorithm
 from jax.tree_util import Partial
 from jaxtyping import PRNGKeyArray, PyTree
+from l2co_tasks import Task
 
 # Local
 from l2co._src.opt_history import OptHistory
 from l2co._src.optimizers.utils import normalize_key
 from l2co._src.sampler import random_sampling
-from l2co._src.task import Task
 from l2co._src.tree_utils import (
     vmapped_loss,
     vmapped_loss_with_rng,
@@ -95,6 +95,7 @@ def evosax_distribution_based_fn(
     def init_fn(
         params: InputParameters, key: PRNGKeyArray = None, **sample
     ) -> EvoSaxState:
+        """Initialise the distribution-based ES state."""
         params = jax.tree.map(lambda x: x[0], params)
         return optimizer.init(key, params, es_params)
 
@@ -104,6 +105,7 @@ def evosax_distribution_based_fn(
         *args,
         **kwargs,
     ) -> tuple[tuple[InputParameters, EvoSaxState, PRNGKeyArray], OptHistory]:
+        """Perform one distribution-based ES step."""
         input_params, opt_state, key = carry
 
         if pass_rng:
@@ -194,6 +196,7 @@ def evosax_population_based_fn(
     def init_fn(
         params: InputParameters, key: PRNGKeyArray, **sample
     ) -> EvoSaxState:
+        """Initialise the population-based ES state."""
         if pass_rng:
             loss = vmapped_loss_with_rng(
                 eqx.combine(params, static),
@@ -214,6 +217,7 @@ def evosax_population_based_fn(
         *args,
         **kwargs,
     ) -> tuple[tuple[InputParameters, EvoSaxState, PRNGKeyArray], OptHistory]:
+        """Perform one population-based ES step."""
         input_params, opt_state, key = carry
 
         if pass_rng:
@@ -463,6 +467,29 @@ def variable_popsize_optimizer(
     popsize: int | None = None,
     **kwargs,
 ) -> UpdateClass:
+    """Create an EvoSax UpdateClass with automatic population sizing.
+
+    If ``popsize`` is ``None``, it defaults to
+    ``int(4 + 3 * log(d))`` where *d* is the problem
+    dimensionality.
+
+    Parameters
+    ----------
+    task : Task
+        Task containing the model and loss function.
+    evosax_class : type
+        EvoSax algorithm class (distribution- or
+        population-based).
+    popsize : int or None, optional
+        Population size. Computed automatically when ``None``.
+    **kwargs
+        Forwarded to the underlying update function.
+
+    Returns
+    -------
+    UpdateClass
+        Configured optimizer update class.
+    """
     if evosax_class in distribution_based_algorithms.values():
         if evosax_class == RandomSearch:
             update_fn = evosax_randomsearch_update

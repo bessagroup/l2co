@@ -1,3 +1,5 @@
+"""Mapping from optimizer names to their UpdateClass implementations."""
+
 from l2co._src.update_class import UpdateClass
 
 from .evosax_implementations import evosax_mapping

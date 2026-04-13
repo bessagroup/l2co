@@ -16,22 +16,30 @@ import jax.random as jr
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
+from bessaplots import TypstReport, savefig
+from l2co_tasks import Task
 from matplotlib.colors import (
+    ListedColormap,
     LogNorm,
 )
+from matplotlib.lines import Line2D
 from scipy.interpolate import griddata
 from sklearn.metrics import r2_score
 
-from l2co._src.batching import BatchState
-
 # Local
+from l2co._src.batching import BatchState
 from l2co._src.data_loader import DataLoader
 from l2co._src.naming import (
+    FEATURE,
+    FEVALS,
+    ITERATIONS,
+    OUTPUT_DIM,
     PROBLEM,
     SCHEDULE,
+    UPDATE_STEP,
 )
+from l2co._src.optimizerschedule import OptimizationStep
 from l2co._src.sampler import grid_sampling
-from l2co._src.task import Task
 from l2co._src.update_class import evaluate
 from l2co._src.visualize.colors import LABEL_MAP, get_schedule_styles
 
@@ -47,9 +55,10 @@ __status__ = "Stable"
 # =============================================================================
 
 # 1. Base widths from your IEEEtran.cls / Logs
-SINGLE_COL_WIDTH = 252.0 / 72.27  # 3.486 inches
-DOUBLE_COL_WIDTH = 516.0 / 72.27  # 7.139 inches
-GOLDEN_RATIO = (5**0.5 - 1) / 2
+# 3.486 inches
+SINGLE_COL_WIDTH = 252.0 / 72.27
+# 7.139 inches
+DOUBLE_COL_WIDTH = 516.0 / 72.27
 
 
 def set_size(
@@ -83,65 +92,6 @@ def set_size(
 # =============================================================================
 
 
-class FigureSaver:
-    @staticmethod
-    def load(path: str) -> plt.Figure:
-        """Load a figure from a file."""
-        _path = Path(path).with_suffix(".pdf")
-        return plt.imread(_path)
-
-    @staticmethod
-    def store(object: plt.Figure, path: str):
-        _path = Path(path)
-        """Store a figure to a file."""
-        object.savefig(
-            _path.with_suffix(".pdf"),
-            format="pdf",
-            bbox_inches="tight",
-            pad_inches=0.01,
-            transparent=True,
-            dpi=300,
-        )
-        return str(_path)
-
-
-def savefig(
-    fig: plt.Figure,
-    name: str,
-    n_side_by_side=1,
-    span_columns=False,
-    height=0.8,
-):
-    """
-    Saves a figure scaled exactly for an IEEE subfigure slot.
-
-    Parameters:
-    - fig: The matplotlib figure object.
-    - name: Filename (e.g., 'ertd_results').
-    - n_side_by_side: How many figures will sit horizontally (1, 2, or 3).
-    - span_columns: False for single column (3.48"), True for full page (7.14")
-    """
-
-    fig = set_size(
-        fig,
-        n_side_by_side=n_side_by_side,
-        span_columns=span_columns,
-        height=height,
-    )
-
-    # 5. Save with tight bounding box
-    # pad_inches is tiny to ensure the figure maximizes the LaTeX slot
-    fig.savefig(
-        f"{name}.pdf",
-        format="pdf",
-        bbox_inches="tight",
-        pad_inches=0.01,
-        transparent=True,
-        dpi=300,
-    )
-    print(f"Saved: {name}.pdf")
-
-
 def _get_or_create_axes(
     ax: plt.Axes | None = None,
     figsize: tuple[float, float] | None = None,
@@ -164,7 +114,8 @@ def _get_or_create_axes(
     """
     if ax is None:
         width = 252.0 / 72.27
-        height = width * 0.8  # This would be ~2.78 inches
+        # ~2.78 inches
+        height = width * 0.8
         # fig, ax = plt.subplots(
         #     1, 1, figsize=figsize or set_size(width="paper", subplots=(1, 1))
         # )
@@ -318,6 +269,7 @@ def plot_ertd_profile(
     title_text: str | None = None,
     top_left_text: str | None = None,
     show_legend: bool = True,
+    xlim: tuple[float, float] = (10**-1, 10**5),
 ) -> tuple[plt.Figure, plt.Axes]:
     """
     Plot the run-time distribution for the given DataLoader.
@@ -335,6 +287,14 @@ def plot_ertd_profile(
     cost_metric: str, optional
         Cost metric to use for the x-axis, either 'fevals' or 'iterations',
         by default 'fevals'
+    title_text: str, optional
+        Title text to display above the plot, by default None
+    top_left_text: str, optional
+        Text to display in the top-left corner (e.g., "5-D"), by default None
+    show_legend: bool, optional
+        Whether to display the legend on the right side, by default True
+    xlim: tuple[float, float], optional
+        Limits for the x-axis, by default (10**-1, 10**5)
 
     Returns
     -------
@@ -356,6 +316,7 @@ def plot_ertd_profile(
         title_text=title_text,
         top_left_text=top_left_text,
         show_legend=show_legend,
+        xlim=xlim,
     )
 
 
@@ -628,6 +589,7 @@ def plot_ertd(
     title_text: str | None = None,
     top_left_text: str | None = None,
     show_legend: bool = True,
+    xlim: tuple[float, float] = (10**-1, 10**5),
 ) -> tuple[plt.Figure, plt.Axes]:
     """
     Plot the expected run-time distribution for multiple optimizers.
@@ -648,6 +610,8 @@ def plot_ertd(
         Text to display in the top-left corner (e.g., "5-D"), by default None.
     show_legend : bool, optional
         Whether to display the legend on the right side, by default True.
+    xlim : tuple[float, float], optional
+        Limits for the x-axis, by default (10**-1, 10**5).
 
     Returns
     -------
@@ -741,7 +705,7 @@ def plot_ertd(
         case _:
             raise ValueError(
                 f"Invalid cost_metric: {cost_metric}. "
-                "Choose 'fevals' or 'iterations'."
+                f"Choose 'fevals' or 'iterations'."
             )
 
     ax.set_ylabel("Fraction of function, target pairs")
@@ -751,18 +715,26 @@ def plot_ertd(
         # loc="lower right" is usually best for ERTD plots as the curves
         # go from bottom-left to top-right.
         ax.legend(
-            loc="best",  # Position inside the axes
-            fontsize=7,  # IEEE standard for legends is often 7pt
-            frameon=True,  # Enable the box
-            fancybox=False,  # IEEE style usually prefers square corners
-            edgecolor="#BBBBBB",  # Explicit frame color
-            framealpha=1.0,  # Make it opaque so grid lines don't bleed through
-            labelspacing=0.2,  # Tighten the vertical space between entries
-            borderaxespad=0.5,  # Distance from the axis edge
+            # Position inside the axes
+            loc="best",
+            # IEEE standard for legends is often 7pt
+            fontsize=7,
+            # Enable the box
+            frameon=True,
+            # IEEE style usually prefers square corners
+            fancybox=False,
+            # Explicit frame color
+            edgecolor="#BBBBBB",
+            # Make it opaque so grid lines don't bleed
+            framealpha=1.0,
+            # Tighten vertical space between entries
+            labelspacing=0.2,
+            # Distance from the axis edge
+            borderaxespad=0.5,
         )
 
     ax.set_ylim(0.0, 1.0)
-    ax.set_xlim(10**-1, 10**5)  # Starts the x-axis at 10^-1
+    ax.set_xlim(*xlim)
 
     return fig, ax
 
@@ -906,23 +878,344 @@ def plot_single_r2(
 
 
 def plot_metrics(metrics: dict[str, Iterable[float]]):
-    fig, ax = _get_or_create_axes()
+    """Plot training and validation loss curves.
 
+    Parameters
+    ----------
+    metrics : dict[str, Iterable[float]]
+        Must contain ``'train_loss'`` and ``'val_loss'`` keys.
+
+    Returns
+    -------
+    tuple[plt.Figure, plt.Axes]
+        Matplotlib figure and axes with log-scaled y-axis.
+    """
+    fig, ax = _get_or_create_axes()
     ax.plot(metrics["train_loss"], label="Train loss", color="#000000")
     ax.plot(metrics["val_loss"], label="Validation loss", color="#CC3311")
+
     ax.set_xlabel("Epochs")
-    ax.set_ylabel("Loss")
+    ax.set_xticklabels([])
+
+    ax.set_ylabel("")
     ax.set_yscale("log")
+    # formatter = ScalarFormatter(useMathText=True)
+    # formatter.set_powerlimits((-2, -2))
+    # ax.yaxis.set_major_formatter(formatter)
 
     ax.legend(
-        loc="best",  # Position inside the axes
-        fontsize=7,  # IEEE standard for legends is often 7pt
-        frameon=True,  # Enable the box
-        fancybox=False,  # IEEE style usually prefers square corners
-        edgecolor="#BBBBBB",  # Explicit frame color
-        framealpha=1.0,  # Make it opaque so grid lines don't bleed through
-        labelspacing=0.2,  # Tighten the vertical space between entries
-        borderaxespad=0.5,  # Distance from the axis edge
+        loc="best",
+        fontsize=7,
+        frameon=True,
+        fancybox=False,
+        edgecolor="#BBBBBB",
+        framealpha=1.0,
+        labelspacing=0.2,
+        borderaxespad=0.5,
+        handlelength=1.5,
+        handletextpad=0.4,
+        borderpad=0.3,
+    )
+    return fig, ax
+
+
+def plot_update_step(
+    d: DataLoader,
+    schedule: str,
+    optimizers: Iterable[OptimizationStep],
+    cost_metric: Literal["fevals", "iterations"] | None = None,
+    ax: plt.Axes | None = None,
+    show_legend: bool = True,
+):
+    """Plot a colour-coded raster of optimizer selections.
+
+    Each row represents a problem and each column a budget
+    step, coloured by which optimizer was active.
+
+    Parameters
+    ----------
+    d : DataLoader
+        Loaded optimisation data.
+    schedule : str
+        Schedule name to visualise.
+    optimizers : Iterable[OptimizationStep]
+        Optimizers whose hashes map to colours.
+    cost_metric : {'fevals', 'iterations'} or None, optional
+        X-axis metric. ``None`` uses raw step index.
+    ax : plt.Axes or None, optional
+        Existing axes. Creates new figure when ``None``.
+    show_legend : bool, optional
+        Whether to display a legend, by default True.
+
+    Returns
+    -------
+    tuple[plt.Figure, plt.Axes]
+        Matplotlib figure and axes.
+    """
+    dims = d.task_labels.sel({FEATURE: "dimensionality"}, drop=True).astype(
+        int
+    )
+    update_step = (
+        d.data[UPDATE_STEP].isel({OUTPUT_DIM: 0}).sel({SCHEDULE: schedule})
+    )
+    match cost_metric:
+        case "fevals":
+            cost_metric = (
+                d.data[FEVALS].isel({OUTPUT_DIM: 0}).sel({SCHEDULE: schedule})
+                / dims
+            )
+            x_label = "Function evaluations / dimension"
+        case "iterations":
+            cost_metric = (
+                d.data[ITERATIONS]
+                .isel({OUTPUT_DIM: 0})
+                .sel({SCHEDULE: schedule})
+                / dims
+            )
+            x_label = "Iterations / dimension"
+        case None:
+            cost_metric = None
+            x_label = "Steps"
+        case _:
+            raise ValueError(f"Invalid cost_metric: {cost_metric}. ")
+
+    # 1. Align Dimensions
+    # We want (Problems, Steps) for the plot
+    # If your xarray is (Steps, Problems), we transpose it
+    if update_step.dims[0] != "problem":
+        update_step = update_step.transpose("problem", ...)
+        if cost_metric is not None:
+            cost_metric = cost_metric.transpose("problem", ...)
+
+    # 2. Prepare Mappings
+    opt_hashes = [opt.hash for opt in optimizers]
+    styles = get_schedule_styles([opt.name for opt in optimizers])
+    hex_colors = [styles[opt.name].color for opt in optimizers]
+    display_names = [LABEL_MAP[opt.name] for opt in optimizers]
+
+    # 3. Reclassification
+    z_data = update_step.astype(int).values
+    indexed_data = np.zeros_like(z_data, dtype=int)
+    for i, opt_hash in enumerate(opt_hashes):
+        indexed_data[z_data == opt_hash] = i
+
+    n_problems, n_steps = indexed_data.shape
+
+    # 4. Coordinate Logic
+    if cost_metric is not None:
+        X = cost_metric.values
+        problem_indices = np.arange(n_problems)
+        # Broadcast Y to match X: (n_problems, n_steps)
+        Y = np.broadcast_to(
+            problem_indices[:, np.newaxis], (n_problems, n_steps)
+        )
+        Z = indexed_data
+    else:
+        # Meshgrid creates (n_problems, n_steps) grids
+        X, Y = np.meshgrid(
+            np.linspace(0.0, 1.0, n_steps), np.arange(n_problems)
+        )
+        Z = indexed_data
+
+    # 5. Plotting
+    fig, ax = _get_or_create_axes(ax=ax)
+    cmap = ListedColormap(hex_colors)
+
+    # Use shading="nearest" to center colors on coordinates
+    ax.pcolormesh(
+        X,
+        Y,
+        Z,
+        cmap=cmap,
+        shading="nearest",
+        edgecolors="none",
     )
 
+    # 6. IEEE Style Legend
+    if show_legend:
+        legend_elements = [
+            Line2D(
+                [0],
+                [0],
+                marker="s",
+                color="w",
+                label=name,
+                markerfacecolor=color,
+                markersize=8,
+                linestyle="None",
+            )
+            for color, name in zip(hex_colors, display_names, strict=True)
+        ]
+        ax.legend(
+            handles=legend_elements,
+            loc="best",
+            fontsize=7,
+            frameon=True,
+            fancybox=False,
+            edgecolor="#BBBBBB",
+            framealpha=1.0,
+            labelspacing=0.2,
+            borderaxespad=0.5,
+        )
+
+    # 7. Scientific Polish
+    ax.set_ylabel("Problems")
+    ax.set_xlabel(x_label)
+
+    # Clean up Y-axis
+    ax.set_yticks([])
+    ax.set_yticklabels([])
+
+    ax.invert_yaxis()
+
     return fig, ax
+
+
+# =============================================================================
+#                                              Grouped ERTD plotting utilities
+# =============================================================================
+
+
+def _add_eval_line(ax, line_val):
+    if line_val is not None:
+        ax.axvline(
+            x=line_val,
+            color="black",
+            linestyle="--",
+            linewidth=2,
+            zorder=5,
+        )
+
+
+def _save_and_collect(
+    fig: plt.Figure,
+    name: str,
+    caption: str,
+    save_dir: Path,
+    figures: list,
+    paths: list,
+    captions: list,
+    **savefig_kwargs,
+):
+    """Save a figure and append to collection lists."""
+    save_path = save_dir / f"{name}.pdf"
+    savefig(fig=fig, path=str(save_path), **savefig_kwargs)
+    paths.append(save_path.resolve())
+    figures.append(fig)
+    captions.append(caption)
+    plt.close(fig)
+
+
+def ertd_per_group(
+    d,
+    groups: list[tuple[dict, str]],
+    plot_actions: str | None = None,
+    optimizers=None,
+    line: float | None = None,
+    save_dir: Path | None = None,
+) -> tuple[list[plt.Figure], list[Path], list[str]]:
+    """Plot and save ERTD profiles for each group.
+
+    Parameters
+    ----------
+    d : DataLoader
+        DataLoader containing optimization results.
+    groups : list[tuple[dict, str]]
+        Each entry is (filter_dict, name) where filter_dict is
+        passed to ``d.select_feature`` and name is used for
+        file naming and captions.
+    plot_actions : str or None, optional
+        If not None, also plot actions for the specified schedule.
+    optimizers : optional
+        Optimizers to pass to ``plot_update_step``.
+    line : float or None, optional
+        X-coordinate for a vertical reference line.
+    save_dir : Path or None, optional
+        Directory to save plots to. Defaults to cwd.
+
+    Returns
+    -------
+    tuple[list[Figure], list[Path], list[str]]
+        List of figures, list of absolute paths, list of captions.
+    """
+    save_dir = Path(save_dir) if save_dir is not None else Path.cwd()
+    figures, paths, captions = [], [], []
+
+    for filter_dict, name in groups:
+        d_group = d.select_feature(filter_dict)
+
+        fig, ax = plot_ertd_profile(d_group, show_legend=False)
+        _add_eval_line(ax, line)
+
+        _save_and_collect(
+            fig,
+            f"rtd_{name}",
+            f"{name}",
+            save_dir,
+            figures,
+            paths,
+            captions,
+            n_side_by_side=4,
+            span_columns=True,
+            height=1.0,
+        )
+
+        if plot_actions is not None:
+            fig_act, ax_act = plot_update_step(
+                d_group,
+                schedule=plot_actions,
+                optimizers=optimizers,
+                cost_metric="iterations",
+                show_legend=False,
+            )
+
+            _save_and_collect(
+                fig_act,
+                f"actions_{plot_actions}_{name}",
+                f"Actions {plot_actions}: {name}",
+                save_dir,
+                figures,
+                paths,
+                captions,
+                n_side_by_side=4,
+                span_columns=True,
+                height=1.0,
+            )
+
+    return figures, paths, captions
+
+
+def generate_report(
+    paths: list[str | Path],
+    captions: list[str],
+    title: str = "",
+    author: str = "",
+    columns: int = 2,
+    save_path: str | Path = "report",
+) -> Path:
+    """Generate a Typst PDF report from a grid of figures.
+
+    Parameters
+    ----------
+    paths : list of str or Path
+        Paths to figure files (e.g. PDF or PNG).
+    captions : list of str
+        Per-figure captions. Must have the same length as *paths*.
+    title : str, optional
+        Report title. The default is ``""``.
+    author : str, optional
+        Author name. The default is ``""``.
+    columns : int, optional
+        Number of grid columns. The default is ``2``.
+    save_path : str or Path, optional
+        Output path stem (without extension). The default is
+        ``"report"``.
+
+    Returns
+    -------
+    Path
+        Path to the compiled PDF.
+    """
+    report = TypstReport(title=title, author=author)
+    report.add_figures(paths, columns=columns, subcaptions=captions)
+    return report.save(save_path)

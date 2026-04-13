@@ -1,6 +1,10 @@
+"""Feature processing, normalization, and mixed embeddings for task inputs."""
+
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
 import equinox as eqx
@@ -10,6 +14,14 @@ import jax.random as jr
 
 
 class FeatureProcessor(eqx.Module):
+    """Normalizes and encodes task/optimizer features.
+
+    Stores per-feature statistics (means, stds) for
+    continuous features and vocabularies for categorical
+    features, enabling consistent transformation of raw
+    feature dictionaries into numeric arrays.
+    """
+
     schema: dict[str, str] = eqx.field(static=True)
     means: dict[str, float] = eqx.field(static=True)
     stds: dict[str, float] = eqx.field(static=True)
@@ -25,8 +37,8 @@ class FeatureProcessor(eqx.Module):
         schema : dict[str, str]
             Mapping of feature names to types ('continuous',
             'categorical', 'ordinal').
-        tasks : Iterable[Task]
-            Task objects containing feature data.
+        tags : Iterable[dict[str, Any]]
+            Iterable of feature dictionaries for tasks.
         """
         means = {}
         stds = {}
@@ -79,7 +91,8 @@ class FeatureProcessor(eqx.Module):
             if ftype == "continuous":
                 normed = (float(val) - self.means[name]) / self.stds[name]
                 feats.append(normed)
-            else:  # categorical or ordinal
+            # Categorical or ordinal
+            else:
                 feats.append(float(self.vocabs[name][val]))
 
         return jnp.array(feats, dtype=jnp.float32)
@@ -116,6 +129,81 @@ class FeatureProcessor(eqx.Module):
             Reconstructed feature processor instance.
         """
         return cls(**kwargs)
+
+    @classmethod
+    def load(cls, path: str) -> FeatureProcessor:
+        """
+        Load model from file.
+
+        Parameters
+        ----------
+        path : str
+            Path to model file (without extension).
+
+        Returns
+        -------
+        FeatureProcessor
+            Loaded model instance.
+        """
+        _path = Path(path)
+
+        with open(_path.with_suffix(".eqx"), "rb") as f:
+            hyperparams: dict = json.loads(f.readline().decode())
+            feature_processor = cls.reconstruct(**hyperparams)
+            feature_processor = eqx.tree_deserialise_leaves(
+                f, feature_processor
+            )
+            return feature_processor
+
+    def store(self, path: str):
+        """
+        Store model to file.
+
+        Parameters
+        ----------
+        path : str
+            Path to save model (without extension).
+
+        Returns
+        -------
+        str
+            Path to saved model file.
+        """
+        _path = Path(path)
+        hyperparams = self.to_dict()
+
+        with open(_path.with_suffix(".eqx"), "wb") as f:
+            hyperparams_str = json.dumps(hyperparams)
+            f.write((hyperparams_str + "\n").encode())
+            eqx.tree_serialise_leaves(f, self)
+
+        return str(_path)
+
+    def swap_names(self, name_mapping: dict[str, str]) -> FeatureProcessor:
+        """
+        Swap feature names according to mapping.
+
+        Parameters
+        ----------
+        name_mapping : dict[str, str]
+            Mapping of old feature names to new feature names.
+
+        Returns
+        -------
+        FeatureProcessor
+            New instance with swapped feature names.
+        """
+        new_vocabs = {
+            name_mapping.get(name, name): vocab
+            for name, vocab in self.vocabs.items()
+        }
+
+        return FeatureProcessor(
+            schema=self.schema,
+            means=self.means,
+            stds=self.stds,
+            vocabs=new_vocabs,
+        )
 
 
 # =============================================================================
@@ -213,6 +301,7 @@ class MixedEmbedding(eqx.Module):
         for xi, mo in zip(x, self.embedders, strict=True):
             if isinstance(mo, eqx.nn.Embedding):
                 xi_input = xi.astype(jnp.int32)
+
             else:
                 xi_input = xi[None]
             outputs.append(mo(xi_input))
@@ -267,8 +356,6 @@ class MixedEmbedding(eqx.Module):
             List of embedder configurations.
         final_proj : dict
             Final projection configuration.
-        key : jax.Array
-            Random key for initialization.
         **kwargs
             Additional arguments (unused).
 

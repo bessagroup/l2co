@@ -29,13 +29,19 @@ __status__ = "Stable"
 
 
 class OptHistoryType(eqx.Module):
+    """Abstract base class for optimization history.
+
+    Defines the interface and required fields for storing
+    per-step losses, parameters, gradients, and evaluation
+    counters during optimization.
+    """
+
     loss: eqx.AbstractVar[Float[Array, " popsize"]]
     params: eqx.AbstractVar[Float[PyTree, " popsize dim"]]
     grads: eqx.AbstractVar[Float[PyTree, " popsize dim"]]
     update_step: eqx.AbstractVar[Int[Array, " popsize"]]
     fevals: eqx.AbstractVar[Int[Array, " popsize"]]
     iterations: eqx.AbstractVar[Int[Array, " popsize"]]
-    """Base class for optimizer history."""
 
     @classmethod
     @abstractmethod

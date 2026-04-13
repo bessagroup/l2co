@@ -1,0 +1,9 @@
+enabled: true
+partition: compute
+account: research-ME-mse
+runner: uv run
+env_setup:
+  - unset LD_LIBRARY_PATH
+env_vars:
+  JAX_LOG_LEVEL: error
+  HYDRA_FULL_ERROR: "1"

@@ -1,3 +1,5 @@
+"""Per-optimizer mutable run state used during optimization rollouts."""
+
 #                                                                       Modules
 # =============================================================================
 
@@ -12,13 +14,13 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Float, PRNGKeyArray, PyTree
+from l2co_tasks import Task
 
 # Local
 from .batching import BatchState
 from .history_state import HistoryState
 from .optimizers import optimizer_mapping
 from .optimizerschedule import OptimizationStep
-from .task import Task
 from .typing import InputParameters, SamplerFunction
 from .update_class import UpdateClass
 from .update_class import evaluate as evaluate_update_class
@@ -54,7 +56,8 @@ class RunState(eqx.Module):
     """
 
     params: InputParameters
-    best_params: InputParameters  ## TODO this has shape (dim,) not (1, dim)
+    # TODO: this has shape (dim,) not (1, dim)
+    best_params: InputParameters
     best_loss: Array[Float, ""]
     opt_state: PyTree
     update_class: UpdateClass = eqx.field(static=True)
@@ -141,12 +144,16 @@ def reset(
     ----------
     run_state : RunState
         Current run state.
+    batch_state : BatchState
+        Current batch state.
     static : PyTree
         Model of the task to optimize.
     dataset : dict[str, jax.Array]
         Dataset for evaluation.
     loss_fn : Callable
         Loss function for evaluation.
+    pass_rng : bool
+        Whether to pass RNG keys to the loss function.
     sampler : SamplerFunction
         Sampling function for generating new parameters.
     key : PRNGKeyArray
@@ -351,7 +358,7 @@ def evaluate(
         Current run state.
     batch_state : BatchState
         Current batch state.
-    model : PyTree
+    static : PyTree
         Model of the task to optimize.
     dataset : dict[str, jax.Array]
         Dataset for evaluation.
@@ -361,6 +368,8 @@ def evaluate(
         Sampling function for generating new parameters.
     n_iterations : int
         Number of iterations to run.
+    pass_rng : bool
+        Whether to pass RNG keys to the loss function.
     key : PRNGKeyArray
         PRNG key for random operations.
     verbose : bool
@@ -368,9 +377,9 @@ def evaluate(
 
     Returns
     -------
-    tuple[RunState, HistoryState]
-        Tuple of updated RunState, BatchState and History state after complete
-        optimization run.
+    tuple[RunState, BatchState, HistoryState]
+        Tuple of updated RunState, BatchState and History state after
+        complete optimization run.
     """
     run_state = reset(
         run_state=run_state,

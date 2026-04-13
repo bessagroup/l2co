@@ -1,0 +1,25 @@
+defaults:
+- stage0_models: best    # set of sklearn models to train (see conf/stage0_models/)
+- tasks: bbob     # task distribution used as training/test data
+- optimizers: medium    # optimizers whose trajectories form the training targets
+- cluster: local        # cluster settings (see conf/cluster/); override with cluster=brown
+- _self_
+
+# Temperature for L2CO stage0 softmax strategy selection (lower = more greedy)
+t: 0.01
+# Final temperature at end of annealing schedule
+t_end: 100000
+
+# Relative path (within the Hydra run output dir) to the training dataset
+path_train: /Volumes/T7/data/wcci/trainingset2/
+# Relative path to the test dataset (defaults to same as train)
+path_test: ${path_train}
+
+# Generate per-model strategy plots after training
+plot_strategy: False
+
+# Root directory for pipeline outputs; null uses the pipeline default (cwd/outputs)
+rootdir: null
+
+# mode of executing the pipeline. This is overwritten if on a cluster
+mode: local
