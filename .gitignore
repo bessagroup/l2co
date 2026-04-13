@@ -172,3 +172,4 @@ CLAUDE.md
 
 # PDF files
 *.pdf
+!overview.svg
