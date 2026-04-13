@@ -143,43 +143,6 @@ def bfill(x: jnp.ndarray) -> jnp.ndarray:
     return jnp.flip(ffill(jnp.flip(x)))
 
 
-def signlog1p(x: jnp.ndarray) -> jnp.ndarray:
-    """Apply signed log1p transformation.
-
-    Parameters
-    ----------
-    x : jnp.ndarray
-        Input array.
-
-    Returns
-    -------
-    jnp.ndarray
-        Transformed array with sign(x) * log1p(|x|).
-    """
-    return jnp.sign(x) * jnp.log1p(jnp.abs(x))
-
-
-def signed_softlog(x: jax.Array, alpha: float = EPSILON) -> jax.Array:
-    """Apply signed soft logarithm transformation.
-
-    Parameters
-    ----------
-    x : jax.Array
-        Input array.
-    alpha : float, optional
-        Scaling parameter, by default EPSILON.
-
-    Returns
-    -------
-    jax.Array
-        Transformed array with signed soft log.
-    """
-    scaled = jnp.abs(x) / alpha
-    y = jnp.log1p(scaled) / jnp.log1p(1.0 / alpha)
-    y = jnp.sign(x) * y
-    return y
-
-
 def get_interpolation_matrix(input_len: int, target_len: int):
     """Computes a static matrix M such that x_interp = x @ M."""
     # The positions we want to sample
@@ -345,80 +308,8 @@ def traj_and_stair(x_output_mean, x_output_min, global_min):
     return ffill(bfill(y))
 
 
-# =============================================================================
-
-
-def get_best(params: PyTree, losses: jax.Array):
-    """
-    Retrieve the best parameters and corresponding loss.
-
-    Parameters
-    ----------
-    params : PyTree
-        Parameter tree with shape (n_iters * popsize, dim).
-    losses : jax.Array
-        Loss array with shape (n_iters * popsize, 1).
-
-    Returns
-    -------
-    Tuple[PyTree, jax.Array]
-        Best parameters and corresponding loss.
-    """
-    # params: shape = (n_iters*popsize, dim)
-    # losses: shape = (n_iters*popsize, 1)
-    idx = jnp.argmin(losses)
-    best_params = jax.tree.map(lambda x: x[idx], params)
-    best_loss = losses[idx]
-    return best_params, best_loss
-
-
-def tree_where(pred, true, false):
-    """
-    Apply a conditional operation to a PyTree.
-
-    Parameters
-    ----------
-    pred : jax.Array
-        Boolean array for the condition.
-    true : PyTree
-        PyTree to use when the condition is True.
-    false : PyTree
-        PyTree to use when the condition is False.
-
-    Returns
-    -------
-    PyTree
-        Resulting PyTree after applying the condition.
-    """
-
-    def keep(a, b):
-        """Select elements from a or b based on pred."""
-        return jnp.where(pred, a, b)
-
-    return jax.tree.map(keep, true, false)
-
-
 #                                                  Loading and saving functions
 # =============================================================================
-
-
-def save_model(model, path: str | Path) -> None:
-    """Save model to disk using cloudpickle and equinox serialization.
-
-    Parameters
-    ----------
-    model : eqx.Module
-        Model to save.
-    path : str | Path
-        Path to save the model files.
-    """
-    _path = Path(path)
-    model_shape = eqx.filter_eval_shape(lambda x: model, None)
-
-    with open(_path.with_suffix(".pkl"), "wb") as f:
-        cloudpickle.dump(model_shape, f)
-
-    eqx.tree_serialise_leaves(_path.with_suffix(".eqx"), model)
 
 
 def load_model(model_path: str, shape_path: str) -> eqx.Module:
@@ -463,19 +354,6 @@ def load_jnparray(path: str | Path) -> jnp.ndarray:
     """
     # TODO: investigate this flatten behaviour
     return jnp.load(Path(path)).flatten()
-
-
-def save_jnparray(model, path: str | Path) -> None:
-    """Save JAX numpy array to disk.
-
-    Parameters
-    ----------
-    model : jnp.ndarray
-        Array to save.
-    path : str | Path
-        Path to save the array.
-    """
-    jnp.save(path, model)
 
 
 def save_dataset(dataset: dict[str, jnp.ndarray], path: str | Path):

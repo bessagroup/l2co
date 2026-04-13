@@ -38,7 +38,6 @@ from .naming import (
     OUTPUT_MIN,
     PROBLEM,
     REALIZATION,
-    SCHEDULE,
     SEED,
     SUCCESS,
     TARGET,
@@ -259,43 +258,6 @@ def scale_by_task(
     ds_log10_positive = ds_output.groupby(TASK_ID).map(min_custom)
 
     return ds_log10_positive
-
-
-def scale_by_problem_and_schedule(data: xr.DataArray) -> xr.DataArray:
-    """
-    Scale the given data array using an alternative scaling method.
-
-    Parameters
-    ----------
-    data : xarray.DataArray
-        The data array to scale.
-
-    Returns
-    -------
-    xarray.DataArray
-        The scaled data array.
-
-    Notes
-    -----
-    This function applies log scaling, ensures non-negativity, and performs
-    min-max scaling across multiple dimensions.
-    """
-
-    # Cap the quality indicator value at 1e-8
-    ds_output = cap_value(data, cap=EPSILON)
-
-    data_scaled = xr.apply_ufunc(
-        min_custom,
-        ds_output,
-        input_core_dims=[[BUDGET, SCHEDULE, OUTPUT_DIM]],
-        output_core_dims=[[BUDGET, SCHEDULE, OUTPUT_DIM]],
-        vectorize=True,
-        dask="parallelized",
-        output_dtypes=[ds_output.dtype],
-        dask_gufunc_kwargs={"allow_rechunk": True},
-    )
-
-    return data_scaled
 
 
 def scale_by_problem(data: xr.DataArray) -> xr.DataArray:

@@ -20,7 +20,7 @@ create_entire_dataset
 # Standard
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from time import perf_counter
@@ -30,7 +30,6 @@ from typing import Literal
 import jax
 import numpy as np
 import xarray as xr
-from scipy.linalg import svd
 
 # Local
 from .naming import (
@@ -71,8 +70,6 @@ __status__ = "Stable"
 #                                                                     Constants
 # =============================================================================
 
-INVALID_PERFORMANCE_VALUE = 1.0
-PADDING_VALUE = 1.0
 # DEFAULT_COST_VALUES = np.logspace(-1, 6, 100) ** 0.8
 DEFAULT_COST_VALUES = np.append(np.logspace(-1, 6, 1000) ** 0.8, 10**5)
 
@@ -1102,165 +1099,6 @@ def calculate_best_solver(
 
 #                                                          OptimizationDynamics
 # =============================================================================
-def load_dynamics(
-    path: str | Path | xr.DataTree,
-) -> dict[str, OptimizationDynamics]:
-    """
-    Load optimization dynamics from a file or DataTree.
-
-    Parameters
-    ----------
-    path : str, Path, or xr.DataTree
-        Path to the file or DataTree object.
-
-    Returns
-    -------
-    dict[str, OptimizationDynamics]
-        Dictionary of OptimizationDynamics objects.
-    """
-    if not isinstance(path, xr.DataTree):
-        _path = Path(path)
-        datatree = xr.open_datatree(_path.with_suffix(".nc"))
-    # Assume path is already a DataTree
-    else:
-        datatree = path
-
-    return {
-        name: OptimizationDynamics.from_data(
-            data=dynamics.to_dataset(), previous_step=name
-        )
-        for name, dynamics in datatree.items()
-    }
-
-
-# =============================================================================
-
-
-def squash_optimizer(data: xr.Dataset, target_optimizer: str) -> xr.Dataset:
-    """
-    Squash multiple optimizer runs into a single run for the target optimizer.
-
-    Parameters
-    ----------
-    data : xr.Dataset
-        Dataset containing optimizer runs.
-    target_optimizer : str
-        Optimizer name to squash.
-
-    Returns
-    -------
-    xr.Dataset
-        Squashed dataset for the target optimizer.
-    """
-    _data = data.sel(
-        {
-            SCHEDULE: [
-                o
-                for o in data.optimizer.values
-                if o.startswith(target_optimizer)
-            ]
-        }
-    )
-    mask = (
-        _data.notnull()
-        .any(dim=BUDGET)
-        .idxmax(dim=SCHEDULE)
-        .isel({OUTPUT_DIM: 0}, drop=True)
-        .output_mean
-    )
-
-    return (
-        _data.sel({SCHEDULE: mask})
-        .reset_coords(SCHEDULE, drop=True)
-        .expand_dims({SCHEDULE: np.array([target_optimizer], dtype=object)})
-    )
-
-
-def impute_missing_values_svd(y: np.ndarray, k=2):
-    """
-    Impute missing values in a matrix using SVD.
-
-    Parameters
-    ----------
-    y : np.ndarray
-        Input matrix with missing values (NaNs).
-    k : int, optional
-        Number of SVD components to use, by default 2.
-
-    Returns
-    -------
-    np.ndarray
-        Matrix with imputed values.
-    """
-    mask = ~np.isnan(y)
-    mean_values = np.nanmean(y, axis=0)
-
-    # Center the data (subtract mean from non-nan values)
-    centered_matrix = np.where(mask, y - mean_values, 0)
-
-    # Perform SVD
-    U, s, Vt = svd(centered_matrix, full_matrices=False)
-
-    # Keep only k components
-    S_k = np.diag(s[:k])
-    U_k = U[:, :k]
-    Vt_k = Vt[:k, :]
-
-    # Reconstruct the matrix
-    reconstructed = U_k @ S_k @ Vt_k + mean_values
-
-    # Fill in missing values
-    filled_matrix = np.where(mask, y, reconstructed)
-
-    return filled_matrix
-
-
-# @ lru_cache(maxsize=1)
-def compute_X_trajectory(data: xr.DataArray) -> xr.DataArray:
-    """
-    Select the history of an optimization trajectory.
-
-    Parameters
-    ----------
-    data : xarray.Dataset
-        The optimization trajectory data.
-    Returns
-    -------
-    xarray.DataArray
-        The selected trajectory.
-    """
-
-    def scale(x: np.ndarray) -> np.ndarray:
-        """Log-transform and min-max scale a 1-D array."""
-        # 3. Make sure the quality indicator value is non-negative
-        p = x - x.min()
-        # 4. Add epsilon to make quality indicator value non-zero
-        eps = np.where(p > 0.0, p, p.max() + 1e-16).min()
-        x_log10 = np.log10(p + eps)
-
-        # 5. Min-max scaling of the data
-        x_min = x_log10.min()
-        x_max = x_log10.max()
-        return (x_log10 - x_min) / (x_max - x_min + 1e-16)
-
-    trajectory: xr.Dataset = xr.apply_ufunc(
-        scale,
-        data,
-        # input_core_dims=[[BUDGET, 'output_dim']],
-        input_core_dims=[[BUDGET]],
-        # output_core_dims=[[BUDGET, 'output_dim']],
-        output_core_dims=[[BUDGET]],
-        vectorize=True,
-        dask="parallelized",
-        dask_gufunc_kwargs={"allow_rechunk": True},
-    )
-
-    # return trajectory.output_mean.isel(
-    #     output_dim=0, drop=True).rename(
-    #         'trajectory').transpose(
-    #             'optimizer', BUDGET, 'problem')
-
-    return trajectory
 
 
 def log_relative_improvement(data: xr.Dataset) -> xr.DataArray:
@@ -1291,88 +1129,6 @@ def log_relative_improvement(data: xr.Dataset) -> xr.DataArray:
         input_core_dims=[["budget"], ["budget"]],
         # output_core_dims=[["log_relative_improvement"]],
         vectorize=True,
-    )
-
-
-def _squash(da: xr.DataArray, reduce_dim: str, vector_dim: str = PROBLEM):
-    """
-    Squash a DataArray along a dimension, keeping the first non-NaN value.
-
-    Parameters
-    ----------
-    da : xr.DataArray
-        DataArray to squash.
-    reduce_dim : str
-        Dimension to reduce.
-    vector_dim : str, optional
-        Vector dimension, by default PROBLEM.
-
-    Returns
-    -------
-    xr.DataArray
-        Squashed DataArray.
-    """
-
-    def f(x):
-        """Return the first non-NaN value from x."""
-        for val in x:
-            if not np.isnan(val).any():
-                return val
-        return val
-
-    # Define dimension names
-    all_dims = list(da.dims)
-    keep_dims = [d for d in all_dims if d not in [reduce_dim, vector_dim]]
-
-    return xr.apply_ufunc(
-        f,
-        da,
-        input_core_dims=[[reduce_dim] + keep_dims],
-        output_core_dims=[keep_dims],
-        vectorize=True,
-        dask="allowed",
-    )
-
-
-def compute_fitting(
-    trajectory: xr.DataArray,
-    fit_params: xr.DataArray,
-    basis_function: Callable,
-):
-    """
-    Compute fitted values for a trajectory using a basis function.
-
-    Parameters
-    ----------
-    trajectory : xr.DataArray
-        Trajectory data.
-    fit_params : xr.DataArray
-        Parameters for fitting.
-    basis_function : Callable
-        Basis function for fitting.
-
-    Returns
-    -------
-    None
-
-    Notes
-    -----
-    This function computes fitted values but does not currently
-    return them. It appears incomplete and may need revision.
-    """
-    x_input = np.linspace(0.0, 1.0, trajectory.coords[BUDGET].size)
-
-    fitted_sigmoid = xr.apply_ufunc(
-        lambda x, x_input: basis_function(x_input, *x),
-        fit_params,
-        kwargs={"x_input": x_input},
-        input_core_dims=[["fit_params"]],
-        output_core_dims=[[BUDGET]],
-        vectorize=True,
-    )
-
-    fitted_sigmoid = fitted_sigmoid.assign_coords(
-        {BUDGET: trajectory.coords[BUDGET]}
     )
 
 

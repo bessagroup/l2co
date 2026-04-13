@@ -59,7 +59,6 @@ __status__ = "Stable"
 SINGLE_COL_WIDTH = 252.0 / 72.27
 # 7.139 inches
 DOUBLE_COL_WIDTH = 516.0 / 72.27
-GOLDEN_RATIO = (5**0.5 - 1) / 2
 
 
 def set_size(

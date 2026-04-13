@@ -29,10 +29,6 @@ class OptimizationDynamics:
     feature_processor_task: FeatureProcessor
     feature_processor_optimizer: FeatureProcessor
 
-    def y_to_array(self) -> xr.DataArray:
-        """Return target labels as a NumPy array."""
-        return self.y.values
-
     def select(self, problems: xr.DataArray) -> OptimizationDynamics:
         """Select a subset of samples by index.
 
