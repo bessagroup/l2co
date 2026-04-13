@@ -21,11 +21,11 @@
 
 ## Statement of need
 
-Optimization plays a central role in Computational Mechanics. However, selecting the right optimization algorithm for a particular task is usually not trivial, as that results from the nature of the optimization problem to be solved and constraints such as available resource budget and training data. In order to address this, there has been a transition from creating hand-designed optimization algorithms to learning how to optimize (L2O), i.e. an approach attempting to learn the optimization conditions themselves. While many studies in the field of L2O have demonstrated good performance on a specific task distribution, they often suffer from poor generalization to other distributions. In addition, established L2O methods are often limited to a specific class of optimization algorithms.
+Optimization plays a central role in data-driven design. However, choosing an appropriate optimization algorithm for a specific task is often challenging, as it depends on the structure of the optimization problem and practical limitations such as the computational budget. To tackle this challenge, the field has seen a shift from manually designing optimizers toward using machine learning methods that attempt to learn the optimization process itself. Despite significant progress, existing approaches frequently exhibit limited generalization to new distributions and typically require retraining to transfer their knowledge.
 
-We propose a new approach called "Learning to Choose Optimizers" (L2CO). Our method allows a meta-learner to select at test time from a range of static and well-established optimizers. This enables the system to adapt to different task distributions and enhance generalization performance. The framework is set up to continuously incorporate new optimization algorithms and problems, inviting domain experts to contribute their insights and expertise for ongoing expansion.
+We introduce a new approach called ''Learning to Choose Optimizers'' (L2CO). In our approach, a meta-learner first selects an optimizer before any function evaluations---based solely on available problem characteristics---and then reassesses that choice using a unified model that jointly encodes problem context, optimizer identity, and the observed optimization trajectory. By restricting selection to well-established algorithms, L2CO avoids the convergence issues of learned update rules while retaining the adaptability of dynamic selection.
 
-In this study, we train our model offline on a diverse set of benchmark loss-functions and apply a range of gradient-based, population-based, and probabilistic model-based optimizers. The potential of this approach is demonstrated by comparing its performance to classical optimizers and established L2O-architectures on benchmark loss-functions and simple material design studies. The results suggest that L2CO can be a useful tool and exhibits better generalization.
+In this work, we train our model offline on a collection of benchmark functions, employing a mixture of gradient-based, population-based, and probabilistic model-based optimizers. We demonstrate the effectiveness of our method by comparing its performance to classical optimizers on standard benchmark problems and a neural net classification task. The empirical results indicate that L2CO is a promising tool with improved generalization capabilities.
 
 <div align="center"><img src="img/overview.svg" width="800"/></div>
 
@@ -45,6 +45,7 @@ L2CO builds on the following packages:
 | --- | --- |
 | [f3dasm](https://github.com/bessagroup/f3dasm) | Framework for data-driven design and analysis of structures and materials |
 | [bbob-jax](https://github.com/bessagroup/bbob-jax) | JAX implementation of the BBOB benchmark functions |
+| [l2co-tasks](https://github.com/mpvanderschelling/l2co-tasks) | Benchmark functions and tasks used by L2CO (BBOB, CEC 2005, PDE, neural network training) |
 | [bessaplots](https://github.com/bessagroup/bessaplots) | Plotting utilities |
 | [JAX](https://github.com/jax-ml/jax) | Composable transformations of NumPy programs |
 | [Equinox](https://github.com/patrick-kidger/equinox) | Neural networks and more for JAX |
