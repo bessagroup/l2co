@@ -1,8 +1,6 @@
 name: Pull request to main branch
-
 on:
   pull_request:
-
 jobs:
   run-tests:
     strategy:
@@ -14,54 +12,40 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up Python ${{ matrix.version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.version }}
-
       - uses: astral-sh/setup-uv@v5
-
       - name: Install dependencies
-        run: uv pip install --system '.[tests]'
-
+        run: uv pip install --system --no-sources '.[tests]'
       - name: Test with pytest
         run: pytest
-
   build-docs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - uses: astral-sh/setup-uv@v5
-
       - name: Install dependencies
-        run: uv pip install --system '.[docs]'
-
+        run: uv pip install --system --no-sources '.[docs]'
       - name: Build documentation
         run: mkdocs build
-
   check_pre-commit:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - uses: astral-sh/setup-uv@v5
-
       - name: Install pre-commit
-        run: uv pip install --system '.[dev]'
-
+        run: uv pip install --system --no-sources '.[dev]'
       - name: Run pre-commit checks
         run: pre-commit run --all-files
