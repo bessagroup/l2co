@@ -349,7 +349,7 @@ def build_pipeline(config: DictConfig) -> Pipeline:
 # =============================================================================
 
 
-@hydra.main(config_path="../../conf", config_name="config")
+@hydra.main(config_path="../conf", config_name="config")
 def main(config: DictConfig) -> None:
     pipeline = build_pipeline(config)
 
