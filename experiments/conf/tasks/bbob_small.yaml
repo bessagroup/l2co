@@ -1,0 +1,62 @@
+# Full BBOB benchmark suite: 24 functions × 6 dimensions × 1 seed
+sampler:
+  _target_: f3dasm.create_sampler
+  sampler: "grid"  # Create one row per (fn_name × dimensionality × seed) combination
+sampler_kwargs:    # Extra keyword args forwarded to the sampler call (null = none)
+
+experimentdata:
+  domain:
+    input:
+      fn_name:
+        type: category
+        categories:
+          - 'attractive_sector'
+          - 'bent_cigar'
+          - 'discuss'
+          - 'ellipsoid'
+          - 'ellipsoid_seperable'
+          - 'gallagher_101_peaks'
+          - 'gallagher_21_peaks'
+          - 'griewank_rosenbrock_f8f2'
+          - 'katsuura'
+          - 'linear_slope'
+          - 'lunacek_bi_rastrigin'
+          - 'rastrigin'
+          - 'rastrigin_seperable'
+          - 'rosenbrock'
+          - 'rosenbrock_rotated'
+          - 'schaffer_f7_condition_10'
+          - 'schaffer_f7_condition_1000'
+          - 'schwefel_xsinx'
+          - 'sharp_ridge'
+          - 'skew_rastrigin_bueche'
+          - 'sphere'
+          - 'step_ellipsoid'
+          - 'sum_of_different_powers'
+          - 'weierstrass'
+      dimensionality:
+        type: category
+        categories:
+          # - 2
+          # - 3
+          # - 5
+          - 10
+          # - 20
+          # - 40
+      seed:
+        type: int
+        low: 0
+        high: 0
+
+task_kwargs:  # Extra keyword args forwarded to the task factory (null = none)
+
+data_generator:
+  # Factory function that creates a Task object from each ExperimentData row
+  _target_: l2co_tasks.create_bbob_task
+  _partial_: True
+
+schema:
+  # Feature schema used by FeatureProcessor to encode task metadata for the model
+  dimensionality: continuous
+  separable: boolean
+  unimodal: boolean
