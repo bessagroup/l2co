@@ -51,7 +51,10 @@ class HistoryState(eqx.Module):
     """State container for optimization history tracking.
 
     This class stores the optimization history including input parameters,
-    output statistics, and evaluation metrics across iterations.
+    output statistics, and evaluation metrics across iterations. Entries
+    are written front-to-back: ``cursor`` points at the next slot to fill,
+    so valid data lives in ``[0, cursor)`` and uninitialized padding (NaN
+    floats / zero ints) lives in ``[cursor, n_iterations)``.
 
     Attributes
     ----------
@@ -67,6 +70,9 @@ class HistoryState(eqx.Module):
         Number of function evaluations at each iteration.
     iterations : Int[Array, " n_iterations"]
         Iteration counter.
+    cursor : Int[Array, ""]
+        Index of the next write position; equals the number of filled
+        slots. The most-recent valid entry lives at ``cursor - 1``.
     """
 
     output_min: Float[Array, " n_iterations"]
@@ -75,6 +81,7 @@ class HistoryState(eqx.Module):
     update_step: Float[Array, " n_iterations"]
     fevals: Int[Array, " n_iterations"]
     iterations: Int[Array, " n_iterations"]
+    cursor: Int[Array, ""]
 
     @classmethod
     def init(cls, max_iterations: int) -> HistoryState:
@@ -88,7 +95,8 @@ class HistoryState(eqx.Module):
         Returns
         -------
         HistoryState
-            Initialized history state with NaN values.
+            Initialized history state with NaN floats, zero ints, and
+            ``cursor`` set to 0 (empty buffer, next write at index 0).
         """
         nans_output = jnp.full((max_iterations,), jnp.nan, dtype=jnp.float32)
         zeros_int32 = jnp.zeros((max_iterations,), dtype=jnp.int32)
@@ -100,10 +108,11 @@ class HistoryState(eqx.Module):
             update_step=zeros_int32,
             fevals=zeros_int32,
             iterations=zeros_int32,
+            cursor=jnp.array(0, dtype=jnp.int32),
         )
 
     def reset(self) -> HistoryState:
-        """Reset the history state to initial NaN values."""
+        """Reset the history state to initial NaN values and cursor 0."""
         return self.init(max_iterations=self.output_min.shape[0])
 
     @classmethod
@@ -119,6 +128,8 @@ class HistoryState(eqx.Module):
         -------
         HistoryState
             History state populated with statistics from optimization history.
+            ``cursor`` is set to ``history.loss.shape[0]`` since the buffer
+            produced by the scan is fully filled.
         """
         # History has shape (n_iter, pop)
         # Compute statistics across P dimension for each time step
@@ -129,45 +140,49 @@ class HistoryState(eqx.Module):
             update_step=history.update_step,
             fevals=history.fevals,
             iterations=history.iterations,
+            cursor=jnp.array(history.loss.shape[0], dtype=jnp.int32),
         )
 
     def add(self, other: HistoryState) -> HistoryState:
         """
-        Append a multi-step HistoryState and drop the same number from the
-        front.
+        Insert ``other``'s entries front-to-back at ``self.cursor``.
+
+        Each field of ``other`` (length ``K``) is written into ``self`` at
+        positions ``[cursor, cursor + K)`` via ``dynamic_update_slice``;
+        the cursor is advanced by ``K``. Entries before ``cursor`` are
+        preserved unchanged. Existing padding past ``cursor + K`` is left
+        untouched (NaN floats, zero ints).
+
+        Precondition: ``self.cursor + K <= n_iterations``. The buffer is
+        sized to fit the full episode at the call site, so this is
+        guaranteed by construction in current callers (rl2co allocates
+        ``HistoryState.init(max_iterations + 1)``).
 
         Parameters
         ----------
         other : HistoryState
-            HistoryState to append.
+            HistoryState whose entries are appended at the cursor.
 
         Returns
         -------
         HistoryState
-            New HistoryState with appended values.
+            New HistoryState with ``other``'s entries written at the cursor
+            and ``cursor`` advanced by ``other.output_min.shape[0]``.
         """
-        # Number of steps to append
-        K = other.output_min.shape[0]
+        cursor = self.cursor
 
-        def push(a, b):
-            """Shift array a left by K and append b at the end."""
-            N = a.shape[0]
+        def write(a, b):
+            return jax.lax.dynamic_update_slice(a, b, (cursor,))
 
-            # 1. slice tail: a[K:]
-            tail = jax.lax.dynamic_slice(a, (K,), (N - K,))
-
-            # 2. create output buffer (length N)
-            out = jnp.empty_like(a)
-
-            # 3. write tail at the front
-            out = jax.lax.dynamic_update_slice(out, tail, (0,))
-
-            # 4. write new entries at the end
-            out = jax.lax.dynamic_update_slice(out, b, (N - K,))
-
-            return out
-
-        return jax.tree.map(push, self, other)
+        return HistoryState(
+            output_min=write(self.output_min, other.output_min),
+            output_mean=write(self.output_mean, other.output_mean),
+            output_std=write(self.output_std, other.output_std),
+            update_step=write(self.update_step, other.update_step),
+            fevals=write(self.fevals, other.fevals),
+            iterations=write(self.iterations, other.iterations),
+            cursor=cursor + other.output_min.shape[0],
+        )
 
     def to_xarray(self, budget_steps: int | None = None) -> xr.Dataset:
         """Convert history state to an xarray Dataset.
@@ -266,8 +281,11 @@ class HistoryState(eqx.Module):
         n_realizations = self.output_min.shape[0]
 
         for realization in range(n_realizations):
+            # Slice axis 0 uniformly: 2-D fields like ``output_min`` give
+            # the row at ``realization``; the 0-D ``cursor`` (which becomes
+            # 1-D under ``vmap``) gives the scalar for that realization.
             new_history: HistoryState = jax.tree.map(
-                lambda x: x[realization, :],  # noqa
+                lambda x: x[realization],  # noqa
                 self,
             )
             arrs.append(
