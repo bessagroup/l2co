@@ -18,8 +18,6 @@ Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)
 # =============================================================================
 
 # Local imports
-import bessaplots
-import matplotlib.pyplot as plt
 from l2co_tasks import Task
 
 from l2co import budget, naming, optimizers, plotting, sampling, tasks
@@ -52,8 +50,6 @@ __author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
 __credits__ = ["Martin van der Schelling"]
 __status__ = "Stable"
 # =============================================================================
-
-plt.style.use(["bessaplots"])
 
 __all__ = [
     "DataLoader",

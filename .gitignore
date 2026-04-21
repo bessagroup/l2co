@@ -170,6 +170,7 @@ AUDIT_REPORT.md
 NEXT_PROMPT.md
 CLAUDE.md
 
-# PDF files
+# Plots
 *.pdf
+*.pgf
 !overview.svg

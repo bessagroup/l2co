@@ -5,6 +5,7 @@ Plotting module
 # =============================================================================
 
 # Standard
+import math
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Literal
@@ -16,7 +17,7 @@ import jax.random as jr
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
-from bessaplots import TypstReport, savefig
+from bessaplots import FigureGrid, TypstReport, savefig
 from l2co_tasks import Task
 from matplotlib.colors import (
     ListedColormap,
@@ -699,16 +700,19 @@ def plot_ertd(
 
     match cost_metric:
         case "iterations":
-            ax.set_xlabel("Iterations / dimension")
+            # ax.set_xlabel("Iterations / dimension")
+            ax.set_xlabel("iterations / dim")
         case "fevals":
-            ax.set_xlabel("Function evaluations / dimension")
+            # ax.set_xlabel("Function evaluations / dimension")
+            ax.set_xlabel("f-evals / dim")
         case _:
             raise ValueError(
                 f"Invalid cost_metric: {cost_metric}. "
                 f"Choose 'fevals' or 'iterations'."
             )
 
-    ax.set_ylabel("Fraction of function, target pairs")
+    # ax.set_ylabel("Fraction of function, target pairs")
+    ax.set_ylabel("Fraction of solved targets")
 
     # --- Legend and Limits ---
     if show_legend:
@@ -834,7 +838,7 @@ def plot_single_r2(
     r2 = r2_score(y_t, y_p)
 
     # Scatter plot - smaller 's' and lower alpha for dense subfigures
-    ax.scatter(y_t, y_p, s=3, edgecolors="none", color="k")
+    ax.scatter(y_t, y_p, s=3, edgecolors="none", color="k", rasterized=True)
 
     # Define the limits for the diagonal line
     all_vals = np.concatenate([y_t, y_p])
@@ -1095,11 +1099,53 @@ def _save_and_collect(
     figures: list,
     paths: list,
     captions: list,
+    grid: FigureGrid | None = None,
+    first_column: bool = True,
+    last_row: bool = True,
     **savefig_kwargs,
 ):
-    """Save a figure and append to collection lists."""
+    """Save a figure and append to collection lists.
+
+    Parameters
+    ----------
+    fig : plt.Figure
+        The figure to save.
+    name : str
+        Base file name (without extension).
+    caption : str
+        Caption text for report generation.
+    save_dir : Path
+        Directory to write the file to.
+    figures : list
+        Accumulator for figure objects.
+    paths : list
+        Accumulator for saved file paths.
+    captions : list
+        Accumulator for caption strings.
+    grid : FigureGrid or None, optional
+        When provided, sizing and saving are handled by
+        :class:`~bessaplots.FigureGrid` instead of
+        :func:`~bessaplots.savefig`.
+    first_column : bool, optional
+        Whether this is the first figure in a row.
+    last_row : bool, optional
+        Whether this figure is in the bottom row of the grid.
+    **savefig_kwargs
+        Forwarded to :func:`~bessaplots.savefig` when
+        *grid* is ``None``.
+    """
     save_path = save_dir / f"{name}.pdf"
-    savefig(fig=fig, path=str(save_path), **savefig_kwargs)
+    if grid is not None:
+        fmt = savefig_kwargs.get("format", "pgf")
+        grid.save(
+            fig,
+            str(save_path),
+            first_column=first_column,
+            last_row=last_row,
+            format=fmt,
+        )
+    else:
+        savefig(fig=fig, path=str(save_path), **savefig_kwargs)
     paths.append(save_path.resolve())
     figures.append(fig)
     captions.append(caption)
@@ -1113,6 +1159,11 @@ def ertd_per_group(
     optimizers=None,
     line: float | None = None,
     save_dir: Path | None = None,
+    n_side_by_side: int = 4,
+    height: float = 1.0,
+    sharey: bool = False,
+    sharex: bool = False,
+    **savefig_kwargs,
 ) -> tuple[list[plt.Figure], list[Path], list[str]]:
     """Plot and save ERTD profiles for each group.
 
@@ -1132,6 +1183,16 @@ def ertd_per_group(
         X-coordinate for a vertical reference line.
     save_dir : Path or None, optional
         Directory to save plots to. Defaults to cwd.
+    n_side_by_side : int, optional
+        Number of figures per row. The default is ``4``.
+    height : float, optional
+        Height of each figure in the grid. The default is ``1.0``.
+    sharey : bool, optional
+        When ``True``, only the first figure in each row keeps its
+        y-axis label and tick labels.  Default is ``False``.
+    sharex : bool, optional
+        When ``True``, only the bottom row keeps its x-axis label
+        and tick labels.  Default is ``False``.
 
     Returns
     -------
@@ -1141,11 +1202,31 @@ def ertd_per_group(
     save_dir = Path(save_dir) if save_dir is not None else Path.cwd()
     figures, paths, captions = [], [], []
 
+    if sharey or sharex:
+        fig_grid = FigureGrid(
+            n_figures=n_side_by_side,
+            paper_size=savefig_kwargs.get("paper_size", "letter"),
+            span_columns=True,
+            height=height,
+            sharey=sharey,
+            sharex=sharex,
+        )
+    else:
+        fig_grid = None
+
+    n_groups = len(groups)
+    n_rows = math.ceil(n_groups / n_side_by_side)
+
+    ertd_idx = 0
     for filter_dict, name in groups:
         d_group = d.select_feature(filter_dict)
 
         fig, ax = plot_ertd_profile(d_group, show_legend=False)
         _add_eval_line(ax, line)
+
+        row_idx = ertd_idx // n_side_by_side
+        is_first_col = ertd_idx % n_side_by_side == 0
+        is_last_row = row_idx == n_rows - 1
 
         _save_and_collect(
             fig,
@@ -1155,10 +1236,15 @@ def ertd_per_group(
             figures,
             paths,
             captions,
-            n_side_by_side=4,
+            grid=fig_grid,
+            first_column=is_first_col,
+            last_row=is_last_row,
             span_columns=True,
-            height=1.0,
+            height=height,
+            n_side_by_side=n_side_by_side,
+            **savefig_kwargs,
         )
+        ertd_idx += 1
 
         if plot_actions is not None:
             fig_act, ax_act = plot_update_step(
@@ -1177,9 +1263,10 @@ def ertd_per_group(
                 figures,
                 paths,
                 captions,
-                n_side_by_side=4,
                 span_columns=True,
-                height=1.0,
+                height=height,
+                n_side_by_side=n_side_by_side,
+                **savefig_kwargs,
             )
 
     return figures, paths, captions
