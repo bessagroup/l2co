@@ -685,7 +685,7 @@ def plot_ertd(
 
     # --- Labels and Optional Annotations ---
     if title_text:
-        ax.set_title(title_text, fontsize=16)
+        ax.set_title(title_text)
 
     if top_left_text:
         # Places text like '5-D' in the top left corner of the plot area
@@ -694,7 +694,6 @@ def plot_ertd(
             0.98,
             top_left_text,
             transform=ax.transAxes,
-            fontsize=14,
             verticalalignment="top",
         )
 
@@ -712,7 +711,7 @@ def plot_ertd(
             )
 
     # ax.set_ylabel("Fraction of function, target pairs")
-    ax.set_ylabel("Fraction of solved targets")
+    ax.set_ylabel("Fraction of targets")
 
     # --- Legend and Limits ---
     if show_legend:
@@ -721,8 +720,6 @@ def plot_ertd(
         ax.legend(
             # Position inside the axes
             loc="best",
-            # IEEE standard for legends is often 7pt
-            fontsize=7,
             # Enable the box
             frameon=True,
             # IEEE style usually prefers square corners
@@ -802,7 +799,6 @@ def plot_r2(y_true: xr.DataArray, y_pred: xr.DataArray):
             0.95,
             text_str,
             transform=ax.transAxes,
-            fontsize=12,
             verticalalignment="top",
             bbox=props,
         )
@@ -863,15 +859,12 @@ def plot_single_r2(
         0.95,
         text_str,
         transform=ax.transAxes,
-        fontsize=7,
         verticalalignment="top",
         bbox=props,
     )
 
-    # IEEE Formatting: Keep titles and labels compact
-    # ax.set_title(label, fontsize=8)
-    ax.set_xlabel("True labels", fontsize=8)
-    ax.set_ylabel("Predicted labels", fontsize=8)
+    ax.set_xlabel("True labels")
+    ax.set_ylabel("Predicted labels")
 
     ax.set_xticklabels([])
     ax.set_yticklabels([])
@@ -909,7 +902,6 @@ def plot_metrics(metrics: dict[str, Iterable[float]]):
 
     ax.legend(
         loc="best",
-        fontsize=7,
         frameon=True,
         fancybox=False,
         edgecolor="#BBBBBB",
@@ -1053,7 +1045,6 @@ def plot_update_step(
         ax.legend(
             handles=legend_elements,
             loc="best",
-            fontsize=7,
             frameon=True,
             fancybox=False,
             edgecolor="#BBBBBB",
