@@ -243,3 +243,41 @@ def grid_sampling(
     return jax.tree_util.tree_unflatten(
         jax.tree_util.tree_structure(params), grid_params
     )
+
+
+# =============================================================================
+
+SAMPLER_MAPPING: dict[str, Callable[..., InputParameters]] = {
+    "random": random_sampling,
+    "normal": normal_sampling,
+    "xavier": xavier_sampling,
+    "constant": constant_sampling,
+    "grid": grid_sampling,
+}
+
+
+def get_sampler(name: str) -> Callable[..., InputParameters]:
+    """Get a sampler function by name.
+
+    Parameters
+    ----------
+    name : str
+        Name of the sampler to retrieve. Must be one of "random", "normal",
+        "xavier", "constant", or "grid".
+
+    Returns
+    -------
+    Callable[..., InputParameters]
+        The corresponding sampler function.
+
+    Raises
+    ------
+    ValueError
+        If the provided name does not correspond to a valid sampler.
+    """
+    if name not in SAMPLER_MAPPING:
+        raise ValueError(
+            f"Sampler '{name}' is not recognized. "
+            f"Valid options are: {list(SAMPLER_MAPPING.keys())}"
+        )
+    return SAMPLER_MAPPING[name]
