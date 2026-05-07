@@ -299,7 +299,7 @@ class ScikitStage0Model(Stage0Model):
             Predicted logits aligned to data coordinates.
         """
         task_features = data.x_features_task.reindex(
-            {FEATURE: self.feature_processor_task.schema.keys()}
+            {FEATURE: self.feature_processor_task.vocabs.keys()}
         )
         x = jnp.array(task_features)
         logits = jnp.array(self.model.predict(x))

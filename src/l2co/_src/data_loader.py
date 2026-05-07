@@ -282,7 +282,7 @@ class DataLoader:
                 x_features,
                 coords={
                     PROBLEM: self.problems,
-                    FEATURE: list(feature_processor_task.schema.keys()),
+                    FEATURE: list(feature_processor_task.vocabs.keys()),
                 },
                 dims=[PROBLEM, FEATURE],
             ),

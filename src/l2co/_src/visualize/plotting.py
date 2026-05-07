@@ -31,15 +31,19 @@ from sklearn.metrics import r2_score
 from l2co._src.batching import BatchState
 from l2co._src.data_loader import DataLoader
 from l2co._src.naming import (
+    BUDGET,
     FEATURE,
     FEVALS,
+    GLOBAL_MIN,
     ITERATIONS,
     OUTPUT_DIM,
+    OUTPUT_MIN,
     PROBLEM,
     SCHEDULE,
     UPDATE_STEP,
 )
 from l2co._src.optimizerschedule import OptimizationStep
+from l2co._src.performance import EPSILON
 from l2co._src.sampler import grid_sampling
 from l2co._src.update_class import evaluate
 from l2co._src.visualize.colors import LABEL_MAP, get_schedule_styles
@@ -922,6 +926,7 @@ def plot_update_step(
     cost_metric: Literal["fevals", "iterations"] | None = None,
     ax: plt.Axes | None = None,
     show_legend: bool = True,
+    hide_when_done: bool = False,
 ):
     """Plot a colour-coded raster of optimizer selections.
 
@@ -942,6 +947,13 @@ def plot_update_step(
         Existing axes. Creates new figure when ``None``.
     show_legend : bool, optional
         Whether to display a legend, by default True.
+    hide_when_done : bool, optional
+        When ``True``, every step from the first one whose running
+        ``OUTPUT_MIN`` reaches within ``EPSILON`` of the task's
+        ``global_min`` onwards is rendered in black instead of the
+        optimizer colour, indicating that the problem was already
+        solved and subsequent optimizer choices are immaterial.
+        Default is ``False``.
 
     Returns
     -------
@@ -954,6 +966,16 @@ def plot_update_step(
     update_step = (
         d.data[UPDATE_STEP].isel({OUTPUT_DIM: 0}).sel({SCHEDULE: schedule})
     )
+    if hide_when_done:
+        output_min = (
+            d.data[OUTPUT_MIN].isel({OUTPUT_DIM: 0}).sel({SCHEDULE: schedule})
+        )
+        global_min = d.task_labels.sel(
+            {FEATURE: GLOBAL_MIN}, drop=True
+        ).astype(float)
+    else:
+        output_min = None
+        global_min = None
     match cost_metric:
         case "fevals":
             cost_metric = (
@@ -982,6 +1004,8 @@ def plot_update_step(
         update_step = update_step.transpose("problem", ...)
         if cost_metric is not None:
             cost_metric = cost_metric.transpose("problem", ...)
+        if output_min is not None:
+            output_min = output_min.transpose("problem", ...)
 
     # 2. Prepare Mappings
     opt_hashes = [opt.hash for opt in optimizers]
@@ -994,6 +1018,27 @@ def plot_update_step(
     indexed_data = np.zeros_like(z_data, dtype=int)
     for i, opt_hash in enumerate(opt_hashes):
         indexed_data[z_data == opt_hash] = i
+
+    # 3b. Optionally mark steps where the task is already solved.
+    # We append black as an extra colormap entry at index len(optimizers).
+    done_index = len(opt_hashes)
+    if hide_when_done:
+        # Take the running minimum along the budget axis so that once the
+        # global minimum is first hit, every subsequent step stays masked.
+        # `np.fmin.accumulate` ignores NaNs along the way; NaN cells
+        # then compare False against `global_min` and stay unmasked.
+        running_min = xr.apply_ufunc(
+            np.fmin.accumulate,
+            output_min,
+            input_core_dims=[[BUDGET]],
+            output_core_dims=[[BUDGET]],
+            kwargs={"axis": -1},
+        )
+        done_mask = (running_min <= global_min + EPSILON).values
+        indexed_data[done_mask] = done_index
+        cmap_colors = list(hex_colors) + ["black"]
+    else:
+        cmap_colors = list(hex_colors)
 
     n_problems, n_steps = indexed_data.shape
 
@@ -1015,9 +1060,11 @@ def plot_update_step(
 
     # 5. Plotting
     fig, ax = _get_or_create_axes(ax=ax)
-    cmap = ListedColormap(hex_colors)
+    cmap = ListedColormap(cmap_colors)
 
-    # Use shading="nearest" to center colors on coordinates
+    # Pin vmin/vmax so the colormap mapping is stable regardless of
+    # which indices actually appear in Z (e.g. no "done" cells, or
+    # an optimizer that was never selected).
     ax.pcolormesh(
         X,
         Y,
@@ -1025,6 +1072,8 @@ def plot_update_step(
         cmap=cmap,
         shading="nearest",
         edgecolors="none",
+        vmin=0,
+        vmax=len(cmap_colors) - 1,
     )
 
     # 6. IEEE Style Legend
