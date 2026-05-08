@@ -931,7 +931,11 @@ def plot_update_step(
     """Plot a colour-coded raster of optimizer selections.
 
     Each row represents a problem and each column a budget
-    step, coloured by which optimizer was active.
+    step, coloured by which optimizer was active. Budget cells
+    that were never written by the rollout (the padding region
+    after a problem terminates early) are rendered in white so
+    that the per-optimizer colour mapping is independent of the
+    order of ``optimizers``.
 
     Parameters
     ----------
@@ -1014,8 +1018,15 @@ def plot_update_step(
     display_names = [LABEL_MAP[opt.name] for opt in optimizers]
 
     # 3. Reclassification
+    # Cells of `update_step` that were never written by the rollout (the
+    # padding region after a problem terminates early) remain at the int32
+    # zero used by `HistoryState.init`. Optimizer hashes are 6-hex sha256
+    # prefixes, so 0 cannot collide with a real hash; we use -1 here as
+    # an unambiguous "no optimizer" sentinel and mask those cells when
+    # plotting so they render in a fixed background colour rather than
+    # silently inheriting whichever optimizer happens to sit at index 0.
     z_data = update_step.astype(int).values
-    indexed_data = np.zeros_like(z_data, dtype=int)
+    indexed_data = np.full(z_data.shape, -1, dtype=int)
     for i, opt_hash in enumerate(opt_hashes):
         indexed_data[z_data == opt_hash] = i
 
@@ -1040,11 +1051,37 @@ def plot_update_step(
     else:
         cmap_colors = list(hex_colors)
 
+    # Mask unmatched cells so they render via cmap.set_bad rather than
+    # being mapped to whichever optimizer sits at index 0.
+    unmatched_mask = indexed_data == -1
+    indexed_data = np.ma.array(indexed_data, mask=unmatched_mask)
+
     n_problems, n_steps = indexed_data.shape
 
     # 4. Coordinate Logic
     if cost_metric is not None:
-        X = cost_metric.values
+        X = cost_metric.values.astype(float)
+        # Forward-fill NaN along the BUDGET axis. NaNs appear when
+        # `d.data` was assembled from problems with different BUDGET
+        # sizes (xarray's outer-join concat pads short rows with NaN
+        # in FEVALS / ITERATIONS, mirroring the same padding that
+        # produces unmatched UPDATE_STEP cells above). Without this
+        # fill, `pcolormesh(shading="nearest")` computes the right
+        # edge of the last visible cell as (X[j]+X[j+1])/2 = NaN and
+        # fails to render it — the Z mask only suppresses the masked
+        # cell, not its X-coord influence on neighbours. Carry-forward
+        # collapses the last visible cell to half-width on the right
+        # but keeps every drawn cell well-defined.
+        nan_mask = np.isnan(X)
+        if nan_mask.any():
+            col_idx = np.where(~nan_mask, np.arange(X.shape[1])[None, :], 0)
+            col_idx = np.maximum.accumulate(col_idx, axis=1)
+            row_idx = np.arange(X.shape[0])[:, None]
+            X = X[row_idx, col_idx]
+            # Rows that are entirely NaN (a problem missing from this
+            # schedule) have nothing meaningful to plot; fill with 0
+            # so matplotlib still produces a degenerate but valid mesh.
+            X = np.nan_to_num(X, nan=0.0)
         problem_indices = np.arange(n_problems)
         # Broadcast Y to match X: (n_problems, n_steps)
         Y = np.broadcast_to(
@@ -1061,6 +1098,7 @@ def plot_update_step(
     # 5. Plotting
     fig, ax = _get_or_create_axes(ax=ax)
     cmap = ListedColormap(cmap_colors)
+    cmap.set_bad(color="white")
 
     # Pin vmin/vmax so the colormap mapping is stable regardless of
     # which indices actually appear in Z (e.g. no "done" cells, or

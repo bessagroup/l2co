@@ -71,7 +71,9 @@ __status__ = "Stable"
 # =============================================================================
 
 # DEFAULT_COST_VALUES = np.logspace(-1, 6, 100) ** 0.8
-DEFAULT_COST_VALUES = np.append(np.logspace(-1, 6, 1000) ** 0.8, 10**5)
+DEFAULT_COST_VALUES = np.concatenate(
+    ([10**-1], np.logspace(-1, 6, 1000) ** 0.8, [10**5])
+)
 
 #                                                                   Data Loader
 # =============================================================================
