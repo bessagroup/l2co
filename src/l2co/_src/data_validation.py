@@ -14,11 +14,9 @@ import f3dasm
 import numpy as np
 import pandas as pd
 import xarray as xr
-from l2co_tasks import Task
 from tqdm import tqdm
 
 # Local
-from l2co._src.optimizerschedule import OptimizationStep
 from l2co._src.performance import output_cummin
 from l2co._src.validation import validation_fn
 from l2co.naming import (
@@ -51,69 +49,144 @@ OPTIMIZATION_DATA_SUFFIX = ".odata"
 logger = logging.getLogger("l2co")
 
 loss_column_name: str = "loss history"
-optimizer_column_name: str = "optimizer schedule"
-task_column_name: str = "task"
 
 # =============================================================================
 
-DEFAULT_TARGETS = np.logspace(-8, 2, 51)
+HARDEST_TARGET_QV = 1e-8
+DEFAULT_EASIEST_TARGET_QV = 1e2
+N_TARGETS = 51
 
 
-def quality_value(x: xr.DataArray, g_min: float) -> xr.DataArray:
-    """Compute scaled quality value relative to global minimum.
+def _fallback_targets(n_targets: int) -> np.ndarray:
+    return np.logspace(
+        np.log10(HARDEST_TARGET_QV),
+        np.log10(DEFAULT_EASIEST_TARGET_QV),
+        n_targets,
+    )
+
+
+def shift_to_quality_value(data: xr.Dataset, g_min: float) -> xr.Dataset:
+    """Shift ``output_min`` into quality-value space (``g_min == 0``).
+
+    Subtracts the task's global minimum from ``output_min`` so the
+    resulting dataset lives in quality-value space, where the optimum
+    is 0 and the hardest target ``1e-8`` is meaningful regardless of
+    the original scale of the objective. If ``g_min`` is NaN, the
+    minimum of ``output_min`` over the data is used as a fallback.
 
     Parameters
     ----------
-    x : xr.DataArray
-        Cumulative-minimum output values.
+    data : xr.Dataset
+        Per-task optimization dataset.
     g_min : float
-        Global minimum. If NaN, the data minimum is used.
+        Task's global minimum (NaN allowed; falls back to data min).
 
     Returns
     -------
-    xr.DataArray
-        Scaled quality values where 0 indicates the optimum.
+    xr.Dataset
+        Copy of ``data`` with ``output_min`` shifted by ``-g_min``.
     """
     if np.isnan(g_min):
-        g_min = x.min(skipna=True)
-    qv = x - g_min
+        g_min = float(data[OUTPUT_MIN].min(skipna=True))
+    return data.assign({OUTPUT_MIN: data[OUTPUT_MIN] - g_min})
 
-    # # scaling
-    # sf = (
-    #     1
-    #     / qv.isel({BUDGET: 0})
-    #     .quantile(q=0.5, skipna=True)
-    #     .drop_vars("quantile")
-    # ) * DEFAULT_TARGETS[-1]
-    return qv  # * sf
+
+def compute_task_targets(
+    data_qv: xr.Dataset, n_targets: int = N_TARGETS
+) -> np.ndarray:
+    """Build per-task log-spaced ERT targets in quality-value space.
+
+    Expects ``data_qv`` already shifted so that ``global_min == 0``
+    (see :func:`shift_to_quality_value`). The hardest target is
+    ``1e-8`` and the easiest is the 25th-percentile of the
+    ``random_search`` baseline's ``output_min`` values flattened
+    across all remaining dims (typically ``REALIZATION`` x ``BUDGET``
+    x any ``random_search`` schedules). Intermediate targets are
+    log-spaced between these endpoints.
+
+    Falls back to ``np.logspace(-8, 2, n_targets)`` if any of the
+    following holds:
+
+    * no ``random_search`` schedule is present for this task,
+    * the easiest quality value is non-finite or not strictly above
+      the hardest target.
+
+    Parameters
+    ----------
+    data_qv : xr.Dataset
+        Per-task dataset with ``output_min`` already in quality-value
+        space and a ``schedule`` coordinate whose values are
+        ``OptimizationStep.name`` strings.
+    n_targets : int, optional
+        Number of target levels to produce, by default ``51``.
+
+    Returns
+    -------
+    np.ndarray
+        1-D array of ``n_targets`` log-spaced target quality values,
+        sorted from hardest (``1e-8``) to easiest.
+    """
+    if SCHEDULE not in data_qv.coords or OUTPUT_MIN not in data_qv.data_vars:
+        return _fallback_targets(n_targets)
+
+    schedule_names = np.asarray(data_qv[SCHEDULE].values, dtype=str)
+    mask = np.array(
+        [name.startswith("random_search") for name in schedule_names]
+    )
+    if not mask.any():
+        return _fallback_targets(n_targets)
+
+    rs = data_qv[OUTPUT_MIN].isel({SCHEDULE: np.where(mask)[0]})
+    easiest_qv = float(rs.quantile(0.25, skipna=True))
+
+    if not np.isfinite(easiest_qv) or easiest_qv <= HARDEST_TARGET_QV:
+        return _fallback_targets(n_targets)
+
+    return np.logspace(
+        np.log10(HARDEST_TARGET_QV), np.log10(easiest_qv), n_targets
+    )
 
 
 def calculate_ert(data: xr.Dataset) -> xr.Dataset:
     """Calculate Expected Running Time (ERT) metrics.
 
+    Shifts ``output_min`` into quality-value space (subtracting
+    ``global_min``, falling back to the data minimum when it is NaN)
+    so the optimum is 0, then derives targets per task via
+    :func:`compute_task_targets`: the hardest target is ``1e-8``
+    (i.e. within ``1e-8`` of the global minimum) and the easiest is
+    the 25th-percentile of the ``random_search`` baseline's shifted
+    ``output_min`` values, with the remaining levels log-spaced
+    between them. The actual target quality values are returned as
+    the ``target_value`` data variable so they survive concatenation
+    along ``TASK_ID``; the ``target`` dim itself is an integer index
+    ``0..n_targets-1``.
+
     Parameters
     ----------
     data : xr.Dataset
         Optimization dataset with ``output_min``, ``fevals``,
-        and ``iterations`` variables.
+        and ``iterations`` variables and a ``schedule`` coordinate.
 
     Returns
     -------
     xr.Dataset
-        Dataset with ``cost`` and ``success`` variables
-        across target quality levels.
+        Dataset with ``cost``, ``success``, and ``target_value``
+        variables across the per-task target quality levels.
     """
     raw_g_min = data.coords.get(GLOBAL_MIN, np.nan)
     raw_g_min = raw_g_min if raw_g_min is not None else np.nan
     g_min = raw_g_min if not np.isnan(raw_g_min) else np.nan
 
-    x = output_cummin(data[OUTPUT_MIN]).ffill(BUDGET)
-    qv = quality_value(x, g_min)
+    data_qv = shift_to_quality_value(data, g_min)
 
-    qv = qv.fillna(np.inf)
+    targets_np = compute_task_targets(data_qv)
+    target_idx = np.arange(len(targets_np))
+
+    qv = output_cummin(data_qv[OUTPUT_MIN]).ffill(BUDGET).fillna(np.inf)
 
     targets = xr.DataArray(
-        DEFAULT_TARGETS, dims=TARGET, coords={TARGET: DEFAULT_TARGETS}
+        targets_np, dims=TARGET, coords={TARGET: target_idx}
     )
     solved = qv <= targets
     success = solved.any(BUDGET)
@@ -139,6 +212,7 @@ def calculate_ert(data: xr.Dataset) -> xr.Dataset:
         {
             COST: cost_da,
             SUCCESS: success,
+            "target_value": targets,
         }
     )
     if GLOBAL_MIN in result.coords:
@@ -150,13 +224,20 @@ def calculate_ert(data: xr.Dataset) -> xr.Dataset:
 
 
 def create_combined_odata(
-    experiment_data: f3dasm.ExperimentData, budget_steps: int
+    experiment_data: f3dasm.ExperimentData,
+    budget_steps: int,
+    tasks_experiment_data: f3dasm.ExperimentData,
+    schedules_experiment_data: f3dasm.ExperimentData,
 ):
     """Build a combined optimization dataset from experiment data.
 
     Loads per-task loss histories, computes ERT performance
     metrics and validation trajectories, merges them with
     task labels, and saves the result to disk.
+
+    Each row of ``experiment_data`` carries integer ``task_idx`` and
+    ``optimizer_idx`` parameters that index into the rows of
+    ``tasks_experiment_data`` and ``schedules_experiment_data``.
 
     Parameters
     ----------
@@ -165,6 +246,12 @@ def create_combined_odata(
     budget_steps : int
         Number of budget interpolation steps for
         trajectory validation.
+    tasks_experiment_data : f3dasm.ExperimentData
+        Source ExperimentData whose ``task`` output column is indexed
+        by ``experiment_data["task_idx"]``.
+    schedules_experiment_data : f3dasm.ExperimentData
+        Source ExperimentData whose ``optimizer`` input column is
+        indexed by ``experiment_data["optimizer_idx"]``.
     """
     # Only select finished experiments and reset the index
     experiment_data = experiment_data.select_with_status(
@@ -173,14 +260,6 @@ def create_combined_odata(
 
     df_input, df_output = experiment_data.to_pandas(keep_references=True)
 
-    # preceed every entry of df_output with experimentdata.project_dir
-    df_input = df_input.map(
-        lambda row: Path(experiment_data.project_dir)
-        / "experiment_data"
-        / row.reference,
-        na_action="ignore",
-    )
-
     df_output = df_output.map(
         lambda row: Path(experiment_data.project_dir)
         / "experiment_data"
@@ -188,20 +267,19 @@ def create_combined_odata(
         na_action="ignore",
     )
 
-    df = pd.concat(
-        [
-            df_input[task_column_name],
-            df_input[optimizer_column_name],
-            df_output[loss_column_name],
-        ],
-        axis=1,
-    )
+    tasks = [es.output_data["task"] for _, es in tasks_experiment_data]
+    schedules = [
+        es.input_data["optimizer"] for _, es in schedules_experiment_data
+    ]
 
-    temp_df = df.copy()
-
-    temp_df[TASK_ID] = temp_df[task_column_name].apply(lambda x: Task.load(x))
-    temp_df[SCHEDULE] = temp_df[optimizer_column_name].apply(
-        lambda x: OptimizationStep.load(x)
+    temp_df = pd.DataFrame(
+        {
+            TASK_ID: df_input["task_idx"].apply(lambda i: tasks[int(i)]),
+            SCHEDULE: df_input["optimizer_idx"].apply(
+                lambda i: schedules[int(i)]
+            ),
+            loss_column_name: df_output[loss_column_name],
+        }
     )
 
     pivot_table = temp_df.pivot(

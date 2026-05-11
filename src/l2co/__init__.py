@@ -35,7 +35,10 @@ from l2co._src.models import (
     Stage0Model,
 )
 from l2co._src.opt_history import OptHistory
-from l2co._src.optimizers import optimizer_mapping
+from l2co._src.optimizers import (
+    create_schedules_experimentdata,
+    optimizer_mapping,
+)
 from l2co._src.optimizerschedule import OptimizationStep
 from l2co._src.preprocessing import preprocessing_factory
 from l2co._src.run_optimization import RolloutWrapper, RunOptimization
@@ -81,4 +84,5 @@ __all__ = [
     "Stage0Model",
     "tree_utils",
     "create_combined_odata",
+    "create_schedules_experimentdata",
 ]

@@ -145,3 +145,50 @@ def test_all_optimizers(optimizer: str):
         sampler=normal_sampling,
         include_input_mean=False,
     )
+
+
+def test_random_search_one_shot_shapes_and_best():
+    """Random search must emit one row per iteration and sum fevals correctly.
+
+    Random search bypasses the scan loop and evaluates all
+    ``n_iterations * popsize`` candidates in a single batched call, so the
+    standard ``HistoryState`` contract has to be reconstructed by reshape.
+    This test pins the externally observable shape/semantics:
+
+    * ``output_min`` has one entry per logical iteration;
+    * ``fevals`` sums to ``n_iterations * popsize``;
+    * the reported ``best_loss`` is the global best across all candidates.
+    """
+    n_iterations = 7
+    popsize = 4
+    task = create_bbob_task(
+        fn_name="sphere",
+        seed=0,
+        dimensionality=3,
+    )
+    optimizer = OptimizationStep(
+        optimizer="random_search",
+        hyperparameters={"sampler": "normal", "popsize": popsize},
+    )
+
+    key = jr.key(0)
+    rollout_wrapper = RolloutWrapper.init(
+        optimizer=optimizer,
+        task=task,
+        sampler=normal_sampling,
+        key=key,
+        bounded=(None, None),
+    )
+    run_state, _, history_state = rollout_wrapper.batch_evaluate(
+        key=key,
+        n_iterations=n_iterations,
+        n_realizations=1,
+    )
+
+    assert history_state.output_min.shape == (1, n_iterations)
+    assert int(history_state.fevals.sum()) == n_iterations * popsize
+    # Global best must be at least as good as any per-iteration min.
+    assert (
+        float(run_state.best_loss[0])
+        <= float(history_state.output_min.min()) + 1e-6
+    )

@@ -24,6 +24,10 @@ OPTIMIZATION_STEPS = [
         },
     ),
     OptimizationStep(optimizer="pso"),
+    OptimizationStep(
+        optimizer="random_search",
+        hyperparameters={"sampler": "normal", "popsize": 8},
+    ),
 ]
 
 ALL_OPTIMIZERS = list(optimizers.keys())
