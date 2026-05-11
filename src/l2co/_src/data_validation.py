@@ -78,14 +78,14 @@ def quality_value(x: xr.DataArray, g_min: float) -> xr.DataArray:
         g_min = x.min(skipna=True)
     qv = x - g_min
 
-    # scaling
-    sf = (
-        1
-        / qv.isel({BUDGET: 0})
-        .quantile(q=0.5, skipna=True)
-        .drop_vars("quantile")
-    ) * DEFAULT_TARGETS[-1]
-    return qv * sf
+    # # scaling
+    # sf = (
+    #     1
+    #     / qv.isel({BUDGET: 0})
+    #     .quantile(q=0.5, skipna=True)
+    #     .drop_vars("quantile")
+    # ) * DEFAULT_TARGETS[-1]
+    return qv  # * sf
 
 
 def calculate_ert(data: xr.Dataset) -> xr.Dataset:
