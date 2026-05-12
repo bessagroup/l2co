@@ -55,6 +55,7 @@ loss_column_name: str = "loss history"
 HARDEST_TARGET_QV = 1e-8
 DEFAULT_EASIEST_TARGET_QV = 1e2
 N_TARGETS = 51
+DEFAULT_EASIEST_QUANTILE = 0.75
 
 
 def _fallback_targets(n_targets: int) -> np.ndarray:
@@ -92,17 +93,21 @@ def shift_to_quality_value(data: xr.Dataset, g_min: float) -> xr.Dataset:
 
 
 def compute_task_targets(
-    data_qv: xr.Dataset, n_targets: int = N_TARGETS
+    data_qv: xr.Dataset,
+    n_targets: int = N_TARGETS,
+    easiest_quantile: float = DEFAULT_EASIEST_QUANTILE,
 ) -> np.ndarray:
     """Build per-task log-spaced ERT targets in quality-value space.
 
     Expects ``data_qv`` already shifted so that ``global_min == 0``
     (see :func:`shift_to_quality_value`). The hardest target is
-    ``1e-8`` and the easiest is the 25th-percentile of the
-    ``random_search`` baseline's ``output_min`` values flattened
-    across all remaining dims (typically ``REALIZATION`` x ``BUDGET``
-    x any ``random_search`` schedules). Intermediate targets are
-    log-spaced between these endpoints.
+    ``1e-8`` and the easiest is set so that ``easiest_quantile`` of
+    the ``random_search`` baseline's ``output_min`` values lie above
+    (i.e. are worse than) it — equivalently, the
+    ``(1 - easiest_quantile)``-quantile of those values. Random_search
+    values are flattened across all remaining dims (typically
+    ``REALIZATION`` x ``BUDGET`` x any ``random_search`` schedules).
+    Intermediate targets are log-spaced between these endpoints.
 
     Falls back to ``np.logspace(-8, 2, n_targets)`` if any of the
     following holds:
@@ -119,6 +124,10 @@ def compute_task_targets(
         ``OptimizationStep.name`` strings.
     n_targets : int, optional
         Number of target levels to produce, by default ``51``.
+    easiest_quantile : float, optional
+        Fraction of ``random_search`` ``output_min`` values that
+        should lie above (be worse than) the easiest target.
+        Must be in ``(0, 1)``. Default ``0.75``.
 
     Returns
     -------
@@ -126,6 +135,11 @@ def compute_task_targets(
         1-D array of ``n_targets`` log-spaced target quality values,
         sorted from hardest (``1e-8``) to easiest.
     """
+    if not 0.0 < easiest_quantile < 1.0:
+        raise ValueError(
+            f"easiest_quantile must be in (0, 1), got {easiest_quantile}"
+        )
+
     if SCHEDULE not in data_qv.coords or OUTPUT_MIN not in data_qv.data_vars:
         return _fallback_targets(n_targets)
 
@@ -137,7 +151,7 @@ def compute_task_targets(
         return _fallback_targets(n_targets)
 
     rs = data_qv[OUTPUT_MIN].isel({SCHEDULE: np.where(mask)[0]})
-    easiest_qv = float(rs.quantile(0.25, skipna=True))
+    easiest_qv = float(rs.quantile(1.0 - easiest_quantile, skipna=True))
 
     if not np.isfinite(easiest_qv) or easiest_qv <= HARDEST_TARGET_QV:
         return _fallback_targets(n_targets)
@@ -147,7 +161,10 @@ def compute_task_targets(
     )
 
 
-def calculate_ert(data: xr.Dataset) -> xr.Dataset:
+def calculate_ert(
+    data: xr.Dataset,
+    easiest_quantile: float = DEFAULT_EASIEST_QUANTILE,
+) -> xr.Dataset:
     """Calculate Expected Running Time (ERT) metrics.
 
     Shifts ``output_min`` into quality-value space (subtracting
@@ -155,18 +172,22 @@ def calculate_ert(data: xr.Dataset) -> xr.Dataset:
     so the optimum is 0, then derives targets per task via
     :func:`compute_task_targets`: the hardest target is ``1e-8``
     (i.e. within ``1e-8`` of the global minimum) and the easiest is
-    the 25th-percentile of the ``random_search`` baseline's shifted
-    ``output_min`` values, with the remaining levels log-spaced
-    between them. The actual target quality values are returned as
-    the ``target_value`` data variable so they survive concatenation
-    along ``TASK_ID``; the ``target`` dim itself is an integer index
-    ``0..n_targets-1``.
+    set so that ``easiest_quantile`` of the ``random_search``
+    baseline's shifted ``output_min`` values lie above (i.e. are
+    worse than) it, with the remaining levels log-spaced between
+    them. The actual target quality values are returned as the
+    ``target_value`` data variable so they survive concatenation
+    along ``TASK_ID``; the ``target`` dim itself is an integer
+    index ``0..n_targets-1``.
 
     Parameters
     ----------
     data : xr.Dataset
         Optimization dataset with ``output_min``, ``fevals``,
         and ``iterations`` variables and a ``schedule`` coordinate.
+    easiest_quantile : float, optional
+        Fraction of ``random_search`` values that should lie above
+        the easiest target. Default ``0.75``.
 
     Returns
     -------
@@ -180,7 +201,9 @@ def calculate_ert(data: xr.Dataset) -> xr.Dataset:
 
     data_qv = shift_to_quality_value(data, g_min)
 
-    targets_np = compute_task_targets(data_qv)
+    targets_np = compute_task_targets(
+        data_qv, easiest_quantile=easiest_quantile
+    )
     target_idx = np.arange(len(targets_np))
 
     qv = output_cummin(data_qv[OUTPUT_MIN]).ffill(BUDGET).fillna(np.inf)
@@ -228,6 +251,7 @@ def create_combined_odata(
     budget_steps: int,
     tasks_experiment_data: f3dasm.ExperimentData,
     schedules_experiment_data: f3dasm.ExperimentData,
+    easiest_quantile: float = DEFAULT_EASIEST_QUANTILE,
 ):
     """Build a combined optimization dataset from experiment data.
 
@@ -252,6 +276,10 @@ def create_combined_odata(
     schedules_experiment_data : f3dasm.ExperimentData
         Source ExperimentData whose ``optimizer`` input column is
         indexed by ``experiment_data["optimizer_idx"]``.
+    easiest_quantile : float, optional
+        Fraction of ``random_search`` ``output_min`` values that
+        should lie above (be worse than) the per-task easiest ERT
+        target. Forwarded to :func:`calculate_ert`. Default ``0.75``.
     """
     # Only select finished experiments and reset the index
     experiment_data = experiment_data.select_with_status(
@@ -354,7 +382,7 @@ def create_combined_odata(
             xr.DataArray(task_ids, coords=[task_ids], dims=[TASK_ID]),
         ],
         parallel=False,
-        preprocess=calculate_ert,
+        preprocess=partial(calculate_ert, easiest_quantile=easiest_quantile),
         coords="minimal",
         join="outer",
     )

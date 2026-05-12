@@ -45,7 +45,7 @@ from l2co._src.run_optimization import RolloutWrapper, RunOptimization
 from l2co._src.run_state import RunState, reset, run
 from l2co._src.task_features import FeatureProcessor, MixedEmbedding
 from l2co._src.update_class import UpdateClass, evaluate
-from l2co._src.validation import validation_fn
+from l2co._src.validation import normalize_budget_grid, validation_fn
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -70,6 +70,7 @@ __all__ = [
     "BatchState",
     "OptHistory",
     "optimizer_mapping",
+    "normalize_budget_grid",
     "validation_fn",
     "L2COModel",
     "preprocessing_factory",
