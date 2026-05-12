@@ -367,4 +367,4 @@ def random_search_update(
 
 # =============================================================================
 
-random_search_mapping = {"random_search": Partial(random_search_update)}
+random_search_mapping = {"randomsearch": Partial(random_search_update)}

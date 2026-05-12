@@ -66,12 +66,14 @@ BASE_OPT_STYLES.update(
         "stage0": OptStyle(color="#BBBBBB", marker=None, linestyle="--"),
         "l2co": OptStyle(color="#000000", marker=None, linestyle="-"),
         "rl2co": OptStyle(color="#FF0000", marker=None, linestyle="-"),
+        "randomsearch": OptStyle(color="#888888", marker=None, linestyle=":"),
     }
 )
 
 
 LABEL_MAP = {
     "sepcmaes": "Sep-CMA-ES",
+    "randomsearch": "Random search",
     # "l2co": r"\textbf{L2CO (Ours)}",  # You can even use LaTeX bold here
     "lbfgs": "L-BFGS",
     "pso": "PSO",

@@ -159,6 +159,9 @@ class OptimizationStep:
             stem = Path(model_path).stem if model_path else ""
             return f"rl2co_{stem}".strip("_")
 
+        elif self.optimizer.startswith("randomsearch"):
+            return "randomsearch"
+
         hyperparameters = "_".join(
             [f"{k}={v}" for k, v in self.hyperparameters.items()]
         )

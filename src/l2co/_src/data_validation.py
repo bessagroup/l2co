@@ -17,19 +17,17 @@ import xarray as xr
 from tqdm import tqdm
 
 # Local
-from l2co._src.performance import output_cummin
+from l2co._src.performance import (
+    DEFAULT_EASIEST_QUANTILE,
+    calculate_ert,
+    compute_task_targets,
+    shift_to_quality_value,
+)
 from l2co._src.validation import validation_fn
 from l2co.naming import (
-    BUDGET,
-    COST,
     FEATURE,
-    FEVALS,
     GLOBAL_MIN,
-    ITERATIONS,
-    OUTPUT_MIN,
     SCHEDULE,
-    SUCCESS,
-    TARGET,
     TASK_ID,
     TASK_LABELS,
 )
@@ -52,198 +50,23 @@ loss_column_name: str = "loss history"
 
 # =============================================================================
 
-HARDEST_TARGET_QV = 1e-8
-DEFAULT_EASIEST_TARGET_QV = 1e2
-N_TARGETS = 51
-DEFAULT_EASIEST_QUANTILE = 0.75
 
-
-def _fallback_targets(n_targets: int) -> np.ndarray:
-    return np.logspace(
-        np.log10(HARDEST_TARGET_QV),
-        np.log10(DEFAULT_EASIEST_TARGET_QV),
-        n_targets,
-    )
-
-
-def shift_to_quality_value(data: xr.Dataset, g_min: float) -> xr.Dataset:
-    """Shift ``output_min`` into quality-value space (``g_min == 0``).
-
-    Subtracts the task's global minimum from ``output_min`` so the
-    resulting dataset lives in quality-value space, where the optimum
-    is 0 and the hardest target ``1e-8`` is meaningful regardless of
-    the original scale of the objective. If ``g_min`` is NaN, the
-    minimum of ``output_min`` over the data is used as a fallback.
-
-    Parameters
-    ----------
-    data : xr.Dataset
-        Per-task optimization dataset.
-    g_min : float
-        Task's global minimum (NaN allowed; falls back to data min).
-
-    Returns
-    -------
-    xr.Dataset
-        Copy of ``data`` with ``output_min`` shifted by ``-g_min``.
-    """
-    if np.isnan(g_min):
-        g_min = float(data[OUTPUT_MIN].min(skipna=True))
-    return data.assign({OUTPUT_MIN: data[OUTPUT_MIN] - g_min})
-
-
-def compute_task_targets(
-    data_qv: xr.Dataset,
-    n_targets: int = N_TARGETS,
-    easiest_quantile: float = DEFAULT_EASIEST_QUANTILE,
-) -> np.ndarray:
-    """Build per-task log-spaced ERT targets in quality-value space.
-
-    Expects ``data_qv`` already shifted so that ``global_min == 0``
-    (see :func:`shift_to_quality_value`). The hardest target is
-    ``1e-8`` and the easiest is set so that ``easiest_quantile`` of
-    the ``random_search`` baseline's ``output_min`` values lie above
-    (i.e. are worse than) it — equivalently, the
-    ``(1 - easiest_quantile)``-quantile of those values. Random_search
-    values are flattened across all remaining dims (typically
-    ``REALIZATION`` x ``BUDGET`` x any ``random_search`` schedules).
-    Intermediate targets are log-spaced between these endpoints.
-
-    Falls back to ``np.logspace(-8, 2, n_targets)`` if any of the
-    following holds:
-
-    * no ``random_search`` schedule is present for this task,
-    * the easiest quality value is non-finite or not strictly above
-      the hardest target.
-
-    Parameters
-    ----------
-    data_qv : xr.Dataset
-        Per-task dataset with ``output_min`` already in quality-value
-        space and a ``schedule`` coordinate whose values are
-        ``OptimizationStep.name`` strings.
-    n_targets : int, optional
-        Number of target levels to produce, by default ``51``.
-    easiest_quantile : float, optional
-        Fraction of ``random_search`` ``output_min`` values that
-        should lie above (be worse than) the easiest target.
-        Must be in ``(0, 1)``. Default ``0.75``.
-
-    Returns
-    -------
-    np.ndarray
-        1-D array of ``n_targets`` log-spaced target quality values,
-        sorted from hardest (``1e-8``) to easiest.
-    """
-    if not 0.0 < easiest_quantile < 1.0:
-        raise ValueError(
-            f"easiest_quantile must be in (0, 1), got {easiest_quantile}"
-        )
-
-    if SCHEDULE not in data_qv.coords or OUTPUT_MIN not in data_qv.data_vars:
-        return _fallback_targets(n_targets)
-
-    schedule_names = np.asarray(data_qv[SCHEDULE].values, dtype=str)
-    mask = np.array(
-        [name.startswith("random_search") for name in schedule_names]
-    )
-    if not mask.any():
-        return _fallback_targets(n_targets)
-
-    rs = data_qv[OUTPUT_MIN].isel({SCHEDULE: np.where(mask)[0]})
-    easiest_qv = float(rs.quantile(1.0 - easiest_quantile, skipna=True))
-
-    if not np.isfinite(easiest_qv) or easiest_qv <= HARDEST_TARGET_QV:
-        return _fallback_targets(n_targets)
-
-    return np.logspace(
-        np.log10(HARDEST_TARGET_QV), np.log10(easiest_qv), n_targets
-    )
-
-
-def calculate_ert(
-    data: xr.Dataset,
-    easiest_quantile: float = DEFAULT_EASIEST_QUANTILE,
+def _ert_from_quantile(
+    data: xr.Dataset, easiest_quantile: float
 ) -> xr.Dataset:
-    """Calculate Expected Running Time (ERT) metrics.
+    """Per-task ERT preprocess that derives targets from randomsearch.
 
-    Shifts ``output_min`` into quality-value space (subtracting
-    ``global_min``, falling back to the data minimum when it is NaN)
-    so the optimum is 0, then derives targets per task via
-    :func:`compute_task_targets`: the hardest target is ``1e-8``
-    (i.e. within ``1e-8`` of the global minimum) and the easiest is
-    set so that ``easiest_quantile`` of the ``random_search``
-    baseline's shifted ``output_min`` values lie above (i.e. are
-    worse than) it, with the remaining levels log-spaced between
-    them. The actual target quality values are returned as the
-    ``target_value`` data variable so they survive concatenation
-    along ``TASK_ID``; the ``target`` dim itself is an integer
-    index ``0..n_targets-1``.
-
-    Parameters
-    ----------
-    data : xr.Dataset
-        Optimization dataset with ``output_min``, ``fevals``,
-        and ``iterations`` variables and a ``schedule`` coordinate.
-    easiest_quantile : float, optional
-        Fraction of ``random_search`` values that should lie above
-        the easiest target. Default ``0.75``.
-
-    Returns
-    -------
-    xr.Dataset
-        Dataset with ``cost``, ``success``, and ``target_value``
-        variables across the per-task target quality levels.
+    Resolves ``global_min`` from ``data.coords``, shifts into
+    quality-value space, computes targets via
+    :func:`compute_task_targets` at the given ``easiest_quantile``,
+    and forwards them to :func:`calculate_ert`.
     """
-    raw_g_min = data.coords.get(GLOBAL_MIN, np.nan)
-    raw_g_min = raw_g_min if raw_g_min is not None else np.nan
-    g_min = raw_g_min if not np.isnan(raw_g_min) else np.nan
-
-    data_qv = shift_to_quality_value(data, g_min)
-
-    targets_np = compute_task_targets(
-        data_qv, easiest_quantile=easiest_quantile
-    )
-    target_idx = np.arange(len(targets_np))
-
-    qv = output_cummin(data_qv[OUTPUT_MIN]).ffill(BUDGET).fillna(np.inf)
-
-    targets = xr.DataArray(
-        targets_np, dims=TARGET, coords={TARGET: target_idx}
-    )
-    solved = qv <= targets
-    success = solved.any(BUDGET)
-
-    stopping_budget = (qv.argmin(BUDGET) + 1).clip(max=data.sizes[BUDGET] - 1)
-
-    first_solved = (
-        solved.argmax(BUDGET).where(success, other=stopping_budget).compute()
-    )
-
-    # Extract the scalar values at the 'first_solved' budget step
-    fevals = data[FEVALS].isel({BUDGET: first_solved})
-    iterations = data[ITERATIONS].isel({BUDGET: first_solved})
-
-    # Combine metrics into a single DataArray named 'COST'
-    # with a new dimension 'metric'
-    cost_da = xr.concat(
-        [fevals, iterations],
-        dim=xr.DataArray([FEVALS, ITERATIONS], dims="metric", name="metric"),
-    )
-
-    result = xr.Dataset(
-        {
-            COST: cost_da,
-            SUCCESS: success,
-            "target_value": targets,
-        }
-    )
-    if GLOBAL_MIN in result.coords:
-        result = result.drop_vars(GLOBAL_MIN)
-    return result
-
-
-# =============================================================================
+    global_min = data.coords.get(GLOBAL_MIN, np.nan)
+    if global_min is None:
+        global_min = np.nan
+    data_qv = shift_to_quality_value(data, global_min)
+    targets = compute_task_targets(data_qv, easiest_quantile=easiest_quantile)
+    return calculate_ert(data, targets=targets, global_min=global_min)
 
 
 def create_combined_odata(
@@ -277,7 +100,7 @@ def create_combined_odata(
         Source ExperimentData whose ``optimizer`` input column is
         indexed by ``experiment_data["optimizer_idx"]``.
     easiest_quantile : float, optional
-        Fraction of ``random_search`` ``output_min`` values that
+        Fraction of ``randomsearch`` ``output_min`` values that
         should lie above (be worse than) the per-task easiest ERT
         target. Forwarded to :func:`calculate_ert`. Default ``0.75``.
     """
@@ -382,7 +205,9 @@ def create_combined_odata(
             xr.DataArray(task_ids, coords=[task_ids], dims=[TASK_ID]),
         ],
         parallel=False,
-        preprocess=partial(calculate_ert, easiest_quantile=easiest_quantile),
+        preprocess=partial(
+            _ert_from_quantile, easiest_quantile=easiest_quantile
+        ),
         coords="minimal",
         join="outer",
     )

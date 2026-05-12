@@ -25,7 +25,7 @@ OPTIMIZATION_STEPS = [
     ),
     OptimizationStep(optimizer="pso"),
     OptimizationStep(
-        optimizer="random_search",
+        optimizer="randomsearch",
         hyperparameters={"sampler": "normal", "popsize": 8},
     ),
 ]

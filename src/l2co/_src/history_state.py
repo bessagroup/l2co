@@ -12,11 +12,13 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 import xarray as xr
 from jaxtyping import Array, Float, Int
 from l2co_tasks import Task
 
 from .data import DataLoader
+from .data_validation import calculate_ert
 from .naming import (
     BUDGET,
     FEATURE,
@@ -34,7 +36,6 @@ from .naming import (
     UPDATE_STEP,
 )
 from .optimizer_schedule import OptimizationStep
-from .performance import calculate_ert
 from .typing import OptHistoryType
 from .validation import normalize_budget_grid
 
@@ -215,7 +216,7 @@ class HistoryState(eqx.Module):
         """
 
         def _wrap(arr: jax.Array) -> xr.DataArray:
-            return xr.DataArray(arr, dims=[BUDGET]).expand_dims(
+            return xr.DataArray(np.asarray(arr), dims=[BUDGET]).expand_dims(
                 {OUTPUT_DIM: ["y"]}
             )
 
@@ -273,9 +274,9 @@ class HistoryState(eqx.Module):
         n_realizations = self.output_min.shape[0]
 
         def _wrap(arr: jax.Array) -> xr.DataArray:
-            return xr.DataArray(arr, dims=[REALIZATION, BUDGET]).expand_dims(
-                {OUTPUT_DIM: ["y"]}
-            )
+            return xr.DataArray(
+                np.asarray(arr), dims=[REALIZATION, BUDGET]
+            ).expand_dims({OUTPUT_DIM: ["y"]})
 
         fevals_cumsum = jnp.cumsum(self.fevals, axis=1)
         iterations_cumsum = jnp.cumsum(self.iterations, axis=1)
@@ -300,6 +301,7 @@ class HistoryState(eqx.Module):
         self,
         task: Task,
         optimizer: OptimizationStep,
+        targets: np.ndarray | None = None,
         budget_steps: int | None = None,
     ) -> DataLoader:
         """Convert history to a DataLoader with task labels.
@@ -320,6 +322,13 @@ class HistoryState(eqx.Module):
         optimizer : OptimizationStep
             Optimizer used; its ``name`` becomes the singleton
             ``SCHEDULE`` coordinate on the data variables.
+        targets : np.ndarray | None, optional
+            1-D array of target quality values (in quality-value space,
+            i.e. relative to ``global_min``). When ``None`` (default),
+            ``_fallback_targets(N_TARGETS) == np.logspace(-8, 2, 51)`` is
+            used. Callers that want randomsearch-derived targets should
+            compute them via :func:`compute_task_targets` and pass them
+            in explicitly.
         budget_steps : int | None, optional
             Budget interpolation steps forwarded to
             :meth:`to_xarray_realizations`; ``None`` means no
@@ -332,7 +341,7 @@ class HistoryState(eqx.Module):
             metrics, and per-task labels.
         """
         xarr = self.to_xarray_realizations(budget_steps=budget_steps)
-        ert = calculate_ert(xarr, task.global_min)
+        ert = calculate_ert(xarr, targets=targets, global_min=task.global_min)
 
         # Task labels are one row per task; broadcast across
         # realizations via expand_dims so xarray handles the tile.

@@ -170,7 +170,7 @@ def test_random_search_one_shot_shapes_and_best():
         dimensionality=3,
     )
     optimizer = OptimizationStep(
-        optimizer="random_search",
+        optimizer="randomsearch",
         hyperparameters={"sampler": "normal", "popsize": popsize},
     )
 
