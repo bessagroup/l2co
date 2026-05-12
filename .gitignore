@@ -141,7 +141,7 @@ multirun/
 *.ipynb
 
 notebooks/plots/*.png
-data/
+/data/
 
 # Ignore _autosummary generated files
 docs/source/_autosummary/
