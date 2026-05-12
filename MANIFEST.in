@@ -2,3 +2,6 @@ include LICENSE
 include README.md
 include CONTRIBUTING.md
 include CODE_OF_CONDUCT.md
+include CHANGELOG.md
+include CITATION.cff
+include src/l2co/py.typed

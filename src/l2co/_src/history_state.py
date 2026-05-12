@@ -16,7 +16,7 @@ import xarray as xr
 from jaxtyping import Array, Float, Int
 from l2co_tasks import Task
 
-from .data_loader import DataLoader
+from .data import DataLoader
 from .naming import (
     BUDGET,
     FEATURE,
@@ -33,7 +33,7 @@ from .naming import (
     TASK_LABELS,
     UPDATE_STEP,
 )
-from .optimizerschedule import OptimizationStep
+from .optimizer_schedule import OptimizationStep
 from .performance import calculate_ert
 from .typing import OptHistoryType
 from .validation import normalize_budget_grid

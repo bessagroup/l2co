@@ -9,8 +9,8 @@ from bbob_jax import registry
 from pathlib import Path
 
 from l2co._src.budget import based_on_dimensionality
-from l2co._src.optimizerschedule import OptimizationStep
-from l2co._src.run_optimization import (
+from l2co._src.optimizer_schedule import OptimizationStep
+from l2co._src.rollout import (
     RunOptimization,
     RolloutWrapper,
 )
@@ -19,7 +19,7 @@ from l2co_tasks import create_pde_task
 from l2co.sampling import normal_sampling
 from l2co_tasks import Task
 
-from . import OPTIMIZATION_STEPS, ALL_OPTIMIZERS
+from tests import ALL_OPTIMIZERS, OPTIMIZATION_STEPS
 
 # =============================================================================
 
@@ -57,6 +57,7 @@ def run(
 # =============================================================================
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("optimizer", OPTIMIZATION_STEPS)
 def test_pde(optimizer: OptimizationStep, tmp_path: Path):
     task = create_pde_task(
@@ -82,6 +83,7 @@ def test_pde(optimizer: OptimizationStep, tmp_path: Path):
     )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("optimizer", OPTIMIZATION_STEPS)
 @pytest.mark.parametrize("fn_name", ["sphere", "rastrigin"])
 @pytest.mark.parametrize("dim", [2, 5])
@@ -132,6 +134,7 @@ def test_optimization_step_name_non_rl2co_unchanged():
     assert step.name == "adam_learning_rate=0.01"
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("optimizer", ALL_OPTIMIZERS)
 def test_all_optimizers(optimizer: str):
     task = create_bbob_task(

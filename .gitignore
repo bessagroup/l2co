@@ -174,3 +174,9 @@ CLAUDE.md
 *.pdf
 *.pgf
 !overview.svg
+
+# Experiments output artefacts
+experiments/plots/
+experiments/plots_pdf/
+experiments/outputs/
+experiments/multirun/

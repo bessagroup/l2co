@@ -1,0 +1,68 @@
+# Release workflow — DISABLED while the repo is private.
+#
+# Rename this file to `release.yml` (drop the `.disabled` suffix) and enable
+# trusted publishing on PyPI (https://docs.pypi.org/trusted-publishers/) once
+# the repo is public and all sibling dependencies (l2co-tasks, bessaplots,
+# the modern f3dasm) have been published to PyPI.
+#
+# On a `v*` tag, this workflow runs the test matrix one more time, builds
+# sdist + wheel with `uv build`, verifies them with `twine check`, and then
+# uploads to PyPI using GitHub's OIDC trusted-publisher flow — no PyPI
+# token is stored as a secret.
+#
+# ---------------------------------------------------------------------------
+# name: Release to PyPI
+# on:
+#   push:
+#     tags:
+#       - "v*"
+#
+# jobs:
+#   verify:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: actions/setup-python@v5
+#         with:
+#           python-version: "3.12"
+#       - uses: astral-sh/setup-uv@v5
+#       - name: Install
+#         run: uv sync --extra tests
+#       - name: Tests
+#         run: uv run pytest -m "not slow"
+#
+#   build:
+#     needs: verify
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: actions/setup-python@v5
+#         with:
+#           python-version: "3.12"
+#       - uses: astral-sh/setup-uv@v5
+#       - name: Build
+#         run: uv build
+#       - name: Twine check
+#         run: |
+#           uv pip install --system twine
+#           twine check dist/*
+#       - uses: actions/upload-artifact@v4
+#         with:
+#           name: dist
+#           path: dist/
+#
+#   publish:
+#     needs: build
+#     runs-on: ubuntu-latest
+#     environment:
+#       name: pypi
+#       url: https://pypi.org/p/l2co
+#     permissions:
+#       id-token: write
+#     steps:
+#       - uses: actions/download-artifact@v4
+#         with:
+#           name: dist
+#           path: dist/
+#       - name: Publish to PyPI
+#         uses: pypa/gh-action-pypi-publish@release/v1

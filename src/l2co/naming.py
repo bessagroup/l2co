@@ -31,7 +31,7 @@ from l2co._src.naming import (
     TRAJECTORY,
     UPDATE_STEP,
 )
-from l2co._src.typing import InputParameters, SamplerFunction
+from l2co._src.typing import InputParameters, OptState, SamplerFunction
 
 __all__ = [
     "PROBLEM",
@@ -64,5 +64,6 @@ __all__ = [
     "TARGET",
     "SEED",
     "InputParameters",
+    "OptState",
     "SamplerFunction",
 ]

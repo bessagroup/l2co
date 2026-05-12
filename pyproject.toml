@@ -1,19 +1,32 @@
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
 [project]
 authors = [
   {email = "m.p.vanderschelling@tudelft.nl", name = "M.P. van der Schelling"}
 ]
 classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: BSD License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Scientific/Engineering :: Mathematics"
 ]
 dependencies = [
   "bbob-jax>=1.6.2",
   "bessaplots>=0.4.0",
   "cloudpickle>=3.1.1",
   "dask>=2025.7.0",
-  "equinox>=0.13.0",
-  "evosax>=0.2.0",
+  "equinox>=0.13.0,<0.14",
+  "evosax>=0.2.0,<0.3",
   "f3dasm",
   "hydra-core>=1.3.2",
-  "jax",
+  "jax>=0.4.30,<0.9",
   "jax-tqdm>=0.4.0",
   "jaxtyping>=0.3.2",
   "l2co-tasks",
@@ -56,7 +69,28 @@ tests = [
 ]
 
 [project.urls]
+Documentation = "https://github.com/bessagroup/l2co"
+Issues = "https://github.com/bessagroup/l2co/issues"
 Repository = "https://github.com/bessagroup/l2co"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "src/l2co",
+  "README.md",
+  "LICENSE",
+  "CHANGELOG.md",
+  "CITATION.cff"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/l2co"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+markers = [
+  "slow: tests that exercise full JAX rollouts and are excluded from the default PR run"
+]
+testpaths = ["tests"]
 
 [tool.ruff]
 extend-exclude = [

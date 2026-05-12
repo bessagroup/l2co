@@ -29,7 +29,7 @@ from sklearn.metrics import r2_score
 
 # Local
 from l2co._src.batching import BatchState
-from l2co._src.data_loader import DataLoader
+from l2co._src.data import DataLoader
 from l2co._src.naming import (
     BUDGET,
     FEATURE,
@@ -42,7 +42,7 @@ from l2co._src.naming import (
     SCHEDULE,
     UPDATE_STEP,
 )
-from l2co._src.optimizerschedule import OptimizationStep
+from l2co._src.optimizer_schedule import OptimizationStep
 from l2co._src.performance import EPSILON
 from l2co._src.sampler import grid_sampling
 from l2co._src.update_class import evaluate

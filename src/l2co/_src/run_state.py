@@ -19,8 +19,8 @@ from l2co_tasks import Task
 # Local
 from .batching import BatchState
 from .history_state import HistoryState
+from .optimizer_schedule import OptimizationStep
 from .optimizers import optimizer_mapping
-from .optimizerschedule import OptimizationStep
 from .typing import InputParameters, SamplerFunction
 from .update_class import UpdateClass
 from .update_class import evaluate as evaluate_update_class
