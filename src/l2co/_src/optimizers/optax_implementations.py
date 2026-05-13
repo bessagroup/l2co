@@ -48,7 +48,7 @@ __status__ = "Stable"
 
 def optax_fn(
     static: PyTree,
-    optimizer: optax.GradientTransformation,
+    optimizer: optax.GradientTransformationExtraArgs,
     loss_fn: LossFunction,
     bounded: tuple[float, float],
     opt_hash: int,
@@ -62,7 +62,7 @@ def optax_fn(
     ----------
     static : PyTree
         Static model parameters.
-    optimizer : optax.GradientTransformation
+    optimizer : optax.GradientTransformationExtraArgs
         Optax optimizer instance.
     loss_fn : LossFunction
         Loss function to optimize.
@@ -111,7 +111,10 @@ def optax_fn(
             )
 
         updates, new_opt_state = optimizer.update(
-            grads, opt_state, input_params
+            grads,
+            opt_state,
+            input_params,
+            value=loss,
         )
         new_params = eqx.apply_updates(input_params, updates)
 

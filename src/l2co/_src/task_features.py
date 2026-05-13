@@ -282,7 +282,6 @@ class MixedEmbedding(eqx.Module):
             embedders=embedders_list,
             final_proj=proj,
             embed_dim=embed_dim,
-            output_dim=output_dim,
         )
 
     def store(self, path: str) -> str:
