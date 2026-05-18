@@ -138,10 +138,10 @@ def evosax_distribution_based_fn(
         history = OptHistory(
             loss=loss,
             params=input_params,
-            update_step=opt_hash,
-            fevals=popsize,
+            update_step=jnp.array(opt_hash, dtype=jnp.int32),
+            fevals=jnp.array(popsize, dtype=jnp.int32),
             grads=grads,
-            iterations=1,
+            iterations=jnp.array(1, dtype=jnp.int32),
         )
 
         # Apply box constraints
@@ -249,10 +249,10 @@ def evosax_population_based_fn(
         history = OptHistory(
             loss=loss,
             params=input_params,
-            update_step=opt_hash,
-            fevals=popsize,
+            update_step=jnp.array(opt_hash, dtype=jnp.int32),
+            fevals=jnp.array(popsize, dtype=jnp.int32),
             grads=grads,
-            iterations=1,
+            iterations=jnp.array(1, dtype=jnp.int32),
         )
 
         # Apply box constraints

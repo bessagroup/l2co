@@ -122,9 +122,9 @@ def optax_fn(
             loss=loss,
             params=input_params,
             grads=grads,
-            update_step=opt_hash,
-            fevals=1,
-            iterations=1,
+            update_step=jnp.array(opt_hash, dtype=jnp.int32),
+            fevals=jnp.array(1, dtype=jnp.int32),
+            iterations=jnp.array(1, dtype=jnp.int32),
         )
 
         # Apply box constraints
@@ -218,9 +218,9 @@ def optax_extra_args_fn(
             loss=jax.tree.map(lambda x: jnp.expand_dims(x, 0), loss),
             params=jax.tree.map(lambda x: jnp.expand_dims(x, 0), input_params),
             grads=jax.tree.map(lambda x: jnp.expand_dims(x, 0), grads),
-            update_step=opt_hash,
-            fevals=1,
-            iterations=1,
+            update_step=jnp.array(opt_hash, dtype=jnp.int32),
+            fevals=jnp.array(1, dtype=jnp.int32),
+            iterations=jnp.array(1, dtype=jnp.int32),
         )
 
         new_params = jax.tree.map(lambda p: jnp.clip(p, *bounded), new_params)
