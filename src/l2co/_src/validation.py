@@ -63,15 +63,15 @@ def normalize_budget_grid(ds: xr.Dataset, budget_steps: int) -> xr.Dataset:
             "least two points for the step size to be finite."
         )
     ds = ds.assign_coords(
-        {BUDGET: np.linspace(0.0, 1.0, ds[BUDGET].size, dtype=np.float32)}
+        {BUDGET: np.linspace(0.0, 1.0, ds[BUDGET].size, dtype=np.float64)}
     )
     ds_interp = ds.interp(
-        {BUDGET: np.linspace(0.0, 1.0, budget_steps, dtype=np.float32)},
+        {BUDGET: np.linspace(0.0, 1.0, budget_steps, dtype=np.float64)},
         method="nearest",
     )
     n = budget_steps - 1
     step = 1.0 / (n - 1)
-    arr_interp = np.linspace(0.0, 1.0, n, dtype=np.float32)
+    arr_interp = np.linspace(0.0, 1.0, n, dtype=np.float64)
     new_budget_coord = np.concatenate([[-step], arr_interp])
 
     return ds_interp.assign_coords({BUDGET: new_budget_coord})

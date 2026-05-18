@@ -363,7 +363,13 @@ def learning_rate_optimizer(
     optax_optimizer : optax.GradientTransformation
         Optax optimizer constructor.
     learning_rate : float or None, optional
-        Learning rate. Defaults to ``1e-3`` when ``None``.
+        Learning rate. For optimizers in ``opt_names_normal`` (Adam, SGD,
+        etc.) ``None`` is replaced with ``1e-3``. For optimizers in
+        ``opt_names_from_state`` (e.g. ``lbfgs``) ``None`` is passed
+        through so the optimizer's internal line search controls the
+        step length — supplying a number here disables that line-search
+        scaling and reduces L-BFGS to gradient descent at the supplied
+        rate, which is almost never what the caller wants.
     **kwargs
         Forwarded to the underlying update function.
 
@@ -374,6 +380,7 @@ def learning_rate_optimizer(
     """
     if optax_optimizer in normalized_optax_normal.values():
         update_fn = optax_update
+        learning_rate = learning_rate or 1e-3
     elif optax_optimizer in normalized_optax_from_state.values():
         update_fn = optax_update_extra_args
     else:
@@ -381,8 +388,6 @@ def learning_rate_optimizer(
             f"Optimizer not recognized as a valid Optax optimizer \
                 {optax_optimizer}."
         )
-
-    learning_rate = learning_rate or 1e-3
 
     optimizer = Partial(update_fn, optimizer=optax_optimizer, popsize=1)
 

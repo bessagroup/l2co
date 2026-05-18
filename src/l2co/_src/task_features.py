@@ -73,7 +73,7 @@ class FeatureProcessor(eqx.Module):
         return cls(vocabs=vocabs)
 
     def transform(self, x: dict[str, Any]) -> jax.Array:
-        """Encode a feature dict to a float32 JAX array.
+        """Encode a feature dict to a default-precision JAX array.
 
         Parameters
         ----------
@@ -83,7 +83,9 @@ class FeatureProcessor(eqx.Module):
         Returns
         -------
         jax.Array
-            Shape (num_features,), dtype float32.
+            Shape (num_features,); dtype follows JAX's default float
+            precision (``float32`` by default, ``float64`` when
+            ``jax_enable_x64`` is set).
         """
         feats = []
         for name, vocab in self.vocabs.items():
@@ -94,7 +96,7 @@ class FeatureProcessor(eqx.Module):
                 if isinstance(val, bool):
                     val = str(val).lower()
                 feats.append(vocab[val])
-        return jnp.array(feats, dtype=jnp.float32)
+        return jnp.array(feats, dtype=jnp.float_)
 
     def __call__(self, x: dict[str, Any]) -> jax.Array:
         return self.transform(x)
@@ -214,8 +216,8 @@ class MixedEmbedding(eqx.Module):
         Parameters
         ----------
         x : jax.Array
-            Float32 array of shape (num_features,) as produced by
-            FeatureProcessor.transform.
+            Default-precision float array of shape (num_features,) as
+            produced by FeatureProcessor.transform.
 
         Returns
         -------

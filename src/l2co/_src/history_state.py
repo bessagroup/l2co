@@ -98,7 +98,7 @@ class HistoryState(eqx.Module):
             Initialized history state with NaN floats, zero ints, and
             ``cursor`` set to 0 (empty buffer, next write at index 0).
         """
-        nans_output = jnp.full((max_iterations,), jnp.nan, dtype=jnp.float32)
+        nans_output = jnp.full((max_iterations,), jnp.nan, dtype=jnp.float_)
         zeros_int32 = jnp.zeros((max_iterations,), dtype=jnp.int32)
 
         return cls(
