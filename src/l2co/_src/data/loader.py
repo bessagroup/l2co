@@ -24,7 +24,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from time import perf_counter
-from typing import Literal
+from typing import Any, Literal
 
 # Third-party
 import jax
@@ -59,6 +59,7 @@ from ..performance import (
 from ..task_features import FeatureProcessor
 from ..tree_utils import traj_and_stair
 from .baselines import calculate_sbs, calculate_vbs
+from .report_helpers import build_report
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -994,6 +995,41 @@ class DataLoader:
         _ertd = _ertd.where(mask)
 
         return _ertd
+
+    #                                                                    Report
+    # =========================================================================
+
+    def report(self) -> dict[str, Any]:
+        """Compute an AI-friendly JSON-serialisable summary of this DataLoader.
+
+        Thin delegate around
+        :func:`l2co._src.data.report_helpers.build_report`. The
+        returned dict captures the dataset's shape, per-schedule
+        performance scalars, cross-schedule rankings, task-feature
+        breakdowns, and a list of programmatically-detected
+        observations. Saving the JSON is the caller's job; provenance
+        (git SHAs, config hashes, hostname, wall-clock) is *not*
+        included so the method stays a pure function of ``self.data``
+        and ``self.task_labels``.
+
+        Log and ratio reductions consume
+        :func:`~l2co._src.data.report_helpers.shifted_final_min`, which
+        adds ``EPSILON`` to ``final_loss - per_task_shift`` and is
+        therefore strictly positive even on tasks whose raw final loss
+        can be negative (BBOB and similar shifted-objective
+        benchmarks).
+
+        Returns
+        -------
+        dict[str, Any]
+            Document conforming to ``schema_version: 1``. Top-level keys:
+            ``schema_version``, ``dataset``, ``task_groups``,
+            ``per_schedule``, ``rankings``, ``grouped``, ``observations``,
+            ``observations_summary``. Every floating-point leaf is plain
+            Python ``float`` (with NaN/Inf replaced by ``None``); every
+            integer leaf is plain Python ``int``.
+        """
+        return build_report(self)
 
     def load(self):
         """
