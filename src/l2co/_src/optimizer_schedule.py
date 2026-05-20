@@ -12,12 +12,13 @@ import hashlib
 import json
 from collections.abc import Callable
 from copy import deepcopy
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+# Third-party
 from jax.tree_util import Partial
 
-# Third-party
 # Local
 from .stopping_criteria import STOPPING_CRITERIA
 
@@ -29,20 +30,27 @@ __status__ = "Stable"
 # =============================================================================
 
 
+@dataclass
 class OptimizationStep:
     """Configuration for an optimization step.
 
-    This class defines the optimizer, its hyperparameters, and stopping
-    criteria for a single optimization step in a schedule.
+    Defines the optimizer, its hyperparameters, and stopping criteria for
+    a single step in an optimization schedule. Implemented as a dataclass:
+    two instances compare equal iff their ``optimizer``, ``hyperparameters``,
+    and ``stopping_criteria`` all match. Hashing, however, is based only on
+    ``optimizer`` and ``hyperparameters`` (see :meth:`__hash__`), so steps
+    that differ only in their stopping criteria collide in sets/dicts —
+    valid behavior, since Python only requires equal objects to share a
+    hash, not the reverse.
 
     Parameters
     ----------
     optimizer : str
         Name of the optimizer to use.
-    stopping_criteria : dict[str, Any] | None, optional
-        Dictionary defining stopping criteria configuration, by default None.
-    hyperparameters : dict[str, Any] | None, optional
-        Dictionary of optimizer hyperparameters, by default None.
+    stopping_criteria : dict[str, Any], optional
+        Stopping criteria configuration, by default an empty dict.
+    hyperparameters : dict[str, Any], optional
+        Optimizer hyperparameters, by default an empty dict.
 
     Attributes
     ----------
@@ -53,56 +61,37 @@ class OptimizationStep:
     stopping_criteria : dict[str, Any]
         Stopping criteria configuration.
     tag : dict[str, Any]
-        Tag containing optimizer name and hyperparameters.
+        Derived property: ``{"opt_name": self.name, **self.hyperparameters}``.
+        Recomputed on each access — always reflects the current
+        ``optimizer`` / ``hyperparameters``.
     """
 
-    def __init__(
-        self,
-        optimizer: str,
-        stopping_criteria: dict[str, Any] | None = None,
-        hyperparameters: dict[str, Any] | None = None,
-    ):
-        if hyperparameters is None:
-            hyperparameters = {}
+    optimizer: str
+    stopping_criteria: dict[str, Any] = field(default_factory=dict)
+    hyperparameters: dict[str, Any] = field(default_factory=dict)
 
-        if stopping_criteria is None:
-            stopping_criteria = {}
+    @property
+    def tag(self) -> dict[str, Any]:
+        """Derived label combining ``opt_name`` with the hyperparameters.
 
-        self.optimizer = optimizer
-        self.hyperparameters = dict(hyperparameters)
-        self.stopping_criteria = dict(stopping_criteria)
-        self.tag = {"opt_name": self.name, **hyperparameters}
+        Recomputed on each access from :attr:`name` and
+        :attr:`hyperparameters`, so it always reflects current state.
 
-    def __repr__(self):
-        return (
-            f"Optimizer: {self.optimizer}, "
-            f"Hyperparameters: {self.hyperparameters}, "
-            f"Stopping criteria: {self.stopping_criteria}"
-        )
-
-    def __str__(self):
-        return (
-            f"Optimizer: {self.optimizer}\n"
-            f"  Hyperparameters: {self.hyperparameters}\n"
-            f"  Stopping criteria: {self.stopping_criteria}\n"
-        )
-
-    def __eq__(self, other):
-        if not isinstance(other, OptimizationStep):
-            return False
-        return (
-            self.optimizer == other.optimizer
-            and self.hyperparameters == other.hyperparameters
-        )
+        Returns
+        -------
+        dict[str, Any]
+            ``{"opt_name": self.name, **self.hyperparameters}``.
+        """
+        return {"opt_name": self.name, **self.hyperparameters}
 
     def __hash__(self):
-        tag_hashable = (
-            tuple(sorted(self.tag.items()))
-            if isinstance(self.tag, dict)
-            else None
-        )
+        """Hash based on :attr:`tag` (optimizer name + hyperparameters).
 
-        return hash(tag_hashable)
+        Intentionally narrower than the dataclass-generated ``__eq__``,
+        which also compares ``stopping_criteria``. The asymmetry is fine:
+        Python only requires ``a == b ⇒ hash(a) == hash(b)``.
+        """
+        return hash(tuple(sorted(self.tag.items())))
 
     @property
     def hash(self) -> int:
@@ -216,8 +205,8 @@ class OptimizationStep:
         """
         return cls(
             optimizer=config["optimizer"],
-            hyperparameters=config.get("hyperparameters", None),
-            stopping_criteria=config.get("stopping_criteria", None),
+            hyperparameters=config.get("hyperparameters") or {},
+            stopping_criteria=config.get("stopping_criteria") or {},
         )
 
     @staticmethod
@@ -298,16 +287,6 @@ class OptimizationStep:
         """
         return cls(
             optimizer=data["optimizer"],
-            hyperparameters=data.get("hyperparameters"),
-            stopping_criteria=data.get("stopping_criteria"),
+            hyperparameters=data.get("hyperparameters") or {},
+            stopping_criteria=data.get("stopping_criteria") or {},
         )
-
-    def copy(self) -> OptimizationStep:
-        """Create a deep copy of this optimization step.
-
-        Returns
-        -------
-        OptimizationStep
-            Deep copy of this instance.
-        """
-        return deepcopy(self)

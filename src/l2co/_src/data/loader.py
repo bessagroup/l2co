@@ -1039,7 +1039,5 @@ class DataLoader:
 
 
 # Baseline metrics (`calculate_sbs`, `calculate_vbs`, `calculate_best_solver`,
-# `log_relative_improvement`, `encode`) moved to `l2co._src.data.baselines`.
-# They are re-exported from the `l2co._src.data` package __init__ so the
-# qualified import paths users had via `l2co._src.data_loader` still resolve
-# through the deprecation shim at `l2co._src.data_loader`.
+# `log_relative_improvement`, `encode`) live in `l2co._src.data.baselines`
+# and are re-exported from the `l2co._src.data` package __init__.

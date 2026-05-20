@@ -33,7 +33,6 @@ from l2co import (
     optimizers,
     plotting,
     sampling,
-    tasks,
     validation,
 )
 from l2co._src import tree_utils
@@ -130,7 +129,6 @@ __all__ = [
     "reset",
     "run",
     "sampling",
-    "tasks",
     "train_equinox",
     "tree_utils",
     "validation",
