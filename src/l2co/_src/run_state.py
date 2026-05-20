@@ -21,8 +21,16 @@ from .batching import BatchState
 from .history_state import HistoryState
 from .optimizer_schedule import OptimizationStep
 from .optimizers import optimizer_mapping
+from .optimizers.random_search import RandomSearchUpdateClass
 from .typing import InputParameters, SamplerFunction
-from .update_class import UpdateClass
+from .update_class import (
+    UpdateClass,
+    batch_run_,
+    batch_run_randomsearch,
+    init_,
+    run_,
+    run_randomsearch,
+)
 from .update_class import evaluate as evaluate_update_class
 
 #                                                          Authorship & Credits
@@ -111,8 +119,11 @@ class RunState(eqx.Module):
             model_params,
         )
 
-        # Initialize the optimizer state
-        opt_state = update_class.init(
+        # Initialize the optimizer state. RandomSearchUpdateClass carries
+        # a no-op ``init_fn`` that returns a scalar placeholder, so the
+        # generic ``init_`` works for it too -- no dispatch needed.
+        opt_state = init_(
+            update_class=update_class,
             params=params,
             batch_state=batch_state,
             dataset=dataset,
@@ -185,7 +196,8 @@ def reset(
     best_params = jax.tree.map(lambda x: x[best_idx], samples)
     best_loss = loss[best_idx]
 
-    opt_state = run_state.update_class.init(
+    opt_state = init_(
+        update_class=run_state.update_class,
         params=samples,
         batch_state=batch_state,
         dataset=dataset,
@@ -199,6 +211,12 @@ def reset(
         opt_state=opt_state,
         update_class=run_state.update_class,
     )
+
+
+batch_reset = eqx.filter_vmap(
+    reset,
+    in_axes=(None, None, None, None, None, None, None, 0),
+)
 
 
 def reset_from_stage0(
@@ -268,7 +286,8 @@ def reset_from_stage0(
     best_params = jax.tree.map(lambda x: x[best_idx], samples)
     best_loss = loss[best_idx]
 
-    opt_state = run_state.update_class.init(
+    opt_state = init_(
+        update_class=run_state.update_class,
         params=samples,
         batch_state=batch_state,
         dataset=dataset,
@@ -282,6 +301,9 @@ def reset_from_stage0(
         opt_state=opt_state,
         update_class=run_state.update_class,
     )
+
+
+# =============================================================================
 
 
 def run(
@@ -314,9 +336,16 @@ def run(
     tuple[RunState, BatchState, HistoryState]
         Updated RunState, BatchState and history state after optimization.
     """
-    # Main optimization loop
-    params, best_params, best_loss, opt_state, batch_state, history_state = (
-        run_state.update_class.step(
+    # Main optimization loop (dispatch random search through its one-shot
+    # batched runner; everything else goes through the generic scan loop).
+    run_fn = (
+        run_randomsearch
+        if isinstance(run_state.update_class, RandomSearchUpdateClass)
+        else run_
+    )
+    (params, best_params, best_loss, opt_state, batch_state, history_state) = (
+        run_fn(
+            update_class=run_state.update_class,
             opt_state=run_state.opt_state,
             params=run_state.params,
             batch_state=batch_state,
@@ -336,6 +365,46 @@ def run(
     )
 
     return run_state, batch_state, history_state
+
+
+def batch_run(
+    run_state: RunState,
+    batch_state: BatchState,
+    dataset: dict[str, jax.Array],
+    n_iterations: int,
+    key: PRNGKeyArray,
+    verbose: bool,
+) -> tuple[RunState, BatchState, HistoryState]:
+    run_fn = (
+        batch_run_randomsearch
+        if isinstance(run_state.update_class, RandomSearchUpdateClass)
+        else batch_run_
+    )
+    (params, best_params, best_loss, opt_state, batch_state, history_state) = (
+        run_fn(
+            update_class=run_state.update_class,
+            opt_state=run_state.opt_state,
+            params=run_state.params,
+            batch_state=batch_state,
+            dataset=dataset,
+            key=key,
+            n_iterations=n_iterations,
+            verbose=verbose,
+        )
+    )
+
+    run_state = RunState(
+        params=params,
+        best_params=best_params,
+        best_loss=best_loss,
+        opt_state=opt_state,
+        update_class=run_state.update_class,
+    )
+
+    return run_state, batch_state, history_state
+
+
+# =============================================================================
 
 
 def evaluate(
@@ -401,19 +470,64 @@ def evaluate(
     )
 
 
-batch_reset = eqx.filter_vmap(
-    reset,
-    in_axes=(None, None, None, None, None, None, None, 0),
-)
+def batch_evaluate(
+    run_state: RunState,
+    batch_state: BatchState,
+    static: PyTree,
+    dataset: dict[str, jax.Array],
+    loss_fn: Callable,
+    sampler: Callable,
+    n_iterations: int,
+    pass_rng: bool,
+    key: PRNGKeyArray,
+    verbose: bool,
+) -> tuple[RunState, BatchState, HistoryState]:
+    """Evaluate optimization by resetting and running to completion.
 
+    Parameters
+    ----------
+    run_state : RunState
+        Current run state.
+    batch_state : BatchState
+        Current batch state.
+    static : PyTree
+        Model of the task to optimize.
+    dataset : dict[str, jax.Array]
+        Dataset for evaluation.
+    loss_fn : Callable
+        Loss function for evaluation.
+    sampler : Callable
+        Sampling function for generating new parameters.
+    n_iterations : int
+        Number of iterations to run.
+    pass_rng : bool
+        Whether to pass RNG keys to the loss function.
+    key : PRNGKeyArray
+        PRNG key for random operations.
+    verbose : bool
+        Whether to print progress information.
 
-batch_run = eqx.filter_vmap(
-    run,
-    in_axes=(0, None, None, None, None, None),
-)
-
-
-batch_evaluate = eqx.filter_vmap(
-    evaluate,
-    in_axes=(None, None, None, None, None, None, None, None, 0, None),
-)
+    Returns
+    -------
+    tuple[RunState, BatchState, HistoryState]
+        Tuple of updated RunState, BatchState and History state after
+        complete optimization run.
+    """
+    run_state = batch_reset(
+        run_state,
+        batch_state,
+        static,
+        dataset,
+        loss_fn,
+        pass_rng,
+        sampler,
+        key,
+    )
+    return batch_run(
+        run_state=run_state,
+        batch_state=batch_state,
+        dataset=dataset,
+        n_iterations=n_iterations,
+        key=key,
+        verbose=verbose,
+    )

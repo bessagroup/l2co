@@ -15,17 +15,12 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.random as jr
 from jax.tree_util import Partial
-from jaxtyping import Array, Float, PRNGKeyArray, PyTree
+from jaxtyping import PRNGKeyArray, PyTree
 from l2co_tasks import Task
 
 # Local
-from l2co._src.batching import BatchState
-from l2co._src.history_state import HistoryState
-from l2co._src.opt_history import OptHistory
 from l2co._src.sampler import get_sampler
-from l2co._src.tree_utils import vmapped_loss, vmapped_loss_with_rng
 from l2co._src.typing import InputParameters, StopFunction
 from l2co._src.update_class import UpdateClass
 
@@ -40,13 +35,21 @@ __status__ = "Stable"
 class RandomSearchUpdateClass(UpdateClass):
     """One-shot random-search update class.
 
-    Subclasses :class:`UpdateClass` but overrides :meth:`step` so the
-    entire ``n_iterations * popsize`` candidate evaluation happens in a
+    Subclasses :class:`UpdateClass` but stores the extra fields needed
+    by the dedicated runners
+    :func:`l2co._src.update_class.run_randomsearch` and
+    :func:`l2co._src.update_class.batch_run_randomsearch`, which
+    evaluate the entire ``n_iterations * popsize`` candidate set in a
     single batched call rather than iterating through the scan loop.
-    Every random-search candidate is independent of every other, so the
-    sequential scan-loop machinery brings no benefit and is bypassed.
+    ``run_state.run`` / ``run_state.batch_run`` dispatch to those
+    runners when they see an instance of this class. ``init_fn`` is a
+    no-op that returns a scalar placeholder -- it is invoked through
+    the generic :func:`l2co._src.update_class.init_` so callers do not
+    need a special initialization path. ``step_fn`` is a no-op as well
+    and is never invoked, since the dedicated runners bypass the scan
+    loop entirely.
 
-    The result is shaped to mimic an iterative trajectory:
+    The runner shapes its result to mimic an iterative trajectory:
     ``output_min[i]`` / ``output_mean[i]`` / ``output_std[i]`` are
     statistics over the ``popsize`` samples drawn for iteration ``i``
     (independent samples per iteration, not cumulative across earlier
@@ -69,8 +72,7 @@ class RandomSearchUpdateClass(UpdateClass):
         Box bounds applied to every sampled candidate.
     popsize : int
         Number of candidates drawn per logical iteration. Total
-        evaluations per :meth:`step` call equal
-        ``popsize * n_iterations``.
+        evaluations per ``run`` call equal ``popsize * n_iterations``.
     hash : int
         Stable optimizer hash from the originating ``OptimizationStep``.
     """
@@ -93,10 +95,14 @@ class RandomSearchUpdateClass(UpdateClass):
     ):
         """Initialise the random-search update class.
 
-        ``init_fn`` / ``step_fn`` are set to no-op placeholders because
-        the scan-loop entry points are unused -- :meth:`init` and
-        :meth:`step` are overridden to do all the work in a single
-        batched evaluation.
+        ``init_fn`` is a no-op returning a scalar placeholder; it is
+        invoked through the generic :func:`l2co._src.update_class.init_`
+        so the random-search code path needs no special initialization
+        helper. ``step_fn`` is a no-op as well and is never invoked --
+        ``run_state.run`` / ``run_state.batch_run`` dispatch to the
+        dedicated runners :func:`l2co._src.update_class.run_randomsearch`
+        / :func:`l2co._src.update_class.batch_run_randomsearch`, which
+        do all the work in a single batched evaluation.
 
         Parameters
         ----------
@@ -124,7 +130,6 @@ class RandomSearchUpdateClass(UpdateClass):
             return jnp.array(0, dtype=jnp.int32)
 
         def _noop_step_fn(carry, sample, *args, **kwargs):
-            # Never invoked: step() is overridden to bypass scan_loop.
             return carry, None
 
         super().__init__(
@@ -132,161 +137,12 @@ class RandomSearchUpdateClass(UpdateClass):
             step_fn=_noop_step_fn,
             popsize=popsize,
             hash=hash,
-            stop_fn=None,
         )
         self.sampling_fn = sampling_fn
         self.static_model = static_model
         self.loss_fn = loss_fn
         self.pass_rng = pass_rng
         self.bounded = bounded
-
-    def init(
-        self,
-        params: InputParameters,
-        batch_state: BatchState,
-        dataset: dict[str, jax.Array],
-        key: PRNGKeyArray,
-    ) -> jax.Array:
-        """Return a trivial optimizer state.
-
-        Random search carries no state between calls; the returned
-        scalar placeholder satisfies the ``opt_state`` slot in
-        ``RunState``.
-
-        Parameters
-        ----------
-        params : InputParameters
-            Unused.
-        batch_state : BatchState
-            Unused.
-        dataset : dict[str, jax.Array]
-            Unused.
-        key : PRNGKeyArray
-            Unused.
-
-        Returns
-        -------
-        jax.Array
-            Scalar zero placeholder.
-        """
-        return jnp.array(0, dtype=jnp.int32)
-
-    def step(
-        self,
-        opt_state: PyTree,
-        params: InputParameters,
-        batch_state: BatchState,
-        dataset: dict[str, jax.Array],
-        key: PRNGKeyArray,
-        n_iterations: int,
-        verbose: bool,
-    ) -> tuple[
-        InputParameters,
-        InputParameters,
-        Float[Array, ""],
-        PyTree,
-        BatchState,
-        HistoryState,
-    ]:
-        """Sample and evaluate ``n_iterations * popsize`` candidates.
-
-        The full candidate set is drawn from ``sampling_fn`` in one
-        call, clipped to ``bounded``, evaluated in parallel via
-        ``vmapped_loss`` (or ``vmapped_loss_with_rng`` for stochastic
-        losses), then reshaped into ``(n_iterations, popsize, ...)`` so
-        downstream :class:`HistoryState` reduction yields one
-        ``output_min/mean/std`` value per iteration.
-
-        A single batch is drawn from ``dataset`` via
-        ``batch_state.next`` and reused across every evaluation -- since
-        candidates are independent there is no benefit to cycling
-        batches between "iterations". ``stop_fn`` is not consulted (no
-        inner loop), and ``verbose`` is ignored.
-
-        Parameters
-        ----------
-        opt_state : PyTree
-            Ignored (random search keeps no state); returned unchanged.
-        params : InputParameters
-            Ignored (each iteration re-samples from scratch).
-        batch_state : BatchState
-            Used to draw one batch; advanced once.
-        dataset : dict[str, jax.Array]
-            Task dataset.
-        key : PRNGKeyArray
-            PRNG key, split into batch / sampling / per-candidate-loss
-            sub-keys.
-        n_iterations : int
-            Number of logical iterations to emit in the trajectory.
-        verbose : bool
-            Ignored.
-
-        Returns
-        -------
-        tuple
-            ``(params, best_params, best_loss, opt_state, batch_state,
-            history_state)`` matching :meth:`UpdateClass.step`.
-        """
-        del params, verbose  # see docstring
-        total = n_iterations * self.popsize
-
-        batch_key, sample_key, loss_key = jr.split(key, 3)
-        loss_keys = jr.split(loss_key, total)
-
-        # One batch reused for all evaluations.
-        batch_idxs, batch_state = batch_state.next(batch_key)
-        sample = jax.tree.map(lambda x: x[batch_idxs], dataset)
-
-        # Flat candidate set.
-        candidates = self.sampling_fn(sample_key, total)
-        candidates = jax.tree.map(
-            lambda p: jnp.clip(p, *self.bounded), candidates
-        )
-
-        # Parallel evaluation.
-        combined = eqx.combine(candidates, self.static_model)
-        if self.pass_rng:
-            losses = vmapped_loss_with_rng(
-                combined, self.loss_fn, sample, loss_keys
-            )
-        else:
-            losses = vmapped_loss(combined, self.loss_fn, sample)
-
-        # Reshape to (n_iter, popsize, ...) for OptHistory.
-        losses_2d = losses.reshape(n_iterations, self.popsize)
-        params_2d = jax.tree.map(
-            lambda x: x.reshape(n_iterations, self.popsize, *x.shape[1:]),
-            candidates,
-        )
-        grads_2d = jax.tree.map(lambda p: jnp.full_like(p, jnp.nan), params_2d)
-
-        history = OptHistory(
-            loss=losses_2d,
-            params=params_2d,
-            grads=grads_2d,
-            update_step=jnp.full((n_iterations,), self.hash, dtype=jnp.int32),
-            fevals=jnp.full((n_iterations,), self.popsize, dtype=jnp.int32),
-            iterations=jnp.ones((n_iterations,), dtype=jnp.int32),
-        )
-        history_state = HistoryState.from_history(history)
-
-        # Global best across the full flat candidate set.
-        best_idx = jnp.argmin(losses)
-        best_params = jax.tree.map(lambda x: x[best_idx], candidates)
-        best_loss = losses[best_idx]
-
-        # "Current population" returned to RunState -- last iteration's
-        # popsize candidates, matching UpdateClass.step's contract.
-        final_params = jax.tree.map(lambda x: x[-1], params_2d)
-
-        return (
-            final_params,
-            best_params,
-            best_loss,
-            opt_state,
-            batch_state,
-            history_state,
-        )
 
 
 def random_search_update(
