@@ -75,9 +75,9 @@ class OptHistory(OptHistoryType):
         loss = jnp.full((popsize,), jnp.nan)
         params = jax.tree.map(lambda p: jnp.full_like(p, jnp.nan), params)
         grads = jax.tree.map(lambda p: jnp.full_like(p, jnp.nan), params)
-        update_step = jnp.array(last_step, dtype=jnp.int32)
-        fevals = jnp.array(0, dtype=jnp.int32)
-        iterations = jnp.array(0, dtype=jnp.int32)
+        update_step = jnp.array(last_step, dtype=int)
+        fevals = jnp.array(0, dtype=int)
+        iterations = jnp.array(0, dtype=int)
 
         return cls(
             loss=loss,

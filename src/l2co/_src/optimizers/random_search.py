@@ -127,7 +127,7 @@ class RandomSearchUpdateClass(UpdateClass):
             key: PRNGKeyArray | None = None,
             **sample: Any,
         ) -> jax.Array:
-            return jnp.array(0, dtype=jnp.int32)
+            return jnp.array(0, dtype=int)
 
         def _noop_step_fn(carry, sample, *args, **kwargs):
             return carry, None

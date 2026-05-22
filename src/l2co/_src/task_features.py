@@ -96,7 +96,7 @@ class FeatureProcessor(eqx.Module):
                 if isinstance(val, bool):
                     val = str(val).lower()
                 feats.append(vocab[val])
-        return jnp.array(feats, dtype=jnp.float_)
+        return jnp.array(feats, dtype=float)
 
     def __call__(self, x: dict[str, Any]) -> jax.Array:
         return self.transform(x)
@@ -227,7 +227,7 @@ class MixedEmbedding(eqx.Module):
         outputs = []
         for xi, layer in zip(x, self.embedders, strict=True):
             if isinstance(layer, eqx.nn.Embedding):
-                outputs.append(layer(xi.astype(jnp.int32)))
+                outputs.append(layer(xi.astype(int)))
             else:
                 outputs.append(layer(xi[None]))
         return self.final_proj(jnp.concatenate(outputs, axis=0))

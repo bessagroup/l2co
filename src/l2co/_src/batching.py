@@ -124,7 +124,7 @@ class BatchState(eqx.Module):
 
         return cls(
             perm=jr.permutation(key, dataset_size),
-            pos=jnp.array(0, dtype=jnp.int32),
+            pos=jnp.array(0, dtype=int),
             batch_size=batch_size,
             dataset_size=dataset_size,
         )
@@ -145,7 +145,7 @@ class BatchState(eqx.Module):
         """
         return BatchState(
             perm=jr.permutation(key, self.dataset_size),
-            pos=jnp.array(0, dtype=jnp.int32),
+            pos=jnp.array(0, dtype=int),
             batch_size=self.batch_size,
             dataset_size=self.dataset_size,
         )

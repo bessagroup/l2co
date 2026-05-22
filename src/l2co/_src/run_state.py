@@ -133,7 +133,7 @@ class RunState(eqx.Module):
         return cls(
             params=params,
             best_params=model_params,
-            best_loss=jnp.array(jnp.inf, dtype=jnp.float_),
+            best_loss=jnp.array(jnp.inf, dtype=float),
             opt_state=opt_state,
             update_class=update_class,
         )

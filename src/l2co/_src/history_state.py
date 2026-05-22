@@ -98,17 +98,17 @@ class HistoryState(eqx.Module):
             Initialized history state with NaN floats, zero ints, and
             ``cursor`` set to 0 (empty buffer, next write at index 0).
         """
-        nans_output = jnp.full((max_iterations,), jnp.nan, dtype=jnp.float_)
-        zeros_int32 = jnp.zeros((max_iterations,), dtype=jnp.int32)
+        nans_output = jnp.full((max_iterations,), jnp.nan, dtype=float)
+        zeros_int = jnp.zeros((max_iterations,), dtype=int)
 
         return cls(
             output_min=nans_output,
             output_mean=nans_output,
             output_std=nans_output,
-            update_step=zeros_int32,
-            fevals=zeros_int32,
-            iterations=zeros_int32,
-            cursor=jnp.array(0, dtype=jnp.int32),
+            update_step=zeros_int,
+            fevals=zeros_int,
+            iterations=zeros_int,
+            cursor=jnp.array(0, dtype=int),
         )
 
     def reset(self) -> HistoryState:
@@ -140,7 +140,7 @@ class HistoryState(eqx.Module):
             update_step=history.update_step,
             fevals=history.fevals,
             iterations=history.iterations,
-            cursor=jnp.array(history.loss.shape[0], dtype=jnp.int32),
+            cursor=jnp.array(history.loss.shape[0], dtype=int),
         )
 
     def add(self, other: HistoryState) -> HistoryState:

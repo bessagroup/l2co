@@ -486,13 +486,9 @@ def run_randomsearch(
         loss=losses_2d,
         params=params_2d,
         grads=grads_2d,
-        update_step=jnp.full(
-            (n_iterations,), update_class.hash, dtype=jnp.int32
-        ),
-        fevals=jnp.full(
-            (n_iterations,), update_class.popsize, dtype=jnp.int32
-        ),
-        iterations=jnp.ones((n_iterations,), dtype=jnp.int32),
+        update_step=jnp.full((n_iterations,), update_class.hash, dtype=int),
+        fevals=jnp.full((n_iterations,), update_class.popsize, dtype=int),
+        iterations=jnp.ones((n_iterations,), dtype=int),
     )
     history_state = HistoryState.from_history(history)
 
