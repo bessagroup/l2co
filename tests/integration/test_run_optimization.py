@@ -135,15 +135,17 @@ def test_optimization_step_name_non_rl2co_unchanged():
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("optimizer", ALL_OPTIMIZERS)
-def test_all_optimizers(optimizer: str):
+@pytest.mark.parametrize(
+    "optimizer", ALL_OPTIMIZERS, ids=lambda step: step.optimizer
+)
+def test_all_optimizers(optimizer: OptimizationStep):
     task = create_bbob_task(
         fn_name="rastrigin",
         seed=0,
         dimensionality=2,
     )
     run(
-        optimizer=OptimizationStep(optimizer=optimizer),
+        optimizer=optimizer,
         task=task,
         sampler=normal_sampling,
         include_input_mean=False,

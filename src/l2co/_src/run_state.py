@@ -22,9 +22,9 @@ from .history_state import HistoryState
 from .optimizer_schedule import OptimizationStep
 from .optimizers import optimizer_mapping
 from .optimizers.random_search import RandomSearchUpdateClass
+from .optimizers.update_class import UpdateClass
 from .typing import InputParameters, SamplerFunction
 from .update_class import (
-    UpdateClass,
     batch_run_,
     batch_run_randomsearch,
     init_,

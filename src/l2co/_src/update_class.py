@@ -23,14 +23,24 @@ from jaxtyping import Array, Float, PRNGKeyArray, PyTree
 from .batching import BatchState
 from .history_state import HistoryState
 from .opt_history import OptHistory, RecentHistory
+from .optimizers.update_class import UpdateClass
 from .tree_utils import vmapped_loss, vmapped_loss_with_rng
 from .typing import (
     Carry,
-    InitFunction,
     InputParameters,
-    StepFunction,
-    StopFunction,
 )
+
+__all__ = [
+    "UpdateClass",
+    "batch_run_",
+    "batch_run_randomsearch",
+    "batch_step_",
+    "evaluate",
+    "init_",
+    "run_",
+    "run_randomsearch",
+    "step",
+]
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -598,41 +608,6 @@ def batch_run_randomsearch(
     return eqx.filter_vmap(_single, in_axes=(0, 0, 0, 0))(
         opt_state, params, batch_state, key
     )
-
-
-# =============================================================================
-
-
-def _default_stop_fn(*_, **__) -> bool:
-    return False
-
-
-class UpdateClass(eqx.Module):
-    """Class for managing optimizer update operations.
-
-    This class encapsulates the initialization, stepping, and stopping logic
-    for optimization algorithms.
-
-    Attributes
-    ----------
-    init_fn : InitFunction
-        Function to initialize optimizer state.
-    step_fn : StepFunction
-        Function to perform optimization step.
-    popsize : int
-        Population size for the optimizer.
-    hash : int
-        Hash identifier for the optimizer configuration.
-    stop_fn : StopFunction
-        Function to check stopping criteria. Defaults to a function that
-        never stops.
-    """
-
-    init_fn: InitFunction = eqx.field(static=True)
-    step_fn: StepFunction = eqx.field(static=True)
-    popsize: int = eqx.field(static=True)
-    hash: int = eqx.field(static=True)
-    stop_fn: StopFunction = eqx.field(static=True, default=_default_stop_fn)
 
 
 # =============================================================================

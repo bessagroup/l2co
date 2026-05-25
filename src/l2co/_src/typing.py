@@ -22,6 +22,8 @@ from jaxtyping import Array, Float, Int, PRNGKeyArray, PyTree
 from optax import OptState as OptaxOptState
 
 if TYPE_CHECKING:
+    from l2co_tasks import Task
+
     from .batching import BatchState
     from .opt_history import RecentHistory
 
@@ -82,6 +84,8 @@ InitFunction = Callable[[PyTree], OptaxOptState | EvoSaxState]
 LossFunction = Any
 
 BudgetFn = Callable[[Any], int]
+
+PopSize = int | Callable[["Task"], int]
 
 SamplerFunction = Callable[[PRNGKeyArray, PyTree, int], InputParameters]
 

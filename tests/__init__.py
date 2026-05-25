@@ -1,5 +1,6 @@
 from l2co import OptimizationStep
 from l2co._src.optimizers import optimizers
+from l2co._src.optimizers.optax_implementations import normalized_optax_normal
 
 OPTIMIZATION_STEPS = [
     OptimizationStep(
@@ -30,4 +31,21 @@ OPTIMIZATION_STEPS = [
     ),
 ]
 
-ALL_OPTIMIZERS = list(optimizers.keys())
+
+def _default_hyperparameters(name: str) -> dict:
+    """Hyperparameters required to construct each optimizer in
+    ``optimizers``. Optax-normal optimizers need a ``learning_rate``;
+    everything else (L-BFGS, EvoSax algorithms, random search) is happy
+    with the empty dict.
+    """
+    if name in normalized_optax_normal:
+        return {"learning_rate": 1e-3}
+    return {}
+
+
+ALL_OPTIMIZERS = [
+    OptimizationStep(
+        optimizer=name, hyperparameters=_default_hyperparameters(name)
+    )
+    for name in optimizers.keys()
+]

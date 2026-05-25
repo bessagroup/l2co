@@ -20,9 +20,10 @@ from jaxtyping import PRNGKeyArray, PyTree
 from l2co_tasks import Task
 
 # Local
+from l2co._src.optimizers.update_class import UpdateClass
+from l2co._src.optimizers.utils import resolve_popsize
 from l2co._src.sampler import get_sampler
-from l2co._src.typing import InputParameters, StopFunction
-from l2co._src.update_class import UpdateClass
+from l2co._src.typing import InputParameters, PopSize, StopFunction
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -151,7 +152,7 @@ def random_search_update(
     bounded: tuple[float | None, float | None] = (None, None),
     stop_fn: StopFunction | None = None,
     sampler: str = "random",
-    popsize: int = 1,
+    popsize: PopSize = 1,
     **sampler_kwargs: Any,
 ) -> UpdateClass:
     """Factory for the one-shot random-search optimizer.
@@ -181,9 +182,12 @@ def random_search_update(
         :func:`l2co._src.sampler.get_sampler`. Must accept ``(key,
         params, n_samples, ...)`` -- i.e. ``"random"``, ``"normal"``,
         or ``"xavier"``. Default ``"random"``.
-    popsize : int, optional
+    popsize : int or Callable[[Task], int], optional
         Candidates per logical iteration; total evaluations per
-        ``step`` call equal ``popsize * n_iterations``. Default 1.
+        ``step`` call equal ``popsize * n_iterations``. Either a
+        literal integer or a callable taking the ``Task`` (e.g.
+        :func:`l2co._src.optimizers.utils.variable_popsize`).
+        Default 1.
     **sampler_kwargs : Any
         Forwarded to the underlying sampler (e.g. ``lower_bound`` /
         ``upper_bound`` for ``"random"``; ``mean`` / ``std`` for
@@ -196,6 +200,7 @@ def random_search_update(
         :class:`l2co._src.run_state.RunState`.
     """
     del stop_fn  # accepted but unused; see docstring
+    popsize = resolve_popsize(popsize, task)
     model_params, static_model = eqx.partition(
         task.model, eqx.is_inexact_array
     )
