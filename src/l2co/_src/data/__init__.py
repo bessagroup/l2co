@@ -8,6 +8,7 @@ from .baselines import (
     encode,
     log_relative_improvement,
 )
+from .databank import dump_databank, load_databank
 from .loader import DataLoader
 
 __all__ = [
@@ -15,7 +16,9 @@ __all__ = [
     "calculate_best_solver",
     "calculate_sbs",
     "calculate_vbs",
+    "dump_databank",
     "encode",
+    "load_databank",
     "log_relative_improvement",
     "report_helpers",
 ]

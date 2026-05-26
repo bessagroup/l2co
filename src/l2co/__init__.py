@@ -36,7 +36,12 @@ from l2co import (
     validation,
 )
 from l2co._src import tree_utils
-from l2co.data import DataLoader, create_combined_odata
+from l2co.data import (
+    DataLoader,
+    create_combined_odata,
+    dump_databank,
+    load_databank,
+)
 from l2co.features import (
     FeatureProcessor,
     MixedEmbedding,
@@ -114,9 +119,11 @@ __all__ = [
     "create_combined_odata",
     "create_schedules_experimentdata",
     "data",
+    "dump_databank",
     "evaluate",
     "features",
     "history",
+    "load_databank",
     "models",
     "mse_loss",
     "naming",
