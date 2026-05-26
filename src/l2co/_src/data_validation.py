@@ -5,6 +5,7 @@
 
 # Standard
 import logging
+import shutil
 from functools import partial
 from pathlib import Path
 
@@ -103,11 +104,33 @@ def create_combined_odata(
         Fraction of ``randomsearch`` ``output_min`` values that
         should lie above (be worse than) the per-task easiest ERT
         target. Forwarded to :func:`calculate_ert`. Default ``0.75``.
+
+    Notes
+    -----
+    Per-task intermediate NetCDF files (``placeholder_*.ncs`` and
+    ``<task.hash>.ncs``) are written under
+    ``experiment_data.project_dir / "combine_tmp"``. The sub-directory
+    is wiped at function entry and removed on success, so a stale
+    attempt cannot poison a re-run -- previously these landed in
+    ``Path.cwd()`` (the SLURM submit dir) and survived crashes,
+    which let HDF5 file-lock state from a failed post job hang the
+    next attempt.
     """
     # Only select finished experiments and reset the index
     experiment_data = experiment_data.select_with_status(
         "finished"
     ).reset_index()
+
+    # Per-task scratch dir lives alongside the ExperimentData on
+    # disk (not in Path.cwd()), so two pipeline runs sharing a
+    # submit directory cannot collide on `<task.hash>.ncs`
+    # filenames, and a crashed previous attempt cannot leave
+    # leftover files with stale HDF5 lock state for this run to
+    # block on. Wipe-then-recreate gives a guaranteed clean start.
+    tmp_dir = Path(experiment_data.project_dir) / "combine_tmp"
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir)
+    tmp_dir.mkdir(parents=True)
 
     df_input, df_output = experiment_data.to_pandas(keep_references=True)
 
@@ -156,7 +179,7 @@ def create_combined_odata(
 
     # Process per task
     for task, loss_history in tqdm(xarr_df.iterrows(), total=len(xarr_df)):
-        placeholder_path = Path.cwd() / f"placeholder_{task.hash}.ncs"
+        placeholder_path = tmp_dir / f"placeholder_{task.hash}.ncs"
 
         placeholder = xr.open_dataset(
             loss_history.dropna(axis=0, how="all").iloc[0]
@@ -186,18 +209,23 @@ def create_combined_odata(
         g_min_val = task.global_min if task.global_min is not None else np.nan
         b = b.assign_coords({GLOBAL_MIN: g_min_val})
 
-        b.to_netcdf(f"{task.hash}.ncs")
+        b.to_netcdf(tmp_dir / f"{task.hash}.ncs")
         b.close()
 
         placeholder_path.unlink()
         # break
 
-    file_list = [Path.cwd() / Path(t).with_suffix(".ncs") for t in task_ids]
+    file_list = [tmp_dir / Path(t).with_suffix(".ncs") for t in task_ids]
 
     # ============= PERFORMANCE ============= #
 
     logger.info("Starting opening the entire dataset for validation")
 
+    # Materialise performance eagerly and close the file handles
+    # before the trajectory pipeline opens the *same* per-task .ncs
+    # files. Holding two open generations of one NetCDF file at once
+    # is what lets HDF5 deadlock on its internal mutex during the
+    # final to_netcdf compute.
     xarr_performance = xr.open_mfdataset(
         file_list,
         combine="nested",
@@ -210,7 +238,8 @@ def create_combined_odata(
         ),
         coords="minimal",
         join="outer",
-    )
+    ).load()
+    xarr_performance.close()
 
     # ============= TRAJECTORY ============= #
 
@@ -227,7 +256,8 @@ def create_combined_odata(
         coords="minimal",
         join="outer",
         compat="override",
-    )
+    ).load()
+    xarr_trajectory.close()
 
     # Create task labels
     labels_data = pd.DataFrame(
@@ -268,7 +298,6 @@ def create_combined_odata(
 
     logger.info("Cleaning up temporary files")
 
-    for f in file_list:
-        f.unlink()
+    shutil.rmtree(tmp_dir)
 
     logger.info("End of program.")
