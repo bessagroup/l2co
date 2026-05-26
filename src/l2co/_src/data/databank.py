@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 from pathlib import Path
 from typing import Any, Literal
@@ -39,7 +40,7 @@ import xarray as xr
 # Local
 from l2co._src.data.loader import DataLoader
 from l2co._src.optimizer_schedule import OptimizationStep
-from l2co.naming import SCHEDULE
+from l2co.naming import REALIZATION, SCHEDULE, TASK_ID, TASK_LABELS
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -56,6 +57,137 @@ _LOCATION_ROOTS: dict[str, Path] = {
     "local": Path("/Volumes/T7/data/databank"),
     "brown": Path("/oscar/data/mbessa/mvander7/databank"),
 }
+
+# Dims and variables a databank-bound dataset must carry. Checked at write
+# time so malformed inputs fail fast rather than producing broken slices.
+_REQUIRED_DIMS: tuple[str, ...] = (SCHEDULE, TASK_ID, REALIZATION)
+_REQUIRED_VARS: tuple[str, ...] = (TASK_LABELS,)
+
+# Characters disallowed inside a schedule name (path separators and any
+# control character).
+_FORBIDDEN_NAME_CHARS = re.compile(r"[\\/\x00-\x1f]")
+
+
+def _validate_schedule_names(names: list[str]) -> None:
+    """Reject schedule names that would be unsafe as filenames."""
+    for name in names:
+        if not name:
+            raise ValueError("Empty schedule name is not allowed.")
+        if name in (".", ".."):
+            raise ValueError(f"Schedule name '{name}' is reserved.")
+        if name.startswith("."):
+            raise ValueError(
+                f"Schedule name '{name}' starts with '.'; leading "
+                "dots are reserved for hidden files."
+            )
+        if ".." in name:
+            raise ValueError(
+                f"Schedule name '{name}' contains '..'; path "
+                "traversal is not allowed."
+            )
+        if _FORBIDDEN_NAME_CHARS.search(name):
+            raise ValueError(
+                f"Schedule name '{name}' contains a path separator "
+                "or control character."
+            )
+
+
+def _validate_input_dataset(ds: xr.Dataset) -> None:
+    """Assert the input has the dims and variables the databank needs."""
+    missing_dims = [d for d in _REQUIRED_DIMS if d not in ds.dims]
+    if missing_dims:
+        raise ValueError(
+            f"Input dataset is missing required dim(s): {missing_dims}. "
+            f"Expected all of {list(_REQUIRED_DIMS)}."
+        )
+    missing_vars = [v for v in _REQUIRED_VARS if v not in ds.variables]
+    if missing_vars:
+        raise ValueError(
+            f"Input dataset is missing required variable(s): "
+            f"{missing_vars}. Expected all of {list(_REQUIRED_VARS)}."
+        )
+
+
+def _check_append_compatibility(ds: xr.Dataset, dataset_root: Path) -> None:
+    """Compare ``ds`` against any existing slice in ``dataset_root``.
+
+    Picks the first existing ``*.nc`` as a sentinel and verifies that
+    the incoming dataset has the same non-``SCHEDULE`` dim set, dim
+    sizes, coord values, data variables, and ``task_labels``. Raises
+    :class:`ValueError` on any mismatch.
+    """
+    existing_files = sorted(dataset_root.glob("*.nc"))
+    if not existing_files:
+        return
+
+    sentinel_path = existing_files[0]
+    with xr.open_dataset(sentinel_path, engine="netcdf4") as existing:
+        ds_dims = set(ds.dims) - {SCHEDULE}
+        existing_dims = set(existing.dims) - {SCHEDULE}
+        if ds_dims != existing_dims:
+            raise ValueError(
+                f"Append schema drift: incoming dims "
+                f"{sorted(ds_dims)} differ from existing "
+                f"{sorted(existing_dims)} in {sentinel_path.name}."
+            )
+
+        for dim in ds_dims:
+            if ds.sizes[dim] != existing.sizes[dim]:
+                raise ValueError(
+                    f"Append schema drift: size of dim '{dim}' is "
+                    f"{ds.sizes[dim]} incoming vs "
+                    f"{existing.sizes[dim]} in {sentinel_path.name}."
+                )
+            if (
+                dim in ds.coords
+                and dim in existing.coords
+                and not ds[dim].equals(existing[dim])
+            ):
+                raise ValueError(
+                    f"Append schema drift: coord values for dim "
+                    f"'{dim}' differ between incoming and "
+                    f"{sentinel_path.name}."
+                )
+
+        if set(ds.data_vars) != set(existing.data_vars):
+            raise ValueError(
+                f"Append schema drift: data variables "
+                f"{sorted(ds.data_vars)} differ from existing "
+                f"{sorted(existing.data_vars)} in "
+                f"{sentinel_path.name}."
+            )
+
+        if (
+            TASK_LABELS in ds
+            and TASK_LABELS in existing
+            and not ds[TASK_LABELS].equals(existing[TASK_LABELS])
+        ):
+            raise ValueError(
+                f"Append schema drift: '{TASK_LABELS}' differs "
+                "between incoming and existing — the new schedules "
+                "appear to come from a different task set."
+            )
+
+
+def _audit_dataset_folder(dataset_root: Path) -> None:
+    """Warn about files that don't fit the databank layout."""
+    recipe_dir = dataset_root / ".data"
+    schedule_names = {p.stem for p in dataset_root.glob("*.nc")}
+
+    allowed_root = {f"{n}.nc" for n in schedule_names} | {".data"}
+    for p in dataset_root.iterdir():
+        if p.name not in allowed_root:
+            logger.warning(
+                f"dump_databank: unexpected entry in dataset root: {p}"
+            )
+
+    if not recipe_dir.is_dir():
+        return
+    allowed_data = {f"{n}.json" for n in schedule_names} | {"info.json"}
+    for p in recipe_dir.iterdir():
+        if p.name not in allowed_data:
+            logger.warning(f"dump_databank: unexpected entry in .data/: {p}")
+
 
 # =============================================================================
 
@@ -118,16 +250,42 @@ def dump_databank(
     KeyError
         ``location`` is not a known key of :data:`_LOCATION_ROOTS`.
     ValueError
-        The set of ``OptimizationStep.name`` values does not match the
-        set of ``SCHEDULE`` coord values in ``odata`` exactly, or
+        Any of: the input dataset is missing a required dim or
+        variable; a ``SCHEDULE`` coord value is an unsafe filename
+        (empty, ``.`` / ``..``, leading dot, path separator, or
+        control character); the set of ``OptimizationStep.name``
+        values does not match the ``SCHEDULE`` coord values exactly;
         ``mode="append"`` and the provided ``info`` differs from the
-        existing ``info.json``.
+        existing ``info.json``; ``mode="append"`` and the incoming
+        slice's dims, coords, data variables, or ``task_labels``
+        differ from an existing on-disk schedule.
     """
     # --- Resolve the source dataset ---
     if isinstance(odata, (str, Path)):
         ds = xr.open_dataset(odata, engine="netcdf4")
     else:
         ds = odata
+
+    # --- Validate inputs before touching the filesystem ---
+    _validate_input_dataset(ds)
+
+    schedule_names = [str(s) for s in ds[SCHEDULE].values]
+    _validate_schedule_names(schedule_names)
+
+    optimizers_by_name = {step.name: step for step in optimizers}
+    if len(optimizers_by_name) != len(optimizers):
+        raise ValueError(
+            "Duplicate OptimizationStep.name values in 'optimizers'."
+        )
+    missing = set(schedule_names) - set(optimizers_by_name)
+    extra = set(optimizers_by_name) - set(schedule_names)
+    if missing or extra:
+        raise ValueError(
+            "Mismatch between SCHEDULE coords and provided "
+            f"OptimizationStep names. Missing recipes for: "
+            f"{sorted(missing)}. Extra recipes not in dataset: "
+            f"{sorted(extra)}."
+        )
 
     # --- Resolve and prepare the target directory ---
     dataset_root = _LOCATION_ROOTS[location] / dataset_name
@@ -160,26 +318,10 @@ def dump_databank(
                         f"{info_path}; append mode requires identical "
                         "run-level info."
                     )
+            _check_append_compatibility(ds, dataset_root)
             recipe_dir.mkdir(parents=True, exist_ok=True)
     else:
         recipe_dir.mkdir(parents=True)
-
-    # --- Validate caller-supplied optimizers match SCHEDULE coords ---
-    schedule_names = [str(s) for s in ds[SCHEDULE].values]
-    optimizers_by_name = {step.name: step for step in optimizers}
-    if len(optimizers_by_name) != len(optimizers):
-        raise ValueError(
-            "Duplicate OptimizationStep.name values in 'optimizers'."
-        )
-    missing = set(schedule_names) - set(optimizers_by_name)
-    extra = set(optimizers_by_name) - set(schedule_names)
-    if missing or extra:
-        raise ValueError(
-            "Mismatch between SCHEDULE coords and provided "
-            f"OptimizationStep names. Missing recipes for: "
-            f"{sorted(missing)}. Extra recipes not in dataset: "
-            f"{sorted(extra)}."
-        )
 
     # --- Write per-schedule NetCDF slices and JSON recipes ---
     n_written = 0
@@ -194,7 +336,7 @@ def dump_databank(
             )
             n_skipped += 1
             continue
-        ds.sel({SCHEDULE: [name]}).to_netcdf(nc_path)
+        ds.sel({SCHEDULE: [name]}).to_netcdf(nc_path, engine="netcdf4")
         optimizers_by_name[name].save_to_json(json_path)
         logger.info(f"dump_databank: wrote schedule '{name}' → {nc_path}")
         n_written += 1
@@ -204,6 +346,8 @@ def dump_databank(
     with open(info_path, "w") as f:
         json.dump(info, f, indent=2)
     logger.info(f"dump_databank: wrote {info_path}")
+
+    _audit_dataset_folder(dataset_root)
 
     skipped_str = f", {n_skipped} skipped" if n_skipped else ""
     logger.info(
