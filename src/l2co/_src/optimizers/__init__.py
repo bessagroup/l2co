@@ -3,7 +3,7 @@
 from .experimentdata import create_schedules_experimentdata
 from .mapping import optimizer_mapping, optimizers
 from .update_class import UpdateClass
-from .utils import variable_popsize
+from .utils import variable_popsize, variable_popsize_even
 
 __all__ = [
     "UpdateClass",
@@ -11,4 +11,5 @@ __all__ = [
     "optimizer_mapping",
     "optimizers",
     "variable_popsize",
+    "variable_popsize_even",
 ]

@@ -51,6 +51,34 @@ def variable_popsize(task: Task) -> int:
     return int(4 + 3 * jnp.log(task.dimensionality))
 
 
+def variable_popsize_even(task: Task) -> int:
+    """:func:`variable_popsize` rounded up to the nearest even number.
+
+    Several EvoSax distribution-based algorithms require an even
+    population size. The antithetic / mirrored-sampling strategies (ARS,
+    ASEBO, CR_FM_NES, GuidedES, NoiseReuseES, OpenES, PersistentES, PGPE)
+    ``assert population_size % 2 == 0`` at construction, and ESMC silently
+    emits ``popsize - 1`` candidates for an odd population size — which
+    then mismatches the ``popsize``-shaped buffers downstream. This
+    variant is their default so they run for any task dimensionality
+    (``variable_popsize`` is odd whenever ``int(4 + 3 * log(d))`` is odd,
+    e.g. ``d == 3`` gives ``7``).
+
+    Parameters
+    ----------
+    task : Task
+        Task whose ``dimensionality`` drives the formula.
+
+    Returns
+    -------
+    int
+        :func:`variable_popsize` for ``task``, rounded up to the nearest
+        even integer.
+    """
+    popsize = variable_popsize(task)
+    return popsize + (popsize % 2)
+
+
 def resolve_popsize(popsize: PopSize, task: Task) -> int:
     """Coerce a :data:`PopSize` (int or callable) to a concrete ``int``.
 
