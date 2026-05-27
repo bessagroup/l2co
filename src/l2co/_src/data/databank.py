@@ -68,6 +68,18 @@ _REQUIRED_VARS: tuple[str, ...] = (TASK_LABELS,)
 _FORBIDDEN_NAME_CHARS = re.compile(r"[\\/\x00-\x1f]")
 
 
+def _list_schedule_ncs(dataset_root: Path) -> list[Path]:
+    """Return ``*.nc`` slices in ``dataset_root``, sorted.
+
+    Skips macOS AppleDouble sidecars (``._*.nc``) that the OS creates
+    on non-HFS+ volumes (e.g. exFAT external drives); those files are
+    not valid NetCDF and would crash :func:`xarray.open_dataset`.
+    """
+    return sorted(
+        p for p in dataset_root.glob("*.nc") if not p.name.startswith("._")
+    )
+
+
 def _validate_schedule_names(names: list[str]) -> None:
     """Reject schedule names that would be unsafe as filenames."""
     for name in names:
@@ -111,12 +123,13 @@ def _validate_input_dataset(ds: xr.Dataset) -> None:
 def _check_append_compatibility(ds: xr.Dataset, dataset_root: Path) -> None:
     """Compare ``ds`` against any existing slice in ``dataset_root``.
 
-    Picks the first existing ``*.nc`` as a sentinel and verifies that
+    Picks the first existing ``*.nc`` slice (ignoring macOS
+    ``._*.nc`` AppleDouble sidecars) as a sentinel and verifies that
     the incoming dataset has the same non-``SCHEDULE`` dim set, dim
     sizes, coord values, data variables, and ``task_labels``. Raises
     :class:`ValueError` on any mismatch.
     """
-    existing_files = sorted(dataset_root.glob("*.nc"))
+    existing_files = _list_schedule_ncs(dataset_root)
     if not existing_files:
         return
 
@@ -170,12 +183,18 @@ def _check_append_compatibility(ds: xr.Dataset, dataset_root: Path) -> None:
 
 
 def _audit_dataset_folder(dataset_root: Path) -> None:
-    """Warn about files that don't fit the databank layout."""
+    """Warn about files that don't fit the databank layout.
+
+    macOS AppleDouble sidecars (``._*``) are silently ignored: they
+    are filesystem noise from non-HFS+ volumes, not databank content.
+    """
     recipe_dir = dataset_root / ".data"
-    schedule_names = {p.stem for p in dataset_root.glob("*.nc")}
+    schedule_names = {p.stem for p in _list_schedule_ncs(dataset_root)}
 
     allowed_root = {f"{n}.nc" for n in schedule_names} | {".data"}
     for p in dataset_root.iterdir():
+        if p.name.startswith("._"):
+            continue
         if p.name not in allowed_root:
             logger.warning(
                 f"dump_databank: unexpected entry in dataset root: {p}"
@@ -185,6 +204,8 @@ def _audit_dataset_folder(dataset_root: Path) -> None:
         return
     allowed_data = {f"{n}.json" for n in schedule_names} | {"info.json"}
     for p in recipe_dir.iterdir():
+        if p.name.startswith("._"):
+            continue
         if p.name not in allowed_data:
             logger.warning(f"dump_databank: unexpected entry in .data/: {p}")
 
