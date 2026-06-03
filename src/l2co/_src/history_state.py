@@ -130,13 +130,26 @@ class HistoryState(eqx.Module):
             History state populated with statistics from optimization history.
             ``cursor`` is set to ``history.loss.shape[0]`` since the buffer
             produced by the scan is fully filled.
+
+        Notes
+        -----
+        The per-generation reductions are NaN-aware
+        (:func:`jnp.nanmin` / :func:`jnp.nanmean` / :func:`jnp.nanstd`).
+        Optimizers whose population is sized exactly to their popsize
+        carry no ``NaN`` and so are unaffected (``nanmin == min``); the
+        NaN-awareness matters for callers that emit a NaN-padded
+        population -- e.g. the rl2co policy wrapper, whose generations
+        pad slots ``[sub.popsize:]`` with ``NaN`` when the active
+        sub-optimizer's popsize is below the buffer width. ``nanstd``
+        of a single valid entry is ``0.0``.
         """
         # History has shape (n_iter, pop)
         # Compute statistics across P dimension for each time step
+        # (NaN-aware: padded candidate slots are ignored, see Notes).
         return cls(
-            output_min=jnp.min(history.loss, axis=1),
-            output_mean=jnp.mean(history.loss, axis=1),
-            output_std=jnp.std(history.loss, axis=1),
+            output_min=jnp.nanmin(history.loss, axis=1),
+            output_mean=jnp.nanmean(history.loss, axis=1),
+            output_std=jnp.nanstd(history.loss, axis=1),
             update_step=history.update_step,
             fevals=history.fevals,
             iterations=history.iterations,

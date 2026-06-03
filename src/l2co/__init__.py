@@ -39,8 +39,10 @@ from l2co._src import tree_utils
 from l2co.data import (
     DataLoader,
     create_combined_odata,
+    databank_dataset_root,
     dump_databank,
     load_databank,
+    load_databank_dataset,
 )
 from l2co.features import (
     FeatureProcessor,
@@ -76,6 +78,7 @@ from l2co.optimization import (
 from l2co.optimizers import (
     create_schedules_experimentdata,
     optimizer_mapping,
+    register_optimizer,
 )
 from l2co.validation import normalize_budget_grid, validation_fn
 
@@ -119,11 +122,13 @@ __all__ = [
     "create_combined_odata",
     "create_schedules_experimentdata",
     "data",
+    "databank_dataset_root",
     "dump_databank",
     "evaluate",
     "features",
     "history",
     "load_databank",
+    "load_databank_dataset",
     "models",
     "mse_loss",
     "naming",
@@ -133,6 +138,7 @@ __all__ = [
     "optimizers",
     "plotting",
     "preprocessing_factory",
+    "register_optimizer",
     "reset",
     "run",
     "sampling",

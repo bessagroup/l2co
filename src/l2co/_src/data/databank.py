@@ -31,6 +31,7 @@ import json
 import logging
 import re
 import shutil
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, Literal
 
@@ -66,6 +67,51 @@ _REQUIRED_VARS: tuple[str, ...] = (TASK_LABELS,)
 # Characters disallowed inside a schedule name (path separators and any
 # control character).
 _FORBIDDEN_NAME_CHARS = re.compile(r"[\\/\x00-\x1f]")
+
+
+def _diff_info(existing: dict, provided: dict) -> str:
+    """Summarise how a provided ``info`` dict differs from an existing one.
+
+    Walks both dicts recursively and returns a human-readable, multi-line
+    description of every key that was added, removed, or changed. Used to
+    make ``mode="append"`` mismatches actionable instead of just reporting
+    that the two dicts are unequal.
+
+    Parameters
+    ----------
+    existing : dict
+        The ``info`` already on disk (loaded from ``info.json``).
+    provided : dict
+        The ``info`` passed to :func:`dump_databank` for this call.
+
+    Returns
+    -------
+    str
+        One ``- <path>: ...`` line per difference, sorted by key path.
+    """
+    lines: list[str] = []
+
+    def _walk(old: Any, new: Any, path: str) -> None:
+        if isinstance(old, dict) and isinstance(new, dict):
+            for key in sorted(set(old) | set(new)):
+                child = f"{path}.{key}" if path else str(key)
+                if key not in old:
+                    lines.append(
+                        f"  - {child}: existing=[not present], "
+                        f"provided={new[key]!r}"
+                    )
+                elif key not in new:
+                    lines.append(
+                        f"  - {child}: existing={old[key]!r}, "
+                        "provided=[not provided]"
+                    )
+                else:
+                    _walk(old[key], new[key], child)
+        elif old != new:
+            lines.append(f"  - {path}: existing={old!r}, provided={new!r}")
+
+    _walk(existing, provided, "")
+    return "\n".join(lines) if lines else "  (no field-level differences)"
 
 
 def _list_schedule_ncs(dataset_root: Path) -> list[Path]:
@@ -249,7 +295,7 @@ def dump_databank(
         Run-level metadata (e.g. ``n_realizations``, ``seed``,
         ``budget_steps``, ``budgets``, ``samplers``). Dumped verbatim to
         ``info.json`` via :func:`json.dump`; values must be
-        JSON-serialisable.
+        JSON-serialisable (checked up front before any writes).
     mode : {"error", "replace", "append"}, optional
         How to handle an existing dataset folder. ``"error"`` (default)
         raises :class:`FileExistsError`. ``"replace"`` removes the
@@ -257,7 +303,8 @@ def dump_databank(
         existing files and writes only schedules that are not already
         on disk; any schedule whose ``<name>.nc`` already exists is
         skipped with a warning. In ``"append"`` mode, ``info`` must
-        equal the existing ``info.json`` exactly (same run conditions).
+        equal the existing ``info.json`` exactly (same run conditions);
+        the existing file is then left in place rather than rewritten.
 
     Returns
     -------
@@ -276,160 +323,200 @@ def dump_databank(
         (empty, ``.`` / ``..``, leading dot, path separator, or
         control character); the set of ``OptimizationStep.name``
         values does not match the ``SCHEDULE`` coord values exactly;
+        ``info`` contains values that are not JSON-serialisable;
         ``mode="append"`` and the provided ``info`` differs from the
         existing ``info.json``; ``mode="append"`` and the incoming
         slice's dims, coords, data variables, or ``task_labels``
         differ from an existing on-disk schedule.
     """
-    # --- Resolve the source dataset ---
-    if isinstance(odata, (str, Path)):
-        ds = xr.open_dataset(odata, engine="netcdf4")
-    else:
-        ds = odata
+    # --- Validate `info` is JSON-serialisable before any FS writes ---
+    # Done up front so a bad `info` can't leave the dataset folder
+    # half-written after every .nc slice is on disk.
+    try:
+        info_serialized = json.dumps(info, indent=2)
+    except TypeError as e:
+        raise ValueError(f"'info' is not JSON-serialisable: {e}") from e
 
-    # --- Validate inputs before touching the filesystem ---
-    _validate_input_dataset(ds)
+    with ExitStack() as stack:
+        # --- Resolve the source dataset; close it if we opened it ---
+        if isinstance(odata, (str, Path)):
+            ds = stack.enter_context(xr.open_dataset(odata, engine="netcdf4"))
+        else:
+            ds = odata
 
-    schedule_names = [str(s) for s in ds[SCHEDULE].values]
-    _validate_schedule_names(schedule_names)
+        # --- Validate inputs before touching the filesystem ---
+        _validate_input_dataset(ds)
 
-    optimizers_by_name = {step.name: step for step in optimizers}
-    if len(optimizers_by_name) != len(optimizers):
-        raise ValueError(
-            "Duplicate OptimizationStep.name values in 'optimizers'."
-        )
-    missing = set(schedule_names) - set(optimizers_by_name)
-    extra = set(optimizers_by_name) - set(schedule_names)
-    if missing or extra:
-        raise ValueError(
-            "Mismatch between SCHEDULE coords and provided "
-            f"OptimizationStep names. Missing recipes for: "
-            f"{sorted(missing)}. Extra recipes not in dataset: "
-            f"{sorted(extra)}."
-        )
+        schedule_names = [str(s) for s in ds[SCHEDULE].values]
+        _validate_schedule_names(schedule_names)
 
-    # --- Resolve and prepare the target directory ---
-    dataset_root = _LOCATION_ROOTS[location] / dataset_name
-    recipe_dir = dataset_root / ".data"
-    logger.info(
-        f"dump_databank: writing dataset '{dataset_name}' to "
-        f"{dataset_root} (mode={mode})"
-    )
-    if dataset_root.exists():
-        if mode == "error":
-            raise FileExistsError(
-                f"Dataset folder {dataset_root} already exists; pass "
-                "mode='replace' to wipe and rewrite, or mode='append' "
-                "to extend it with new schedules."
+        optimizers_by_name = {step.name: step for step in optimizers}
+        if len(optimizers_by_name) != len(optimizers):
+            raise ValueError(
+                "Duplicate OptimizationStep.name values in 'optimizers'."
             )
-        elif mode == "replace":
-            logger.info(
-                f"dump_databank: removing existing folder {dataset_root}"
+        missing = set(schedule_names) - set(optimizers_by_name)
+        extra = set(optimizers_by_name) - set(schedule_names)
+        if missing or extra:
+            raise ValueError(
+                "Mismatch between SCHEDULE coords and provided "
+                f"OptimizationStep names. Missing recipes for: "
+                f"{sorted(missing)}. Extra recipes not in dataset: "
+                f"{sorted(extra)}."
             )
-            shutil.rmtree(dataset_root)
+
+        # --- Resolve and prepare the target directory ---
+        dataset_root = _LOCATION_ROOTS[location] / dataset_name
+        recipe_dir = dataset_root / ".data"
+        logger.info(
+            f"dump_databank: writing dataset '{dataset_name}' to "
+            f"{dataset_root} (mode={mode})"
+        )
+        if dataset_root.exists():
+            if mode == "error":
+                raise FileExistsError(
+                    f"Dataset folder {dataset_root} already exists; pass "
+                    "mode='replace' to wipe and rewrite, or mode='append' "
+                    "to extend it with new schedules."
+                )
+            elif mode == "replace":
+                logger.info(
+                    f"dump_databank: removing existing folder {dataset_root}"
+                )
+                shutil.rmtree(dataset_root)
+                recipe_dir.mkdir(parents=True)
+            elif mode == "append":
+                info_path = recipe_dir / "info.json"
+                if info_path.exists():
+                    with open(info_path) as f:
+                        existing_info = json.load(f)
+                    if existing_info != info:
+                        raise ValueError(
+                            f"Provided 'info' does not match existing "
+                            f"{info_path}; append mode requires identical "
+                            "run-level info. Differences "
+                            "(existing vs provided):\n"
+                            f"{_diff_info(existing_info, info)}"
+                        )
+                _check_append_compatibility(ds, dataset_root)
+                recipe_dir.mkdir(parents=True, exist_ok=True)
+        else:
             recipe_dir.mkdir(parents=True)
-        elif mode == "append":
-            info_path = recipe_dir / "info.json"
-            if info_path.exists():
-                with open(info_path) as f:
-                    existing_info = json.load(f)
-                if existing_info != info:
-                    raise ValueError(
-                        f"Provided 'info' does not match existing "
-                        f"{info_path}; append mode requires identical "
-                        "run-level info."
-                    )
-            _check_append_compatibility(ds, dataset_root)
-            recipe_dir.mkdir(parents=True, exist_ok=True)
-    else:
-        recipe_dir.mkdir(parents=True)
 
-    # --- Write per-schedule NetCDF slices and JSON recipes ---
-    n_written = 0
-    n_skipped = 0
-    for name in schedule_names:
-        nc_path = dataset_root / f"{name}.nc"
-        json_path = recipe_dir / f"{name}.json"
-        if mode == "append" and nc_path.exists():
-            logger.warning(
-                f"dump_databank: schedule '{name}' already exists at "
-                f"{nc_path}; skipping (mode='append' never overwrites)."
+        # --- Write per-schedule NetCDF slices and JSON recipes ---
+        n_written = 0
+        n_skipped = 0
+        for name in schedule_names:
+            nc_path = dataset_root / f"{name}.nc"
+            json_path = recipe_dir / f"{name}.json"
+            if mode == "append" and nc_path.exists():
+                logger.warning(
+                    f"dump_databank: schedule '{name}' already exists at "
+                    f"{nc_path}; skipping (mode='append' never overwrites)."
+                )
+                n_skipped += 1
+                continue
+            ds.sel({SCHEDULE: [name]}).to_netcdf(nc_path, engine="netcdf4")
+            optimizers_by_name[name].save_to_json(json_path)
+            logger.info(f"dump_databank: wrote schedule '{name}' → {nc_path}")
+            n_written += 1
+
+        # --- Write run-level info ---
+        # Skip rewriting in append mode when info.json already exists:
+        # it was verified to match above, so re-truncating would only
+        # risk corrupting the canonical record we just validated
+        # against. When writing, go via a temp file + atomic rename so
+        # a crash mid-write doesn't leave a half-written info.json.
+        info_path = recipe_dir / "info.json"
+        if info_path.exists():
+            logger.info(
+                f"dump_databank: kept existing {info_path} (matches input)"
             )
-            n_skipped += 1
-            continue
-        ds.sel({SCHEDULE: [name]}).to_netcdf(nc_path, engine="netcdf4")
-        optimizers_by_name[name].save_to_json(json_path)
-        logger.info(f"dump_databank: wrote schedule '{name}' → {nc_path}")
-        n_written += 1
+        else:
+            tmp_path = info_path.with_suffix(".json.tmp")
+            tmp_path.write_text(info_serialized)
+            tmp_path.replace(info_path)
+            logger.info(f"dump_databank: wrote {info_path}")
 
-    # --- Write run-level info ---
-    info_path = recipe_dir / "info.json"
-    with open(info_path, "w") as f:
-        json.dump(info, f, indent=2)
-    logger.info(f"dump_databank: wrote {info_path}")
+        _audit_dataset_folder(dataset_root)
 
-    _audit_dataset_folder(dataset_root)
-
-    skipped_str = f", {n_skipped} skipped" if n_skipped else ""
-    logger.info(
-        f"dump_databank: done — {n_written} schedule(s) written"
-        f"{skipped_str} → {dataset_root}"
-    )
-    return dataset_root.resolve()
+        skipped_str = f", {n_skipped} skipped" if n_skipped else ""
+        logger.info(
+            f"dump_databank: done — {n_written} schedule(s) written"
+            f"{skipped_str} → {dataset_root}"
+        )
+        return dataset_root.resolve()
 
 
-def load_databank(
+def load_databank_dataset(
     dataset_name: str,
     optimizers: list[OptimizationStep] | list[str],
     location: Literal["local", "brown"],
-) -> DataLoader:
-    """Load selected schedules from a databank into a :class:`DataLoader`.
+) -> xr.Dataset:
+    """Open every per-schedule NetCDF and concatenate along ``SCHEDULE``.
 
-    Opens each ``<dataset_name>/<schedule_name>.nc`` slice produced by
-    :func:`dump_databank`, concatenates them along the ``SCHEDULE``
-    dimension, and wraps the result via :meth:`DataLoader.from_xarray`.
+    Reads the per-schedule slices written by :func:`dump_databank` and
+    returns them concatenated as a single raw :class:`xarray.Dataset`.
+    Each slice is fully materialised in memory and its NetCDF file
+    handle is closed before this function returns, so the result is
+    independent of concurrent writers on disk (e.g. another process
+    calling :func:`dump_databank` mid-flight). Trades file-handle
+    safety for memory: the entire requested subset is held in RAM.
+
+    Use this when you need the bare ``xr.Dataset`` (e.g. to re-write it
+    to a ``.odata`` file); use :func:`load_databank` when you want it
+    wrapped in a :class:`DataLoader`.
+
+    Variables and coords that do not carry the ``SCHEDULE`` dim (e.g.
+    ``task_labels``, ``target_value``) are expected to be identical
+    across slices. The concat is done with ``compat="override"`` so
+    conflicting values are silently resolved by taking the **first**
+    schedule's copy; this hides producer-side drift across schedules
+    rather than failing loudly. Inspect the source files directly if
+    you suspect a mismatch.
 
     Parameters
     ----------
     dataset_name : str
-        Name of the dataset folder inside the databank (e.g.
-        ``"bbob_test"``).
+        Name of the dataset folder inside the databank
+        (e.g. ``"bbob"``).
     optimizers : list[OptimizationStep] | list[str]
-        Schedules to load. Each entry is either an
-        :class:`OptimizationStep` (its :attr:`~OptimizationStep.name`
-        is used as the filename stem) or the schedule name as a
-        string. The two forms can be mixed.
+        Schedules to load, identified either by
+        :class:`OptimizationStep` (``step.name`` is used) or by name
+        string. Order is preserved along the resulting ``SCHEDULE``
+        dim. Must be non-empty and contain no duplicate names.
     location : {"local", "brown"}
         Which databank to read from; maps to a fixed root directory
         via :data:`_LOCATION_ROOTS`.
 
     Returns
     -------
-    DataLoader
-        DataLoader with all requested schedules stacked along
-        ``SCHEDULE``.
+    xarray.Dataset
+        The concatenated per-schedule dataset.
 
     Raises
     ------
-    KeyError
+    ValueError
+        ``optimizers`` is empty or contains duplicate names, or
         ``location`` is not a known key of :data:`_LOCATION_ROOTS`.
     FileNotFoundError
-        The dataset folder or any requested ``<name>.nc`` slice is
-        missing.
-    ValueError
-        ``optimizers`` is empty.
+        The dataset folder does not exist, or a requested schedule's
+        ``<name>.nc`` is missing.
     """
     if not optimizers:
         raise ValueError("'optimizers' must contain at least one entry.")
-
-    dataset_root = _LOCATION_ROOTS[location] / dataset_name
-    if not dataset_root.is_dir():
-        raise FileNotFoundError(f"Dataset folder not found: {dataset_root}")
 
     names = [
         opt.name if isinstance(opt, OptimizationStep) else opt
         for opt in optimizers
     ]
+    duplicates = sorted({n for n in names if names.count(n) > 1})
+    if duplicates:
+        raise ValueError(
+            f"Duplicate schedule name(s) in 'optimizers': {duplicates}."
+        )
+
+    dataset_root = databank_dataset_root(location, dataset_name)
 
     slices = []
     for name in names:
@@ -438,11 +525,87 @@ def load_databank(
             raise FileNotFoundError(
                 f"Schedule '{name}' not found at {nc_path}"
             )
-        slices.append(xr.open_dataset(nc_path, engine="netcdf4"))
-        logger.info(f"load_databank: opened {nc_path}")
+        slices.append(xr.load_dataset(nc_path, engine="netcdf4"))
+        logger.info(f"load_databank_dataset: loaded {nc_path}")
 
-    ds = xr.concat(slices, dim=SCHEDULE, data_vars="minimal")
+    ds = xr.concat(
+        slices,
+        dim=SCHEDULE,
+        data_vars="minimal",
+        coords="minimal",
+        compat="override",
+    )
     logger.info(
-        f"load_databank: loaded {len(slices)} schedule(s) from {dataset_root}"
+        f"load_databank_dataset: loaded {len(slices)} schedule(s) "
+        f"from {dataset_root}"
+    )
+    return ds
+
+
+def load_databank(
+    dataset_name: str,
+    optimizers: list[OptimizationStep] | list[str],
+    location: Literal["local", "brown"],
+) -> DataLoader:
+    """Open every per-schedule NetCDF and wrap it in a :class:`DataLoader`.
+
+    Thin wrapper over :func:`load_databank_dataset`: loads the requested
+    schedules into a single concatenated :class:`xarray.Dataset` and
+    returns ``DataLoader.from_xarray(ds)``. See
+    :func:`load_databank_dataset` for the loading semantics (in-memory
+    materialisation, ``compat="override"`` concat behaviour) and the
+    full parameter / exception contract, which is identical.
+
+    Returns
+    -------
+    DataLoader
+        Loader wrapping the concatenated per-schedule dataset.
+    """
+    ds = load_databank_dataset(
+        dataset_name=dataset_name,
+        optimizers=optimizers,
+        location=location,
     )
     return DataLoader.from_xarray(ds)
+
+
+# =============================================================================
+
+
+def databank_dataset_root(
+    location: Literal["local", "brown"],
+    dataset_name: str,
+) -> Path:
+    """
+    Return the absolute path to a dataset folder in the databank.
+
+    Parameters
+    ----------
+    location : {"local", "brown"}
+        Which databank to read from; maps to a fixed root directory via
+        :data:`_LOCATION_ROOTS`.
+    dataset_name : str
+        Name of the dataset folder inside the databank (e.g. ``"bbob_test
+        "``).
+
+    Returns
+    -------
+    pathlib.Path
+        Absolute path to the dataset folder.
+
+    Raises
+    ------
+    KeyError
+        ``location`` is not a known key of :data:`_LOCATION_ROOTS`.
+    FileNotFoundError
+        The dataset folder does not exist at the expected path.
+    """
+    if location not in _LOCATION_ROOTS:
+        raise ValueError(
+            f"Unknown location {location!r}; expected one of "
+            f"{sorted(_LOCATION_ROOTS)}."
+        )
+    path = _LOCATION_ROOTS[location] / dataset_name
+    if not path.is_dir():
+        raise FileNotFoundError(f"Dataset directory does not exist: {path}")
+    return path
