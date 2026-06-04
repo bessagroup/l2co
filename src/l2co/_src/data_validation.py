@@ -53,7 +53,9 @@ loss_column_name: str = "loss history"
 
 
 def _ert_from_quantile(
-    data: xr.Dataset, easiest_quantile: float
+    data: xr.Dataset,
+    easiest_quantile: float,
+    targets: np.ndarray | None = None,
 ) -> xr.Dataset:
     """Per-task ERT preprocess that derives targets from randomsearch.
 
@@ -61,12 +63,30 @@ def _ert_from_quantile(
     quality-value space, computes targets via
     :func:`compute_task_targets` at the given ``easiest_quantile``,
     and forwards them to :func:`calculate_ert`.
+
+    Parameters
+    ----------
+    data : xr.Dataset
+        Per-task dataset concatenated along ``schedule``.
+    easiest_quantile : float
+        Forwarded to :func:`compute_task_targets` when ``targets`` is
+        ``None``.
+    targets : np.ndarray or None, optional
+        Pre-computed ERT target quality values (in quality-value space).
+        When given, :func:`compute_task_targets` is skipped and these
+        targets are used directly -- this scores ``data`` against
+        targets fixed elsewhere (e.g. the ``target_value`` already
+        stored for an existing task) rather than re-deriving them from
+        this dataset's randomsearch baseline.
     """
     global_min = data.coords.get(GLOBAL_MIN, np.nan)
     if global_min is None:
         global_min = np.nan
-    data_qv = shift_to_quality_value(data, global_min)
-    targets = compute_task_targets(data_qv, easiest_quantile=easiest_quantile)
+    if targets is None:
+        data_qv = shift_to_quality_value(data, global_min)
+        targets = compute_task_targets(
+            data_qv, easiest_quantile=easiest_quantile
+        )
     return calculate_ert(data, targets=targets, global_min=global_min)
 
 

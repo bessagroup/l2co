@@ -45,3 +45,11 @@ ITERATIONS = "iterations"
 SUCCESS = "success"
 TARGET = "target"
 SEED = "seed"
+
+# Per-record databank (see l2co._src.databank). ``METRIC`` /
+# ``TARGET_VALUE`` mirror the string keys already emitted by
+# ``l2co._src.performance.calculate_ert``; ``OPTIMIZATIONSTEP`` is the
+# JSON-recipe data variable stored in ``optimizer/<hash>.nc``.
+METRIC = "metric"
+TARGET_VALUE = "target_value"
+OPTIMIZATIONSTEP = "optimizationstep"

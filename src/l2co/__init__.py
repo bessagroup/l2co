@@ -25,6 +25,7 @@ from l2co_tasks import Task
 from l2co import (
     budget,
     data,
+    databank,
     features,
     history,
     models,
@@ -122,6 +123,7 @@ __all__ = [
     "create_combined_odata",
     "create_schedules_experimentdata",
     "data",
+    "databank",
     "databank_dataset_root",
     "dump_databank",
     "evaluate",

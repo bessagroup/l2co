@@ -178,6 +178,39 @@ class CreateCombinedOdata(Block):
         return data
 
 
+class DumpDatabank(Block):
+    """Write the per-record databank from finished runs (opt-in).
+
+    Additive alternative to :class:`CreateCombinedOdata`: instead of one
+    monolithic ``entire_dataset.odata`` it writes the per-record layout
+    via :func:`l2co.databank.dump_databank` (one file per task,
+    optimizer, and ``(task, optimizer)`` pair). The tasks / schedules
+    ``ExperimentData`` are reloaded from the ``tasks`` / ``schedules``
+    sub-directories created in :func:`create_experimentdata`.
+    """
+
+    def __init__(
+        self, location: str, dataset_name: str, mode: str = "replace"
+    ) -> None:
+        self.location = location
+        self.dataset_name = dataset_name
+        self.mode = mode
+
+    def call(self, data: ExperimentData, **kwargs) -> ExperimentData:
+        project_dir = Path(data.project_dir)
+        tasks_ed = ExperimentData.from_file(project_dir / "tasks")
+        schedules_ed = ExperimentData.from_file(project_dir / "schedules")
+        l2co.databank.dump_databank(
+            experiment_data=data,
+            tasks_experiment_data=tasks_ed,
+            schedules_experiment_data=schedules_ed,
+            location=self.location,
+            dataset_name=self.dataset_name,
+            mode=self.mode,
+        )
+        return data
+
+
 # =============================================================================
 
 
@@ -296,6 +329,15 @@ def build_pipeline(config: DictConfig) -> Pipeline:
     post_process = CollectArrayResults(cleanup=True) >> CreateCombinedOdata(
         budget_steps=config.budget_steps
     )
+
+    # Optionally also write the per-record databank (opt-in via config).
+    databank_cfg = config.get("databank", None)
+    if databank_cfg is not None:
+        post_process = post_process >> DumpDatabank(
+            location=databank_cfg.location,
+            dataset_name=databank_cfg.dataset_name,
+            mode=databank_cfg.get("mode", "replace"),
+        )
 
     return Pipeline(
         name="create_optimization_dataset",
