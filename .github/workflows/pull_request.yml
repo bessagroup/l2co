@@ -39,7 +39,7 @@ jobs:
       - name: Checkout l2co-tasks (sibling editable dep)
         uses: actions/checkout@v4
         with:
-          repository: mpvanderschelling/l2co-tasks
+          repository: bessagroup/l2co-tasks
           path: l2co-tasks
           token: ${{ secrets.SIBLING_DEPS_TOKEN }}
       - name: Checkout f3dasm (sibling editable dep)
@@ -99,7 +99,7 @@ jobs:
       - name: Checkout l2co-tasks
         uses: actions/checkout@v4
         with:
-          repository: mpvanderschelling/l2co-tasks
+          repository: bessagroup/l2co-tasks
           path: l2co-tasks
           token: ${{ secrets.SIBLING_DEPS_TOKEN }}
       - name: Checkout f3dasm

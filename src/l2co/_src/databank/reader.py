@@ -1,12 +1,13 @@
-"""Open and merge a per-record databank into a single dataset.
+"""Open a databank into a single dataset / loader.
 
-Each dataset type is opened in its own :func:`xarray.open_mfdataset`
-call (they have different variables and concat axes) and the results are
-``xr.merge``d into one dataset. ``loss_history`` files store the *raw*,
-variable-length ``budget`` axis; it is resampled onto the canonical L2CO
-budget grid at open time by :func:`loss_preprocess`. The merged dataset
-matches what :meth:`l2co.DataLoader.from_xarray` consumes, so the
-training pipeline is unaffected.
+Opens the **single** consolidated store and lazily ``.sel``\\s the
+requested ``taskID`` / ``schedule`` chunks. ``loss_history`` is already
+interpolated to a fixed budget grid, so there is no per-pair resampling
+at read time. Missing ``(task, optimizer)`` cells read back as ``NaN``
+(unwritten chunks).
+
+Numerical variables are returned as ``float`` (the on-disk dtype); cast
+to ``int`` / ``bool`` downstream if needed.
 """
 
 #                                                                       Modules
@@ -15,30 +16,31 @@ training pipeline is unaffected.
 # Standard
 from __future__ import annotations
 
+import json
 import logging
-from functools import partial
 from pathlib import Path
-from typing import Literal
 
 # Third-party
 import xarray as xr
 
-# Local
 from l2co._src.data.loader import DataLoader
 from l2co._src.optimizer_schedule import OptimizationStep
-from l2co._src.validation import normalize_budget_grid
+
+# Local
 from l2co.naming import (
-    FEVALS,
-    ITERATIONS,
+    COST,
     OPTIMIZATIONSTEP,
     SCHEDULE,
     SUCCESS,
+    TARGET_VALUE,
     TASK_ID,
-    UPDATE_STEP,
+    TASK_LABELS,
 )
 
 from . import layout
+from .records import loss_preprocess
 from .tasksets import load_taskset
+from .writer import silence_zarr_warnings
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -49,226 +51,266 @@ __status__ = "Stable"
 
 logger = logging.getLogger(__name__)
 
-# Integer counters that nearest-neighbour interpolation promotes to
-# float and that must be cast back so dtypes stay consistent with the
-# rest of L2CO (see CLAUDE.md "Default float dtype").
-_INT_LOSS_VARS = (FEVALS, ITERATIONS, UPDATE_STEP)
 
-# Shared open keywords for every dataset type. ``compat="override"``
-# keeps the open lazy (it skips element-wise comparison of shared
-# coords); ``join="outer"`` unions ``taskID`` / ``schedule`` and
-# NaN-pads any missing ``(task, optimizer)`` combination.
-_OPEN_KW = dict(
-    combine="by_coords",
-    join="outer",
-    data_vars="minimal",
-    coords="minimal",
-    compat="override",
-    engine="netcdf4",
-)
+def _resolve_schedule_names(
+    ds: xr.Dataset, optimizers: list[OptimizationStep] | list[int] | list[str]
+) -> list[str]:
+    """Map the requested optimizers to ``schedule`` names in the store.
 
-
-def loss_preprocess(ds: xr.Dataset, budget_steps: int) -> xr.Dataset:
-    """Resample one raw ``loss_history`` file onto the canonical grid.
-
-    Delegates to :func:`l2co.validation.normalize_budget_grid` so the
-    ``[-step, 0, step', ...]`` slot-0 ("pre-optimization") convention
-    used throughout L2CO is preserved -- the same normalization the
-    legacy write-time pipeline applied via ``validation_fn``. Nearest
-    interpolation keeps the recorded 0th and final iterations exact, but
-    promotes the integer counters (``fevals``, ``iterations``,
-    ``update_step``) to float; they are cast back to ``int`` here.
-
-    The cast goes through ``.round()`` first: although ``method="nearest"``
-    only copies existing sample values (so the integer is conceptually
-    exact), the float64 round-trip can leave a count at e.g. ``3.9999999``,
-    and a bare ``.astype(int)`` truncates toward zero -- silently dropping
-    it to ``3``. Rounding first restores the intended integer before the
-    truncation.
-
-    Parameters
-    ----------
-    ds : xr.Dataset
-        A single ``loss_history`` dataset with a raw ``budget`` dim.
-    budget_steps : int
-        Number of points on the common budget grid (``>= 3``).
-
-    Returns
-    -------
-    xr.Dataset
-        ``ds`` resampled to ``budget_steps`` points with integer
-        counters restored.
+    The store keys ``schedule`` by the human-readable optimizer *name*.
+    :class:`OptimizationStep` inputs use their ``.name``; ``str`` inputs
+    are taken as schedule names directly; integer inputs are matched by
+    ``OptimizationStep.hash`` reconstructed from each stored
+    ``optimizationstep`` recipe.
     """
-    ds = normalize_budget_grid(ds, budget_steps)
-    for var in _INT_LOSS_VARS:
-        if var in ds:
-            ds[var] = ds[var].round().astype(int)
-    return ds
-
-
-def _resolve_optimizer_hashes(
-    optimizers: list[OptimizationStep] | list[int],
-) -> list[int]:
-    """Map a list of ``OptimizationStep`` or ints to optimizer hashes."""
     if not optimizers:
         raise ValueError("'optimizers' must contain at least one entry.")
-    return [
-        opt.hash if isinstance(opt, OptimizationStep) else int(opt)
-        for opt in optimizers
-    ]
+    name_by_hash: dict[int, str] = {}
+    for name, recipe in zip(
+        ds[SCHEDULE].values, ds[OPTIMIZATIONSTEP].values, strict=True
+    ):
+        step = OptimizationStep.from_dict(json.loads(str(recipe)))
+        name_by_hash[step.hash] = str(name)
+    names: list[str] = []
+    for opt in optimizers:
+        if isinstance(opt, OptimizationStep):
+            names.append(opt.name)
+        elif isinstance(opt, str):
+            names.append(opt)
+        else:
+            names.append(name_by_hash[int(opt)])
+    return names
 
 
 def _resolve_task_ids(
-    rootdir: Path,
+    root: Path,
+    dataset_name: str,
+    available: list[str],
     task_ids: list[str] | None,
     taskset: str | None,
 ) -> list[str]:
-    """Resolve the selected task hashes from an explicit list, a taskset
-    name, or (as a fallback) every task present on disk."""
+    """Resolve selected task hashes from a list, a taskset, or the store.
+
+    Tasksets live under the per-dataset folder
+    (``<root>/<dataset_name>/tasksets``), written there by
+    :func:`l2co._src.databank.writer.dump_databank`.
+    """
     if task_ids is not None and taskset is not None:
         raise ValueError("Pass at most one of 'task_ids' / 'taskset'.")
     if taskset is not None:
-        return load_taskset(rootdir, taskset)
+        return load_taskset(layout.databank_root(root, dataset_name), taskset)
     if task_ids is not None:
         if not task_ids:
             raise ValueError("'task_ids' must contain at least one entry.")
         return list(task_ids)
-    # Discover every task on disk (skip macOS AppleDouble sidecars).
-    task_dir = layout.subdir(rootdir, layout.TASK_DIR)
-    discovered = sorted(
-        p.stem for p in task_dir.glob("*.nc") if not p.name.startswith("._")
-    )
-    if not discovered:
-        raise FileNotFoundError(
-            f"No task files found under {task_dir}; pass 'task_ids' or "
-            "'taskset' explicitly."
-        )
-    return discovered
+    return available
 
 
 def load_databank_dataset(
     dataset_name: str,
-    optimizers: list[OptimizationStep] | list[int],
-    location: Literal["local", "brown"],
+    optimizers: list[OptimizationStep] | list[int] | list[str],
+    root: Path,
     *,
     task_ids: list[str] | None = None,
     taskset: str | None = None,
-    budget_steps: int = 1000,
 ) -> xr.Dataset:
-    """Open a ``(task, optimizer)`` selection and merge it into one dataset.
-
-    Builds the exact candidate paths from the cross product of the
-    selected tasks and optimizers (see
-    :func:`l2co._src.databank.layout.select_paths`), opens each dataset
-    type with its own :func:`xarray.open_mfdataset`, and ``xr.merge``s
-    the four. The ``loss_history`` open resamples each file's raw
-    ``budget`` axis onto a common ``budget_steps`` grid via
-    :func:`loss_preprocess`.
+    """Open a ``(task, optimizer)`` selection from the consolidated store.
 
     Parameters
     ----------
     dataset_name : str
-        Name of the dataset folder in the databank.
-    optimizers : list[OptimizationStep] | list[int]
-        Selected optimizers, given as :class:`OptimizationStep` recipes
-        (``step.hash`` is used) or raw integer hashes.
-    location : {"local", "brown"}
-        Which databank to read from.
+        Name of the dataset.
+    optimizers : list[OptimizationStep] | list[int] | list[str]
+        Selected optimizers, as :class:`OptimizationStep` recipes (their
+        ``.name`` is matched), schedule-name strings (matched directly),
+        or integer hashes (matched via the stored recipes).
+    root : pathlib.Path
+        The databank base directory (the application supplies it).
     task_ids : list[str] | None, optional
-        Explicit task hashes to load. Mutually exclusive with
-        ``taskset``. If both are ``None``, every task on disk is loaded.
+        Explicit task hashes. Mutually exclusive with ``taskset``. If
+        both are ``None``, every task in the store is selected.
     taskset : str | None, optional
-        Name of a taskset file to resolve the task hashes from (see
-        :func:`l2co._src.databank.tasksets.load_taskset`).
-    budget_steps : int, optional
-        Number of points on the common budget grid, by default 1000.
+        Name of a taskset file to resolve the task hashes from.
 
     Returns
     -------
     xarray.Dataset
-        The merged dataset over dims ``taskID``, ``schedule``,
-        ``realization``, ``output_dim``, ``budget``, ``target``,
-        ``metric``, ``feature``. Lazy (dask-backed) until ``.load()``.
+        Lazy (zarr-backed) selection. ``loss_history`` is already on the
+        store's fixed budget grid; numerical variables are ``float``.
 
     Raises
     ------
+    FileNotFoundError
+        The store does not exist.
     ValueError
         ``optimizers`` is empty, or both ``task_ids`` and ``taskset``
-        are given, or ``location`` is unknown.
-    FileNotFoundError
-        No matching ``loss_history`` files exist for the selection.
+        are given.
     """
-    rootdir = layout.databank_root(location, dataset_name)
-    hashes = _resolve_optimizer_hashes(optimizers)
-    ids = _resolve_task_ids(rootdir, task_ids, taskset)
+    store = layout.zarr_store_path(root, dataset_name)
+    if not store.exists():
+        raise FileNotFoundError(f"No zarr store found at {store}.")
 
-    paths = layout.select_paths(rootdir, ids, hashes)
-    if not paths["loss_history"]:
+    with silence_zarr_warnings():
+        ds = xr.open_zarr(store, consolidated=True)
+
+    names = _resolve_schedule_names(ds, optimizers)
+    available = [str(t) for t in ds[TASK_ID].values]
+    ids = _resolve_task_ids(root, dataset_name, available, task_ids, taskset)
+
+    present_ids = [t for t in ids if t in available]
+    missing_ids = [t for t in ids if t not in available]
+    if missing_ids:
+        logger.warning(
+            f"load_databank_dataset: {len(missing_ids)} requested "
+            f"task(s) absent from {store}: {missing_ids}"
+        )
+    if not present_ids:
         raise FileNotFoundError(
-            f"No loss_history files found for the selection under {rootdir} "
-            f"({len(ids)} task(s) x {len(hashes)} optimizer(s))."
+            f"None of the requested tasks are present in {store}."
         )
 
-    loss = xr.open_mfdataset(
-        paths["loss_history"],
-        preprocess=partial(loss_preprocess, budget_steps=budget_steps),
-        **_OPEN_KW,
-    )
-    perf = xr.open_mfdataset(paths["performance"], **_OPEN_KW)
-    task = xr.open_mfdataset(paths["task"], **_OPEN_KW)
-    opt = xr.open_mfdataset(paths["optimizer"], **_OPEN_KW)
+    store_names = set(str(s) for s in ds[SCHEDULE].values)
+    present_names = [n for n in names if n in store_names]
+    if not present_names:
+        raise FileNotFoundError(
+            f"None of the requested optimizers are present in {store}."
+        )
 
-    ds = xr.merge([loss, perf, task, opt], join="outer", compat="override")
+    ds = ds.sel({TASK_ID: present_ids, SCHEDULE: present_names})
 
-    # Completeness check: join="outer" silently NaN-pads gaps.
+    # Completeness check: count populated cells.
     n_expected = ds.sizes[TASK_ID] * ds.sizes[SCHEDULE]
-    n_filled = int(
-        perf[SUCCESS]
-        .isel(
-            {d: 0 for d in perf[SUCCESS].dims if d not in (TASK_ID, SCHEDULE)}
-        )
-        .notnull()
-        .sum()
+    succ = ds[SUCCESS].isel(
+        {d: 0 for d in ds[SUCCESS].dims if d not in (TASK_ID, SCHEDULE)}
     )
+    n_filled = int(succ.notnull().sum())
     logger.info(
-        f"load_databank_dataset: {n_filled}/{n_expected} (task, schedule) "
-        f"cells populated from {rootdir}"
+        f"load_databank_dataset: {n_filled}/{n_expected} "
+        f"(task, schedule) cells populated from {store}"
     )
     return ds
 
 
 def load_databank(
     dataset_name: str,
-    optimizers: list[OptimizationStep] | list[int],
-    location: Literal["local", "brown"],
+    optimizers: list[OptimizationStep] | list[int] | list[str],
+    root: Path,
     *,
     task_ids: list[str] | None = None,
     taskset: str | None = None,
-    budget_steps: int = 1000,
 ) -> DataLoader:
-    """Open a databank selection and wrap it in a :class:`DataLoader`.
+    """Open a selection and wrap it in a ``DataLoader``.
 
-    Thin wrapper over :func:`load_databank_dataset`: materialises the
-    merged dataset, drops the ``optimizationstep`` recipe variable
-    (carried only for provenance, not training), and returns
-    ``DataLoader.from_xarray(ds)``. The remaining variables match the
-    legacy ``entire_dataset.odata`` schema, so downstream
-    feature/label extraction is unchanged. See
-    :func:`load_databank_dataset` for the full parameter contract.
+    Thin wrapper over :func:`load_databank_dataset`: drops the
+    ``optimizationstep`` provenance variable and returns
+    ``DataLoader.from_xarray(ds)``. The selection stays **lazy**
+    (zarr-backed) -- dask reads only the chunks each downstream
+    operation touches; call :meth:`l2co.DataLoader.load` to force the
+    whole dataset into memory. See :func:`load_databank_dataset` for the
+    parameter contract.
 
     Returns
     -------
     DataLoader
-        Loader wrapping the merged dataset.
+        Loader wrapping the lazy selection.
     """
     ds = load_databank_dataset(
-        dataset_name=dataset_name,
-        optimizers=optimizers,
-        location=location,
+        dataset_name,
+        optimizers,
+        root,
         task_ids=task_ids,
         taskset=taskset,
-        budget_steps=budget_steps,
-    ).load()
+    )
     if OPTIMIZATIONSTEP in ds:
         ds = ds.drop_vars(OPTIMIZATIONSTEP)
     return DataLoader.from_xarray(ds)
+
+
+def load_databank_performance(
+    dataset_name: str,
+    optimizers: list[OptimizationStep] | list[int] | list[str],
+    root: Path,
+    *,
+    task_ids: list[str] | None = None,
+    taskset: str | None = None,
+) -> DataLoader:
+    """Open only the performance half of a selection as a loader.
+
+    Like :func:`load_databank`, but keeps just the performance/task
+    variables (``success`` / ``cost`` / ``target_value`` plus
+    ``task_labels``), dropping the large ``loss_history`` arrays. The
+    selection stays **lazy**, so the loss chunks are never read. Use this
+    for ERTD reporting and any other performance-only consumer.
+
+    Parameters
+    ----------
+    dataset_name, optimizers, root, task_ids, taskset
+        See :func:`load_databank_dataset`.
+
+    Returns
+    -------
+    DataLoader
+        Loader over the (lazy) performance variables.
+    """
+    ds = load_databank_dataset(
+        dataset_name,
+        optimizers,
+        root,
+        task_ids=task_ids,
+        taskset=taskset,
+    )
+    # Drop the loss arrays (and the budget axis) by keeping only the
+    # performance/task variables; the loss chunks stay unread.
+    keep = [v for v in (SUCCESS, COST, TARGET_VALUE, TASK_LABELS) if v in ds]
+    ds = ds[keep]
+    return DataLoader.from_xarray(ds)
+
+
+def load_loss_raw(
+    dataset_name: str,
+    root: Path,
+    task_id: str,
+    optimizer_hash: int,
+    *,
+    budget_steps: int | None = None,
+) -> xr.Dataset:
+    """Read one raw loss history from ``loss_history_raw/``.
+
+    The raw histories keep their original variable-length ``budget``
+    axis, so this is the source of truth for regenerating the
+    interpolated store at a different ``budget_steps``.
+
+    Parameters
+    ----------
+    dataset_name : str
+        Name of the dataset.
+    root : pathlib.Path
+        The databank base directory.
+    task_id : str
+        Task hash.
+    optimizer_hash : int
+        Optimizer hash (the filename stem ``loss_<taskID>_<hash>``).
+    budget_steps : int | None, optional
+        If given, resample onto a common ``budget_steps`` grid via
+        :func:`l2co._src.databank.records.loss_preprocess` (integer
+        counters cast back to ``int``). If ``None`` (default) the raw
+        dataset is returned unchanged.
+
+    Returns
+    -------
+    xarray.Dataset
+        The raw (or resampled) loss history.
+
+    Raises
+    ------
+    FileNotFoundError
+        The raw loss file does not exist.
+    """
+    rawroot = layout.raw_root(root, dataset_name)
+    path = layout.loss_raw_path(rawroot, task_id, optimizer_hash)
+    if not path.exists():
+        raise FileNotFoundError(f"No raw loss history at {path}.")
+    ds = xr.load_dataset(path)
+    if budget_steps is not None:
+        ds = loss_preprocess(ds, budget_steps)
+    return ds

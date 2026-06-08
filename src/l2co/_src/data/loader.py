@@ -1,17 +1,24 @@
 """
-Module containing a data loader class of the L2CO framework.
+Module containing the data loader of the L2CO framework.
 
 Classes
 -------
 
 DataLoader
-    A data loader class for optimization dynamics data. Used for analysing the
-    performances of various optimizers as well as creating learning data
-OptimizationDynamics
-    Learning dataset inherited from pytorch Dataset. Used for learning the
-    machine learning models
-create_entire_dataset
-    Create an entire dataset from a given experiment data object
+    The single data loader for the L2CO framework. Holds the optimization
+    dataset (raw loss trajectories *and* pre-computed ERT metrics) together
+    with the parsed task labels, and provides problem/optimizer selection,
+    concatenation, feature extraction, the (trajectory, staircase) learning
+    representation, the expected-runtime distribution (ERTD) profile, the
+    learning data (``to_params``), and the AI-friendly summary (``report``).
+
+Notes
+-----
+The dataset is opened lazily (zarr-backed via xarray); operations stay lazy
+with respect to the heavy ``loss_history`` variables. Only
+``to_traj_and_stair`` (which feeds ``jax.vmap``) and explicit consumption of
+``valid_files`` / ``_performance`` materialise data variables. Call
+:meth:`DataLoader.load` to force everything into memory.
 """
 
 #                                                                       Modules
@@ -59,7 +66,6 @@ from ..performance import (
 from ..task_features import FeatureProcessor
 from ..tree_utils import traj_and_stair
 from .baselines import calculate_sbs, calculate_vbs
-from .report_helpers import build_report
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -72,10 +78,10 @@ __status__ = "Stable"
 #                                                                     Constants
 # =============================================================================
 
-# DEFAULT_COST_VALUES = np.logspace(-1, 6, 100) ** 0.8
 DEFAULT_COST_VALUES = np.concatenate(
     ([10**-1], np.logspace(-1, 6, 1000) ** 0.8, [10**5])
 )
+
 
 #                                                                   Data Loader
 # =============================================================================
@@ -84,19 +90,27 @@ DEFAULT_COST_VALUES = np.concatenate(
 @dataclass
 class DataLoader:
     """
-    Data loader for optimization dynamics in the L2CO framework.
+    The data loader of the L2CO framework.
+
+    Holds the full optimization dataset -- both the loss-history variables
+    (``output_min``, ``output_mean``, ``fevals``, ``iterations``,
+    ``update_step``) over the ``budget`` axis and the pre-computed ERT
+    metrics (``cost``, ``success``, ``target_value``) over the ``target`` /
+    ``metric`` axes -- together with the parsed task labels. Provides the
+    problem/optimizer selection, concatenation, and feature-extraction
+    logic as well as the loss-trajectory and performance operations.
 
     Parameters
     ----------
     data : xarray.Dataset
-        The raw optimization trajectories.
+        The optimization dataset (loss trajectories and ERT metrics).
     task_labels : xarray.DataArray
         Labels of the optimization problems.
 
     Attributes
     ----------
     data : xarray.Dataset
-        The raw optimization trajectories.
+        The optimization dataset.
     task_labels : xarray.DataArray
         Labels of the optimization problems.
     """
@@ -110,17 +124,17 @@ class DataLoader:
 
     def __add__(self, other: DataLoader) -> DataLoader:
         """
-        Concatenate two DataLoader objects.
+        Concatenate two loaders along the problem dimension.
 
         Parameters
         ----------
         other : DataLoader
-            DataLoader to concatenate.
+            Loader to concatenate.
 
         Returns
         -------
         DataLoader
-            Concatenated DataLoader.
+            Concatenated loader.
         """
         if other is None:
             return self
@@ -134,17 +148,17 @@ class DataLoader:
         )
 
     def join(self, other: DataLoader) -> DataLoader:
-        """Join another DataLoader along the schedule dimension.
+        """Join another loader along the schedule dimension.
 
         Parameters
         ----------
         other : DataLoader
-            DataLoader to join with.
+            Loader to join with.
 
         Returns
         -------
         DataLoader
-            Combined DataLoader with concatenated schedules.
+            Combined loader with concatenated schedules.
         """
         return replace(
             self,
@@ -156,22 +170,24 @@ class DataLoader:
     # =========================================================================
 
     @classmethod
-    def from_xarray(
-        cls,
-        data: xr.Dataset,
-    ):
+    def from_xarray(cls, data: xr.Dataset) -> DataLoader:
         """
-        Create a DataLoader from an xarray.Dataset.
+        Create a loader from an xarray.Dataset.
+
+        Stacks ``(realization, taskID)`` into the ``problem`` dimension and
+        parses the string ``task_labels`` variable into typed values. Every
+        data variable in ``data`` is kept (loss trajectories and ERT
+        metrics alike).
 
         Parameters
         ----------
         data : xarray.Dataset
-            Dataset containing optimization trajectories and labels.
+            Dataset containing optimization data and task labels.
 
         Returns
         -------
         DataLoader
-            Instantiated DataLoader object.
+            Instantiated loader.
         """
         data = data.stack({PROBLEM: (REALIZATION, TASK_ID)}, create_index=True)
 
@@ -203,8 +219,6 @@ class DataLoader:
         # Remove variable features from data
         data = data.drop_vars([TASK_LABELS, FEATURE])
 
-        # Remove unnecessary coordinates from data
-
         return cls(
             data=data,
             task_labels=task_labels,
@@ -215,7 +229,7 @@ class DataLoader:
         cls, path: str, data_filename: str = "entire_dataset"
     ) -> DataLoader:
         """
-        Create a DataLoader from a file path.
+        Create a loader from a file path.
 
         Parameters
         ----------
@@ -227,7 +241,7 @@ class DataLoader:
         Returns
         -------
         DataLoader
-            Instantiated DataLoader object.
+            Instantiated loader.
         """
         # Create path object
         _path = Path(path)
@@ -237,7 +251,7 @@ class DataLoader:
 
         return cls.from_xarray(data=data)
 
-    #                                                                 Exporting
+    #                                                                  Features
     # =========================================================================
 
     def task_features(
@@ -347,75 +361,271 @@ class DataLoader:
             feature_processor_optimizer,
         )
 
-    def to_params(
-        self,
-        t: float,
-        t_end: int,
-        schema: dict[str, str],
-        feature_processor_task: FeatureProcessor | None = None,
-        feature_processor_optimizer: FeatureProcessor | None = None,
-        cost_metric: Literal["fevals", "iterations"] = "fevals",
-    ) -> OptimizationDynamics:
-        """
-        Return task parameters and labels for a given budget.
+    #                                                                Properties
+    # =========================================================================
 
-        Parameters
-        ----------
-        t : float
-            Budget value.
-        t_end : int
-            End budget value.
-        schema : dict[str, str]
-            Schema for feature processing.
-        cost_metric : {'fevals', 'iterations'}, optional
-            Cost metric to use, by default 'fevals'.
-        feature_processor_task : FeatureProcessor | None, optional
-            Feature processor for task features, by default None.
-        feature_processor_optimizer : FeatureProcessor | None, optional
-            Feature processor for optimizer features, by default None.
+    @property
+    def n_realization(self) -> int:
+        """
+        Returns the number of unique realizations.
 
         Returns
         -------
-        OptimizationDynamics
-            Optimization dynamics data.
+        int
+            Number of realizations.
+        """
+        return np.unique(self.data[REALIZATION]).size
+
+    @property
+    def problems(self) -> xr.DataArray:
+        """
+        Returns the problem coordinate.
+
+        Returns
+        -------
+        xarray.DataArray
+            The problem coordinate.
+        """
+        return self.task_labels[PROBLEM]
+
+    @property
+    def optimizers(self) -> xr.DataArray:
+        """
+        Property method to return the optimizers coordinate
+
+        Returns
+        -------
+        xarray.DataArray
+            The optimizers coordinate.
+        """
+        return self.data[SCHEDULE]
+
+    @property
+    def valid_files(self) -> xr.DataArray:
+        """
+        Returns a boolean array indicating valid files. It has coordinates
+        of PROBLEM, SCHEDULE and OUTPUT_DIM.
+
+        Derived from ``success`` nullity: a ``(problem, schedule)`` cell is
+        valid iff it has at least one non-null target. This assumes the
+        ``success`` variable is present, which holds for every dataset
+        produced by the databank and by ``HistoryState.to_dataloader``
+        (both always build the ERT metrics). ``join="outer"`` NaN-pads any
+        missing ``(task, optimizer)`` combination identically across the
+        loss and performance variables, so this mask matches the loss-side
+        validity.
+
+        Returns
+        -------
+        xarray.DataArray
+            Boolean array indicating valid files.
+        """
+        return ~self.data[SUCCESS].isnull().all(TARGET)
+
+    @property
+    def performance(self) -> xr.Dataset:
+        """
+        Returns the (loss-trajectory) performance data for optimizers.
+
+        Returns
+        -------
+        xarray.Dataset
+            Performance data.
+        """
+        return self._performance(include_best=False, exclude_optimizer=None)
+
+    #                                                                 Selecting
+    # =========================================================================
+
+    def select_problems(self, problem_indices: xr.DataArray) -> DataLoader:
+        """
+        Select a subset of problems of the loader.
+
+        Parameters
+        ----------
+        problem_indices : xarray.DataArray
+            The problem indices to select.
+
+        Returns
+        -------
+        DataLoader
+            The selected loader.
+
+        Notes
+        -----
+        Selects on the problem dimension. Also sorts the problem indices on
+        itemID.
+        """
+        _problem_indices = problem_indices.sortby(TASK_ID)
+
+        return replace(
+            self,
+            task_labels=self.task_labels.sel({PROBLEM: _problem_indices}),
+            data=self.data.sel({PROBLEM: _problem_indices}),
+        )
+
+    def select_feature(self, feature: dict) -> DataLoader:
+        """Select problems matching given feature values.
+
+        Parameters
+        ----------
+        feature : dict
+            Mapping of feature names to target values.
+            Values may be scalars or iterables.
+
+        Returns
+        -------
+        DataLoader
+            Filtered loader containing only matching problems.
+        """
+        mask = None
+        for feature_name, feature_value in feature.items():
+            # extract the 1D array for this feature
+            feature_data = self.task_labels.sel(
+                feature=feature_name, drop=True
+            )
+            if isinstance(feature_value, list | tuple | set):
+                current_mask = False
+                for val in feature_value:
+                    current_mask |= feature_data == val
+            else:
+                current_mask = feature_data == feature_value
+            mask = current_mask if mask is None else (mask & current_mask)
+
+        problems = feature_data[PROBLEM].where(mask, drop=True)
+        return self.select_problems(problems)
+
+    def create_strategy(self, choices: xr.DataArray, name: str) -> DataLoader:
+        """Create a new optimizer schedule from per-problem choices.
+
+        Parameters
+        ----------
+        choices : xr.DataArray
+            Per-problem schedule selections.
+        name : str
+            Name for the new composite schedule.
+
+        Returns
+        -------
+        DataLoader
+            Loader with the new strategy appended along the schedule
+            dimension.
+        """
+        # Align coordinates
+        choices = choices.sortby(TASK_ID).assign_coords(
+            {PROBLEM: self.problems.sortby(TASK_ID)}
+        )
+        strategy = self.data.sel({SCHEDULE: choices}).drop_vars(SCHEDULE)
+        strategy = strategy.expand_dims({SCHEDULE: [name]})
+
+        data = xr.concat([self.data, strategy], dim=SCHEDULE)
+
+        return replace(self, data=data)
+
+    def isel(self, problems: Iterable[int]) -> DataLoader:
+        """
+        Select a subset of problems of the loader.
+
+        Parameters
+        ----------
+        problems : Iterable[int]
+            The problem indices to select.
+
+        Returns
+        -------
+        DataLoader
+            The selected loader.
+
+        Notes
+        -----
+        Selects on the problem dimension. Also sorts the problem indices on
+        itemID.
         """
 
-        x_features_task, feature_processor_task = self.task_features(
-            schema=schema,
-            feature_processor=feature_processor_task,
+        return replace(
+            self,
+            data=self.data.isel({PROBLEM: problems}),
+            task_labels=self.task_labels.isel({PROBLEM: problems}),
         )
-        x_features_optimizer, feature_processor_optimizer = (
-            self.optimizer_features(
-                feature_processor=feature_processor_optimizer
+
+    def select_optimizer(
+        self, optimizers: Iterable[str] | str, squash: bool = False
+    ) -> DataLoader:
+        """
+        Select specific optimizers.
+
+        Parameters
+        ----------
+        optimizers : Iterable[str] or str
+            Optimizers to select.
+        squash : bool, optional
+            Whether to squash multiple optimizers into one, by default False.
+
+        Returns
+        -------
+        DataLoader
+            Loader containing selected optimizers.
+        """
+        if isinstance(optimizers, str):
+            optimizers = [optimizers]
+
+        data = self.data.sel({SCHEDULE: optimizers})
+
+        return replace(
+            self,
+            data=data,
+        )
+
+    #                                                          Selecting budget
+    # =========================================================================
+
+    def select_t(
+        self,
+        t: int,
+        t_start: float | None = 0.0,
+        select_one_before: bool = True,
+    ) -> DataLoader:
+        """
+        Select a subset of the data loader at a specific budget.
+
+        Parameters
+        ----------
+        t : int
+            The budget to select.
+        t_start : float, optional
+            The starting budget number of the requested trajectory,
+        select_one_before : bool, optional
+            Whether to include the budget value just before ``t_start``,
+            by default True.
+
+        Returns
+        -------
+        DataLoader
+            The selected data loader.
+        """
+        if select_one_before:
+            # Check if there are budget coordinate values below t_start
+            prior = self.data[BUDGET].where(
+                self.data[BUDGET] < t_start, drop=True
             )
-        )
-        x_history = self.select_t(t=t).to_traj_and_stair()
 
-        y = self.to_labels(t=t_end, cost_metric=cost_metric)
+            # If so, take the value before t_start
+            if prior.sizes[BUDGET] > 0:
+                t_prior = prior[-1].item()
 
-        ds = xr.Dataset(
-            {
-                "x_features_task": x_features_task,
-                "x_features_optimizer": x_features_optimizer,
-                "x_history": x_history,
-                "y": y,
-            }
-        )
+            # If not, do nothing
+            else:
+                t_prior = t_start
+        else:
+            t_prior = t_start
 
-        ds = (
-            ds.unstack(PROBLEM)
-            .stack({"sample": (TASK_ID, REALIZATION, SCHEDULE)})
-            .transpose("sample", BUDGET, KIND, ...)
+        return replace(
+            self,
+            data=self.data.sel({BUDGET: slice(t_prior, t)}),
         )
 
-        return OptimizationDynamics(
-            x_features_task=ds["x_features_task"],
-            x_features_optimizer=ds["x_features_optimizer"],
-            x_history=ds["x_history"],
-            y=ds["y"],
-            feature_processor_task=feature_processor_task,
-            feature_processor_optimizer=feature_processor_optimizer,
-        )
+    #                                                                 Exporting
+    # =========================================================================
 
     def to_traj_and_stair(self) -> xr.DataArray:
         """Compute trajectory and staircase arrays.
@@ -485,6 +695,137 @@ class DataLoader:
         y = y.unstack("batch")
         return y.stack({PROBLEM: (REALIZATION, TASK_ID)})
 
+    def to_params(
+        self,
+        t: float,
+        t_end: int,
+        schema: dict[str, str],
+        feature_processor_task: FeatureProcessor | None = None,
+        feature_processor_optimizer: FeatureProcessor | None = None,
+        cost_metric: Literal["fevals", "iterations"] = "fevals",
+    ) -> OptimizationDynamics:
+        """
+        Return task parameters and labels for a given budget.
+
+        Combines the loss-trajectory history (``x_history``) with the
+        per-schedule performance labels (``y``).
+
+        Parameters
+        ----------
+        t : float
+            Budget value.
+        t_end : int
+            End budget value.
+        schema : dict[str, str]
+            Schema for feature processing.
+        feature_processor_task : FeatureProcessor | None, optional
+            Feature processor for task features, by default None.
+        feature_processor_optimizer : FeatureProcessor | None, optional
+            Feature processor for optimizer features, by default None.
+        cost_metric : {'fevals', 'iterations'}, optional
+            Cost metric to use, by default 'fevals'.
+
+        Returns
+        -------
+        OptimizationDynamics
+            Optimization dynamics data.
+        """
+        x_features_task, feature_processor_task = self.task_features(
+            schema=schema,
+            feature_processor=feature_processor_task,
+        )
+        x_features_optimizer, feature_processor_optimizer = (
+            self.optimizer_features(
+                feature_processor=feature_processor_optimizer
+            )
+        )
+        x_history = self.select_t(t=t).to_traj_and_stair()
+
+        y = self.to_labels(t=t_end, cost_metric=cost_metric)
+
+        ds = xr.Dataset(
+            {
+                "x_features_task": x_features_task,
+                "x_features_optimizer": x_features_optimizer,
+                "x_history": x_history,
+                "y": y,
+            }
+        )
+
+        ds = (
+            ds.unstack(PROBLEM)
+            .stack({"sample": (TASK_ID, REALIZATION, SCHEDULE)})
+            .transpose("sample", BUDGET, KIND, ...)
+        )
+
+        return OptimizationDynamics(
+            x_features_task=ds["x_features_task"],
+            x_features_optimizer=ds["x_features_optimizer"],
+            x_history=ds["x_history"],
+            y=ds["y"],
+            feature_processor_task=feature_processor_task,
+            feature_processor_optimizer=feature_processor_optimizer,
+        )
+
+    #                                                       Performance metrics
+    # =========================================================================
+
+    def ertd_profile(
+        self,
+        include_best: bool = False,
+        exclude_optimizer: str | None = None,
+        cost_values: np.ndarray = DEFAULT_COST_VALUES,
+    ) -> xr.DataArray:
+        """
+        Compute the expected runtime distribution (ERTD) profile.
+
+        Parameters
+        ----------
+        include_best : bool, optional
+            Whether to include the best optimizer, by default False.
+        exclude_optimizer : str, optional
+            Optimizer to exclude, by default None.
+        cost_values : np.ndarray, optional
+            Cost budget thresholds, by default ``DEFAULT_COST_VALUES``.
+
+        Returns
+        -------
+        xr.DataArray
+            ERTD profile.
+        """
+        if include_best:
+            sbs = self.data[SUCCESS].sum(TARGET).idxmax(SCHEDULE)
+            d = self.create_strategy(choices=sbs, name="sbs")
+        else:
+            d = self
+        dims = self.task_labels.sel(
+            {FEATURE: "dimensionality"}, drop=True
+        ).astype(int)
+
+        _ertd = ertd(
+            performance=d.data,
+            dims=dims,
+            cost_values=cost_values,
+        )
+
+        # Expand realization and stack dimensions to match valid_files
+        _ertd = _ertd.expand_dims(
+            {REALIZATION: np.arange(self.n_realization)}
+        ).stack({PROBLEM: (REALIZATION, TASK_ID)})
+
+        # 1. Get the base mask from valid_files
+        mask = self.valid_files.isel({OUTPUT_DIM: 0}, drop=True)
+
+        # 2. Reindex the mask to include 'vbs' and 'sbs' from _ertd
+        # fill_value=True ensures that any schedule NOT in self.data
+        # (like vbs/sbs) defaults to True.
+        mask = mask.reindex_like(_ertd[SCHEDULE], method=None, fill_value=True)
+
+        # 3. Apply the expanded mask
+        _ertd = _ertd.where(mask)
+
+        return _ertd
+
     def to_labels(
         self, t: int, cost_metric: Literal["fevals", "iterations"] = "fevals"
     ):
@@ -512,374 +853,11 @@ class DataLoader:
         y = y - y.mean(SCHEDULE)
         return y.rename({SCHEDULE: "label"})
 
-    #                                                                Properties
-    # =========================================================================
-
-    # @property
-    # def hash_opt_step(self) -> xr.DataArray:
-    #     """
-    #     Returns a hash for each optimization step.
-
-    #     Returns
-    #     -------
-    #     xarray.DataArray
-    #         Hash values for optimization steps.
-    #     """
-    #     return xr.apply_ufunc(
-    #         lambda x: int(hashlib.sha256(x.tobytes()).hexdigest()[:8], 16)
-    #         % (2**31 - 1),
-    #         self.data[UPDATE_STEP],
-    #         input_core_dims=[[BUDGET]],
-    #         output_core_dims=[[]],
-    #         vectorize=True,
-    #     )
-
-    # @property
-    # def n_iterations(self) -> int:
-    #     """
-    #     Returns the number of iterations (budget size).
-
-    #     Returns
-    #     -------
-    #     int
-    #         Number of iterations.
-    #     """
-    #     return self.data[BUDGET].size
-
-    @property
-    def n_realization(self) -> int:
-        """
-        Returns the number of unique realizations.
-
-        Returns
-        -------
-        int
-            Number of realizations.
-        """
-        return np.unique(self.data[REALIZATION]).size
-
-    # @property
-    # def features(self) -> xr.DataArray:
-    #     """
-    #     Returns the features coordinate.
-
-    #     Returns
-    #     -------
-    #     xarray.DataArray
-    #         The features coordinate."""
-    #     """
-    #     Property method to return the features coordinate
-
-    #     Returns
-    #     -------
-    #     xarray.DataArray
-    #         The features coordinate.
-    #     """
-    #     return self.task_labels[FEATURE]
-
-    @property
-    def problems(self) -> xr.DataArray:
-        """
-        Returns the problem coordinate.
-
-        Returns
-        -------
-        xarray.DataArray
-            The problem coordinate.
-        """
-        return self.task_labels[PROBLEM]
-
-    @property
-    def optimizers(self) -> xr.DataArray:
-        """
-        Property method to return the optimizers coordinate
-
-        Returns
-        -------
-        xarray.DataArray
-            The optimizers coordinate.
-        """
-        return self.data[SCHEDULE]
-
-    @property
-    def valid_files(self) -> xr.DataArray:
-        """
-        Returns a boolean array indicating valid files. It has coordinates
-        of PROBLEM, SCHEDULE and OUTPUT_DIM.
-
-        Returns
-        -------
-        xarray.DataArray
-            Boolean array indicating valid files.
-        """
-        return ~self.data[OUTPUT_MIN].isnull().all(BUDGET)
-
-    @property
-    def performance(self) -> xr.DataArray:
-        """
-        Returns the performance data for optimizers.
-
-        Returns
-        -------
-        xarray.DataArray
-            Performance data.
-        """
-        return self._performance(include_best=False, exclude_optimizer=None)
-
-    def select_problems(self, problem_indices: xr.DataArray) -> DataLoader:
-        """
-        Select a subset of problems of the data loader.
-
-        Parameters
-        ----------
-        problem_indices : xarray.DataArray
-            The problem indices to select.
-
-        Returns
-        -------
-        DataLoader
-            The selected data loader.
-
-        Notes
-        -----
-        Selects on the problem dimension. Also sorts the problem indices on
-        itemID.
-        """
-        _problem_indices = problem_indices.sortby(TASK_ID)
-
-        return DataLoader(
-            task_labels=self.task_labels.sel({PROBLEM: _problem_indices}),
-            data=self.data.sel({PROBLEM: _problem_indices}),
-        )
-
-    def select_feature(self, feature: dict) -> DataLoader:
-        """Select problems matching given feature values.
-
-        Parameters
-        ----------
-        feature : dict
-            Mapping of feature names to target values.
-            Values may be scalars or iterables.
-
-        Returns
-        -------
-        DataLoader
-            Filtered DataLoader containing only matching
-            problems.
-        """
-        mask = None
-        for feature_name, feature_value in feature.items():
-            # extract the 1D array for this feature
-            feature_data = self.task_labels.sel(
-                feature=feature_name, drop=True
-            )
-            if isinstance(feature_value, list | tuple | set):
-                current_mask = False
-                for val in feature_value:
-                    current_mask |= feature_data == val
-            else:
-                current_mask = feature_data == feature_value
-            mask = current_mask if mask is None else (mask & current_mask)
-
-        problems = feature_data[PROBLEM].where(mask, drop=True)
-        return self.select_problems(problems)
-
-    def create_strategy(self, choices: xr.DataArray, name: str) -> DataLoader:
-        """Create a new optimizer schedule from per-problem choices.
-
-        Parameters
-        ----------
-        choices : xr.DataArray
-            Per-problem schedule selections.
-        name : str
-            Name for the new composite schedule.
-
-        Returns
-        -------
-        DataLoader
-            DataLoader with the new strategy appended along
-            the schedule dimension.
-        """
-        # Align coordinates
-        choices = choices.sortby(TASK_ID).assign_coords(
-            {PROBLEM: self.problems.sortby(TASK_ID)}
-        )
-        strategy = self.data.sel({SCHEDULE: choices}).drop_vars(SCHEDULE)
-        strategy = strategy.expand_dims({SCHEDULE: [name]})
-
-        data = xr.concat([self.data, strategy], dim=SCHEDULE)
-
-        return replace(self, data=data)
-
-    def isel(self, problems: Iterable[int]) -> DataLoader:
-        """
-        Select a subset of problems of the data loader.
-
-        Parameters
-        ----------
-        problems : Iterable[int]
-            The problem indices to select.
-
-        Returns
-        -------
-        DataLoader
-            The selected data loader.
-
-        Notes
-        -----
-        Selects on the problem dimension. Also sorts the problem indices on
-        itemID.
-        """
-
-        return replace(
-            self,
-            data=self.data.isel({PROBLEM: problems}),
-            task_labels=self.task_labels.isel({PROBLEM: problems}),
-        )
-
-    # def train_test_split(
-    #     self, test_size: float = 0.2, random_state: int | None = None
-    # ) -> tuple[DataLoader, DataLoader]:
-    #     """
-    #     Split the data into train and test sets.
-
-    #     Parameters
-    #     ----------
-    #     test_size : float, optional
-    #         The size of the test set, by default 0.2
-    #     random_state : int, optional
-    #         The random state, by default None
-
-    #     Returns
-    #     -------
-    #     Tuple[DataLoader, DataLoader]
-    #         The train and test data loaders.
-    #     """
-    #     (
-    #         _X_train_indices,
-    #         _X_test_indices,
-    #     ) = train_test_split(
-    #         range(len(self.problems)),
-    #         test_size=test_size,
-    #         random_state=random_state,
-    #     )
-
-    #     return (self.isel(_X_train_indices), self.isel(_X_test_indices))
-
-    #                                                          Selecting budget
-    # =========================================================================
-
-    def select_t(
-        self,
-        t: int,
-        t_start: float | None = 0.0,
-        select_one_before: bool = True,
-    ) -> DataLoader:
-        """
-        Select a subset of the data loader at a specific budget.
-
-        Parameters
-        ----------
-        t : int
-            The budget to select.
-        t_start : float, optional
-            The starting budget number of the requested trajectory,
-
-        Returns
-        -------
-        DataLoader
-            The selected data loader.
-        """
-        """
-        Select a subset of the data loader at a specific budget.
-
-        Parameters
-        ----------
-        t : int
-            The budget to select.
-        t_start : float, optional
-            The starting budget number of the requested trajectory,
-
-        Returns
-        -------
-        DataLoader
-            The selected data loader.
-        """
-        if select_one_before:
-            # Check if there are budget coordinate values below t_start
-            prior = self.data[BUDGET].where(
-                self.data[BUDGET] < t_start, drop=True
-            )
-
-            # If so, take the value before t_start
-            if prior.sizes[BUDGET] > 0:
-                t_prior = prior[-1].item()
-
-            # If not, do nothing
-            else:
-                t_prior = t_start
-        else:
-            t_prior = t_start
-
-        return replace(
-            self,
-            data=self.data.sel({BUDGET: slice(t_prior, t)}),
-        )
-
-    #                                                      Selecting optimizers
-    # =========================================================================
-
-    def select_optimizer(
-        self, optimizers: Iterable[str] | str, squash: bool = False
-    ) -> DataLoader:
-        """
-        Select specific optimizers.
-
-        Parameters
-        ----------
-        optimizers : Iterable[str] or str
-            Optimizers to select.
-        squash : bool, optional
-            Whether to squash multiple optimizers into one, by default False.
-
-        Returns
-        -------
-        DataLoader
-            DataLoader containing selected optimizers.
-        """
-        """
-        Select specific optimizers.
-
-        Parameters
-        ----------
-        optimizers : Iterable[str] or str
-            Optimizers to select.
-        squash : bool, optional
-            Whether to squash multiple optimizers into one, by default False.
-
-        Returns
-        -------
-        DataLoader
-            DataLoader containing selected optimizers.
-        """
-        if isinstance(optimizers, str):
-            optimizers = [optimizers]
-
-        data = self.data.sel({SCHEDULE: optimizers})
-
-        return replace(
-            self,
-            data=data,
-        )
-
-    #                                                       Performance metrics
-    # =========================================================================
-
     def _performance(
         self, include_best: bool, exclude_optimizer: str | None = None
     ) -> xr.Dataset:
         """
-        Computes the performance of the optimizers.
+        Computes the (loss-trajectory) performance of the optimizers.
 
         Parameters
         ----------
@@ -890,16 +868,11 @@ class DataLoader:
 
         Returns
         -------
-        xr.DataArray
+        xr.Dataset
             Performance data.
         """
         t_start = perf_counter()
         print("Triggered performance")
-
-        # performance = scale_by_task(
-        #     output_cummin(self.data[OUTPUT_MIN])).ffill(
-        #     BUDGET
-        # )
 
         performance = xr.Dataset(
             {
@@ -938,98 +911,34 @@ class DataLoader:
         print(f"Performance calculation took: {perf_counter() - t_start:0.2f}")
         return performance
 
-    def ertd_profile(
-        self,
-        include_best: bool = False,
-        exclude_optimizer: str | None = None,
-        cost_values: np.ndarray = DEFAULT_COST_VALUES,
-    ) -> xr.DataArray:
-        """
-        Compute the expected runtime distribution (ERTD) profile.
-
-        Parameters
-        ----------
-        include_best : bool, optional
-            Whether to include the best optimizer, by default False.
-        exclude_optimizer : str, optional
-            Optimizer to exclude, by default None.
-
-        Returns
-        -------
-        xr.DataArray
-            ERTD profile.
-        """
-        if include_best:
-            sbs = self.data[SUCCESS].sum(TARGET).idxmax(SCHEDULE)
-            d = self.create_strategy(choices=sbs, name="sbs")
-        else:
-            d = self
-        # TODO : include best
-        # p = self._performance(
-        #     include_best=include_best, exclude_optimizer=exclude_optimizer
-        # )
-        dims = self.task_labels.sel(
-            {FEATURE: "dimensionality"}, drop=True
-        ).astype(int)
-
-        _ertd = ertd(
-            performance=d.data,
-            dims=dims,
-            cost_values=cost_values,
-        )
-
-        # Expand realization and stack dimensions to match valid_files
-        _ertd = _ertd.expand_dims(
-            {REALIZATION: np.arange(self.n_realization)}
-        ).stack({PROBLEM: (REALIZATION, TASK_ID)})
-
-        # 1. Get the base mask from valid_files
-        mask = self.valid_files.isel({OUTPUT_DIM: 0}, drop=True)
-
-        # 2. Reindex the mask to include 'vbs' and 'sbs' from _ertd
-        # fill_value=True ensures that any schedule NOT in self.data
-        # (like vbs/sbs) defaults to True.
-        mask = mask.reindex_like(_ertd[SCHEDULE], method=None, fill_value=True)
-
-        # 3. Apply the expanded mask
-        _ertd = _ertd.where(mask)
-
-        return _ertd
-
     #                                                                    Report
     # =========================================================================
 
     def report(self) -> dict[str, Any]:
-        """Compute an AI-friendly JSON-serialisable summary of this DataLoader.
+        """Compute an AI-friendly JSON-serialisable summary of this loader.
 
         Thin delegate around
-        :func:`l2co._src.data.report_helpers.build_report`. The
-        returned dict captures the dataset's shape, per-schedule
-        performance scalars, cross-schedule rankings, task-feature
-        breakdowns, and a list of programmatically-detected
-        observations. Saving the JSON is the caller's job; provenance
-        (git SHAs, config hashes, hostname, wall-clock) is *not*
-        included so the method stays a pure function of ``self.data``
-        and ``self.task_labels``.
-
-        Log and ratio reductions consume
-        :func:`~l2co._src.data.report_helpers.shifted_final_min`, which
-        adds ``EPSILON`` to ``final_loss - per_task_shift`` and is
-        therefore strictly positive even on tasks whose raw final loss
-        can be negative (BBOB and similar shifted-objective
-        benchmarks).
+        :func:`l2co._src.data.report_helpers.build_report`. The returned
+        dict captures the dataset's shape, per-schedule performance
+        scalars, cross-schedule rankings, task-feature breakdowns, and a
+        list of programmatically-detected observations. Saving the JSON is
+        the caller's job; provenance (git SHAs, config hashes, hostname,
+        wall-clock) is *not* included so the method stays a pure function
+        of the underlying loss and performance data.
 
         Returns
         -------
         dict[str, Any]
-            Document conforming to ``schema_version: 1``. Top-level keys:
-            ``schema_version``, ``dataset``, ``task_groups``,
-            ``per_schedule``, ``rankings``, ``grouped``, ``observations``,
-            ``observations_summary``. Every floating-point leaf is plain
-            Python ``float`` (with NaN/Inf replaced by ``None``); every
-            integer leaf is plain Python ``int``.
+            Document conforming to ``schema_version: 1``.
         """
+        # Imported lazily to avoid an import cycle with report_helpers,
+        # which type-hints DataLoader.
+        from .report_helpers import build_report
+
         return build_report(self)
+
+    #                                                                   Loading
+    # =========================================================================
 
     def load(self):
         """

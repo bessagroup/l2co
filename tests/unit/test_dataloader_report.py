@@ -140,6 +140,9 @@ def synthetic_dataloader() -> DataLoader:
         coords={"problem": problem_index, "feature": features},
     )
 
+    # The merged synthetic dataset carries both the loss-trajectory
+    # variable (output_min) and the performance variables (success, cost)
+    # on the single loader.
     return DataLoader(data=data, task_labels=task_labels)
 
 
@@ -308,7 +311,34 @@ def test_descriptive_stats_log10_strictly_positive_input() -> None:
     assert s["max"] == 2.0
 
 
-#                                                       DataLoader.report — E2E
+#                                                  DataLoader — selection
+# =============================================================================
+
+
+def test_ertd_profile_runs(
+    synthetic_dataloader: DataLoader,
+) -> None:
+    """``DataLoader.ertd_profile`` returns a stable result over repeat
+    calls on the same loader."""
+    first = synthetic_dataloader.ertd_profile()
+    second = synthetic_dataloader.ertd_profile()
+    xr.testing.assert_identical(first, second)
+
+
+def test_select_feature_narrows_problems(
+    synthetic_dataloader: DataLoader,
+) -> None:
+    """Selecting a feature subset narrows the loader to the matching
+    problems (both loss and performance variables, on one loader)."""
+    sub = synthetic_dataloader.select_feature({"fn_name": "sphere"})
+    assert isinstance(sub, DataLoader)
+    problems = set(sub.data["taskID"].values.tolist())
+    assert problems == {"task_0", "task_1"}
+    # The single dataset still carries both families after selection.
+    assert "output_min" in sub.data and "success" in sub.data
+
+
+#                                                  DataLoader.report — E2E
 # =============================================================================
 
 

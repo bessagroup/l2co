@@ -1,123 +1,108 @@
-# Per-record databank
+# Databank (consolidated-zarr)
 
-A lazy-loadable databank. A sweep is stored as **one file per record**, split
-into four typed subfolders plus a `tasksets` folder. Files are hash-named so a
-`(task, optimizer)` selection is addressable directly from the chosen
-combinations — no globbing. The submodule is self-contained (no dependency on
-the legacy per-schedule databank).
-
-> **Concat-axis rule.** Every payload variable carries its concat axis as a
-> *leading dimension* — `taskID`/`schedule` for `loss_history` and
-> `performance`, `taskID` for `task`, `schedule` for `optimizer`. This is
-> required for `xarray.open_mfdataset(combine="by_coords")` to stack files
-> along those axes. If a payload variable carried the axis only as a
-> *coordinate* (not a dimension), `data_vars="minimal"` + `compat="override"`
-> would silently keep only the first file's values and discard the rest.
-
-## Storage layout
+A lazy-loadable databank that stores a whole dataset in **one zarr store** plus
+a sidecar of raw loss histories. It exists to make reads cheap at scale
+(hundreds of tasks × tens of optimizers), especially on networked HPC
+filesystems where opening thousands of HDF5 files is expensive.
 
 ```
-<root>/<dataset_name>/
-├── task/<taskID>.nc                       # one file per task
-├── optimizer/<optimizer_hash>.nc          # one file per optimizer
-├── loss_history/loss_<taskID>_<optimizer_hash>.nc
-├── performance/perf_<taskID>_<optimizer_hash>.nc
-└── tasksets/<taskset>.txt
+<root>/<dataset_name>.zarr/                       # consolidated store
+    loss_history (interp), performance, task, optimizer
+<root>/<dataset_name>/loss_history_raw/           # per-pair raw netCDF
+    loss_<taskID>_<optimizer_hash>.nc
+<root>/<dataset_name>/tasksets/<name>.txt         # named task selections
 ```
 
-`<root>` comes from `_LOCATION_ROOTS[location]` (defined in `layout.py`).
-`<taskID>` is `l2co_tasks.Task.hash` (a 16-hex
-string); `<optimizer_hash>` is `l2co.OptimizationStep.hash`
-(`int(sha256(...)[:6], 16)`). The **human-readable optimizer name**
-(`OptimizationStep.name`) is carried inside each file as the `schedule`
-coordinate; the integer hash is used only in filenames.
+`<root>` is the databank base directory supplied by the caller (the application
+resolves it from its own config, e.g. a per-cluster `databank_root` key — the
+library holds no machine paths). `<taskID>` is
+`l2co_tasks.Task.hash` (a 16-hex string); `<optimizer_hash>` is
+`l2co.OptimizationStep.hash` (`int(sha256(...)[:6], 16)`). The **human-readable
+optimizer name** (`OptimizationStep.name`) is the `schedule` coordinate of the
+store; the integer hash is used only in the raw sidecar filenames.
 
-For *n* tasks × *m* optimizers: *n* files in `task/`, *m* in `optimizer/`, and
-*n × m* in each of `loss_history/` and `performance/`.
+## Why one store, chunked per pair
 
-## Per-type schemas
+The store is chunked **one chunk per `(taskID, schedule)`**: a subset read is
+`xr.open_zarr(store).sel(taskID=..., schedule=...)`, lazily fetching only the
+selected chunks. A missing `(task, optimizer)` pair is simply an unwritten chunk
+that reads back as `NaN` (zero bytes on disk). zarr v3 **sharding** packs each
+cell's chunks into one file, so the inode count stays modest rather than
+exploding into one-file-per-record.
 
-### `loss_history` — dims `(taskID, schedule, realization, output_dim, budget)`
+## Storage decisions
 
-| Variable | Dtype | Notes |
+- **All numerical variables are `float32` on disk.** A missing cell must be
+  `NaN`, which only floats hold, so `fevals` / `iterations` / `update_step` /
+  `cost` / `success` are stored (and returned) as `float`. Cast to int/bool
+  downstream if needed — the reader does not. Storage is `float32` to halve disk
+  usage; `float64` is reserved for the upstream optimization runs that *generate*
+  the data (numerical stability), not for storing the results, which feed the
+  `float32` JAX training path. The `loss_history_raw/` sidecar applies the same
+  downcast to its **float** variables only, leaving its integer counters intact.
+- **Fixed interior dims.** `realization`, `target`, `feature`, `output_dim` and
+  `metric` are constant across `(taskID, schedule)` per dataset; the writer
+  asserts the `feature` axis is consistent. Appends only ever extend `taskID` /
+  `schedule`.
+- **`loss_history` is split in two.** The store holds the loss history
+  **interpolated** to a fixed `BUDGET_STEPS` grid (uniform, dense, read with no
+  per-pair resampling). The original variable-length histories are kept under
+  `loss_history_raw/` as the source of truth — regenerate the interpolated store
+  at a different `BUDGET_STEPS` from there (see `load_loss_raw`).
+
+## Per-type schemas (in the store)
+
+| Array | Dims | Notes |
 |---|---|---|
-| `output_min` / `output_mean` / `output_std` | float | |
-| `fevals` / `iterations` / `update_step` | int | cumulative |
-
-`budget` is **raw** (variable length per file) and has no coordinate on disk; it
-is resampled to a common grid at open time (see *Opening & merging*).
-
-### `performance` — dims `(taskID, schedule, realization, output_dim, target[, metric])`
-
-| Variable | Dims | Dtype |
-|---|---|---|
-| `success` | `(…, target)` | bool |
-| `cost` | `(…, target, metric)` | int |
-
-`metric` coord is `["fevals", "iterations"]`. `target` is an integer index
-`0..N-1`; the actual target *values* live in the `task` file (`target_value`).
-
-### `task` — dims `(taskID, feature, target)`
-
-| Variable | Dims | Dtype |
-|---|---|---|
-| `task_labels` | `(taskID, feature)` | str (mixed types stringified) |
+| `output_min` / `output_mean` / `output_std` / `fevals` / `iterations` / `update_step` | `(taskID, schedule, realization, output_dim, budget)` | `budget` = `BUDGET_STEPS`, canonical grid |
+| `success` | `(taskID, schedule, realization, output_dim, target)` | float (0/1, NaN if missing) |
+| `cost` | `(taskID, schedule, realization, output_dim, target, metric)` | float |
+| `task_labels` | `(taskID, feature)` | str |
 | `target_value` | `(taskID, target)` | float |
+| `optimizationstep` | `(schedule,)` | str (JSON recipe; dropped by the loader) |
 
-`task_labels` carries the task tag plus `global_min` (one `feature` per key).
+`metric` coord is `["fevals", "iterations"]`. `target` is an integer index; the
+target *values* live in `target_value`. `task_labels` carries the task tag plus
+`global_min` (one `feature` per key).
 
-### `optimizer` — dims `(schedule,)`
+## Writing
 
-| Variable | Dims | Dtype |
-|---|---|---|
-| `optimizationstep` | `(schedule,)` | str (`json.dumps(OptimizationStep.to_dict())`) |
+`dump_databank` reuses the shared f3dasm preamble and ERT pipeline
+(`records._iter_task_runs`, `records._build_task_records`). Per pair it writes
+the raw history to `loss_history_raw/` and region-writes the interpolated history
++ performance into the store.
 
-## Opening & merging
+- **Creation** (`mode="error"` / `"replace"`) streams one `(task, optimizer)`
+  cell at a time into a `compute=False` template, so the full dense array is
+  never held in memory.
+- **Append** (`mode="append"`) rebuilds the store over the union of old and new
+  `taskID` / `schedule` into a temporary store and swaps it in atomically,
+  copying untouched cells from the old store one at a time. It reuses the
+  existing budget grid and each existing task's stored ERT `target_value` (so
+  appended optimizers stay comparable). The rebuild — rather than an in-place
+  coordinate resize — avoids silently truncating optimizer names in the
+  fixed-length string `schedule` coordinate.
 
-`load_databank_dataset` opens each type in its own `open_mfdataset` call (they
-have different variables and concat axes) and `xr.merge`s the four:
+Writes that touch distinct `(taskID, schedule)` cells are chunk-disjoint and
+safe to parallelise; resizing and `consolidate_metadata` are single-writer.
 
-```python
-open_kw = dict(combine="by_coords", join="outer", data_vars="minimal",
-               coords="minimal", compat="override", engine="netcdf4")
-loss = xr.open_mfdataset(loss_paths, preprocess=loss_preprocess, **open_kw)
-perf = xr.open_mfdataset(perf_paths, **open_kw)
-task = xr.open_mfdataset(task_paths, **open_kw)
-opt  = xr.open_mfdataset(opt_paths,  **open_kw)
-ds = xr.merge([loss, perf, task, opt], join="outer", compat="override")
-```
+## Reading
 
-`loss_preprocess` normalizes each file's raw `budget` to the canonical L2CO grid
-by delegating to `l2co.validation.normalize_budget_grid` (the `[-step, 0, …, 1]`
-slot-0 / "pre-optimization" convention), then casts the integer counters back to
-`int` (nearest-neighbour interpolation promotes them to float). `nearest`
-returns *recorded* values, so `budget=0` is the true initial loss and the final
-iteration is preserved exactly.
-
-`load_databank` materializes the merge, drops the `optimizationstep` provenance
-variable, and returns a `DataLoader` (the remaining variables match the legacy
-`entire_dataset.odata` schema, so training is unaffected).
+`load_databank_dataset` opens the consolidated store, `.sel`s the requested
+tasks/optimizers (optimizers given as `OptimizationStep`, schedule-name strings,
+or integer hashes), and returns the lazy selection — no per-pair resampling,
+since `loss_history` is already on the `BUDGET_STEPS` grid. `load_databank`
+drops `optimizationstep` and returns a lazy `DataLoader` (dask reads only the
+chunks each operation touches; call `.load()` to force it all into memory).
+`load_databank_performance` keeps only the performance variables, so the large
+loss chunks are never read (use it for ERTD reporting). `load_loss_raw` reaches
+a single raw history (optionally resampled).
 
 **Notes / gotchas**
-- `join="outer"` silently NaN-pads missing `(task, schedule)` cells;
-  `load_databank_dataset` logs an `n_filled / n_expected` completeness check.
-- `compat="override"` keeps the open lazy; `"equals"`/`"identical"` read data to
-  compare and are not lazy.
-- `target` has no coordinate value beyond its integer index → it is matched
-  **positionally**; all files must share the identical target ordering.
-
-## Selecting paths
-
-When both the `taskID` list and the optimizer list are known, filenames are
-fully determined, so `select_paths` builds the candidate paths from the cross
-product and splits them into existing / missing (one `stat` per candidate, no
-directory listing). Missing combinations are returned (and logged) rather than
-letting the dataset silently shrink. The `task` / `optimizer` paths come from
-the *distinct* ids, not the cross product.
-
-> If only *one* identifier is known (e.g. tasks selected, optimizers unknown),
-> glob with a single wildcard per task and filter in Python. Reserve this for
-> the unknown-identifier case, since each glob scans the directory.
+- Missing `(task, schedule)` cells read back as `NaN`; `load_databank_dataset`
+  logs an `n_filled / n_expected` completeness check.
+- `target` is matched **positionally** (its only coordinate is an integer
+  index); all cells share the identical target ordering.
 
 ## Tasksets
 

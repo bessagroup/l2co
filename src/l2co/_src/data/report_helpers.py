@@ -42,9 +42,9 @@ from ..naming import (
 )
 
 if TYPE_CHECKING:
-    # Only used as a type hint on ``build_report``. Loader imports from
-    # this module at runtime, so taking the runtime import here would be
-    # circular.
+    # Only used as a type hint on ``build_report``. DataLoader imports
+    # from this module at runtime, so taking the runtime import here would
+    # be circular.
     from .loader import DataLoader
 
 #                                                          Authorship & Credits
@@ -436,7 +436,10 @@ def build_report(dataloader: DataLoader) -> dict[str, Any]:
     Parameters
     ----------
     dataloader : DataLoader
-        The data loader whose contents to summarise. Read-only.
+        The combined loader whose contents to summarise. Read-only. The
+        loss-trajectory members (``data``, ``valid_files``,
+        ``n_realization``) and the performance members (``ertd_profile``)
+        are accessed through its passthroughs.
 
     Returns
     -------
@@ -551,7 +554,12 @@ def build_report(dataloader: DataLoader) -> dict[str, Any]:
     )
     ertd_six_fevals = ertd_six.sel({"metric": "fevals"}).mean(dim=PROBLEM)
 
-    valid_per_sched = dataloader.valid_files
+    # Loss-side validity: a (problem, schedule) cell is valid iff its loss
+    # curve is not all-NaN over the budget axis. Computed here from
+    # ``output_min`` directly rather than via ``DataLoader.valid_files``
+    # (which is success-based) so the crash detection stays a function of
+    # the loss data, matching this report's historical behaviour.
+    valid_per_sched = ~data[OUTPUT_MIN].isnull().all(BUDGET)
     if OUTPUT_DIM in valid_per_sched.dims:
         valid_per_sched = valid_per_sched.isel({OUTPUT_DIM: 0}, drop=True)
 

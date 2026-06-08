@@ -101,7 +101,8 @@ nav:
     - 'index.md'
     - Installation: 'installation.md'
     - Getting Started: 'usage.ipynb'
-    - API Reference: 
+    - Register your own optimizer: 'register_optimizer.ipynb'
+    - API Reference:
         - 'api.md'
     - License: 
         - 'license.md'

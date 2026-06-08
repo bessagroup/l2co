@@ -1,20 +1,25 @@
-"""Filesystem layout for the per-record databank.
+"""Filesystem layout and storage constants for the databank.
 
-A databank lives under ``<root>/<dataset_name>/`` and splits a sweep into
-four typed subfolders plus a ``tasksets`` folder::
+A dataset is stored as a **single zarr store** plus a sidecar folder of
+raw loss histories and a folder of human-editable tasksets, all under a
+caller-supplied root directory ``root``::
 
-    <root>/<dataset_name>/
-    ├── task/<taskID>.nc                       # one file per task
-    ├── optimizer/<optimizer_hash>.nc          # one file per optimizer
-    ├── loss_history/loss_<taskID>_<optimizer_hash>.nc
-    ├── performance/perf_<taskID>_<optimizer_hash>.nc
-    └── tasksets/<taskset>.txt
+    <root>/<dataset_name>.zarr/                # consolidated store
+        loss_history (interp), performance, task, optimizer
+    <root>/<dataset_name>/loss_history_raw/    # per-pair raw netCDF
+        loss_<taskID>_<optimizer_hash>.nc
+    <root>/<dataset_name>/tasksets/<name>.txt  # named task selections
 
-``taskID`` is :attr:`l2co_tasks.Task.hash` (a 16-hex string) and
-``optimizer_hash`` is :attr:`l2co.OptimizationStep.hash` (an int). The
-filenames mirror the concat axes so a selection is addressable directly
-from the chosen ``(task, optimizer)`` combinations without globbing. See
-``README.md`` in this package for the full data-structure reference.
+The databank holds **no machine-specific paths** of its own: the caller
+passes ``root`` (the application resolves it from its own config, e.g. a
+per-cluster ``databank_root`` key). The zarr ``loss_history`` is
+pre-interpolated to a fixed :data:`BUDGET_STEPS` grid so every array is
+dense and uniform; a subset read is a lazy ``.sel`` over the ``taskID`` /
+``schedule`` chunks rather than opening thousands of files.
+``loss_history_raw`` keeps the original variable-length ``budget`` axis so
+the interpolated store can be regenerated at a different ``BUDGET_STEPS``
+without re-running the sweep. See ``README.md`` in this package for the
+full data-structure reference.
 """
 
 #                                                                       Modules
@@ -24,9 +29,7 @@ from the chosen ``(task, optimizer)`` combinations without globbing. See
 from __future__ import annotations
 
 import logging
-from itertools import product
 from pathlib import Path
-from typing import Literal
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -37,35 +40,26 @@ __status__ = "Stable"
 
 logger = logging.getLogger(__name__)
 
-# Mapping from ``location`` keyword to the databank root directory on disk.
-# Add a new entry here when introducing another machine. Kept self-contained
-# (a copy of the legacy ``l2co._src.data.databank._LOCATION_ROOTS``) so this
-# submodule has no dependency on the per-schedule databank module.
-_LOCATION_ROOTS: dict[str, Path] = {
-    "local": Path("/Volumes/T7/data/databank"),
-    "brown": Path("/oscar/data/mbessa/mvander7/databank"),
-}
-
-# Subfolder names (one per dataset type) and the taskset folder.
-TASK_DIR = "task"
-OPTIMIZER_DIR = "optimizer"
-LOSS_DIR = "loss_history"
-PERF_DIR = "performance"
+# Folder of named, human-editable task selections (see ``tasksets.py``).
 TASKSET_DIR = "tasksets"
 
-_SUBDIRS = (TASK_DIR, OPTIMIZER_DIR, LOSS_DIR, PERF_DIR, TASKSET_DIR)
+# Subfolder holding the per-pair raw (variable-length budget) loss files.
+LOSS_RAW_DIR = "loss_history_raw"
+
+# Number of points on the fixed budget grid the zarr ``loss_history`` is
+# interpolated onto at write time. The raw histories under
+# ``loss_history_raw`` keep their original length, so regenerating the
+# store with a different value is always possible.
+BUDGET_STEPS = 1000
 
 
-def databank_root(
-    location: Literal["local", "brown"], dataset_name: str
-) -> Path:
-    """Return the root folder of a databank dataset.
+def databank_root(root: Path, dataset_name: str) -> Path:
+    """Return the per-dataset folder (sidecar + tasksets live here).
 
     Parameters
     ----------
-    location : {"local", "brown"}
-        Which databank to use; maps to a fixed root directory via
-        :data:`_LOCATION_ROOTS`.
+    root : pathlib.Path
+        The databank base directory (supplied by the application).
     dataset_name : str
         Name of the dataset folder (e.g. ``"bbob"``).
 
@@ -73,113 +67,48 @@ def databank_root(
     -------
     pathlib.Path
         ``<root>/<dataset_name>`` (not required to exist).
-
-    Raises
-    ------
-    ValueError
-        ``location`` is not a known key of ``_LOCATION_ROOTS``.
     """
-    if location not in _LOCATION_ROOTS:
-        raise ValueError(
-            f"Unknown location {location!r}; expected one of "
-            f"{sorted(_LOCATION_ROOTS)}."
-        )
-    return _LOCATION_ROOTS[location] / dataset_name
+    return Path(root) / dataset_name
 
 
-def subdir(rootdir: Path, which: str) -> Path:
-    """Return one of the typed subfolders under ``rootdir``."""
-    if which not in _SUBDIRS:
-        raise ValueError(
-            f"Unknown subfolder {which!r}; expected one of {_SUBDIRS}."
-        )
-    return rootdir / which
-
-
-def task_path(rootdir: Path, task_id: str) -> Path:
-    """Path to ``task/<taskID>.nc``."""
-    return rootdir / TASK_DIR / f"{task_id}.nc"
-
-
-def optimizer_path(rootdir: Path, optimizer_hash: int) -> Path:
-    """Path to ``optimizer/<optimizer_hash>.nc``."""
-    return rootdir / OPTIMIZER_DIR / f"{optimizer_hash}.nc"
-
-
-def loss_path(rootdir: Path, task_id: str, optimizer_hash: int) -> Path:
-    """Path to ``loss_history/loss_<taskID>_<optimizer_hash>.nc``."""
-    return rootdir / LOSS_DIR / f"loss_{task_id}_{optimizer_hash}.nc"
-
-
-def perf_path(rootdir: Path, task_id: str, optimizer_hash: int) -> Path:
-    """Path to ``performance/perf_<taskID>_<optimizer_hash>.nc``."""
-    return rootdir / PERF_DIR / f"perf_{task_id}_{optimizer_hash}.nc"
-
-
-def select_paths(
-    rootdir: Path,
-    task_ids: list[str],
-    optimizer_hashes: list[int],
-) -> dict[str, list[Path]]:
-    """Build per-type path lists for a ``task × optimizer`` selection.
-
-    The filenames are fully determined by ``(taskID, optimizer_hash)``,
-    so the candidate paths are constructed directly from the cross
-    product and split into the ones that exist on disk and the ones that
-    are missing. Direct construction avoids a directory listing (one
-    ``stat`` per candidate) and makes a ragged selection explicit
-    instead of letting the dataset silently shrink. The ``task`` and
-    ``optimizer`` paths come from the *distinct* ids, not the cross
-    product.
+def zarr_store_path(root: Path, dataset_name: str) -> Path:
+    """Return the consolidated zarr store path for a dataset.
 
     Parameters
     ----------
-    rootdir : pathlib.Path
-        Databank dataset root (see :func:`databank_root`).
-    task_ids : list[str]
-        Selected task hashes.
-    optimizer_hashes : list[int]
-        Selected optimizer hashes.
+    root : pathlib.Path
+        The databank base directory.
+    dataset_name : str
+        Name of the dataset (e.g. ``"bbob"``).
 
     Returns
     -------
-    dict[str, list[pathlib.Path]]
-        Keys ``"task"``, ``"optimizer"``, ``"loss_history"``,
-        ``"performance"`` map to the **existing** files of each type;
-        ``"loss_history_missing"`` and ``"performance_missing"`` map to
-        the ``(task, optimizer)`` files absent on disk. Missing
-        combinations are also logged.
+    pathlib.Path
+        ``<root>/<dataset_name>.zarr`` (sibling of the per-dataset
+        folder; not required to exist).
     """
-    pairs = list(product(task_ids, optimizer_hashes))
+    return Path(root) / f"{dataset_name}.zarr"
 
-    loss_candidates = [(loss_path(rootdir, t, h), (t, h)) for t, h in pairs]
-    perf_candidates = [(perf_path(rootdir, t, h), (t, h)) for t, h in pairs]
 
-    loss_existing = [p for p, _ in loss_candidates if p.is_file()]
-    loss_missing = [p for p, _ in loss_candidates if not p.is_file()]
-    perf_existing = [p for p, _ in perf_candidates if p.is_file()]
-    perf_missing = [p for p, _ in perf_candidates if not p.is_file()]
+def raw_root(root: Path, dataset_name: str) -> Path:
+    """Return the sidecar folder holding the raw loss histories.
 
-    task_existing = [
-        p for t in task_ids if (p := task_path(rootdir, t)).is_file()
-    ]
-    opt_existing = [
-        p
-        for h in optimizer_hashes
-        if (p := optimizer_path(rootdir, h)).is_file()
-    ]
+    Parameters
+    ----------
+    root : pathlib.Path
+        The databank base directory.
+    dataset_name : str
+        Name of the dataset.
 
-    if loss_missing:
-        logger.warning(
-            f"select_paths: {len(loss_missing)}/{len(loss_candidates)} "
-            f"loss_history (task, optimizer) files missing under {rootdir}"
-        )
+    Returns
+    -------
+    pathlib.Path
+        ``<root>/<dataset_name>/loss_history_raw`` (not required to
+        exist).
+    """
+    return databank_root(root, dataset_name) / LOSS_RAW_DIR
 
-    return {
-        "task": task_existing,
-        "optimizer": opt_existing,
-        "loss_history": loss_existing,
-        "performance": perf_existing,
-        "loss_history_missing": loss_missing,
-        "performance_missing": perf_missing,
-    }
+
+def loss_raw_path(rawroot: Path, task_id: str, optimizer_hash: int) -> Path:
+    """Path to one raw loss file ``loss_<taskID>_<optimizer_hash>.nc``."""
+    return rawroot / f"loss_{task_id}_{optimizer_hash}.nc"

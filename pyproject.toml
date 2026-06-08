@@ -36,7 +36,9 @@ dependencies = [
   "scikit-learn>=1.7.1",
   "matplotlib>=3.10.7",
   "tqdm>=4.67.1",
-  "bottleneck>=1.6.0"
+  "bottleneck>=1.6.0",
+  "zarr>=3",
+  "numcodecs>=0.13"
 ]
 description = "A library for learning to choose optimizers."
 license = "BSD-3-Clause"

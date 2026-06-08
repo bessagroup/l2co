@@ -45,7 +45,7 @@ L2CO builds on the following packages:
 | --- | --- |
 | [f3dasm](https://github.com/bessagroup/f3dasm) | Framework for data-driven design and analysis of structures and materials |
 | [bbob-jax](https://github.com/bessagroup/bbob-jax) | JAX implementation of the BBOB benchmark functions |
-| [l2co-tasks](https://github.com/mpvanderschelling/l2co-tasks) | Benchmark functions and tasks used by L2CO (BBOB, CEC 2005, PDE, neural network training) |
+| [l2co-tasks](https://github.com/bessagroup/l2co-tasks) | Benchmark functions and tasks used by L2CO (BBOB, CEC 2005, PDE, neural network training) |
 | [bessaplots](https://github.com/bessagroup/bessaplots) | Plotting utilities |
 | [JAX](https://github.com/jax-ml/jax) | Composable transformations of NumPy programs |
 | [Equinox](https://github.com/patrick-kidger/equinox) | Neural networks and more for JAX |
@@ -89,7 +89,7 @@ pip install -e '.[dev,docs,tests]'
 
 > For detailed instructions on how to develop on this package, please refer to the [Contributing Guide](CONTRIBUTING.md).
 
-After installation, start by looking at the [Getting Started Guide](./docs/usage.ipynb).
+After installation, start by looking at the [Getting Started Guide](./docs/usage.ipynb). To plug your own optimizer into the `RolloutWrapper`, see [Register your own optimizer](./docs/register_optimizer.ipynb).
 
 ## Experiments
 
@@ -117,3 +117,15 @@ Copyright 2026, Martin van der Schelling
 All rights reserved.
 
 This project is licensed under the BSD 3-Clause License. See [LICENSE](LICENSE) for the full license text.
+
+## Related repositories
+
+This package is part of the L2CO ecosystem developed in the [Bessa Research Group](https://github.com/bessagroup). The repositories below work together:
+
+- [l2co](https://github.com/bessagroup/L2CO) — Learning to Choose Optimizers: a meta-learner that selects an optimizer from problem features before any evaluations, then reassesses that choice from the observed optimization trajectory.
+- [rl2co](https://github.com/bessagroup/rl2co) — Reinforcement Learning to Choose Optimizers: a JAX-based RL agent that dynamically switches between optimizers during a run.
+- [l2co-tasks](https://github.com/bessagroup/l2co-tasks) — Optimization task definitions (BBOB, CEC 2005, PDE, spiral, …) compatible with the L2CO library.
+- [l2co_experiments](https://github.com/bessagroup/l2co_experiments) — Hydra + f3dasm experiment pipelines (dataset creation, training, rollouts, figures) for the L2CO studies.
+- [agentic-l2co](https://github.com/bessagroup/agentic-l2co) — An LLM-agent drop-in replacement for `l2co.L2COModel`, driving two-stage optimizer selection with an Ollama-hosted LLM.
+- [bbob-jax](https://github.com/bessagroup/bbob-jax) — JAX implementations of the BBOB and CEC 2005 black-box optimization benchmark functions.
+- [f3dasm](https://github.com/bessagroup/f3dasm) — Framework for Data-Driven Design and Analysis of Structures and Materials; provides `ExperimentData`, pipelines, and SLURM orchestration.

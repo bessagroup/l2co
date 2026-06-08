@@ -40,10 +40,6 @@ from l2co._src import tree_utils
 from l2co.data import (
     DataLoader,
     create_combined_odata,
-    databank_dataset_root,
-    dump_databank,
-    load_databank,
-    load_databank_dataset,
 )
 from l2co.features import (
     FeatureProcessor,
@@ -124,13 +120,9 @@ __all__ = [
     "create_schedules_experimentdata",
     "data",
     "databank",
-    "databank_dataset_root",
-    "dump_databank",
     "evaluate",
     "features",
     "history",
-    "load_databank",
-    "load_databank_dataset",
     "models",
     "mse_loss",
     "naming",

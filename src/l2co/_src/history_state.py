@@ -319,8 +319,8 @@ class HistoryState(eqx.Module):
     ) -> DataLoader:
         """Convert history to a DataLoader with task labels.
 
-        Builds the xarray that
-        :meth:`l2co.DataLoader.from_xarray` expects:
+        Builds the merged xarray (loss trajectories + ERT metrics + task
+        labels) that :meth:`l2co.DataLoader.from_xarray` expects:
 
         - data variables (trajectory + ERT) carry dims
           ``(TASK_ID, SCHEDULE, REALIZATION, BUDGET, OUTPUT_DIM, ...)``
