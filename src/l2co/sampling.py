@@ -8,6 +8,7 @@ Submodule with sampling strategies
 # Local
 from ._src.sampler import (
     constant_sampling,
+    get_sampler,
     grid_sampling,
     normal_sampling,
     random_sampling,
@@ -29,4 +30,5 @@ __all__ = [
     "normal_sampling",
     "xavier_sampling",
     "constant_sampling",
+    "get_sampler",
 ]

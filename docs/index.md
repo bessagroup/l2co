@@ -36,7 +36,7 @@ L2CO builds on the following packages:
 | --- | --- |
 | [f3dasm](https://github.com/bessagroup/f3dasm) | Framework for data-driven design and analysis of structures and materials |
 | [bbob-jax](https://github.com/bessagroup/bbob-jax) | JAX implementation of the BBOB benchmark functions |
-| [l2co-tasks](https://github.com/mpvanderschelling/l2co-tasks) | Benchmark functions and tasks used by L2CO (BBOB, CEC 2005, PDE, neural network training) |
+| [l2co-tasks](https://github.com/bessagroup/l2co-tasks) | Benchmark functions and tasks used by L2CO (BBOB, CEC 2005, PDE, neural network training) |
 | [bessaplots](https://github.com/bessagroup/bessaplots) | Plotting utilities |
 | [JAX](https://github.com/jax-ml/jax) | Composable transformations of NumPy programs |
 | [Equinox](https://github.com/patrick-kidger/equinox) | Neural networks and more for JAX |
@@ -73,6 +73,7 @@ pip install -e .
 
 - For full installation instructions, see the [Installation Guide](installation.md).
 - After installation, start by looking at the [Getting Started Guide](usage.ipynb).
+- To plug your own optimizer into the `RolloutWrapper`, see [Register your own optimizer](register_optimizer.ipynb).
 
 ## Community Support
 

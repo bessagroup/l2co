@@ -28,6 +28,8 @@
 
 ::: l2co.optimizer_mapping
 
+::: l2co.register_optimizer
+
 ## States
 
 ::: l2co.RunState
@@ -59,6 +61,29 @@
 ::: l2co.validation_fn
 
 ::: l2co.preprocessing_factory
+
+## Databank
+
+A lazy-loadable databank that stores a whole dataset in a single
+consolidated-zarr store (one chunk per `(task, optimizer)`), with the raw
+variable-length loss histories kept in a `loss_history_raw/` netCDF
+sidecar and named task selections under `tasksets/` (see the design
+reference in `src/l2co/_src/databank/README.md`). Exposed under the
+`l2co.databank` namespace.
+
+::: l2co.databank.dump_databank
+
+::: l2co.databank.load_databank
+
+::: l2co.databank.load_databank_dataset
+
+::: l2co.databank.load_databank_performance
+
+::: l2co.databank.load_loss_raw
+
+::: l2co.databank.populated_pairs
+
+::: l2co.databank.load_taskset
 
 ## Sampling
 

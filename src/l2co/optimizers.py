@@ -1,5 +1,20 @@
-"""Public API for importing available optimizer configurations."""
+"""Public API for available optimizer configurations.
 
-from ._src.optimizers import optimizers
+Stable import surface for the ``optimizer_mapping`` and ``optimizers`` dicts,
+the ``register_optimizer`` extension point, and the
+``create_schedules_experimentdata`` helper.
+"""
 
-__all__ = ["optimizers"]
+from ._src.optimizers import (
+    create_schedules_experimentdata,
+    optimizer_mapping,
+    optimizers,
+    register_optimizer,
+)
+
+__all__ = [
+    "create_schedules_experimentdata",
+    "optimizer_mapping",
+    "optimizers",
+    "register_optimizer",
+]

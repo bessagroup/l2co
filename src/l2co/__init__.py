@@ -11,78 +11,133 @@ Usage
 
 Author
 ------
-Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)
+Martin van der Schelling (m.p.vanderschelling@tudelft.nl)
 """
 
 #                                                                       Modules
 # =============================================================================
 
-# Local imports
-import bessaplots
-import matplotlib.pyplot as plt
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
+
 from l2co_tasks import Task
 
-from l2co import budget, naming, optimizers, plotting, sampling, tasks
+from l2co import (
+    budget,
+    data,
+    databank,
+    features,
+    history,
+    models,
+    naming,
+    optimization,
+    optimizers,
+    plotting,
+    sampling,
+    validation,
+)
 from l2co._src import tree_utils
-from l2co._src.batching import BatchState
-from l2co._src.data_loader import DataLoader
-from l2co._src.data_validation import create_combined_odata
-from l2co._src.history_state import HistoryState
-from l2co._src.models import (
+from l2co.data import (
+    DataLoader,
+    create_combined_odata,
+)
+from l2co.features import (
+    FeatureProcessor,
+    MixedEmbedding,
+    preprocessing_factory,
+)
+from l2co.history import BatchState, HistoryState, OptHistory
+from l2co.models import (
     MLP,
     AbstractModel,
+    EquinoxStage0Model,
+    EquinoxStage1Model,
     L2COModel,
     LSTM_Encoder,
+    ScikitStage0Model,
     Stage0Loader,
     Stage0Model,
+    Stage1Loader,
+    Stage1Model,
+    mse_loss,
+    train_equinox,
 )
-from l2co._src.opt_history import OptHistory
-from l2co._src.optimizers import optimizer_mapping
-from l2co._src.optimizerschedule import OptimizationStep
-from l2co._src.preprocessing import preprocessing_factory
-from l2co._src.run_optimization import RolloutWrapper, RunOptimization
-from l2co._src.run_state import RunState, reset, run
-from l2co._src.task_features import FeatureProcessor, MixedEmbedding
-from l2co._src.update_class import UpdateClass, evaluate
-from l2co._src.validation import validation_fn
+from l2co.optimization import (
+    OptimizationStep,
+    RolloutWrapper,
+    RunOptimization,
+    RunState,
+    UpdateClass,
+    evaluate,
+    reset,
+    run,
+)
+from l2co.optimizers import (
+    create_schedules_experimentdata,
+    optimizer_mapping,
+    register_optimizer,
+)
+from l2co.validation import normalize_budget_grid, validation_fn
+
+try:
+    __version__ = _pkg_version("l2co")
+except PackageNotFoundError:  # pragma: no cover
+    __version__ = "0.0.0+unknown"
 
 #                                                          Authorship & Credits
 # =============================================================================
-__author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
+__author__ = "Martin van der Schelling (m.p.vanderschelling@tudelft.nl)"
 __credits__ = ["Martin van der Schelling"]
 __status__ = "Stable"
 # =============================================================================
 
-plt.style.use(["bessaplots"])
-
 __all__ = [
-    "DataLoader",
-    "HistoryState",
-    "AbstractModel",
-    "LSTM_Encoder",
-    "OptimizationStep",
-    "RunState",
-    "RunOptimization",
-    "Stage0Loader",
-    "Task",
     "MLP",
-    "FeatureProcessor",
-    "MixedEmbedding",
+    "AbstractModel",
     "BatchState",
-    "OptHistory",
-    "optimizer_mapping",
-    "validation_fn",
+    "DataLoader",
+    "EquinoxStage0Model",
+    "EquinoxStage1Model",
+    "FeatureProcessor",
+    "HistoryState",
     "L2COModel",
-    "preprocessing_factory",
-    "plotting",
-    "sampling",
-    "naming",
-    "UpdateClass",
+    "LSTM_Encoder",
+    "MixedEmbedding",
+    "OptHistory",
+    "OptimizationStep",
     "RolloutWrapper",
+    "RunOptimization",
+    "RunState",
+    "ScikitStage0Model",
+    "Stage0Loader",
+    "Stage0Model",
+    "Stage1Loader",
+    "Stage1Model",
+    "Task",
+    "UpdateClass",
+    "budget",
+    "create_combined_odata",
+    "create_schedules_experimentdata",
+    "data",
+    "databank",
+    "evaluate",
+    "features",
+    "history",
+    "models",
+    "mse_loss",
+    "naming",
+    "normalize_budget_grid",
+    "optimization",
+    "optimizer_mapping",
+    "optimizers",
+    "plotting",
+    "preprocessing_factory",
+    "register_optimizer",
     "reset",
     "run",
-    "evaluate",
-    "Stage0Model",
+    "sampling",
+    "train_equinox",
     "tree_utils",
-    "create_combined_odata",
+    "validation",
+    "validation_fn",
 ]

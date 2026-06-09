@@ -3,21 +3,45 @@ on:
   push:
     branches:
       - main
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout l2co
+        uses: actions/checkout@v4
+        with:
+          path: l2co
+      - name: Checkout l2co-tasks (sibling editable dep)
+        uses: actions/checkout@v4
+        with:
+          repository: bessagroup/l2co-tasks
+          path: l2co-tasks
+          token: ${{ secrets.SIBLING_DEPS_TOKEN }}
+      - name: Checkout f3dasm (sibling editable dep)
+        uses: actions/checkout@v4
+        with:
+          repository: bessagroup/f3dasm
+          path: f3dasm
+          token: ${{ secrets.SIBLING_DEPS_TOKEN }}
+      - name: Checkout bessaplots (sibling editable dep)
+        uses: actions/checkout@v4
+        with:
+          repository: bessagroup/bessaplots
+          path: bessaplots
+          token: ${{ secrets.SIBLING_DEPS_TOKEN }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v5
-      - name: Install dependencies
-        run: uv pip install --system --no-sources '.[docs]'
+      - name: Install docs extras
+        working-directory: l2co
+        run: uv sync --extra docs
       - name: Build docs
-        run: mkdocs build
+        working-directory: l2co
+        run: uv run mkdocs build
       - name: Upload docs
         uses: actions/upload-artifact@v4
         with:
           name: docs
-          path: site
+          path: l2co/site

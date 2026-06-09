@@ -36,10 +36,10 @@ from pathlib import Path
 from l2co import OptimizationStep
 import matplotlib.pyplot as plt
 from hydra.utils import instantiate
-from l2co._src.models import (
+from l2co.features import MixedEmbedding
+from l2co.models import (
     LSTM_Encoder,
     EquinoxStage1Model,
-    MixedEmbedding,
     MLP,
     Stage0Loader,
     Stage1Loader,

@@ -11,14 +11,21 @@ from abc import abstractmethod
 
 # Standard
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import equinox as eqx
+import jax
 
 # Third-party
 from evosax.algorithms.base import State as EvoSaxState
 from jaxtyping import Array, Float, Int, PRNGKeyArray, PyTree
 from optax import OptState as OptaxOptState
+
+if TYPE_CHECKING:
+    from l2co_tasks import Task
+
+    from .batching import BatchState
+    from .opt_history import RecentHistory
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -78,4 +85,15 @@ LossFunction = Any
 
 BudgetFn = Callable[[Any], int]
 
+PopSize = int | Callable[["Task"], int]
+
 SamplerFunction = Callable[[PRNGKeyArray, PyTree, int], InputParameters]
+
+Carry = tuple[
+    InputParameters,
+    PyTree,
+    PRNGKeyArray,
+    "BatchState",
+    jax.Array,
+    "RecentHistory",
+]

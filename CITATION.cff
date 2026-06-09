@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "L2CO: Learning to Choose Optimizers"
+abstract: >-
+  A research framework that learns to select from a set of static optimizers
+  (Adam, SGD, CMA-ES, etc.) based on problem features and optimization history,
+  rather than designing a new optimizer from scratch. Built on JAX/Equinox.
+authors:
+  - family-names: "van der Schelling"
+    given-names: "Martin P."
+    email: "m.p.vanderschelling@tudelft.nl"
+license: BSD-3-Clause
+repository-code: "https://github.com/bessagroup/l2co"
+version: "1.3.1"
+type: software
+keywords:
+  - optimization
+  - meta-learning
+  - jax
+  - equinox
+  - learning-to-optimize

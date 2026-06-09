@@ -11,9 +11,11 @@ from l2co._src.naming import (
     INPUT_MEAN,
     ITERATIONS,
     KIND,
+    METRIC,
     OPT_CHOICE,
     OPT_HISTORY,
     OPT_STEPS,
+    OPTIMIZATIONSTEP,
     OUTPUT_DIM,
     OUTPUT_MEAN,
     OUTPUT_MIN,
@@ -26,12 +28,13 @@ from l2co._src.naming import (
     STAIRCASE,
     SUCCESS,
     TARGET,
+    TARGET_VALUE,
     TASK_ID,
     TASK_LABELS,
     TRAJECTORY,
     UPDATE_STEP,
 )
-from l2co._src.typing import InputParameters, SamplerFunction
+from l2co._src.typing import InputParameters, OptState, SamplerFunction
 
 __all__ = [
     "PROBLEM",
@@ -63,6 +66,10 @@ __all__ = [
     "SUCCESS",
     "TARGET",
     "SEED",
+    "METRIC",
+    "TARGET_VALUE",
+    "OPTIMIZATIONSTEP",
     "InputParameters",
+    "OptState",
     "SamplerFunction",
 ]

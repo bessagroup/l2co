@@ -9,8 +9,8 @@ from bbob_jax import registry
 from pathlib import Path
 
 from l2co._src.budget import based_on_dimensionality
-from l2co._src.optimizerschedule import OptimizationStep
-from l2co._src.run_optimization import (
+from l2co._src.optimizer_schedule import OptimizationStep
+from l2co._src.rollout import (
     RunOptimization,
     RolloutWrapper,
 )
@@ -19,7 +19,7 @@ from l2co_tasks import create_pde_task
 from l2co.sampling import normal_sampling
 from l2co_tasks import Task
 
-from . import OPTIMIZATION_STEPS, ALL_OPTIMIZERS
+from tests import ALL_OPTIMIZERS, OPTIMIZATION_STEPS
 
 # =============================================================================
 
@@ -57,6 +57,7 @@ def run(
 # =============================================================================
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("optimizer", OPTIMIZATION_STEPS)
 def test_pde(optimizer: OptimizationStep, tmp_path: Path):
     task = create_pde_task(
@@ -82,6 +83,7 @@ def test_pde(optimizer: OptimizationStep, tmp_path: Path):
     )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("optimizer", OPTIMIZATION_STEPS)
 @pytest.mark.parametrize("fn_name", ["sphere", "rastrigin"])
 @pytest.mark.parametrize("dim", [2, 5])
@@ -132,16 +134,66 @@ def test_optimization_step_name_non_rl2co_unchanged():
     assert step.name == "adam_learning_rate=0.01"
 
 
-@pytest.mark.parametrize("optimizer", ALL_OPTIMIZERS)
-def test_all_optimizers(optimizer: str):
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "optimizer", ALL_OPTIMIZERS, ids=lambda step: step.optimizer
+)
+def test_all_optimizers(optimizer: OptimizationStep):
     task = create_bbob_task(
         fn_name="rastrigin",
         seed=0,
         dimensionality=2,
     )
     run(
-        optimizer=OptimizationStep(optimizer=optimizer),
+        optimizer=optimizer,
         task=task,
         sampler=normal_sampling,
         include_input_mean=False,
+    )
+
+
+def test_random_search_one_shot_shapes_and_best():
+    """Random search must emit one row per iteration and sum fevals correctly.
+
+    Random search bypasses the scan loop and evaluates all
+    ``n_iterations * popsize`` candidates in a single batched call, so the
+    standard ``HistoryState`` contract has to be reconstructed by reshape.
+    This test pins the externally observable shape/semantics:
+
+    * ``output_min`` has one entry per logical iteration;
+    * ``fevals`` sums to ``n_iterations * popsize``;
+    * the reported ``best_loss`` is the global best across all candidates.
+    """
+    n_iterations = 7
+    popsize = 4
+    task = create_bbob_task(
+        fn_name="sphere",
+        seed=0,
+        dimensionality=3,
+    )
+    optimizer = OptimizationStep(
+        optimizer="randomsearch",
+        hyperparameters={"sampler": "normal", "popsize": popsize},
+    )
+
+    key = jr.key(0)
+    rollout_wrapper = RolloutWrapper.init(
+        optimizer=optimizer,
+        task=task,
+        sampler=normal_sampling,
+        key=key,
+        bounded=(None, None),
+    )
+    run_state, _, history_state = rollout_wrapper.batch_evaluate(
+        key=key,
+        n_iterations=n_iterations,
+        n_realizations=1,
+    )
+
+    assert history_state.output_min.shape == (1, n_iterations)
+    assert int(history_state.fevals.sum()) == n_iterations * popsize
+    # Global best must be at least as good as any per-iteration min.
+    assert (
+        float(run_state.best_loss[0])
+        <= float(history_state.output_min.min()) + 1e-6
     )

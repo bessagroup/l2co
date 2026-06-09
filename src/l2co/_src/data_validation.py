@@ -5,6 +5,7 @@
 
 # Standard
 import logging
+import shutil
 from functools import partial
 from pathlib import Path
 
@@ -14,24 +15,20 @@ import f3dasm
 import numpy as np
 import pandas as pd
 import xarray as xr
-from l2co_tasks import Task
 from tqdm import tqdm
 
 # Local
-from l2co._src.optimizerschedule import OptimizationStep
-from l2co._src.performance import output_cummin
+from l2co._src.performance import (
+    DEFAULT_EASIEST_QUANTILE,
+    calculate_ert,
+    compute_task_targets,
+    shift_to_quality_value,
+)
 from l2co._src.validation import validation_fn
 from l2co.naming import (
-    BUDGET,
-    COST,
     FEATURE,
-    FEVALS,
     GLOBAL_MIN,
-    ITERATIONS,
-    OUTPUT_MIN,
     SCHEDULE,
-    SUCCESS,
-    TARGET,
     TASK_ID,
     TASK_LABELS,
 )
@@ -51,112 +48,64 @@ OPTIMIZATION_DATA_SUFFIX = ".odata"
 logger = logging.getLogger("l2co")
 
 loss_column_name: str = "loss history"
-optimizer_column_name: str = "optimizer schedule"
-task_column_name: str = "task"
 
 # =============================================================================
 
-DEFAULT_TARGETS = np.logspace(-8, 2, 51)
 
+def _ert_from_quantile(
+    data: xr.Dataset,
+    easiest_quantile: float,
+    targets: np.ndarray | None = None,
+) -> xr.Dataset:
+    """Per-task ERT preprocess that derives targets from randomsearch.
 
-def quality_value(x: xr.DataArray, g_min: float) -> xr.DataArray:
-    """Compute scaled quality value relative to global minimum.
-
-    Parameters
-    ----------
-    x : xr.DataArray
-        Cumulative-minimum output values.
-    g_min : float
-        Global minimum. If NaN, the data minimum is used.
-
-    Returns
-    -------
-    xr.DataArray
-        Scaled quality values where 0 indicates the optimum.
-    """
-    if np.isnan(g_min):
-        g_min = x.min(skipna=True)
-    qv = x - g_min
-
-    # scaling
-    sf = (
-        1
-        / qv.isel({BUDGET: 0})
-        .quantile(q=0.5, skipna=True)
-        .drop_vars("quantile")
-    ) * DEFAULT_TARGETS[-1]
-    return qv * sf
-
-
-def calculate_ert(data: xr.Dataset) -> xr.Dataset:
-    """Calculate Expected Running Time (ERT) metrics.
+    Resolves ``global_min`` from ``data.coords``, shifts into
+    quality-value space, computes targets via
+    :func:`compute_task_targets` at the given ``easiest_quantile``,
+    and forwards them to :func:`calculate_ert`.
 
     Parameters
     ----------
     data : xr.Dataset
-        Optimization dataset with ``output_min``, ``fevals``,
-        and ``iterations`` variables.
-
-    Returns
-    -------
-    xr.Dataset
-        Dataset with ``cost`` and ``success`` variables
-        across target quality levels.
+        Per-task dataset concatenated along ``schedule``.
+    easiest_quantile : float
+        Forwarded to :func:`compute_task_targets` when ``targets`` is
+        ``None``.
+    targets : np.ndarray or None, optional
+        Pre-computed ERT target quality values (in quality-value space).
+        When given, :func:`compute_task_targets` is skipped and these
+        targets are used directly -- this scores ``data`` against
+        targets fixed elsewhere (e.g. the ``target_value`` already
+        stored for an existing task) rather than re-deriving them from
+        this dataset's randomsearch baseline.
     """
-    raw_g_min = data.coords.get(GLOBAL_MIN, np.nan)
-    raw_g_min = raw_g_min if raw_g_min is not None else np.nan
-    g_min = raw_g_min if not np.isnan(raw_g_min) else np.nan
-
-    x = output_cummin(data[OUTPUT_MIN]).ffill(BUDGET)
-    qv = quality_value(x, g_min)
-
-    qv = qv.fillna(np.inf)
-
-    targets = xr.DataArray(
-        DEFAULT_TARGETS, dims=TARGET, coords={TARGET: DEFAULT_TARGETS}
-    )
-    solved = qv <= targets
-    success = solved.any(BUDGET)
-
-    stopping_budget = (qv.argmin(BUDGET) + 1).clip(max=data.sizes[BUDGET] - 1)
-
-    first_solved = (
-        solved.argmax(BUDGET).where(success, other=stopping_budget).compute()
-    )
-
-    # Extract the scalar values at the 'first_solved' budget step
-    fevals = data[FEVALS].isel({BUDGET: first_solved})
-    iterations = data[ITERATIONS].isel({BUDGET: first_solved})
-
-    # Combine metrics into a single DataArray named 'COST'
-    # with a new dimension 'metric'
-    cost_da = xr.concat(
-        [fevals, iterations],
-        dim=xr.DataArray([FEVALS, ITERATIONS], dims="metric", name="metric"),
-    )
-
-    result = xr.Dataset(
-        {
-            COST: cost_da,
-            SUCCESS: success,
-        }
-    )
-    if GLOBAL_MIN in result.coords:
-        result = result.drop_vars(GLOBAL_MIN)
-    return result
-
-
-# =============================================================================
+    global_min = data.coords.get(GLOBAL_MIN, np.nan)
+    if global_min is None:
+        global_min = np.nan
+    if targets is None:
+        data_qv = shift_to_quality_value(data, global_min)
+        targets = compute_task_targets(
+            data_qv, easiest_quantile=easiest_quantile
+        )
+    return calculate_ert(data, targets=targets, global_min=global_min)
 
 
 def create_combined_odata(
-    experiment_data: f3dasm.ExperimentData, budget_steps: int
+    experiment_data: f3dasm.ExperimentData,
+    budget_steps: int,
+    tasks_experiment_data: f3dasm.ExperimentData,
+    schedules_experiment_data: f3dasm.ExperimentData,
+    easiest_quantile: float = DEFAULT_EASIEST_QUANTILE,
 ):
     """Build a combined optimization dataset from experiment data.
 
     Loads per-task loss histories, computes ERT performance
     metrics and validation trajectories, merges them with
     task labels, and saves the result to disk.
+
+    Each row of ``experiment_data`` carries integer ``task_idx`` and
+    ``optimizer_idx`` parameters that index into the rows of
+    ``tasks_experiment_data`` and ``schedules_experiment_data``.
 
     Parameters
     ----------
@@ -165,21 +114,45 @@ def create_combined_odata(
     budget_steps : int
         Number of budget interpolation steps for
         trajectory validation.
+    tasks_experiment_data : f3dasm.ExperimentData
+        Source ExperimentData whose ``task`` output column is indexed
+        by ``experiment_data["task_idx"]``.
+    schedules_experiment_data : f3dasm.ExperimentData
+        Source ExperimentData whose ``optimizer`` input column is
+        indexed by ``experiment_data["optimizer_idx"]``.
+    easiest_quantile : float, optional
+        Fraction of ``randomsearch`` ``output_min`` values that
+        should lie above (be worse than) the per-task easiest ERT
+        target. Forwarded to :func:`calculate_ert`. Default ``0.75``.
+
+    Notes
+    -----
+    Per-task intermediate NetCDF files (``placeholder_*.ncs`` and
+    ``<task.hash>.ncs``) are written under
+    ``experiment_data.project_dir / "combine_tmp"``. The sub-directory
+    is wiped at function entry and removed on success, so a stale
+    attempt cannot poison a re-run -- previously these landed in
+    ``Path.cwd()`` (the SLURM submit dir) and survived crashes,
+    which let HDF5 file-lock state from a failed post job hang the
+    next attempt.
     """
     # Only select finished experiments and reset the index
     experiment_data = experiment_data.select_with_status(
         "finished"
     ).reset_index()
 
-    df_input, df_output = experiment_data.to_pandas(keep_references=True)
+    # Per-task scratch dir lives alongside the ExperimentData on
+    # disk (not in Path.cwd()), so two pipeline runs sharing a
+    # submit directory cannot collide on `<task.hash>.ncs`
+    # filenames, and a crashed previous attempt cannot leave
+    # leftover files with stale HDF5 lock state for this run to
+    # block on. Wipe-then-recreate gives a guaranteed clean start.
+    tmp_dir = Path(experiment_data.project_dir) / "combine_tmp"
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir)
+    tmp_dir.mkdir(parents=True)
 
-    # preceed every entry of df_output with experimentdata.project_dir
-    df_input = df_input.map(
-        lambda row: Path(experiment_data.project_dir)
-        / "experiment_data"
-        / row.reference,
-        na_action="ignore",
-    )
+    df_input, df_output = experiment_data.to_pandas(keep_references=True)
 
     df_output = df_output.map(
         lambda row: Path(experiment_data.project_dir)
@@ -188,20 +161,19 @@ def create_combined_odata(
         na_action="ignore",
     )
 
-    df = pd.concat(
-        [
-            df_input[task_column_name],
-            df_input[optimizer_column_name],
-            df_output[loss_column_name],
-        ],
-        axis=1,
-    )
+    tasks = [es.output_data["task"] for _, es in tasks_experiment_data]
+    schedules = [
+        es.input_data["optimizer"] for _, es in schedules_experiment_data
+    ]
 
-    temp_df = df.copy()
-
-    temp_df[TASK_ID] = temp_df[task_column_name].apply(lambda x: Task.load(x))
-    temp_df[SCHEDULE] = temp_df[optimizer_column_name].apply(
-        lambda x: OptimizationStep.load(x)
+    temp_df = pd.DataFrame(
+        {
+            TASK_ID: df_input["task_idx"].apply(lambda i: tasks[int(i)]),
+            SCHEDULE: df_input["optimizer_idx"].apply(
+                lambda i: schedules[int(i)]
+            ),
+            loss_column_name: df_output[loss_column_name],
+        }
     )
 
     pivot_table = temp_df.pivot(
@@ -227,7 +199,7 @@ def create_combined_odata(
 
     # Process per task
     for task, loss_history in tqdm(xarr_df.iterrows(), total=len(xarr_df)):
-        placeholder_path = Path.cwd() / f"placeholder_{task.hash}.ncs"
+        placeholder_path = tmp_dir / f"placeholder_{task.hash}.ncs"
 
         placeholder = xr.open_dataset(
             loss_history.dropna(axis=0, how="all").iloc[0]
@@ -257,18 +229,23 @@ def create_combined_odata(
         g_min_val = task.global_min if task.global_min is not None else np.nan
         b = b.assign_coords({GLOBAL_MIN: g_min_val})
 
-        b.to_netcdf(f"{task.hash}.ncs")
+        b.to_netcdf(tmp_dir / f"{task.hash}.ncs")
         b.close()
 
         placeholder_path.unlink()
         # break
 
-    file_list = [Path.cwd() / Path(t).with_suffix(".ncs") for t in task_ids]
+    file_list = [tmp_dir / Path(t).with_suffix(".ncs") for t in task_ids]
 
     # ============= PERFORMANCE ============= #
 
     logger.info("Starting opening the entire dataset for validation")
 
+    # Materialise performance eagerly and close the file handles
+    # before the trajectory pipeline opens the *same* per-task .ncs
+    # files. Holding two open generations of one NetCDF file at once
+    # is what lets HDF5 deadlock on its internal mutex during the
+    # final to_netcdf compute.
     xarr_performance = xr.open_mfdataset(
         file_list,
         combine="nested",
@@ -276,10 +253,13 @@ def create_combined_odata(
             xr.DataArray(task_ids, coords=[task_ids], dims=[TASK_ID]),
         ],
         parallel=False,
-        preprocess=calculate_ert,
+        preprocess=partial(
+            _ert_from_quantile, easiest_quantile=easiest_quantile
+        ),
         coords="minimal",
         join="outer",
-    )
+    ).load()
+    xarr_performance.close()
 
     # ============= TRAJECTORY ============= #
 
@@ -296,7 +276,8 @@ def create_combined_odata(
         coords="minimal",
         join="outer",
         compat="override",
-    )
+    ).load()
+    xarr_trajectory.close()
 
     # Create task labels
     labels_data = pd.DataFrame(
@@ -337,7 +318,6 @@ def create_combined_odata(
 
     logger.info("Cleaning up temporary files")
 
-    for f in file_list:
-        f.unlink()
+    shutil.rmtree(tmp_dir)
 
     logger.info("End of program.")

@@ -38,6 +38,7 @@ from .naming import (
     OUTPUT_MIN,
     PROBLEM,
     REALIZATION,
+    SCHEDULE,
     SEED,
     SUCCESS,
     TARGET,
@@ -624,50 +625,188 @@ def quality_value(x: xr.DataArray, g_min: float) -> xr.DataArray:
         g_min = x.min(skipna=True)
     qv = x - g_min
 
-    # scaling
-    sf = (
-        1
-        / qv.isel({BUDGET: 0})
-        .quantile(q=0.5, skipna=True)
-        .drop_vars("quantile")
-    ) * DEFAULT_TARGETS[-1]
-    return qv * sf
+    # # scaling
+    # sf = (
+    #     1
+    #     / qv.isel({BUDGET: 0})
+    #     .quantile(q=0.5, skipna=True)
+    #     .drop_vars("quantile")
+    # ) * DEFAULT_TARGETS[-1]
+    return qv  # * sf
 
 
-def calculate_ert(data: xr.Dataset, global_min: float) -> xr.Dataset:
-    """
-    Calculate Expected Running Time (ERT) metrics.
+# =============================================================================
+
+HARDEST_TARGET_QV = 1e-8
+DEFAULT_EASIEST_TARGET_QV = 1e2
+N_TARGETS = 51
+DEFAULT_EASIEST_QUANTILE = 0.75
+
+
+def _fallback_targets(n_targets: int) -> np.ndarray:
+    return np.logspace(
+        np.log10(HARDEST_TARGET_QV),
+        np.log10(DEFAULT_EASIEST_TARGET_QV),
+        n_targets,
+    )
+
+
+def shift_to_quality_value(data: xr.Dataset, g_min: float) -> xr.Dataset:
+    """Shift ``output_min`` into quality-value space (``g_min == 0``).
+
+    Subtracts the task's global minimum from ``output_min`` so the
+    resulting dataset lives in quality-value space, where the optimum
+    is 0 and the hardest target ``1e-8`` is meaningful regardless of
+    the original scale of the objective. If ``g_min`` is NaN, the
+    minimum of ``output_min`` over the data is used as a fallback.
 
     Parameters
     ----------
     data : xr.Dataset
-        Optimization dataset with 'output_min', 'fevals', and
-        'iterations' variables.
-    global_min : float
-        Global minimum value for quality calculation.
+        Per-task optimization dataset.
+    g_min : float
+        Task's global minimum (NaN allowed; falls back to data min).
 
     Returns
     -------
     xr.Dataset
-        Dataset with 'cost' and 'success' variables across multiple
-        target quality levels.
-
-    Notes
-    -----
-    ERT is computed for DEFAULT_TARGETS quality levels. Cost
-    includes both function evaluations (fevals) and iterations,
-    stored as separate metrics in the 'cost' variable.
+        Copy of ``data`` with ``output_min`` shifted by ``-g_min``.
     """
-    data = data.as_numpy()
-    x = output_cummin(data[OUTPUT_MIN]).ffill(BUDGET)
-    qv = quality_value(x, global_min)
+    if np.isnan(g_min):
+        g_min = float(data[OUTPUT_MIN].min(skipna=True))
+    return data.assign({OUTPUT_MIN: data[OUTPUT_MIN] - g_min})
 
-    qv = qv.fillna(np.inf)
 
-    targets = xr.DataArray(
-        DEFAULT_TARGETS, dims=TARGET, coords={TARGET: DEFAULT_TARGETS}
+def compute_task_targets(
+    data_qv: xr.Dataset,
+    n_targets: int = N_TARGETS,
+    easiest_quantile: float = DEFAULT_EASIEST_QUANTILE,
+) -> np.ndarray:
+    """Build per-task log-spaced ERT targets in quality-value space.
+
+    Expects ``data_qv`` already shifted so that ``global_min == 0``
+    (see :func:`shift_to_quality_value`). The hardest target is
+    ``1e-8`` and the easiest is set so that ``easiest_quantile`` of
+    the ``randomsearch`` baseline's ``output_min`` values lie above
+    (i.e. are worse than) it — equivalently, the
+    ``(1 - easiest_quantile)``-quantile of those values. Randomsearch
+    values are flattened across all remaining dims (typically
+    ``REALIZATION`` x ``BUDGET`` x any ``randomsearch`` schedules).
+    Intermediate targets are log-spaced between these endpoints.
+
+    Falls back to ``np.logspace(-8, 2, n_targets)`` if any of the
+    following holds:
+
+    * no ``randomsearch`` schedule is present for this task,
+    * the easiest quality value is non-finite or not strictly above
+      the hardest target.
+
+    Parameters
+    ----------
+    data_qv : xr.Dataset
+        Per-task dataset with ``output_min`` already in quality-value
+        space and a ``schedule`` coordinate whose values are
+        ``OptimizationStep.name`` strings.
+    n_targets : int, optional
+        Number of target levels to produce, by default ``51``.
+    easiest_quantile : float, optional
+        Fraction of ``randomsearch`` ``output_min`` values that
+        should lie above (be worse than) the easiest target.
+        Must be in ``(0, 1)``. Default ``0.75``.
+
+    Returns
+    -------
+    np.ndarray
+        1-D array of ``n_targets`` log-spaced target quality values,
+        sorted from hardest (``1e-8``) to easiest.
+    """
+    if not 0.0 < easiest_quantile < 1.0:
+        raise ValueError(
+            f"easiest_quantile must be in (0, 1), got {easiest_quantile}"
+        )
+
+    if SCHEDULE not in data_qv.coords or OUTPUT_MIN not in data_qv.data_vars:
+        return _fallback_targets(n_targets)
+
+    schedule_names = np.asarray(data_qv[SCHEDULE].values, dtype=str)
+    mask = np.array(
+        [name.startswith("randomsearch") for name in schedule_names]
     )
-    solved = qv <= targets
+    if not mask.any():
+        return _fallback_targets(n_targets)
+
+    rs = data_qv[OUTPUT_MIN].isel({SCHEDULE: np.where(mask)[0]})
+    easiest_qv = float(rs.quantile(1.0 - easiest_quantile, skipna=True))
+
+    if not np.isfinite(easiest_qv) or easiest_qv <= HARDEST_TARGET_QV:
+        return _fallback_targets(n_targets)
+
+    return np.logspace(
+        np.log10(HARDEST_TARGET_QV), np.log10(easiest_qv), n_targets
+    )
+
+
+def calculate_ert(
+    data: xr.Dataset,
+    targets: np.ndarray | None = None,
+    global_min: np.ndarray | None = None,
+) -> xr.Dataset:
+    """Calculate Expected Running Time (ERT) metrics.
+
+    Shifts ``output_min`` into quality-value space (subtracting
+    ``global_min``, falling back to the data minimum when it is NaN)
+    so the optimum is 0, then counts the first budget step that
+    reaches each supplied target. The supplied target quality values
+    are echoed as the ``target_value`` data variable so they survive
+    concatenation along ``TASK_ID``; the ``target`` dim itself is an
+    integer index ``0..len(targets)-1``.
+
+    Parameters
+    ----------
+    data : xr.Dataset
+        Optimization dataset with ``output_min``, ``fevals``,
+        and ``iterations`` variables.
+    targets : np.ndarray or None, optional
+        1-D array of target quality values (in quality-value space,
+        i.e. relative to ``global_min``). When ``None`` (default),
+        ``_fallback_targets(N_TARGETS) == np.logspace(-8, 2, 51)`` is
+        used. Callers that want randomsearch-derived targets should
+        compute them via :func:`compute_task_targets` and pass them
+        in explicitly.
+    global_min : np.ndarray or None, optional
+        Task global minimum used to shift ``output_min`` into
+        quality-value space. When ``None`` (default), it is read
+        from ``data.coords[GLOBAL_MIN]`` and falls back to
+        ``np.nan`` if that coordinate is missing; a NaN value in
+        turn triggers the per-task data-minimum fallback inside
+        :func:`shift_to_quality_value`. When provided, the supplied
+        value is used directly.
+
+    Returns
+    -------
+    xr.Dataset
+        Dataset with ``cost``, ``success``, and ``target_value``
+        variables across the supplied target quality levels.
+    """
+    if global_min is None:
+        global_min = data.coords.get(GLOBAL_MIN, np.nan)
+        if global_min is None:
+            global_min = np.nan
+
+    targets_np = (
+        targets if targets is not None else _fallback_targets(N_TARGETS)
+    )
+
+    data_qv = shift_to_quality_value(data, global_min)
+
+    target_idx = np.arange(targets_np.size)
+
+    qv = output_cummin(data_qv[OUTPUT_MIN]).ffill(BUDGET).fillna(np.inf)
+
+    targets_da = xr.DataArray(
+        targets_np, dims=TARGET, coords={TARGET: target_idx}
+    )
+    solved = qv <= targets_da
     success = solved.any(BUDGET)
 
     stopping_budget = (qv.argmin(BUDGET) + 1).clip(max=data.sizes[BUDGET] - 1)
@@ -687,9 +826,13 @@ def calculate_ert(data: xr.Dataset, global_min: float) -> xr.Dataset:
         dim=xr.DataArray([FEVALS, ITERATIONS], dims="metric", name="metric"),
     )
 
-    return xr.Dataset(
+    result = xr.Dataset(
         {
             COST: cost_da,
             SUCCESS: success,
+            "target_value": targets_da,
         }
     )
+    if GLOBAL_MIN in result.coords:
+        result = result.drop_vars(GLOBAL_MIN)
+    return result

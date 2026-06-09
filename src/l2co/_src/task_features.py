@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -12,218 +11,151 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 
-
-class FeatureProcessor(eqx.Module):
-    """Normalizes and encodes task/optimizer features.
-
-    Stores per-feature statistics (means, stds) for
-    continuous features and vocabularies for categorical
-    features, enabling consistent transformation of raw
-    feature dictionaries into numeric arrays.
-    """
-
-    schema: dict[str, str] = eqx.field(static=True)
-    means: dict[str, float] = eqx.field(static=True)
-    stds: dict[str, float] = eqx.field(static=True)
-    vocabs: dict[str, dict[object, int]] = eqx.field(static=True)
-
-    @classmethod
-    def init(cls, schema: dict[str, str], tags: Iterable[dict[str, Any]]):
-        """
-        Initialize feature processor with schema and task data.
-
-        Parameters
-        ----------
-        schema : dict[str, str]
-            Mapping of feature names to types ('continuous',
-            'categorical', 'ordinal').
-        tags : Iterable[dict[str, Any]]
-            Iterable of feature dictionaries for tasks.
-        """
-        means = {}
-        stds = {}
-        vocabs = {}
-
-        if isinstance(tags, dict):
-            tags = [tags]
-
-        for name, ftype in schema.items():
-            if ftype == "boolean":
-                col = [str(d[name]).lower() for d in tags]
-            else:
-                col = [d[name] for d in tags]
-
-            if ftype == "continuous":
-                arr = jnp.array(col, dtype=jnp.float32)
-                means[name] = float(arr.mean())
-                stds[name] = float(arr.std() + 1e-8)
-            elif ftype in ("categorical", "ordinal", "boolean"):
-                uniqs = sorted(set(col))
-                vocabs[name] = {v: i for i, v in enumerate(uniqs)}
-            else:
-                raise ValueError(f"Unknown feature type {ftype}")
-
-        return cls(schema=schema, means=means, stds=stds, vocabs=vocabs)
-
-    def transform(self, x: dict[str, object]) -> jax.Array:
-        """
-        Transform feature dictionary to normalized array.
-
-        Parameters
-        ----------
-        x : dict[str, object]
-            Dictionary of feature names to values.
-
-        Returns
-        -------
-        jax.Array
-            Normalized feature array of shape (num_features,).
-        """
-        feats = []
-        for name, ftype in self.schema.items():
-            if name not in x:
-                feats.append(jnp.nan)
-                continue
-            if ftype == "boolean":
-                val = str(x[name]).lower()
-            else:
-                val = x[name]
-            if ftype == "continuous":
-                normed = (float(val) - self.means[name]) / self.stds[name]
-                feats.append(normed)
-            # Categorical or ordinal
-            else:
-                feats.append(float(self.vocabs[name][val]))
-
-        return jnp.array(feats, dtype=jnp.float32)
-
-    def to_dict(self) -> dict:
-        """
-        Serialize feature processor configuration.
-
-        Returns
-        -------
-        dict
-            Configuration dictionary.
-        """
-        return {
-            "schema": dict(self.schema),
-            "means": self.means,
-            "stds": self.stds,
-            "vocabs": self.vocabs,
-        }
-
-    @classmethod
-    def reconstruct(cls, **kwargs) -> FeatureProcessor:
-        """
-        Reconstruct feature processor from configuration.
-
-        Parameters
-        ----------
-        **kwargs
-            Configuration dictionary.
-
-        Returns
-        -------
-        FeatureProcessor
-            Reconstructed feature processor instance.
-        """
-        return cls(**kwargs)
-
-    @classmethod
-    def load(cls, path: str) -> FeatureProcessor:
-        """
-        Load model from file.
-
-        Parameters
-        ----------
-        path : str
-            Path to model file (without extension).
-
-        Returns
-        -------
-        FeatureProcessor
-            Loaded model instance.
-        """
-        _path = Path(path)
-
-        with open(_path.with_suffix(".eqx"), "rb") as f:
-            hyperparams: dict = json.loads(f.readline().decode())
-            feature_processor = cls.reconstruct(**hyperparams)
-            feature_processor = eqx.tree_deserialise_leaves(
-                f, feature_processor
-            )
-            return feature_processor
-
-    def store(self, path: str):
-        """
-        Store model to file.
-
-        Parameters
-        ----------
-        path : str
-            Path to save model (without extension).
-
-        Returns
-        -------
-        str
-            Path to saved model file.
-        """
-        _path = Path(path)
-        hyperparams = self.to_dict()
-
-        with open(_path.with_suffix(".eqx"), "wb") as f:
-            hyperparams_str = json.dumps(hyperparams)
-            f.write((hyperparams_str + "\n").encode())
-            eqx.tree_serialise_leaves(f, self)
-
-        return str(_path)
-
-    def swap_names(self, name_mapping: dict[str, str]) -> FeatureProcessor:
-        """
-        Swap feature names according to mapping.
-
-        Parameters
-        ----------
-        name_mapping : dict[str, str]
-            Mapping of old feature names to new feature names.
-
-        Returns
-        -------
-        FeatureProcessor
-            New instance with swapped feature names.
-        """
-        new_vocabs = {
-            name_mapping.get(name, name): vocab
-            for name, vocab in self.vocabs.items()
-        }
-
-        return FeatureProcessor(
-            schema=self.schema,
-            means=self.means,
-            stds=self.stds,
-            vocabs=new_vocabs,
-        )
+Schema = dict[str, str | list]
 
 
 # =============================================================================
 
 
-class MixedEmbedding(eqx.Module):
-    """
-    Mixed embedding layer for categorical and continuous features.
+class FeatureProcessor(eqx.Module):
+    """Encodes a raw feature dict into a flat JAX array.
 
-    Attributes
+    Continuous values are passed through as-is. Categorical and
+    boolean values are mapped to integer indices via a per-feature
+    vocabulary; booleans use the fixed mapping
+    ``{"false": 0, "true": 1}``.
+
+    Parameters
+    ----------
+    vocabs : dict[str, dict[object, int] | None]
+        Per-feature vocabulary mapping. ``None`` marks a continuous
+        feature; a dict gives the value→index lookup for boolean or
+        categorical features. Insertion order of ``vocabs`` defines
+        the feature ordering used by :meth:`transform`.
+    """
+
+    vocabs: dict[str, dict[object, int] | None] = eqx.field(static=True)
+
+    @classmethod
+    def init(cls, schema: Schema) -> FeatureProcessor:
+        """Build a FeatureProcessor from a schema.
+
+        Parameters
+        ----------
+        schema : Schema
+            Mapping of feature names to type specs:
+              - ``'continuous'`` : float, passed through as-is
+              - ``'boolean'``    : bool, mapped to 0 or 1
+              - iterable         : categorical, gives the full
+                vocabulary in the desired index order
+
+        Returns
+        -------
+        FeatureProcessor
+        """
+        vocabs: dict[str, dict[object, int] | None] = {}
+
+        for name, spec in schema.items():
+            if spec == "continuous":
+                vocabs[name] = None
+            elif spec == "boolean":
+                vocabs[name] = {"false": 0, "true": 1}
+            elif hasattr(spec, "__iter__"):
+                categories = list(spec)
+                vocabs[name] = {v: i for i, v in enumerate(categories)}
+            else:
+                raise ValueError(
+                    f"Unknown feature spec for {name!r}: {spec!r}. "
+                    f"Expected 'continuous', 'boolean', or an iterable "
+                    f"of categories."
+                )
+
+        return cls(vocabs=vocabs)
+
+    def transform(self, x: dict[str, Any]) -> jax.Array:
+        """Encode a feature dict to a default-precision JAX array.
+
+        Parameters
+        ----------
+        x : dict[str, Any]
+            Raw feature dict. All keys in ``vocabs`` must be present.
+
+        Returns
+        -------
+        jax.Array
+            Shape (num_features,); dtype follows JAX's default float
+            precision (``float32`` by default, ``float64`` when
+            ``jax_enable_x64`` is set).
+        """
+        feats = []
+        for name, vocab in self.vocabs.items():
+            val = x[name]
+            if vocab is None:
+                feats.append(val)
+            else:
+                if isinstance(val, bool):
+                    val = str(val).lower()
+                feats.append(vocab[val])
+        return jnp.array(feats, dtype=float)
+
+    def __call__(self, x: dict[str, Any]) -> jax.Array:
+        return self.transform(x)
+
+    # ------------------------------------------------------------------
+    # Serialization
+    # ------------------------------------------------------------------
+
+    def to_dict(self) -> dict:
+        return {"vocabs": self.vocabs}
+
+    @classmethod
+    def reconstruct(cls, vocabs: dict) -> FeatureProcessor:
+        return cls(vocabs=vocabs)
+
+    def store(self, path: str) -> str:
+        _path = Path(path)
+        with open(_path.with_suffix(".eqx"), "wb") as f:
+            f.write((json.dumps(self.to_dict()) + "\n").encode())
+            eqx.tree_serialise_leaves(f, self)
+        return str(_path)
+
+    @classmethod
+    def load(cls, path: str) -> FeatureProcessor:
+        _path = Path(path)
+        with open(_path.with_suffix(".eqx"), "rb") as f:
+            hyperparams = json.loads(f.readline().decode())
+            fp = cls.reconstruct(**hyperparams)
+            return eqx.tree_deserialise_leaves(f, fp)
+
+
+class MixedEmbedding(eqx.Module):
+    """Embeds a mixed-type feature array and projects to output_dim.
+
+    Each feature gets its own layer:
+      - continuous  → Linear(1, embed_dim)
+      - boolean     → Embedding(2, embed_dim)
+      - categorical → Embedding(vocab_size, embed_dim)
+
+    Outputs are concatenated and passed through a final
+    Linear(num_features * embed_dim, output_dim) projection.
+
+    Parameters
     ----------
     embedders : list[eqx.Module]
-        List of embedding/linear layers per feature.
+        One layer per feature, in schema order.
     final_proj : eqx.nn.Linear
-        Final projection layer.
+        Projection from concatenated embeddings to output_dim.
+    embed_dim : int
+        Embedding size of each individual layer.
     """
 
-    out_size: int
     embedders: list[eqx.Module]
     final_proj: eqx.nn.Linear
+    embed_dim: int = eqx.field(static=True)
+
+    @property
+    def out_size(self) -> int:
+        return self.final_proj.out_features
 
     @classmethod
     def from_feature_processor(
@@ -233,171 +165,138 @@ class MixedEmbedding(eqx.Module):
         output_dim: int,
         *,
         key: jax.Array,
-    ):
-        """
-        Create embedding from feature processor schema.
+    ) -> MixedEmbedding:
+        """Build a MixedEmbedding from a FeatureProcessor.
 
         Parameters
         ----------
         feature_processor : FeatureProcessor
-            Feature processor with schema and vocabularies.
         embed_dim : int
-            Dimension of embeddings.
+            Size of each individual embedding / linear output.
         output_dim : int
-            Output dimension after projection.
+            Dimensionality of the final projected output.
         key : jax.Array
-            Random key for initialization.
 
         Returns
         -------
         MixedEmbedding
-            New MixedEmbedding instance.
         """
-        embedders = []
-        keys = jax.random.split(key, len(feature_processor.schema) + 1)
+        num_features = len(feature_processor.vocabs)
+        keys = jax.random.split(key, num_features + 1)
 
-        for (name, s), k in zip(
-            feature_processor.schema.items(), keys[:-1], strict=True
+        embedders: list[eqx.Module] = []
+        for (_name, vocab), k in zip(
+            feature_processor.vocabs.items(), keys[:-1], strict=True
         ):
-            if s in ("categorical", "ordinal", "boolean"):
+            if vocab is None:
+                embedders.append(eqx.nn.Linear(1, embed_dim, key=k))
+            else:  # boolean or categorical
                 embedders.append(
                     eqx.nn.Embedding(
-                        num_embeddings=len(feature_processor.vocabs[name]),
+                        num_embeddings=len(vocab),
                         embedding_size=embed_dim,
                         key=k,
                     )
                 )
-            elif s == "continuous":
-                embedders.append(eqx.nn.Linear(1, embed_dim, key=k))
-            else:
-                raise ValueError(f"Unknown feature type {s}")
 
-        embedders = embedders
         final_proj = eqx.nn.Linear(
-            embed_dim * len(feature_processor.schema),
+            embed_dim * num_features,
             output_dim,
             key=keys[-1],
         )
-
         return cls(
-            embedders=embedders, final_proj=final_proj, out_size=output_dim
+            embedders=embedders,
+            final_proj=final_proj,
+            embed_dim=embed_dim,
         )
 
     def __call__(self, x: jax.Array) -> jax.Array:
-        """
-        Embed and project mixed features.
+        """Embed features and project to output_dim.
 
         Parameters
         ----------
         x : jax.Array
-            Input feature array.
+            Default-precision float array of shape (num_features,) as
+            produced by FeatureProcessor.transform.
 
         Returns
         -------
         jax.Array
-            Projected embedding vector.
+            Shape (output_dim,).
         """
         outputs = []
-        for xi, mo in zip(x, self.embedders, strict=True):
-            if isinstance(mo, eqx.nn.Embedding):
-                xi_input = xi.astype(jnp.int32)
-
+        for xi, layer in zip(x, self.embedders, strict=True):
+            if isinstance(layer, eqx.nn.Embedding):
+                outputs.append(layer(xi.astype(int)))
             else:
-                xi_input = xi[None]
-            outputs.append(mo(xi_input))
+                outputs.append(layer(xi[None]))
+        return self.final_proj(jnp.concatenate(outputs, axis=0))
 
-        return self.final_proj(jnp.stack(outputs, axis=-1).flatten())
+    # ------------------------------------------------------------------
+    # Serialization
+    # ------------------------------------------------------------------
 
-    def to_dict(
-        self,
-    ) -> dict:
-        """
-        Serialize embedding configuration.
-
-        Returns
-        -------
-        dict
-            Configuration with embedders and projection info.
-        """
+    def to_dict(self) -> dict:
         embed_list = []
-        for emb in self.embedders:
-            if isinstance(emb, eqx.nn.Embedding):
-                emb_dict = {
-                    "_type": "embedding",
-                    "num_embeddings": emb.num_embeddings,
-                    "embedding_size": emb.embedding_size,
-                }
-            elif isinstance(emb, eqx.nn.Linear):
-                emb_dict = {
-                    "_type": "linear",
-                    "in_features": 1,
-                    "out_features": emb.out_features,
-                }
+        for layer in self.embedders:
+            if isinstance(layer, eqx.nn.Embedding):
+                embed_list.append(
+                    {
+                        "_type": "embedding",
+                        "num_embeddings": layer.num_embeddings,
+                        "embedding_size": layer.embedding_size,
+                    }
+                )
             else:
-                raise ValueError(f"Unknown embedder _type {type(emb)}")
-
-            embed_list.append(emb_dict)
-
-        final_dict = {
-            "in_features": self.final_proj.in_features,
-            "out_features": self.final_proj.out_features,
+                embed_list.append({"_type": "linear"})
+        return {
+            "embedders": embed_list,
+            "embed_dim": self.embed_dim,
+            "output_dim": self.final_proj.out_features,
         }
 
-        return {"embedders": embed_list, "final_proj": final_dict}
-
     @classmethod
-    def reconstruct(cls, embedders, final_proj, **kwargs) -> MixedEmbedding:
-        """
-        Reconstruct embedding from configuration.
-
-        Parameters
-        ----------
-        embedders : list
-            List of embedder configurations.
-        final_proj : dict
-            Final projection configuration.
-        **kwargs
-            Additional arguments (unused).
-
-        Returns
-        -------
-        MixedEmbedding
-            Reconstructed embedding instance.
-        """
+    def reconstruct(
+        cls, embedders, embed_dim, output_dim, **kwargs
+    ) -> MixedEmbedding:
         key = jr.key(0)
-        k1, k2 = jr.split(key)
+        k, *layer_keys = jax.random.split(key, len(embedders) + 1)
 
-        embedders_list = []
-        for emb in embedders:
-            k, k1 = jax.random.split(k1)
+        embedders_list: list[eqx.Module] = []
+        for emb, lk in zip(embedders, layer_keys, strict=True):
             if emb["_type"] == "embedding":
                 embedders_list.append(
                     eqx.nn.Embedding(
                         num_embeddings=emb["num_embeddings"],
                         embedding_size=emb["embedding_size"],
-                        key=k,
-                    )
-                )
-            elif emb["_type"] == "linear":
-                embedders_list.append(
-                    eqx.nn.Linear(
-                        in_features=1,
-                        out_features=emb["out_features"],
-                        key=k,
+                        key=lk,
                     )
                 )
             else:
-                raise ValueError(f"Unknown embedder type {emb['_type']}")
+                embedders_list.append(eqx.nn.Linear(1, embed_dim, key=lk))
 
-        out_features = final_proj["out_features"]
-        final_proj = eqx.nn.Linear(
-            in_features=final_proj["in_features"],
-            out_features=final_proj["out_features"],
-            key=k2,
+        proj = eqx.nn.Linear(
+            in_features=embed_dim * len(embedders),
+            out_features=output_dim,
+            key=k,
         )
         return cls(
             embedders=embedders_list,
-            final_proj=final_proj,
-            out_size=out_features,
-            **kwargs,
+            final_proj=proj,
+            embed_dim=embed_dim,
         )
+
+    def store(self, path: str) -> str:
+        _path = Path(path)
+        with open(_path.with_suffix(".eqx"), "wb") as f:
+            f.write((json.dumps(self.to_dict()) + "\n").encode())
+            eqx.tree_serialise_leaves(f, self)
+        return str(_path)
+
+    @classmethod
+    def load(cls, path: str) -> MixedEmbedding:
+        _path = Path(path)
+        with open(_path.with_suffix(".eqx"), "rb") as f:
+            hyperparams = json.loads(f.readline().decode())
+            me = cls.reconstruct(**hyperparams)
+            return eqx.tree_deserialise_leaves(f, me)

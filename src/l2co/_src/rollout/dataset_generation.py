@@ -1,40 +1,10 @@
-"""
-Optimization execution module for L2CO optimization tasks.
+"""``RunOptimization`` - the ``DataGenerator`` that executes the algorithm
+portfolio on a benchmark task and collects RTD trajectories.
 
-This module provides functions and classes for executing optimization tasks
-with configurable parameters, supporting both single and multiple realization
-runs. It includes utilities for initializing optimizers, running optimization
-loops, and managing optimization history.
-
-The main components include:
-- Functions for optimizer initialization and optimization execution
-- Support for vectorized multiple realizations using JAX
-- Data generator class for integration with f3dasm framework
-- History tracking and result storage
-
-Classes
--------
-RunOptimizationSimple : DataGenerator
-    Main class for executing optimization tasks with configurable parameters.
-
-Functions
----------
-initialize_optimizer : Initialize an optimizer with given parameters
-run_optimization : Execute a single optimization process
-run_optimization_many_realizations : Run multiple optimization realizations
-
-Notes
------
-This module heavily relies on JAX for efficient computation and vectorization,
-particularly for running multiple optimization realizations in parallel. The
-implementation is designed to work with the f3dasm framework for experiment
-management and data generation.
+Used exclusively from the ``experiments/create_optimization_dataset/main.py``
+Hydra pipeline; not part of the inference-time API.
 """
 
-#                                                                       Modules
-# =============================================================================
-
-# Standard
 from __future__ import annotations
 
 import gc
@@ -42,302 +12,23 @@ import logging
 from collections.abc import Callable
 from time import time
 
-# Third-party
 import equinox as eqx
 import jax
 import jax.random as jr
 import xarray as xr
 from f3dasm import ExperimentSample
 from f3dasm.datageneration import DataGenerator
-from jaxtyping import PRNGKeyArray, PyTree
 from l2co_tasks import Task
 
-from l2co._src.batching import BatchState
-
-# Local
-from l2co._src.history_state import HistoryState
 from l2co._src.models import L2COModel
 from l2co._src.naming import BUDGET, OUTPUT_MEAN, OUTPUT_MIN, REALIZATION
-from l2co._src.optimizerschedule import OptimizationStep
-from l2co._src.run_state import (
-    RunState,
-    batch_evaluate,
-    evaluate,
-    reset_from_stage0,
-    run,
-)
+from l2co._src.optimizer_schedule import OptimizationStep
 
-#                                                          Authorship & Credits
-# =============================================================================
-__author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
-__credits__ = ["Martin van der Schelling"]
-__status__ = "Stable"
-# =============================================================================
+from .rollout_wrapper import RolloutWrapper
 
 logger = logging.getLogger(__name__)
 
 # =============================================================================
-
-
-class RolloutWrapper(eqx.Module):
-    """Wrapper for running optimization rollouts.
-
-    Bundles a ``RunState``, ``BatchState``, and task
-    configuration so that optimization can be launched
-    via ``evaluate``, ``batch_evaluate``, or ``run``.
-    """
-
-    run_state: RunState
-    batch_state: BatchState
-    static: PyTree
-    dataset: dict[str, jax.Array]
-    loss_fn: Callable
-    sampler: Callable
-    pass_rng: bool
-    verbose: bool
-
-    @classmethod
-    def init(
-        cls,
-        optimizer: OptimizationStep,
-        task: Task,
-        sampler: Callable,
-        key: PRNGKeyArray,
-        bounded: tuple[float, float] = (None, None),
-        verbose: float = False,
-    ) -> RolloutWrapper:
-        """Create a RolloutWrapper from an optimizer and task.
-
-        Parameters
-        ----------
-        optimizer : OptimizationStep
-            Optimizer configuration.
-        task : Task
-            Optimization task with model and loss function.
-        sampler : Callable
-            Parameter sampling function.
-        key : PRNGKeyArray
-            Random key for initialization.
-        bounded : tuple[float, float], optional
-            Parameter bounds as (lower, upper),
-            by default (None, None).
-        verbose : float, optional
-            Whether to print progress, by default False.
-
-        Returns
-        -------
-        RolloutWrapper
-            Initialized rollout wrapper.
-        """
-        run_state = RunState.init(
-            optimizer=optimizer,
-            task=task,
-            bounded=bounded,
-            key=key,
-        )
-
-        pass_rng = task.pass_rng
-
-        dataset = task.loaded_dataset
-
-        batch_state = BatchState.init(
-            dataset=dataset,
-            batch_size=task.batch_size,
-            key=key,
-        )
-
-        _, static = eqx.partition(task.model, eqx.is_inexact_array)
-
-        return cls(
-            run_state=run_state,
-            batch_state=batch_state,
-            static=static,
-            dataset=dataset,
-            loss_fn=task.loss_fn,
-            sampler=sampler,
-            pass_rng=pass_rng,
-            verbose=verbose,
-        )
-
-    @classmethod
-    def init_from_stage0(
-        cls,
-        previous_run_state: RunState,
-        batch_state: BatchState,
-        optimizer: OptimizationStep,
-        task: Task,
-        sampler: Callable,
-        key: PRNGKeyArray,
-        switch: bool,
-        bounded: tuple[float, float] = (None, None),
-        verbose: float = False,
-    ) -> RolloutWrapper:
-        """Create a RolloutWrapper continuing from a stage-0 run.
-
-        Re-uses the best parameters from ``previous_run_state``
-        when switching optimizers between stages.
-
-        Parameters
-        ----------
-        previous_run_state : RunState
-            Run state from the completed stage-0 run.
-        batch_state : BatchState
-            Batch state from the completed stage-0 run.
-        optimizer : OptimizationStep
-            Stage-1 optimizer configuration.
-        task : Task
-            Optimization task.
-        sampler : Callable
-            Parameter sampling function.
-        key : PRNGKeyArray
-            Random key for initialization.
-        switch : bool
-            If True, reuse the previous run state as-is.
-        bounded : tuple[float, float], optional
-            Parameter bounds, by default (None, None).
-        verbose : float, optional
-            Whether to print progress, by default False.
-
-        Returns
-        -------
-        RolloutWrapper
-            Initialized rollout wrapper for stage 1.
-        """
-        dataset = task.loaded_dataset
-        _, static = eqx.partition(task.model, eqx.is_inexact_array)
-        pass_rng = task.pass_rng
-
-        if switch:
-            run_state = previous_run_state
-        else:
-            # Initialize new run state
-            run_state = RunState.init(
-                optimizer=optimizer,
-                task=task,
-                bounded=bounded,
-                key=key,
-            )
-
-            run_state = reset_from_stage0(
-                run_state=run_state,
-                best_params=previous_run_state.best_params,
-                batch_state=batch_state,
-                static=static,
-                dataset=dataset,
-                loss_fn=task.loss_fn,
-                pass_rng=pass_rng,
-                sampler=sampler,
-                key=key,
-            )
-
-        # Replace one of run_state params with best_params
-
-        return cls(
-            run_state=run_state,
-            batch_state=batch_state,
-            static=static,
-            dataset=dataset,
-            loss_fn=task.loss_fn,
-            sampler=sampler,
-            pass_rng=pass_rng,
-            verbose=verbose,
-        )
-
-    @eqx.filter_jit
-    def batch_evaluate(
-        self,
-        key: PRNGKeyArray,
-        n_iterations: int,
-        n_realizations: int = 1,
-    ) -> tuple[RunState, BatchState, HistoryState]:
-        """Run optimization across multiple realizations.
-
-        Parameters
-        ----------
-        key : PRNGKeyArray
-            Random key, split for each realization.
-        n_iterations : int
-            Number of optimization iterations.
-        n_realizations : int, optional
-            Number of independent runs, by default 1.
-
-        Returns
-        -------
-        tuple[RunState, BatchState, HistoryState]
-            Final states for all realizations.
-        """
-        return batch_evaluate(
-            self.run_state,
-            self.batch_state,
-            self.static,
-            self.dataset,
-            self.loss_fn,
-            self.sampler,
-            n_iterations,
-            self.pass_rng,
-            jr.split(key, n_realizations),
-            self.verbose,
-        )
-
-    def evaluate(
-        self,
-        key,
-        n_iterations: int,
-    ) -> tuple[RunState, BatchState, HistoryState]:
-        """Run a single optimization realization.
-
-        Parameters
-        ----------
-        key : PRNGKeyArray
-            Random key.
-        n_iterations : int
-            Number of optimization iterations.
-
-        Returns
-        -------
-        tuple[RunState, BatchState, HistoryState]
-            Final run state, batch state, and history.
-        """
-        return evaluate(
-            self.run_state,
-            self.batch_state,
-            self.static,
-            self.dataset,
-            self.loss_fn,
-            self.sampler,
-            n_iterations,
-            self.pass_rng,
-            key,
-            self.verbose,
-        )
-
-    def run(
-        self,
-        key: PRNGKeyArray,
-        n_iterations: int,
-    ) -> tuple[RunState, BatchState, HistoryState]:
-        """Run optimization without JIT compilation.
-
-        Parameters
-        ----------
-        key : PRNGKeyArray
-            Random key.
-        n_iterations : int
-            Number of optimization iterations.
-
-        Returns
-        -------
-        tuple[RunState, BatchState, HistoryState]
-            Final run state, batch state, and history.
-        """
-        return run(
-            run_state=self.run_state,
-            batch_state=self.batch_state,
-            dataset=self.dataset,
-            n_iterations=n_iterations,
-            key=key,
-            verbose=self.verbose,
-        )
 
 
 class RunOptimization(DataGenerator):

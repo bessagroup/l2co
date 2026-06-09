@@ -5,6 +5,7 @@ Plotting module
 # =============================================================================
 
 # Standard
+import math
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Literal
@@ -16,7 +17,7 @@ import jax.random as jr
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
-from bessaplots import TypstReport, savefig
+from bessaplots import FigureGrid, TypstReport, savefig
 from l2co_tasks import Task
 from matplotlib.colors import (
     ListedColormap,
@@ -28,17 +29,21 @@ from sklearn.metrics import r2_score
 
 # Local
 from l2co._src.batching import BatchState
-from l2co._src.data_loader import DataLoader
+from l2co._src.data import DataLoader
 from l2co._src.naming import (
+    BUDGET,
     FEATURE,
     FEVALS,
+    GLOBAL_MIN,
     ITERATIONS,
     OUTPUT_DIM,
+    OUTPUT_MIN,
     PROBLEM,
     SCHEDULE,
     UPDATE_STEP,
 )
-from l2co._src.optimizerschedule import OptimizationStep
+from l2co._src.optimizer_schedule import OptimizationStep
+from l2co._src.performance import EPSILON
 from l2co._src.sampler import grid_sampling
 from l2co._src.update_class import evaluate
 from l2co._src.visualize.colors import LABEL_MAP, get_schedule_styles
@@ -684,7 +689,7 @@ def plot_ertd(
 
     # --- Labels and Optional Annotations ---
     if title_text:
-        ax.set_title(title_text, fontsize=16)
+        ax.set_title(title_text)
 
     if top_left_text:
         # Places text like '5-D' in the top left corner of the plot area
@@ -693,22 +698,24 @@ def plot_ertd(
             0.98,
             top_left_text,
             transform=ax.transAxes,
-            fontsize=14,
             verticalalignment="top",
         )
 
     match cost_metric:
         case "iterations":
-            ax.set_xlabel("Iterations / dimension")
+            # ax.set_xlabel("Iterations / dimension")
+            ax.set_xlabel("iterations / dim")
         case "fevals":
-            ax.set_xlabel("Function evaluations / dimension")
+            # ax.set_xlabel("Function evaluations / dimension")
+            ax.set_xlabel("f-evals / dim")
         case _:
             raise ValueError(
                 f"Invalid cost_metric: {cost_metric}. "
                 f"Choose 'fevals' or 'iterations'."
             )
 
-    ax.set_ylabel("Fraction of function, target pairs")
+    # ax.set_ylabel("Fraction of function, target pairs")
+    ax.set_ylabel("Fraction of targets")
 
     # --- Legend and Limits ---
     if show_legend:
@@ -717,8 +724,6 @@ def plot_ertd(
         ax.legend(
             # Position inside the axes
             loc="best",
-            # IEEE standard for legends is often 7pt
-            fontsize=7,
             # Enable the box
             frameon=True,
             # IEEE style usually prefers square corners
@@ -798,7 +803,6 @@ def plot_r2(y_true: xr.DataArray, y_pred: xr.DataArray):
             0.95,
             text_str,
             transform=ax.transAxes,
-            fontsize=12,
             verticalalignment="top",
             bbox=props,
         )
@@ -834,7 +838,7 @@ def plot_single_r2(
     r2 = r2_score(y_t, y_p)
 
     # Scatter plot - smaller 's' and lower alpha for dense subfigures
-    ax.scatter(y_t, y_p, s=3, edgecolors="none", color="k")
+    ax.scatter(y_t, y_p, s=3, edgecolors="none", color="k", rasterized=True)
 
     # Define the limits for the diagonal line
     all_vals = np.concatenate([y_t, y_p])
@@ -859,15 +863,12 @@ def plot_single_r2(
         0.95,
         text_str,
         transform=ax.transAxes,
-        fontsize=7,
         verticalalignment="top",
         bbox=props,
     )
 
-    # IEEE Formatting: Keep titles and labels compact
-    # ax.set_title(label, fontsize=8)
-    ax.set_xlabel("True labels", fontsize=8)
-    ax.set_ylabel("Predicted labels", fontsize=8)
+    ax.set_xlabel("True labels")
+    ax.set_ylabel("Predicted labels")
 
     ax.set_xticklabels([])
     ax.set_yticklabels([])
@@ -905,7 +906,6 @@ def plot_metrics(metrics: dict[str, Iterable[float]]):
 
     ax.legend(
         loc="best",
-        fontsize=7,
         frameon=True,
         fancybox=False,
         edgecolor="#BBBBBB",
@@ -926,11 +926,16 @@ def plot_update_step(
     cost_metric: Literal["fevals", "iterations"] | None = None,
     ax: plt.Axes | None = None,
     show_legend: bool = True,
+    hide_when_done: bool = False,
 ):
     """Plot a colour-coded raster of optimizer selections.
 
     Each row represents a problem and each column a budget
-    step, coloured by which optimizer was active.
+    step, coloured by which optimizer was active. Budget cells
+    that were never written by the rollout (the padding region
+    after a problem terminates early) are rendered in white so
+    that the per-optimizer colour mapping is independent of the
+    order of ``optimizers``.
 
     Parameters
     ----------
@@ -946,6 +951,13 @@ def plot_update_step(
         Existing axes. Creates new figure when ``None``.
     show_legend : bool, optional
         Whether to display a legend, by default True.
+    hide_when_done : bool, optional
+        When ``True``, every step from the first one whose running
+        ``OUTPUT_MIN`` reaches within ``EPSILON`` of the task's
+        ``global_min`` onwards is rendered in black instead of the
+        optimizer colour, indicating that the problem was already
+        solved and subsequent optimizer choices are immaterial.
+        Default is ``False``.
 
     Returns
     -------
@@ -958,6 +970,16 @@ def plot_update_step(
     update_step = (
         d.data[UPDATE_STEP].isel({OUTPUT_DIM: 0}).sel({SCHEDULE: schedule})
     )
+    if hide_when_done:
+        output_min = (
+            d.data[OUTPUT_MIN].isel({OUTPUT_DIM: 0}).sel({SCHEDULE: schedule})
+        )
+        global_min = d.task_labels.sel(
+            {FEATURE: GLOBAL_MIN}, drop=True
+        ).astype(float)
+    else:
+        output_min = None
+        global_min = None
     match cost_metric:
         case "fevals":
             cost_metric = (
@@ -986,6 +1008,8 @@ def plot_update_step(
         update_step = update_step.transpose("problem", ...)
         if cost_metric is not None:
             cost_metric = cost_metric.transpose("problem", ...)
+        if output_min is not None:
+            output_min = output_min.transpose("problem", ...)
 
     # 2. Prepare Mappings
     opt_hashes = [opt.hash for opt in optimizers]
@@ -994,16 +1018,70 @@ def plot_update_step(
     display_names = [LABEL_MAP[opt.name] for opt in optimizers]
 
     # 3. Reclassification
+    # Cells of `update_step` that were never written by the rollout (the
+    # padding region after a problem terminates early) remain at the int32
+    # zero used by `HistoryState.init`. Optimizer hashes are 6-hex sha256
+    # prefixes, so 0 cannot collide with a real hash; we use -1 here as
+    # an unambiguous "no optimizer" sentinel and mask those cells when
+    # plotting so they render in a fixed background colour rather than
+    # silently inheriting whichever optimizer happens to sit at index 0.
     z_data = update_step.astype(int).values
-    indexed_data = np.zeros_like(z_data, dtype=int)
+    indexed_data = np.full(z_data.shape, -1, dtype=int)
     for i, opt_hash in enumerate(opt_hashes):
         indexed_data[z_data == opt_hash] = i
+
+    # 3b. Optionally mark steps where the task is already solved.
+    # We append black as an extra colormap entry at index len(optimizers).
+    done_index = len(opt_hashes)
+    if hide_when_done:
+        # Take the running minimum along the budget axis so that once the
+        # global minimum is first hit, every subsequent step stays masked.
+        # `np.fmin.accumulate` ignores NaNs along the way; NaN cells
+        # then compare False against `global_min` and stay unmasked.
+        running_min = xr.apply_ufunc(
+            np.fmin.accumulate,
+            output_min,
+            input_core_dims=[[BUDGET]],
+            output_core_dims=[[BUDGET]],
+            kwargs={"axis": -1},
+        )
+        done_mask = (running_min <= global_min + EPSILON).values
+        indexed_data[done_mask] = done_index
+        cmap_colors = list(hex_colors) + ["black"]
+    else:
+        cmap_colors = list(hex_colors)
+
+    # Mask unmatched cells so they render via cmap.set_bad rather than
+    # being mapped to whichever optimizer sits at index 0.
+    unmatched_mask = indexed_data == -1
+    indexed_data = np.ma.array(indexed_data, mask=unmatched_mask)
 
     n_problems, n_steps = indexed_data.shape
 
     # 4. Coordinate Logic
     if cost_metric is not None:
-        X = cost_metric.values
+        X = cost_metric.values.astype(float)
+        # Forward-fill NaN along the BUDGET axis. NaNs appear when
+        # `d.data` was assembled from problems with different BUDGET
+        # sizes (xarray's outer-join concat pads short rows with NaN
+        # in FEVALS / ITERATIONS, mirroring the same padding that
+        # produces unmatched UPDATE_STEP cells above). Without this
+        # fill, `pcolormesh(shading="nearest")` computes the right
+        # edge of the last visible cell as (X[j]+X[j+1])/2 = NaN and
+        # fails to render it — the Z mask only suppresses the masked
+        # cell, not its X-coord influence on neighbours. Carry-forward
+        # collapses the last visible cell to half-width on the right
+        # but keeps every drawn cell well-defined.
+        nan_mask = np.isnan(X)
+        if nan_mask.any():
+            col_idx = np.where(~nan_mask, np.arange(X.shape[1])[None, :], 0)
+            col_idx = np.maximum.accumulate(col_idx, axis=1)
+            row_idx = np.arange(X.shape[0])[:, None]
+            X = X[row_idx, col_idx]
+            # Rows that are entirely NaN (a problem missing from this
+            # schedule) have nothing meaningful to plot; fill with 0
+            # so matplotlib still produces a degenerate but valid mesh.
+            X = np.nan_to_num(X, nan=0.0)
         problem_indices = np.arange(n_problems)
         # Broadcast Y to match X: (n_problems, n_steps)
         Y = np.broadcast_to(
@@ -1019,9 +1097,12 @@ def plot_update_step(
 
     # 5. Plotting
     fig, ax = _get_or_create_axes(ax=ax)
-    cmap = ListedColormap(hex_colors)
+    cmap = ListedColormap(cmap_colors)
+    cmap.set_bad(color="white")
 
-    # Use shading="nearest" to center colors on coordinates
+    # Pin vmin/vmax so the colormap mapping is stable regardless of
+    # which indices actually appear in Z (e.g. no "done" cells, or
+    # an optimizer that was never selected).
     ax.pcolormesh(
         X,
         Y,
@@ -1029,6 +1110,8 @@ def plot_update_step(
         cmap=cmap,
         shading="nearest",
         edgecolors="none",
+        vmin=0,
+        vmax=len(cmap_colors) - 1,
     )
 
     # 6. IEEE Style Legend
@@ -1049,7 +1132,6 @@ def plot_update_step(
         ax.legend(
             handles=legend_elements,
             loc="best",
-            fontsize=7,
             frameon=True,
             fancybox=False,
             edgecolor="#BBBBBB",
@@ -1095,11 +1177,53 @@ def _save_and_collect(
     figures: list,
     paths: list,
     captions: list,
+    grid: FigureGrid | None = None,
+    first_column: bool = True,
+    last_row: bool = True,
     **savefig_kwargs,
 ):
-    """Save a figure and append to collection lists."""
+    """Save a figure and append to collection lists.
+
+    Parameters
+    ----------
+    fig : plt.Figure
+        The figure to save.
+    name : str
+        Base file name (without extension).
+    caption : str
+        Caption text for report generation.
+    save_dir : Path
+        Directory to write the file to.
+    figures : list
+        Accumulator for figure objects.
+    paths : list
+        Accumulator for saved file paths.
+    captions : list
+        Accumulator for caption strings.
+    grid : FigureGrid or None, optional
+        When provided, sizing and saving are handled by
+        :class:`~bessaplots.FigureGrid` instead of
+        :func:`~bessaplots.savefig`.
+    first_column : bool, optional
+        Whether this is the first figure in a row.
+    last_row : bool, optional
+        Whether this figure is in the bottom row of the grid.
+    **savefig_kwargs
+        Forwarded to :func:`~bessaplots.savefig` when
+        *grid* is ``None``.
+    """
     save_path = save_dir / f"{name}.pdf"
-    savefig(fig=fig, path=str(save_path), **savefig_kwargs)
+    if grid is not None:
+        fmt = savefig_kwargs.get("format", "pgf")
+        grid.save(
+            fig,
+            str(save_path),
+            first_column=first_column,
+            last_row=last_row,
+            format=fmt,
+        )
+    else:
+        savefig(fig=fig, path=str(save_path), **savefig_kwargs)
     paths.append(save_path.resolve())
     figures.append(fig)
     captions.append(caption)
@@ -1113,6 +1237,11 @@ def ertd_per_group(
     optimizers=None,
     line: float | None = None,
     save_dir: Path | None = None,
+    n_side_by_side: int = 4,
+    height: float = 1.0,
+    sharey: bool = False,
+    sharex: bool = False,
+    **savefig_kwargs,
 ) -> tuple[list[plt.Figure], list[Path], list[str]]:
     """Plot and save ERTD profiles for each group.
 
@@ -1132,6 +1261,16 @@ def ertd_per_group(
         X-coordinate for a vertical reference line.
     save_dir : Path or None, optional
         Directory to save plots to. Defaults to cwd.
+    n_side_by_side : int, optional
+        Number of figures per row. The default is ``4``.
+    height : float, optional
+        Height of each figure in the grid. The default is ``1.0``.
+    sharey : bool, optional
+        When ``True``, only the first figure in each row keeps its
+        y-axis label and tick labels.  Default is ``False``.
+    sharex : bool, optional
+        When ``True``, only the bottom row keeps its x-axis label
+        and tick labels.  Default is ``False``.
 
     Returns
     -------
@@ -1141,11 +1280,31 @@ def ertd_per_group(
     save_dir = Path(save_dir) if save_dir is not None else Path.cwd()
     figures, paths, captions = [], [], []
 
+    if sharey or sharex:
+        fig_grid = FigureGrid(
+            n_figures=n_side_by_side,
+            paper_size=savefig_kwargs.get("paper_size", "letter"),
+            span_columns=True,
+            height=height,
+            sharey=sharey,
+            sharex=sharex,
+        )
+    else:
+        fig_grid = None
+
+    n_groups = len(groups)
+    n_rows = math.ceil(n_groups / n_side_by_side)
+
+    ertd_idx = 0
     for filter_dict, name in groups:
         d_group = d.select_feature(filter_dict)
 
         fig, ax = plot_ertd_profile(d_group, show_legend=False)
         _add_eval_line(ax, line)
+
+        row_idx = ertd_idx // n_side_by_side
+        is_first_col = ertd_idx % n_side_by_side == 0
+        is_last_row = row_idx == n_rows - 1
 
         _save_and_collect(
             fig,
@@ -1155,10 +1314,15 @@ def ertd_per_group(
             figures,
             paths,
             captions,
-            n_side_by_side=4,
+            grid=fig_grid,
+            first_column=is_first_col,
+            last_row=is_last_row,
             span_columns=True,
-            height=1.0,
+            height=height,
+            n_side_by_side=n_side_by_side,
+            **savefig_kwargs,
         )
+        ertd_idx += 1
 
         if plot_actions is not None:
             fig_act, ax_act = plot_update_step(
@@ -1177,9 +1341,10 @@ def ertd_per_group(
                 figures,
                 paths,
                 captions,
-                n_side_by_side=4,
                 span_columns=True,
-                height=1.0,
+                height=height,
+                n_side_by_side=n_side_by_side,
+                **savefig_kwargs,
             )
 
     return figures, paths, captions
