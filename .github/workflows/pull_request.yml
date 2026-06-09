@@ -2,12 +2,6 @@ name: Pull request
 on:
   pull_request:
 
-# Sibling repos resolved via [tool.uv.sources] in pyproject.toml.
-# CI clones them into the parent directory of the checkout so the editable
-# paths (../l2co-tasks, ../f3dasm, ../bessaplots) resolve as they do locally.
-# A repository secret BESSAGROUP_READ_TOKEN with read access to each sibling
-# repo is required while the sibling repos are still private.
-
 jobs:
   lint:
     runs-on: ubuntu-latest
