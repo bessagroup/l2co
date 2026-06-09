@@ -81,6 +81,8 @@ reference in `src/l2co/_src/databank/README.md`). Exposed under the
 
 ::: l2co.databank.load_loss_raw
 
+::: l2co.databank.populated_pairs
+
 ::: l2co.databank.load_taskset
 
 ## Sampling

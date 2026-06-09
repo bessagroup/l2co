@@ -293,6 +293,26 @@ def test_missing_pair_is_nan(tmp_path, tasks, steps):
     assert not bool(np.isnan(present).all())
 
 
+def test_populated_pairs(tmp_path, tasks, steps):
+    # Missing store -> empty set (the "run everything" signal).
+    assert databank.populated_pairs(tmp_path, "bbob") == set()
+
+    # One omitted cell -> every other (task, optimizer) pair is reported.
+    runs = _write_raw_runs(
+        tmp_path / "runs",
+        [(tasks[0], 7), (tasks[1], 7)],
+        steps,
+        omit={(tasks[1].hash, "adam_lr=0.01")},
+    )
+    _create_zarr(tmp_path, runs)
+
+    assert databank.populated_pairs(tmp_path, "bbob") == {
+        (tasks[0].hash, "randomsearch"),
+        (tasks[0].hash, "adam_lr=0.01"),
+        (tasks[1].hash, "randomsearch"),
+    }
+
+
 #                                                                  Reader path
 # =============================================================================
 

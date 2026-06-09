@@ -96,7 +96,11 @@ drops `optimizationstep` and returns a lazy `DataLoader` (dask reads only the
 chunks each operation touches; call `.load()` to force it all into memory).
 `load_databank_performance` keeps only the performance variables, so the large
 loss chunks are never read (use it for ERTD reporting). `load_loss_raw` reaches
-a single raw history (optionally resampled).
+a single raw history (optionally resampled). `populated_pairs` returns the set
+of `(task hash, schedule name)` cells already written (a non-null `success`
+cell) — empty when the store is absent — so a caller can decide which
+`(task, optimizer)` runs are still missing before launching them (then
+`dump_databank(..., mode="append")` adds just those).
 
 **Notes / gotchas**
 - Missing `(task, schedule)` cells read back as `NaN`; `load_databank_dataset`

@@ -30,6 +30,7 @@ from l2co._src.databank import (
     load_loss_raw,
     load_taskset,
     loss_preprocess,
+    populated_pairs,
     save_taskset,
     zarr_store_path,
 )
@@ -51,6 +52,7 @@ __all__ = [
     "load_loss_raw",
     "load_taskset",
     "loss_preprocess",
+    "populated_pairs",
     "save_taskset",
     "zarr_store_path",
 ]

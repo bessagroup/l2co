@@ -106,6 +106,56 @@ def _resolve_task_ids(
     return available
 
 
+def populated_pairs(root: Path, dataset_name: str) -> set[tuple[str, str]]:
+    """Return the ``(taskID, schedule)`` cells already written to a store.
+
+    A cell counts as populated when its ``success`` is non-null for any
+    interior index -- i.e. the ``(task, optimizer)`` pair was actually
+    written (the same criterion :func:`l2co._src.databank.writer._dump_append`
+    uses to copy untouched cells). Unwritten cells read back as ``NaN`` and
+    are excluded.
+
+    Returns an **empty set** when the store does not exist yet, so a caller
+    deciding which runs to launch can treat a missing store as "nothing
+    present" without special-casing it.
+
+    Parameters
+    ----------
+    root : pathlib.Path
+        The databank base directory (the application supplies it).
+    dataset_name : str
+        Name of the dataset.
+
+    Returns
+    -------
+    set[tuple[str, str]]
+        Every populated ``(task hash, schedule name)`` pair in the store.
+    """
+    store = layout.zarr_store_path(root, dataset_name)
+    if not store.exists():
+        return set()
+
+    with silence_zarr_warnings():
+        ds = xr.open_zarr(store, consolidated=True)
+
+    mask = ds[SUCCESS].notnull()
+    for d in list(mask.dims):
+        if d not in (TASK_ID, SCHEDULE):
+            mask = mask.any(d)
+    mask = mask.load()
+
+    taskids = [str(t) for t in ds[TASK_ID].values]
+    schedules = [str(s) for s in ds[SCHEDULE].values]
+    pairs = {
+        (t, s)
+        for i, t in enumerate(taskids)
+        for j, s in enumerate(schedules)
+        if bool(mask.isel({TASK_ID: i, SCHEDULE: j}))
+    }
+    ds.close()
+    return pairs
+
+
 def load_databank_dataset(
     dataset_name: str,
     optimizers: list[OptimizationStep] | list[int] | list[str],
