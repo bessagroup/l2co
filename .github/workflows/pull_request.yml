@@ -5,7 +5,7 @@ on:
 # Sibling repos resolved via [tool.uv.sources] in pyproject.toml.
 # CI clones them into the parent directory of the checkout so the editable
 # paths (../l2co-tasks, ../f3dasm, ../bessaplots) resolve as they do locally.
-# A repository secret SIBLING_DEPS_TOKEN with read access to each sibling
+# A repository secret BESSAGROUP_READ_TOKEN with read access to each sibling
 # repo is required while the sibling repos are still private.
 
 jobs:
@@ -17,8 +17,10 @@ jobs:
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v5
-      - name: Install dev extras
-        run: uv pip install --system '.[dev]'
+      # Lint needs only ruff — not the project or its (private) sibling deps,
+      # so we install ruff directly instead of '.[dev]'.
+      - name: Install ruff
+        run: uv pip install --system ruff
       - name: Ruff check
         run: ruff check
       - name: Ruff format check
@@ -41,19 +43,19 @@ jobs:
         with:
           repository: bessagroup/l2co-tasks
           path: l2co-tasks
-          token: ${{ secrets.SIBLING_DEPS_TOKEN }}
+          token: ${{ secrets.BESSAGROUP_READ_TOKEN }}
       - name: Checkout f3dasm (sibling editable dep)
         uses: actions/checkout@v4
         with:
           repository: bessagroup/f3dasm
           path: f3dasm
-          token: ${{ secrets.SIBLING_DEPS_TOKEN }}
+          token: ${{ secrets.BESSAGROUP_READ_TOKEN }}
       - name: Checkout bessaplots (sibling editable dep)
         uses: actions/checkout@v4
         with:
           repository: bessagroup/bessaplots
           path: bessaplots
-          token: ${{ secrets.SIBLING_DEPS_TOKEN }}
+          token: ${{ secrets.BESSAGROUP_READ_TOKEN }}
       - name: Set up Python ${{ matrix.version }}
         uses: actions/setup-python@v5
         with:
@@ -101,19 +103,19 @@ jobs:
         with:
           repository: bessagroup/l2co-tasks
           path: l2co-tasks
-          token: ${{ secrets.SIBLING_DEPS_TOKEN }}
+          token: ${{ secrets.BESSAGROUP_READ_TOKEN }}
       - name: Checkout f3dasm
         uses: actions/checkout@v4
         with:
           repository: bessagroup/f3dasm
           path: f3dasm
-          token: ${{ secrets.SIBLING_DEPS_TOKEN }}
+          token: ${{ secrets.BESSAGROUP_READ_TOKEN }}
       - name: Checkout bessaplots
         uses: actions/checkout@v4
         with:
           repository: bessagroup/bessaplots
           path: bessaplots
-          token: ${{ secrets.SIBLING_DEPS_TOKEN }}
+          token: ${{ secrets.BESSAGROUP_READ_TOKEN }}
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
@@ -134,7 +136,10 @@ jobs:
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v5
+      # pre-commit hooks (ruff-pre-commit, local toml-sort) run in their own
+      # isolated envs, so only pre-commit itself is needed — not the project
+      # or its (private) sibling deps.
       - name: Install pre-commit
-        run: uv pip install --system '.[dev]'
+        run: uv pip install --system pre-commit
       - name: Run pre-commit checks
         run: pre-commit run --all-files
