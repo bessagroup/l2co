@@ -17,11 +17,16 @@ variable-length histories live in a ``loss_history_raw/`` netCDF sidecar.
 
 Use :func:`load_databank_performance` for performance-only consumers
 (ERTD reporting) so the large ``loss_history`` chunks are never read, and
-:func:`load_loss_raw` to reach the raw variable-length histories.
+:func:`load_loss_raw` to reach the raw variable-length histories. Use
+:func:`verify_databank` to audit a store for anomalies (NaN/inf, partial
+writes); it returns a structured report and the caller decides whether
+to raise.
 """
 
 from l2co._src.databank import (
     BUDGET_STEPS,
+    DatabankVerificationReport,
+    VerificationFinding,
     databank_root,
     dump_databank,
     load_databank,
@@ -32,6 +37,7 @@ from l2co._src.databank import (
     loss_preprocess,
     populated_pairs,
     save_taskset,
+    verify_databank,
     zarr_store_path,
 )
 
@@ -44,6 +50,8 @@ __status__ = "Stable"
 
 __all__ = [
     "BUDGET_STEPS",
+    "DatabankVerificationReport",
+    "VerificationFinding",
     "databank_root",
     "dump_databank",
     "load_databank",
@@ -54,5 +62,6 @@ __all__ = [
     "loss_preprocess",
     "populated_pairs",
     "save_taskset",
+    "verify_databank",
     "zarr_store_path",
 ]

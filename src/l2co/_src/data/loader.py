@@ -126,6 +126,11 @@ class DataLoader:
         """
         Concatenate two loaders along the problem dimension.
 
+        Non-concat dimensions are outer-aligned (``join="outer"``,
+        stated explicitly since xarray's default is changing to
+        ``"exact"``): coordinates present on only one side are kept and
+        NaN-padded on the other.
+
         Parameters
         ----------
         other : DataLoader
@@ -141,14 +146,22 @@ class DataLoader:
 
         return replace(
             self,
-            data=xr.concat([self.data, other.data], dim=PROBLEM),
+            data=xr.concat([self.data, other.data], dim=PROBLEM, join="outer"),
             task_labels=xr.concat(
-                [self.task_labels, other.task_labels], dim=PROBLEM
+                [self.task_labels, other.task_labels],
+                dim=PROBLEM,
+                join="outer",
             ),
         )
 
     def join(self, other: DataLoader) -> DataLoader:
         """Join another loader along the schedule dimension.
+
+        The ``problem`` axes are outer-aligned (``join="outer"``, stated
+        explicitly since xarray's default is changing to ``"exact"``):
+        problems present on only one side are kept and NaN-padded on the
+        other, and data variables missing from one side are NaN-filled
+        on that side's schedules.
 
         Parameters
         ----------
@@ -162,7 +175,9 @@ class DataLoader:
         """
         return replace(
             self,
-            data=xr.concat([self.data, other.data], dim=SCHEDULE),
+            data=xr.concat(
+                [self.data, other.data], dim=SCHEDULE, join="outer"
+            ),
             task_labels=self.task_labels,
         )
 
@@ -178,6 +193,14 @@ class DataLoader:
         parses the string ``task_labels`` variable into typed values. Every
         data variable in ``data`` is kept (loss trajectories and ERT
         metrics alike).
+
+        The label parse is forced to ``object`` dtype and runs on an
+        eagerly-loaded copy of ``task_labels``: without ``otypes``,
+        ``np.vectorize`` (and dask's sample-based dtype inference on a
+        lazy zarr-backed input, e.g. from ``l2co.databank``) infers the
+        output dtype from the first parsed element -- a boolean feature
+        like ``separable`` would collapse the *entire* labels array to
+        ``bool`` (``global_min`` ``"-116.56"`` -> ``True``).
 
         Parameters
         ----------
@@ -206,14 +229,15 @@ class DataLoader:
             except ValueError:
                 return val
 
+        # Labels are tiny; load them so the parse below never goes
+        # through dask (whose blockwise dtype inference ignores
+        # ``otypes``-less vectorize results -- see docstring).
         task_labels = xr.apply_ufunc(
-            np.vectorize(parse_mixed_value),
-            data[TASK_LABELS],
+            np.vectorize(parse_mixed_value, otypes=[object]),
+            data[TASK_LABELS].load(),
             input_core_dims=[[PROBLEM]],
             output_core_dims=[[PROBLEM]],
             vectorize=True,
-            dask="allowed",
-            output_dtypes=[object],
         ).T
 
         # Remove variable features from data

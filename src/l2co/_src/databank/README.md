@@ -108,6 +108,38 @@ cell) — empty when the store is absent — so a caller can decide which
 - `target` is matched **positionally** (its only coordinate is an integer
   index); all cells share the identical target ordering.
 
+## Verification
+
+`verify_databank(root, dataset_name, *, task_ids=..., taskset=...,
+schedules=...)` audits a store and returns a structured
+`DatabankVerificationReport` (per-finding severity/check/pair fields, an
+`ok` property meaning "no errors", and a readable `summary()`). It never
+raises on anomalies — the caller decides whether to log the report or
+fail on `not report.ok`. The severity model ("non-finite" = `NaN` or
+`inf`):
+
+- **warning** — *scattered* non-finite values inside the `loss_history`
+  variables of a populated pair (expected: the optimizer produced them
+  while traversing the problem), non-integer or budget-decreasing
+  counters, taskset/subset hashes absent from the store.
+- **error** — a `loss_history` variable *entirely* non-finite for a
+  populated pair; any non-finite value in `success` / `cost`; a
+  half-written cell (performance present but all loss variables NaN, or
+  vice versa — an interrupted region write); schema violations (missing
+  variables, wrong dims, bad budget grid / metric coord / recipe JSON);
+  internal inconsistencies (non-binary or target-non-monotone `success`,
+  negative `output_std` or counters, non-finite / unsorted
+  `target_value`).
+- **info** — completeness (`n_populated/n_expected` plus the
+  fully-unwritten pairs, which are by design `NaN` and *not* errors) and
+  a non-default budget-grid resolution.
+
+All per-pair checks are evaluated as one batch of lazy dask reductions
+computed in a single pass over small per-pair summary arrays, so
+verifying a large store never loads the full arrays into memory. A
+missing store raises `FileNotFoundError` (use `populated_pairs` to probe
+for presence instead).
+
 ## Tasksets
 
 A **taskset** is a named selection of tasks: a plain-text file under

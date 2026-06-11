@@ -19,12 +19,14 @@ equal what the pipeline produced for it.
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import pytest
 import xarray as xr
+import zarr
 
 from l2co import DataLoader, databank
 from l2co._src.databank import layout
@@ -36,6 +38,7 @@ from l2co._src.databank.reader import (
 )
 from l2co._src.databank.records import _build_task_records, loss_preprocess
 from l2co._src.databank.tasksets import load_taskset, save_taskset
+from l2co._src.databank.verify import verify_databank
 from l2co._src.databank.writer import _dump_append, _dump_create, _interp_loss
 from l2co.naming import (
     BUDGET,
@@ -559,3 +562,399 @@ def test_save_taskset_roundtrip(tmp_path):
         descriptions={"a1b2c3": "sphere 10D"},
     )
     assert load_taskset(tmp_path, "sel") == ["a1b2c3", "9f8e7d"]
+
+
+#                                                                  Verification
+# =============================================================================
+
+
+def _full_store(tmp_path, tasks, steps, omit=()):
+    """A complete 2 tasks x 2 schedules store under ``tmp_path``."""
+    runs = _write_raw_runs(
+        tmp_path / "runs", [(tasks[0], 7), (tasks[1], 7)], steps, omit=omit
+    )
+    return _create_zarr(tmp_path, runs)
+
+
+def _zarr_corrupt(store: Path, var: str, value, **sel):
+    """Write ``value`` into ``var`` at per-dim positions.
+
+    ``sel`` maps a dim name to a coordinate label (``taskID`` /
+    ``schedule`` strings) or an integer/slice position; unspecified dims
+    take the full slice. Value writes through zarr leave the
+    consolidated metadata valid, so the corrupted store still opens.
+    """
+    with xr.open_zarr(store) as ds:
+        dims = ds[var].dims
+        labels = {
+            d: [str(x) for x in ds[d].values]
+            for d in (TASK_ID, SCHEDULE)
+            if d in dims
+        }
+    idx = tuple(
+        labels[d].index(sel[d])
+        if isinstance(sel.get(d), str)
+        else sel.get(d, slice(None))
+        for d in dims
+    )
+    zarr.open_group(str(store), mode="r+")[var][idx] = value
+
+
+def _by_check(report, check: str):
+    return [f for f in report.findings if f.check == check]
+
+
+def test_verify_healthy_store_ok(tmp_path, tasks, steps):
+    _full_store(tmp_path, tasks, steps)
+    report = verify_databank(tmp_path, "bbob")
+
+    assert report.ok
+    assert report.errors == ()
+    assert report.warnings == ()
+    assert report.n_pairs_expected == report.n_pairs_populated == 4
+    assert report.missing_pairs == ()
+    assert _by_check(report, "completeness.summary")
+    text = str(report)
+    assert "bbob" in text and "OK" in text
+
+
+def test_verify_missing_store_raises(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        verify_databank(tmp_path, "bbob")
+
+
+def test_verify_scattered_nan_is_warning(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    _zarr_corrupt(
+        store,
+        OUTPUT_MIN,
+        np.nan,
+        **{TASK_ID: tasks[0].hash, SCHEDULE: "randomsearch", BUDGET: 0},
+    )
+    report = verify_databank(tmp_path, "bbob")
+
+    assert report.ok  # scattered non-finite loss values are expected
+    found = _by_check(report, "loss.scattered_nonfinite")
+    assert len(found) == 1
+    f = found[0]
+    assert f.severity == "warning"
+    assert f.task_id == tasks[0].hash
+    assert f.schedule == "randomsearch"
+    assert f.variable == OUTPUT_MIN
+    assert f.count == N_REAL  # one budget slot across all realizations
+
+
+def test_verify_inf_treated_as_nonfinite(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    # inf in a loss variable behaves like NaN: a warning, not an error
+    _zarr_corrupt(
+        store,
+        OUTPUT_MIN,
+        np.inf,
+        **{TASK_ID: tasks[0].hash, SCHEDULE: "randomsearch", BUDGET: 0},
+    )
+    # inf in a performance variable is an error like NaN
+    _zarr_corrupt(
+        store,
+        COST,
+        np.inf,
+        **{
+            TASK_ID: tasks[1].hash,
+            SCHEDULE: "randomsearch",
+            REALIZATION: 0,
+            "output_dim": 0,
+            TARGET: 0,
+            METRIC: 0,
+        },
+    )
+    report = verify_databank(tmp_path, "bbob")
+
+    assert not report.ok
+    assert _by_check(report, "loss.scattered_nonfinite")
+    errs = _by_check(report, "perf.nonfinite")
+    assert len(errs) == 1
+    assert errs[0].variable == COST
+    assert errs[0].count == 1
+
+
+def test_verify_whole_var_nan_is_error(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    _zarr_corrupt(
+        store,
+        "output_mean",
+        np.nan,
+        **{TASK_ID: tasks[0].hash, SCHEDULE: "adam_lr=0.01"},
+    )
+    report = verify_databank(tmp_path, "bbob")
+
+    assert not report.ok
+    errs = _by_check(report, "loss.all_nonfinite")
+    assert len(errs) == 1
+    assert errs[0].variable == "output_mean"
+    assert errs[0].task_id == tasks[0].hash
+    assert errs[0].schedule == "adam_lr=0.01"
+    # the cell is not flagged as a partial write (other loss vars intact)
+    assert not _by_check(report, "pair.partial_loss_missing")
+
+
+def test_verify_nan_in_cost_is_error(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    _zarr_corrupt(
+        store,
+        COST,
+        np.nan,
+        **{
+            TASK_ID: tasks[0].hash,
+            SCHEDULE: "randomsearch",
+            REALIZATION: 0,
+            "output_dim": 0,
+            TARGET: 0,
+            METRIC: 0,
+        },
+    )
+    report = verify_databank(tmp_path, "bbob")
+
+    assert not report.ok
+    errs = _by_check(report, "perf.nonfinite")
+    assert len(errs) == 1
+    assert errs[0].variable == COST
+    assert errs[0].count == 1
+
+
+def test_verify_partial_write_loss_missing(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    sel = {TASK_ID: tasks[0].hash, SCHEDULE: "randomsearch"}
+    for var in (
+        OUTPUT_MIN,
+        "output_mean",
+        "output_std",
+        FEVALS,
+        ITERATIONS,
+        UPDATE_STEP,
+    ):
+        _zarr_corrupt(store, var, np.nan, **sel)
+    report = verify_databank(tmp_path, "bbob")
+
+    assert not report.ok
+    errs = _by_check(report, "pair.partial_loss_missing")
+    assert len(errs) == 1
+    assert (errs[0].task_id, errs[0].schedule) == (
+        tasks[0].hash,
+        "randomsearch",
+    )
+    # one root cause, one finding: per-variable errors are suppressed
+    assert not _by_check(report, "loss.all_nonfinite")
+    assert report.n_pairs_populated == 4  # success is still non-null
+
+
+def test_verify_partial_write_perf_missing(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    sel = {TASK_ID: tasks[0].hash, SCHEDULE: "randomsearch"}
+    _zarr_corrupt(store, SUCCESS, np.nan, **sel)
+    _zarr_corrupt(store, COST, np.nan, **sel)
+    report = verify_databank(tmp_path, "bbob")
+
+    assert not report.ok
+    errs = _by_check(report, "pair.partial_perf_missing")
+    assert len(errs) == 1
+    assert (errs[0].task_id, errs[0].schedule) == (
+        tasks[0].hash,
+        "randomsearch",
+    )
+    assert report.n_pairs_populated == 3
+    # a half-written cell is not a benign missing pair
+    assert (tasks[0].hash, "randomsearch") not in report.missing_pairs
+
+
+def test_verify_unwritten_pair_is_info(tmp_path, tasks, steps):
+    _full_store(tmp_path, tasks, steps, omit={(tasks[1].hash, "adam_lr=0.01")})
+    report = verify_databank(tmp_path, "bbob")
+
+    assert report.ok
+    assert report.errors == ()
+    assert report.n_pairs_populated == 3
+    assert report.missing_pairs == ((tasks[1].hash, "adam_lr=0.01"),)
+    summary = _by_check(report, "completeness.summary")[0]
+    assert tasks[1].hash in summary.message
+
+
+def test_verify_success_non_monotone_is_error(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    sel = {TASK_ID: tasks[0].hash, SCHEDULE: "randomsearch"}
+    # solved at every target except the easiest (last) one: impossible
+    _zarr_corrupt(store, SUCCESS, 1.0, **sel)
+    _zarr_corrupt(store, SUCCESS, 0.0, **sel, **{TARGET: -1})
+    report = verify_databank(tmp_path, "bbob")
+
+    assert not report.ok
+    assert _by_check(report, "consistency.success_not_monotone")
+    assert not _by_check(report, "consistency.success_not_binary")
+
+
+def test_verify_success_non_binary_is_error(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    _zarr_corrupt(
+        store,
+        SUCCESS,
+        0.5,
+        **{
+            TASK_ID: tasks[0].hash,
+            SCHEDULE: "randomsearch",
+            REALIZATION: 0,
+            "output_dim": 0,
+            TARGET: 0,
+        },
+    )
+    report = verify_databank(tmp_path, "bbob")
+
+    assert not report.ok
+    errs = _by_check(report, "consistency.success_not_binary")
+    assert len(errs) == 1
+    assert errs[0].count == 1
+
+
+def test_verify_negative_std_is_error(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    _zarr_corrupt(
+        store,
+        "output_std",
+        -1.0,
+        **{
+            TASK_ID: tasks[0].hash,
+            SCHEDULE: "randomsearch",
+            REALIZATION: 0,
+            "output_dim": 0,
+            BUDGET: 0,
+        },
+    )
+    report = verify_databank(tmp_path, "bbob")
+
+    assert not report.ok
+    errs = _by_check(report, "consistency.negative_std")
+    assert len(errs) == 1
+    assert errs[0].count == 1
+
+
+def test_verify_counter_checks(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    cell = {TASK_ID: tasks[0].hash, SCHEDULE: "randomsearch"}
+    point = {REALIZATION: 0, "output_dim": 0}
+    # negative counter (budget slot 0, so no decreasing diff to it)
+    _zarr_corrupt(store, FEVALS, -3.0, **cell, **point, **{BUDGET: 0})
+    # non-integer counter, still below its successor (no decrease)
+    _zarr_corrupt(store, ITERATIONS, 0.5, **cell, **point, **{BUDGET: 0})
+    # spike that the next budget step falls back from (a decrease)
+    _zarr_corrupt(store, UPDATE_STEP, 1000.0, **cell, **point, **{BUDGET: 8})
+    report = verify_databank(tmp_path, "bbob")
+
+    assert not report.ok
+    neg = _by_check(report, f"consistency.counter_negative.{FEVALS}")
+    assert len(neg) == 1 and neg[0].severity == "error"
+    nonint = _by_check(report, f"consistency.counter_noninteger.{ITERATIONS}")
+    assert len(nonint) == 1 and nonint[0].severity == "warning"
+    dec = _by_check(report, f"consistency.counter_decreasing.{UPDATE_STEP}")
+    assert len(dec) == 1 and dec[0].severity == "warning"
+
+
+def test_verify_target_value_corruption(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    _zarr_corrupt(
+        store,
+        TARGET_VALUE,
+        np.nan,
+        **{TASK_ID: tasks[0].hash, TARGET: 0},
+    )
+    # a huge hardest target breaks the ascending (hardest->easiest) order
+    _zarr_corrupt(
+        store,
+        TARGET_VALUE,
+        1e9,
+        **{TASK_ID: tasks[1].hash, TARGET: 0},
+    )
+    report = verify_databank(tmp_path, "bbob")
+
+    assert not report.ok
+    nonfinite = _by_check(report, "task.target_value_nonfinite")
+    assert len(nonfinite) == 1
+    assert nonfinite[0].task_id == tasks[0].hash
+    assert nonfinite[0].schedule is None
+    unsorted = _by_check(report, "task.target_value_unsorted")
+    assert len(unsorted) == 1
+    assert unsorted[0].task_id == tasks[1].hash
+
+
+def test_verify_subset_filters(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    _zarr_corrupt(
+        store,
+        "output_mean",
+        np.nan,
+        **{TASK_ID: tasks[0].hash, SCHEDULE: "randomsearch"},
+    )
+    assert not verify_databank(tmp_path, "bbob").ok
+
+    # the corruption sits outside both of these selections
+    by_task = verify_databank(tmp_path, "bbob", task_ids=[tasks[1].hash])
+    assert by_task.ok and by_task.n_pairs_expected == 2
+    by_sched = verify_databank(tmp_path, "bbob", schedules=["adam_lr=0.01"])
+    assert by_sched.ok and by_sched.n_pairs_expected == 2
+
+    with pytest.raises(ValueError):
+        verify_databank(
+            tmp_path, "bbob", task_ids=[tasks[1].hash], taskset="sel"
+        )
+
+    # unknown requested ids: warned and skipped, not fatal
+    partial = verify_databank(
+        tmp_path, "bbob", task_ids=[tasks[1].hash, "zzz"]
+    )
+    assert partial.ok
+    assert _by_check(partial, "subset.unknown_task")
+    with pytest.raises(ValueError):
+        verify_databank(tmp_path, "bbob", task_ids=["zzz"])
+
+
+def test_verify_taskset_unknown_hash_warning(tmp_path, tasks, steps):
+    _full_store(tmp_path, tasks, steps)
+    save_taskset(
+        layout.databank_root(tmp_path, "bbob"),
+        "sel",
+        [tasks[0].hash, "deadbeef"],
+    )
+    report = verify_databank(tmp_path, "bbob")
+
+    assert report.ok  # a stale taskset is a warning, not an error
+    found = _by_check(report, "taskset.unknown_hash")
+    assert len(found) == 1
+    assert "deadbeef" in found[0].message
+
+
+def test_verify_missing_variable_is_error(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    shutil.rmtree(store / COST)
+    zarr.consolidate_metadata(str(store))
+    report = verify_databank(tmp_path, "bbob")  # must not crash
+
+    assert not report.ok
+    errs = _by_check(report, "structure.missing_var")
+    assert len(errs) == 1
+    assert errs[0].variable == COST
+    # pair analysis still ran on the remaining variables
+    assert report.n_pairs_populated == 4
+
+
+def test_verify_budget_nondefault_is_info(tmp_path, tasks, steps):
+    _full_store(tmp_path, tasks, steps)  # BS=16 != BUDGET_STEPS
+    report = verify_databank(tmp_path, "bbob")
+
+    found = _by_check(report, "structure.budget_nondefault")
+    assert len(found) == 1
+    assert found[0].severity == "info"
+    assert report.ok
+
+
+def test_verify_facade(tmp_path, tasks, steps):
+    _full_store(tmp_path, tasks, steps)
+    report = databank.verify_databank(tmp_path, "bbob")
+    assert isinstance(report, databank.DatabankVerificationReport)
+    assert isinstance(report.findings[0], databank.VerificationFinding)

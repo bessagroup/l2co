@@ -85,6 +85,12 @@ reference in `src/l2co/_src/databank/README.md`). Exposed under the
 
 ::: l2co.databank.load_taskset
 
+::: l2co.databank.verify_databank
+
+::: l2co.databank.DatabankVerificationReport
+
+::: l2co.databank.VerificationFinding
+
 ## Sampling
 
 ::: l2co.sampling

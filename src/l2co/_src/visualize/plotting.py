@@ -935,7 +935,11 @@ def plot_update_step(
     that were never written by the rollout (the padding region
     after a problem terminates early) are rendered in white so
     that the per-optimizer colour mapping is independent of the
-    order of ``optimizers``.
+    order of ``optimizers``; white always wins over the
+    ``hide_when_done`` black overlay, so the two sentinels stay
+    distinguishable (black = solved from that step on, white =
+    no data). Both sentinels get their own legend entries when
+    they can appear.
 
     Parameters
     ----------
@@ -1030,14 +1034,21 @@ def plot_update_step(
     for i, opt_hash in enumerate(opt_hashes):
         indexed_data[z_data == opt_hash] = i
 
+    # Cells that match no optimizer hash (the never-written padding)
+    # render via cmap.set_bad; computed before the done overpaint below
+    # so "no data" always wins over "solved".
+    unmatched_mask = indexed_data == -1
+
     # 3b. Optionally mark steps where the task is already solved.
     # We append black as an extra colormap entry at index len(optimizers).
     done_index = len(opt_hashes)
     if hide_when_done:
         # Take the running minimum along the budget axis so that once the
-        # global minimum is first hit, every subsequent step stays masked.
-        # `np.fmin.accumulate` ignores NaNs along the way; NaN cells
-        # then compare False against `global_min` and stay unmasked.
+        # global minimum is first hit, every subsequent step stays black.
+        # `np.fmin.accumulate` carries the running minimum *through* NaN
+        # cells (fmin prefers the non-NaN operand), so the padding region
+        # of a solved problem would also satisfy the comparison -- the
+        # `~unmatched_mask` term keeps those cells white instead.
         running_min = xr.apply_ufunc(
             np.fmin.accumulate,
             output_min,
@@ -1046,14 +1057,13 @@ def plot_update_step(
             kwargs={"axis": -1},
         )
         done_mask = (running_min <= global_min + EPSILON).values
-        indexed_data[done_mask] = done_index
+        indexed_data[done_mask & ~unmatched_mask] = done_index
         cmap_colors = list(hex_colors) + ["black"]
     else:
         cmap_colors = list(hex_colors)
 
     # Mask unmatched cells so they render via cmap.set_bad rather than
     # being mapped to whichever optimizer sits at index 0.
-    unmatched_mask = indexed_data == -1
     indexed_data = np.ma.array(indexed_data, mask=unmatched_mask)
 
     n_problems, n_steps = indexed_data.shape
@@ -1129,6 +1139,33 @@ def plot_update_step(
             )
             for color, name in zip(hex_colors, display_names, strict=True)
         ]
+        if hide_when_done:
+            legend_elements.append(
+                Line2D(
+                    [0],
+                    [0],
+                    marker="s",
+                    color="w",
+                    label="Global min. reached",
+                    markerfacecolor="black",
+                    markersize=8,
+                    linestyle="None",
+                )
+            )
+        if unmatched_mask.any():
+            legend_elements.append(
+                Line2D(
+                    [0],
+                    [0],
+                    marker="s",
+                    color="w",
+                    label="No data",
+                    markerfacecolor="white",
+                    markeredgecolor="#BBBBBB",
+                    markersize=8,
+                    linestyle="None",
+                )
+            )
         ax.legend(
             handles=legend_elements,
             loc="best",
