@@ -100,7 +100,11 @@ a single raw history (optionally resampled). `populated_pairs` returns the set
 of `(task hash, schedule name)` cells already written (a non-null `success`
 cell) — empty when the store is absent — so a caller can decide which
 `(task, optimizer)` runs are still missing before launching them (then
-`dump_databank(..., mode="append")` adds just those).
+`dump_databank(..., mode="append")` adds just those). `populated_iterations`
+is the budget-aware variant: it returns `{(task hash, schedule name):
+max_iterations}` (the `iterations` counter's max, which equals the stored run's
+`n_iterations`), so a caller can also re-run a cell whose proposed budget
+*exceeds* the stored one — `mode="append"` then overwrites that cell in place.
 
 **Notes / gotchas**
 - Missing `(task, schedule)` cells read back as `NaN`; `load_databank_dataset`

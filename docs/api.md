@@ -83,6 +83,8 @@ reference in `src/l2co/_src/databank/README.md`). Exposed under the
 
 ::: l2co.databank.populated_pairs
 
+::: l2co.databank.populated_iterations
+
 ::: l2co.databank.load_taskset
 
 ::: l2co.databank.verify_databank

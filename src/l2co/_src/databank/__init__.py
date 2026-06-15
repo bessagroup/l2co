@@ -17,6 +17,7 @@ from .reader import (
     load_databank_dataset,
     load_databank_performance,
     load_loss_raw,
+    populated_iterations,
     populated_pairs,
 )
 from .records import loss_preprocess
@@ -40,6 +41,7 @@ __all__ = [
     "load_loss_raw",
     "load_taskset",
     "loss_preprocess",
+    "populated_iterations",
     "populated_pairs",
     "save_taskset",
     "verify_databank",

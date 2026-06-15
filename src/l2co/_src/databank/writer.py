@@ -411,9 +411,13 @@ def _dump_append(
 ) -> int:
     """Rebuild the store over the union of old and new coordinates.
 
-    Existing cells are copied from the old store one at a time; new cells
-    come from ``runs``. Existing tasks keep their stored ERT targets so
-    appended optimizers stay comparable. The rebuild lands in a temporary
+    New cells come from ``runs`` and are written first; old cells are then
+    copied from the old store one at a time. A ``(task, optimizer)`` pair
+    present in **both** is *rewritten* from ``runs`` (the copy step skips
+    it), so re-running a pair -- e.g. at a higher iteration budget --
+    overwrites its stored cell instead of being clobbered by the stale
+    copy. Existing tasks keep their stored ERT targets so appended (and
+    re-run) optimizers stay comparable. The rebuild lands in a temporary
     store that is swapped in atomically.
     """
     with silence_zarr_warnings():
@@ -449,6 +453,9 @@ def _dump_append(
     labels: dict[str, xr.DataArray] = {}
     targets: dict[str, xr.DataArray] = {}
     recipes: dict[str, xr.DataArray] = {}
+    # (taskID, schedule) cells written from runs -- the copy step below
+    # must skip these so a re-run pair overwrites rather than gets clobbered.
+    written: set[tuple[str, str]] = set()
 
     # New runs first: gives the template sample and (re)writes raw files.
     for task, step_paths in tqdm(runs, total=len(runs)):
@@ -484,6 +491,7 @@ def _dump_append(
             sj = schedules.index(step.name)
             _write_pair(tmp, loss_interp[h], perf[h], ti, sj)
             recipes.setdefault(step.name, opt[h][OPTIMIZATIONSTEP])
+            written.add((task.hash, step.name))
         _accumulate_task(task_ds, task.hash, labels, targets)
 
     # Copy untouched old cells (one at a time) into the rebuilt store.
@@ -491,6 +499,9 @@ def _dump_append(
         ti = taskids.index(t)
         for oj, s in enumerate(old_scheds):
             if not bool(mask.isel({TASK_ID: oi, SCHEDULE: oj})):
+                continue
+            if (t, s) in written:
+                # A new run already (re)wrote this cell -- don't clobber it.
                 continue
             sj = schedules.index(s)
             with silence_zarr_warnings():

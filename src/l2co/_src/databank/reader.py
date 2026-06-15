@@ -29,6 +29,7 @@ from l2co._src.optimizer_schedule import OptimizationStep
 # Local
 from l2co.naming import (
     COST,
+    ITERATIONS,
     OPTIMIZATIONSTEP,
     SCHEDULE,
     SUCCESS,
@@ -154,6 +155,74 @@ def populated_pairs(root: Path, dataset_name: str) -> set[tuple[str, str]]:
     }
     ds.close()
     return pairs
+
+
+def populated_iterations(
+    root: Path, dataset_name: str
+) -> dict[tuple[str, str], int]:
+    """Stored max-iterations per populated ``(taskID, schedule)`` cell.
+
+    Like :func:`populated_pairs`, but instead of just *which* cells are
+    written this reports, for each populated cell, the number of
+    iterations its stored run used -- the ``iterations`` counter's max
+    over the interior dims. ``iterations`` is a per-step cumulative sum
+    (``+1`` per optimization step), so its max equals the run's
+    ``n_iterations``; the write-time nearest-interpolation onto the fixed
+    budget grid keeps that maximum exact. A caller deciding which runs to
+    launch can therefore re-run only the cells whose proposed budget
+    *exceeds* the stored one.
+
+    Returns an **empty dict** when the store does not exist yet, so a
+    missing store reads as "nothing present" (matching
+    :func:`populated_pairs`).
+
+    Reads the ``iterations`` variable (which carries the ``budget`` axis),
+    so it is heavier than :func:`populated_pairs` -- which only touches
+    ``success`` -- but it works against already-written stores without a
+    schema change.
+
+    Parameters
+    ----------
+    root : pathlib.Path
+        The databank base directory (the application supplies it).
+    dataset_name : str
+        Name of the dataset.
+
+    Returns
+    -------
+    dict[tuple[str, str], int]
+        ``{(task hash, schedule name): max_iterations}`` for every
+        populated cell in the store.
+    """
+    store = layout.zarr_store_path(root, dataset_name)
+    if not store.exists():
+        return {}
+
+    with silence_zarr_warnings():
+        ds = xr.open_zarr(store, consolidated=True)
+
+    mask = ds[SUCCESS].notnull()
+    for d in list(mask.dims):
+        if d not in (TASK_ID, SCHEDULE):
+            mask = mask.any(d)
+    mask = mask.load()
+
+    iters = ds[ITERATIONS]
+    for d in list(iters.dims):
+        if d not in (TASK_ID, SCHEDULE):
+            iters = iters.max(d)
+    iters = iters.load()
+
+    taskids = [str(t) for t in ds[TASK_ID].values]
+    schedules = [str(s) for s in ds[SCHEDULE].values]
+    stored = {
+        (t, s): int(round(float(iters.isel({TASK_ID: i, SCHEDULE: j}))))
+        for i, t in enumerate(taskids)
+        for j, s in enumerate(schedules)
+        if bool(mask.isel({TASK_ID: i, SCHEDULE: j}))
+    }
+    ds.close()
+    return stored
 
 
 def load_databank_dataset(

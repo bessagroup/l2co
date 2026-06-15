@@ -316,6 +316,29 @@ def test_populated_pairs(tmp_path, tasks, steps):
     }
 
 
+def test_populated_iterations(tmp_path, tasks, steps):
+    # Missing store -> empty dict (the "run everything" signal).
+    assert databank.populated_iterations(tmp_path, "bbob") == {}
+
+    # Each populated cell reports the stored run's iteration count, which
+    # is the ITERATIONS counter's max == the raw budget length here
+    # (make_loss_ds sets ITERATIONS = arange(1, nb + 1)). The omitted cell
+    # is absent, just like populated_pairs.
+    runs = _write_raw_runs(
+        tmp_path / "runs",
+        [(tasks[0], 7), (tasks[1], 13)],
+        steps,
+        omit={(tasks[1].hash, "adam_lr=0.01")},
+    )
+    _create_zarr(tmp_path, runs)
+
+    assert databank.populated_iterations(tmp_path, "bbob") == {
+        (tasks[0].hash, "randomsearch"): 7,
+        (tasks[0].hash, "adam_lr=0.01"): 7,
+        (tasks[1].hash, "randomsearch"): 13,
+    }
+
+
 #                                                                  Reader path
 # =============================================================================
 
@@ -526,6 +549,40 @@ def test_append_optimizer_and_task(tmp_path, tasks, steps):
     # task0 kept its original ERT targets (append reuses stored targets)
     target0_after = zd[TARGET_VALUE].sel({TASK_ID: tasks[0].hash}).values
     np.testing.assert_array_equal(target0_before, target0_after)
+
+
+def test_append_overwrites_higher_budget(tmp_path, tasks, steps):
+    # create: task0 with rs + adam at a low budget (nb=7) ...
+    runs0 = _write_raw_runs(tmp_path / "r0", [(tasks[0], 7)], steps)
+    store = _create_zarr(tmp_path, runs0)
+    rawroot = layout.raw_root(tmp_path, "bbob")
+    # ... plus an unrelated task1 (also nb=7) that is never re-run.
+    runs0b = _write_raw_runs(tmp_path / "r0b", [(tasks[1], 7)], steps)
+    _dump_append(store, rawroot, runs0b, easiest_quantile=0.75)
+
+    # append: re-run task0's cells at a HIGHER budget (nb=13).
+    runs1 = _write_raw_runs(tmp_path / "r1", [(tasks[0], 13)], steps)
+    _dump_append(store, rawroot, runs1, easiest_quantile=0.75)
+
+    # the re-run cells now report the higher iteration count; task1 is
+    # untouched.
+    iters = databank.populated_iterations(tmp_path, "bbob")
+    for s in steps:
+        assert iters[(tasks[0].hash, s.name)] == 13
+        assert iters[(tasks[1].hash, s.name)] == 7
+
+    # the stored loss matches the nb=13 records, not the stale nb=7 ones --
+    # i.e. the copy-old-cells step did not clobber the re-run. (OUTPUT_MIN
+    # is target-independent, so reusing task0's old ERT targets on the
+    # re-run does not affect this comparison.)
+    zd = load_databank_dataset("bbob", steps, tmp_path).load()
+    _, loss13, _, _ = _records(tasks[0], 13, steps)
+    for s in steps:
+        sel = {TASK_ID: tasks[0].hash, SCHEDULE: s.name}
+        _assert_da_close(
+            _interp_loss(loss13[s.hash], BS)[OUTPUT_MIN],
+            zd[OUTPUT_MIN].sel(sel),
+        )
 
 
 #                                                                      Tasksets
