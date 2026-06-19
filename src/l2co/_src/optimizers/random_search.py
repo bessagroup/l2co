@@ -181,7 +181,7 @@ def random_search_update(
         Name of the sampler used to draw candidates, resolved via
         :func:`l2co._src.sampler.get_sampler`. Must accept ``(key,
         params, n_samples, ...)`` -- i.e. ``"random"``, ``"normal"``,
-        or ``"xavier"``. Default ``"random"``.
+        ``"xavier"``, or ``"constant"``. Default ``"random"``.
     popsize : int or Callable[[Task], int], optional
         Candidates per logical iteration; total evaluations per
         ``step`` call equal ``popsize * n_iterations``. Either a
