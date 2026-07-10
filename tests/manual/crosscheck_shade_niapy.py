@@ -53,15 +53,11 @@ def rastrigin(x):
 
     if not isinstance(x, np.ndarray):
         import jax.numpy as xp
-    return 10.0 * x.shape[-1] + (
-        x**2 - 10.0 * xp.cos(2.0 * xp.pi * x)
-    ).sum()
+    return 10.0 * x.shape[-1] + (x**2 - 10.0 * xp.cos(2.0 * xp.pi * x)).sum()
 
 
 def rosenbrock(x):
-    return (
-        100.0 * (x[1:] - x[:-1] ** 2) ** 2 + (1.0 - x[:-1]) ** 2
-    ).sum()
+    return (100.0 * (x[1:] - x[:-1] ** 2) ** 2 + (1.0 - x[:-1]) ** 2).sum()
 
 
 FUNCTIONS = {
@@ -148,9 +144,7 @@ def main() -> None:
         f"H=|A|={POPSIZE}, budget={MAX_FEVALS} fevals, {N_SEEDS} seeds"
     )
     for name, fn in FUNCTIONS.items():
-        ours = np.array(
-            [run_l2co_shade(fn, seed) for seed in range(N_SEEDS)]
-        )
+        ours = np.array([run_l2co_shade(fn, seed) for seed in range(N_SEEDS)])
         reference = np.array(
             [run_niapy_shade(fn, seed) for seed in range(N_SEEDS)]
         )

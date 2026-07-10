@@ -123,9 +123,11 @@ def _iter_task_runs(
 
     df_input, df_output = experiment_data.to_pandas(keep_references=True)
     df_output = df_output.map(
-        lambda row: Path(experiment_data.project_dir)
-        / "experiment_data"
-        / row.reference,
+        lambda row: (
+            Path(experiment_data.project_dir)
+            / "experiment_data"
+            / row.reference
+        ),
         na_action="ignore",
     )
 

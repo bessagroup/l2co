@@ -127,9 +127,7 @@ def test_tell_memory_update_weighted_means():
     assert jnp.allclose(new_state.population[1], trials[1])  # tie
     assert jnp.allclose(new_state.population[2], population[2])
     assert jnp.allclose(new_state.population[3], trials[3])
-    assert jnp.allclose(
-        new_state.fitness, jnp.array([0.5, 2.0, 3.0, 3.0])
-    )
+    assert jnp.allclose(new_state.fitness, jnp.array([0.5, 2.0, 3.0, 3.0]))
 
     # Weights: df / sum(df) = [1/3, 0, 0, 2/3].
     w0, w3 = 1.0 / 3.0, 2.0 / 3.0
@@ -146,9 +144,7 @@ def test_tell_memory_update_weighted_means():
     assert int(new_state.archive_count) == 2
     valid_rows = new_state.archive[:2]
     for parent_idx in (0, 3):
-        assert jnp.any(
-            jnp.all(valid_rows == population[parent_idx], axis=1)
-        )
+        assert jnp.any(jnp.all(valid_rows == population[parent_idx], axis=1))
 
 
 def test_tell_no_success_leaves_memory_and_archive():
@@ -232,9 +228,7 @@ def test_tell_nan_robustness():
 
     assert jnp.allclose(new_state.population[0], trials[0])
     assert jnp.allclose(new_state.population[1], population[1])
-    assert jnp.allclose(
-        new_state.fitness, jnp.array([1.0, 1.0, 1.0, 3.0])
-    )
+    assert jnp.allclose(new_state.fitness, jnp.array([1.0, 1.0, 1.0, 3.0]))
     # Infinite total improvement falls back to uniform weights over the
     # successes (members 0 and 2).
     expected_cr = (0.2 + 0.6) / 2
@@ -276,8 +270,7 @@ def test_ask_unbounded_defaults_are_finite():
     assert jnp.all(new_state.scale_factors > 0.0)
     assert jnp.all(new_state.scale_factors <= 1.0)
     assert jnp.all(
-        (new_state.crossover_rates >= 0.0)
-        & (new_state.crossover_rates <= 1.0)
+        (new_state.crossover_rates >= 0.0) & (new_state.crossover_rates <= 1.0)
     )
 
 
@@ -308,9 +301,7 @@ def test_turning_only_rewrites_individuals_inside_ring():
     n_diff = jnp.zeros(5, dtype=int)
     for i in range(30):
         trials_off, _ = algo.ask(key=jr.key(i), state=state, params=base)
-        trials_on, _ = algo.ask(
-            key=jr.key(i), state=state, params=turning
-        )
+        trials_on, _ = algo.ask(key=jr.key(i), state=state, params=turning)
         row_differs = jnp.any(trials_off != trials_on, axis=1)
         assert not jnp.any(row_differs & ~in_ring)
         n_diff = n_diff + row_differs
@@ -413,15 +404,15 @@ def test_first_generation_tie_does_not_pollute_memory():
     )
     params, _ = eqx.partition(task.model, eqx.is_inexact_array)
     population = jax.tree.map(
-        lambda x: jnp.broadcast_to(x, (update_class.popsize, *x.shape))
-        + 0.1 * jr.normal(jr.key(12), (update_class.popsize, *x.shape)),
+        lambda x: (
+            jnp.broadcast_to(x, (update_class.popsize, *x.shape))
+            + 0.1 * jr.normal(jr.key(12), (update_class.popsize, *x.shape))
+        ),
         params,
     )
     key = jr.key(13)
     state = update_class.init_fn(population, key)
-    (_, new_state, _), _ = update_class.step_fn(
-        (population, state, key), {}
-    )
+    (_, new_state, _), _ = update_class.step_fn((population, state, key), {})
     assert jnp.allclose(new_state.memory_f, 0.5)
     assert jnp.allclose(new_state.memory_cr, 0.5)
     assert int(new_state.memory_index) == 0
