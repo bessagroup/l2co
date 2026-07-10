@@ -119,10 +119,12 @@ def calculate_best_solver(
         check_sbs[OUTPUT_MIN]
         .groupby(group)
         .map(
-            lambda x: x.mean(PROBLEM)
-            .isel({BUDGET: -1}, drop=True)
-            .idxmin(SCHEDULE)
-            .expand_dims({PROBLEM: x[PROBLEM]})
+            lambda x: (
+                x.mean(PROBLEM)
+                .isel({BUDGET: -1}, drop=True)
+                .idxmin(SCHEDULE)
+                .expand_dims({PROBLEM: x[PROBLEM]})
+            )
         )
         .isel({OUTPUT_DIM: 0}, drop=True)
         .assign_coords({PROBLEM: performance[PROBLEM]})

@@ -5,16 +5,17 @@ from collections.abc import Callable
 from .evosax_implementations import evosax_mapping
 from .optax_implementations import optax_mapping
 from .random_search import random_search_mapping
+from .shade import shade_mapping
 from .update_class import UpdateClass
 
 # Registry of optimizer-name -> factory callables. Each value is a callable
 # that, when called with the keyword contract used by ``RunState.init``
 # (``**hyperparameters, task, opt_hash, bounded, stop_fn``), returns an
 # ``UpdateClass`` instance. Built-in entries come from the optax/evosax/
-# random-search modules; sibling packages inject their own via
+# random-search/shade modules; sibling packages inject their own via
 # ``register_optimizer`` (see below) so l2co stays standalone.
 optimizers: dict[str, Callable[..., UpdateClass]] = (
-    evosax_mapping | optax_mapping | random_search_mapping
+    evosax_mapping | optax_mapping | random_search_mapping | shade_mapping
 )
 
 
