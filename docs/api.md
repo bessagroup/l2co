@@ -30,6 +30,10 @@
 
 ::: l2co.register_optimizer
 
+::: l2co.SHADE
+
+::: l2co.optimizers.shade_update
+
 ## States
 
 ::: l2co.RunState
