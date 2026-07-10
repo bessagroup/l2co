@@ -622,7 +622,7 @@ wheels = [
 
 [[package]]
 name = "f3dasm"
-version = "2.2.4"
+version = "2.3.0"
 source = { editable = "../f3dasm" }
 dependencies = [
     { name = "cloudpickle" },
