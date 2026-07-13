@@ -27,6 +27,7 @@ truncation that an in-place coordinate resize would cause).
 # Standard
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import warnings
@@ -35,6 +36,7 @@ from pathlib import Path
 from typing import Literal
 
 # Third-party
+import numpy as np
 import xarray as xr
 import zarr
 from l2co_tasks import Task
@@ -46,7 +48,9 @@ from l2co._src.performance import DEFAULT_EASIEST_QUANTILE
 from l2co._src.validation import normalize_budget_grid
 from l2co.naming import (
     FEATURE,
+    IN_TRAINING,
     OPTIMIZATIONSTEP,
+    PROVENANCE,
     SCHEDULE,
     SUCCESS,
     TARGET_VALUE,
@@ -55,8 +59,17 @@ from l2co.naming import (
 )
 
 from . import layout
+from .provenance import (
+    _weights_files,
+    manifest_path,
+    parse_provenance,
+    policy_identity_hash,
+    record_task_hashes,
+    record_weights_hash,
+    weights_hash,
+)
 from .records import _build_task_records, _iter_task_runs
-from .schema import big_template, downcast_floats, to_region_cell
+from .schema import STORE_DTYPE, big_template, downcast_floats, to_region_cell
 from .tasksets import save_taskset
 
 #                                                          Authorship & Credits
@@ -124,23 +137,86 @@ def _write_pair(
             cell.to_zarr(store, region=region, consolidated=False)
 
 
+def _in_training_mask(
+    provenances: dict[str, xr.DataArray],
+    taskids: list[str],
+    schedules: list[str],
+) -> xr.DataArray:
+    """Materialize the ``(taskID, schedule)`` in-training mask.
+
+    Derived from two inputs frozen at dump time — each policy
+    schedule's recorded training task hashes and the store's task
+    axis — so the mask cannot drift from the provenance it summarizes.
+    Policy schedules get ``1.0`` / ``0.0`` per task; static optimizers
+    (empty provenance) get ``NaN``.
+    """
+    mask = np.full((len(taskids), len(schedules)), np.nan, dtype=STORE_DTYPE)
+    for j, s in enumerate(schedules):
+        record = parse_provenance(str(provenances[s].values.flat[0]))
+        if record is None:
+            continue
+        trained = record_task_hashes(record)
+        mask[:, j] = [float(t in trained) for t in taskids]
+    return xr.DataArray(
+        mask,
+        coords={TASK_ID: taskids, SCHEDULE: schedules},
+        dims=[TASK_ID, SCHEDULE],
+    )
+
+
+def _check_alias_consistency(name: str, existing: str, incoming: str) -> None:
+    """Refuse to mix two different policy artifacts under one alias.
+
+    Schedule names are short human aliases; identity lives in the
+    provenance record. Reusing a name for a *different* artifact (or
+    for a static optimizer where a policy lived, and vice versa) would
+    silently mix rollouts from different weights under one coordinate,
+    so it is a hard error. Records of the *same* artifact may differ in
+    their evaluation section (timestamps); only the combined weights
+    hash decides.
+    """
+    old = parse_provenance(existing)
+    new = parse_provenance(incoming)
+    if old is None and new is None:
+        return
+    if (old is None) != (new is None):
+        raise ValueError(
+            f"Schedule name '{name}' is already used by a "
+            f"{'static optimizer' if old is None else 'policy artifact'} "
+            f"but the incoming run is a "
+            f"{'static optimizer' if new is None else 'policy artifact'}: "
+            "pick a different schedule name."
+        )
+    old_hash = record_weights_hash(old)
+    new_hash = record_weights_hash(new)
+    if old_hash != new_hash:
+        raise ValueError(
+            f"Schedule name '{name}' already refers to policy artifact "
+            f"{old_hash[:12]}… but the incoming run evaluated "
+            f"{new_hash[:12]}…: one alias must always mean one artifact "
+            "— pick a different schedule name for the new checkpoint."
+        )
+
+
 def _finalize_small(
     store: Path,
     labels: dict[str, xr.DataArray],
     targets: dict[str, xr.DataArray],
     recipes: dict[str, xr.DataArray],
+    provenances: dict[str, xr.DataArray],
     taskids: list[str],
     schedules: list[str],
 ) -> None:
     """Write the small string / target arrays and consolidate metadata.
 
-    ``task_labels`` (taskID, feature), ``target_value`` (taskID, target)
-    and ``optimizationstep`` (schedule,) are tiny, so they are assembled
-    in full and written with ``mode="a"`` (which also creates the new
-    ``feature`` coordinate). Metadata is consolidated last so the reader
-    opens the store with a single metadata read.
+    ``task_labels`` (taskID, feature), ``target_value`` (taskID, target),
+    ``optimizationstep`` / ``provenance`` (schedule,) and the derived
+    ``in_training`` (taskID, schedule) mask are tiny, so they are
+    assembled in full and written with ``mode="a"`` (which also creates
+    the new ``feature`` coordinate). Metadata is consolidated last so
+    the reader opens the store with a single metadata read.
 
-    The two string variables are stored as **variable-length** (``object``
+    The string variables are stored as **variable-length** (``object``
     dtype) strings. Fixed-width unicode would cap every entry at the first
     contributor's width and silently truncate longer ones -- e.g. a longer
     ``optimizationstep`` JSON recipe would be cut mid-string and fail to
@@ -153,6 +229,9 @@ def _finalize_small(
     recipes_da = xr.concat(
         [recipes[s].astype(object) for s in schedules], dim=SCHEDULE
     )
+    provenance_da = xr.concat(
+        [provenances[s].astype(object) for s in schedules], dim=SCHEDULE
+    )
     small = xr.Dataset(
         {
             TASK_LABELS: labels_da,
@@ -160,6 +239,8 @@ def _finalize_small(
                 [targets[t] for t in taskids], dim=TASK_ID
             ),
             OPTIMIZATIONSTEP: recipes_da,
+            PROVENANCE: provenance_da,
+            IN_TRAINING: _in_training_mask(provenances, taskids, schedules),
         }
     )
     with silence_zarr_warnings():
@@ -209,6 +290,14 @@ def dump_databank(
     ``task`` / ``optimizer`` in one zarr store (one chunk per
     ``(task, optimizer)``) and keeps the raw loss histories as per-pair
     netCDF under ``loss_history_raw/``.
+
+    Learned optimizers (rl2co / l2co policy schedules) are stored in the
+    exact same array format as static optimizers, plus three additive
+    provenance surfaces (see :mod:`l2co._src.databank.provenance`): the
+    per-schedule ``provenance`` record (read from the loss history's
+    ``provenance`` attribute; a policy schedule without one is refused),
+    the derived ``in_training`` mask, and an archived copy of the
+    artifact files under ``policy_artifacts/<schedule>/``.
 
     Parameters
     ----------
@@ -284,11 +373,15 @@ def dump_databank(
     rawroot.mkdir(parents=True, exist_ok=True)
 
     if mode == "append" and exists:
-        result = _dump_append(store, rawroot, runs, easiest_quantile)
+        n_tasks, policy_provs = _dump_append(
+            store, rawroot, runs, easiest_quantile
+        )
     else:
-        result = _dump_create(
+        n_tasks, policy_provs = _dump_create(
             store, rawroot, runs, easiest_quantile, budget_steps
         )
+
+    _archive_policy_artifacts(root, dataset_name, policy_provs)
 
     if taskset is not None:
         save_taskset(
@@ -298,9 +391,93 @@ def dump_databank(
         )
 
     logger.info(
-        f"dump_databank: done -- {result} task(s) -> {store} (mode={mode})"
+        f"dump_databank: done -- {n_tasks} task(s) -> {store} (mode={mode})"
     )
     return store.resolve()
+
+
+def _safe_dirname(schedule_name: str) -> str:
+    """Filesystem-safe folder name for one schedule."""
+    return schedule_name.replace("/", "_")
+
+
+def _archive_policy_artifacts(
+    root: Path,
+    dataset_name: str,
+    provenances: dict[str, str],
+) -> None:
+    """Copy each policy schedule's artifact files into the dataset.
+
+    Training run directories live on purged scratch, so the dataset
+    archives every policy artifact it stores results for:
+    ``policy_artifacts/<schedule>/`` receives the checkpoint file(s)
+    listed under the record's ``evaluation.artifacts`` map, their
+    sibling manifests, and a ``provenance.json`` with the full record.
+    This keeps the dataset directory self-sufficient — the rollouts,
+    their provenance, *and* the means to reproduce or extend them.
+
+    Fails loudly (no partial silence): a policy record without an
+    ``artifacts`` map, a missing artifact file, or a file whose bytes
+    no longer match the expected ``weights_hash`` each raise.
+
+    Parameters
+    ----------
+    root : pathlib.Path
+        The databank base directory.
+    dataset_name : str
+        Name of the dataset.
+    provenances : dict[str, str]
+        Serialized provenance record per policy schedule written in
+        this dump (static schedules are not present).
+    """
+    for schedule_name, prov_str in provenances.items():
+        record = parse_provenance(prov_str)
+        if record is None:  # pragma: no cover - callers pre-filter
+            continue
+        artifacts = record.get("evaluation", {}).get("artifacts", {})
+        if not artifacts:
+            raise ValueError(
+                f"Policy schedule '{schedule_name}' carries no "
+                "'evaluation.artifacts' map in its provenance record, so "
+                "its checkpoint cannot be archived into the dataset. "
+                "List every artifact file (path + expected weights_hash) "
+                "when assembling the record."
+            )
+        dest = layout.policy_artifacts_root(
+            root, dataset_name
+        ) / _safe_dirname(schedule_name)
+        dest.mkdir(parents=True, exist_ok=True)
+        for label, spec in artifacts.items():
+            src = Path(spec["path"])
+            try:
+                files = _weights_files(src)
+            except FileNotFoundError as e:
+                raise FileNotFoundError(
+                    f"Cannot archive artifact '{label}' of schedule "
+                    f"'{schedule_name}': {e} Re-evaluate the policy from "
+                    "an existing checkpoint (the run directory may have "
+                    "been purged between evaluation and dump)."
+                ) from e
+            expected = spec.get("weights_hash")
+            if expected is not None and weights_hash(src) != expected:
+                raise ValueError(
+                    f"Artifact '{label}' of schedule '{schedule_name}' at "
+                    f"{src} no longer matches its recorded weights_hash: "
+                    "the file was overwritten since evaluation; refusing "
+                    "to archive the wrong weights."
+                )
+            for f in files:
+                shutil.copy2(f, dest / f.name)
+            mpath = manifest_path(src)
+            if mpath.is_file():
+                shutil.copy2(mpath, dest / mpath.name)
+        (dest / "provenance.json").write_text(
+            json.dumps(record, indent=2, default=str)
+        )
+        logger.info(
+            f"dump_databank: archived policy artifact(s) of "
+            f"'{schedule_name}' -> {dest}"
+        )
 
 
 def _records_for_task(
@@ -319,6 +496,12 @@ def _records_for_task(
     their float variables downcast to :data:`~l2co._src.databank.schema.
     STORE_DTYPE` (integer counters keep their dtype; see
     :func:`l2co._src.databank.schema.downcast_floats`).
+
+    Raw filenames are keyed by ``OptimizationStep.hash`` for static
+    optimizers and by :func:`~l2co._src.databank.provenance.
+    policy_identity_hash` for policy schedules (the recipe hash is
+    path-derived for those — neither stable nor unique across
+    checkpoints).
     """
     ds_by_step = {
         step: xr.load_dataset(path) for step, path in step_paths.items()
@@ -331,11 +514,42 @@ def _records_for_task(
 
     loss_interp: dict[int, xr.Dataset] = {}
     for h, raw in loss_raw.items():
+        record = parse_provenance(str(raw.attrs.get(PROVENANCE, "")))
+        file_hash = (
+            policy_identity_hash(record, hash_to_step[h])
+            if record is not None
+            else h
+        )
         downcast_floats(raw).to_netcdf(
-            layout.loss_raw_path(rawroot, task.hash, h), engine="netcdf4"
+            layout.loss_raw_path(rawroot, task.hash, file_hash),
+            engine="netcdf4",
         )
         loss_interp[h] = _interp_loss(raw, budget_steps)
     return task_ds, hash_to_step, loss_interp, perf, opt
+
+
+def _accumulate_schedule(
+    step_name: str,
+    opt_ds: xr.Dataset,
+    recipes: dict[str, xr.DataArray],
+    provenances: dict[str, xr.DataArray],
+) -> None:
+    """Record one schedule's recipe + provenance, guarding the alias.
+
+    First contributor wins (matching the recipe behaviour); later
+    contributions of the same name must refer to the same policy
+    artifact (see :func:`_check_alias_consistency`).
+    """
+    incoming = str(opt_ds[PROVENANCE].values.flat[0])
+    if step_name in provenances:
+        _check_alias_consistency(
+            step_name,
+            str(provenances[step_name].values.flat[0]),
+            incoming,
+        )
+        return
+    recipes[step_name] = opt_ds[OPTIMIZATIONSTEP]
+    provenances[step_name] = opt_ds[PROVENANCE]
 
 
 def _dump_create(
@@ -344,8 +558,13 @@ def _dump_create(
     runs: list,
     easiest_quantile: float,
     budget_steps: int,
-) -> int:
-    """Stream a fresh store, one ``(task, optimizer)`` cell at a time."""
+) -> tuple[int, dict[str, str]]:
+    """Stream a fresh store, one ``(task, optimizer)`` cell at a time.
+
+    Returns ``(n_tasks, provenance_by_schedule)`` where the dict holds
+    the serialized provenance record of every *policy* schedule written
+    (used by :func:`dump_databank` to archive the artifacts).
+    """
     taskids = [task.hash for task, _ in runs]
     schedules: list[str] = []
     for _, step_paths in runs:
@@ -356,6 +575,7 @@ def _dump_create(
     labels: dict[str, xr.DataArray] = {}
     targets: dict[str, xr.DataArray] = {}
     recipes: dict[str, xr.DataArray] = {}
+    provenances: dict[str, xr.DataArray] = {}
     created = False
 
     for task, step_paths in tqdm(runs, total=len(runs)):
@@ -383,11 +603,25 @@ def _dump_create(
         for h, step in hash_to_step.items():
             sj = schedules.index(step.name)
             _write_pair(store, loss_interp[h], perf[h], ti, sj)
-            recipes.setdefault(step.name, opt[h][OPTIMIZATIONSTEP])
+            _accumulate_schedule(step.name, opt[h], recipes, provenances)
         _accumulate_task(task_ds, task.hash, labels, targets)
 
-    _finalize_small(store, labels, targets, recipes, taskids, schedules)
-    return len(taskids)
+    _finalize_small(
+        store, labels, targets, recipes, provenances, taskids, schedules
+    )
+    return len(taskids), _policy_provenances(provenances)
+
+
+def _policy_provenances(
+    provenances: dict[str, xr.DataArray],
+) -> dict[str, str]:
+    """Extract the non-empty (policy) provenance strings per schedule."""
+    out: dict[str, str] = {}
+    for name, da in provenances.items():
+        s = str(da.values.flat[0])
+        if s:
+            out[name] = s
+    return out
 
 
 def _populated_mask(old: xr.Dataset) -> xr.DataArray:
@@ -408,7 +642,7 @@ def _dump_append(
     rawroot: Path,
     runs: list,
     easiest_quantile: float,
-) -> int:
+) -> tuple[int, dict[str, str]]:
     """Rebuild the store over the union of old and new coordinates.
 
     New cells come from ``runs`` and are written first; old cells are then
@@ -419,6 +653,14 @@ def _dump_append(
     copy. Existing tasks keep their stored ERT targets so appended (and
     re-run) optimizers stay comparable. The rebuild lands in a temporary
     store that is swapped in atomically.
+
+    Returns ``(n_tasks, provenance_by_schedule)`` for the policy
+    schedules written from ``runs`` (see :func:`_dump_create`).
+    Schedule names arriving for an already-present name must refer to
+    the same policy artifact (:func:`_check_alias_consistency`); stores
+    written before the provenance schema read back as all-static
+    (empty provenance) and the derived ``in_training`` mask is
+    recomputed over the union.
     """
     with silence_zarr_warnings():
         old = xr.open_zarr(store, consolidated=True)
@@ -428,6 +670,15 @@ def _dump_append(
     old_targets = old[TARGET_VALUE].load()
     old_labels = old[TASK_LABELS].load()
     old_recipes = old[OPTIMIZATIONSTEP].load()
+    if PROVENANCE in old:
+        old_provenances = old[PROVENANCE].astype(object).load()
+    else:
+        # Pre-provenance store: every existing schedule is static.
+        old_provenances = xr.DataArray(
+            np.array([""] * len(old_scheds), dtype=object),
+            coords={SCHEDULE: old_scheds},
+            dims=[SCHEDULE],
+        )
     mask = _populated_mask(old)
     loss_vars = [v for v in old.data_vars if "budget" in old[v].dims]
     perf_vars = [
@@ -453,6 +704,7 @@ def _dump_append(
     labels: dict[str, xr.DataArray] = {}
     targets: dict[str, xr.DataArray] = {}
     recipes: dict[str, xr.DataArray] = {}
+    provenances: dict[str, xr.DataArray] = {}
     # (taskID, schedule) cells written from runs -- the copy step below
     # must skip these so a re-run pair overwrites rather than gets clobbered.
     written: set[tuple[str, str]] = set()
@@ -490,7 +742,15 @@ def _dump_append(
         for h, step in hash_to_step.items():
             sj = schedules.index(step.name)
             _write_pair(tmp, loss_interp[h], perf[h], ti, sj)
-            recipes.setdefault(step.name, opt[h][OPTIMIZATIONSTEP])
+            if step.name in old_scheds:
+                # An alias may only ever mean one artifact -- also
+                # across appends into an existing store.
+                _check_alias_consistency(
+                    step.name,
+                    str(old_provenances.sel({SCHEDULE: step.name}).values),
+                    str(opt[h][PROVENANCE].values.flat[0]),
+                )
+            _accumulate_schedule(step.name, opt[h], recipes, provenances)
             written.add((task.hash, step.name))
         _accumulate_task(task_ds, task.hash, labels, targets)
 
@@ -521,10 +781,16 @@ def _dump_append(
     for s in schedules:
         if s not in recipes:
             recipes[s] = old_recipes.sel({SCHEDULE: [s]})
+            provenances[s] = old_provenances.sel({SCHEDULE: [s]})
 
     old.close()
-    _finalize_small(tmp, labels, targets, recipes, taskids, schedules)
+    new_policy_provs = _policy_provenances(
+        {s: provenances[s] for s in {name for _, name in written}}
+    )
+    _finalize_small(
+        tmp, labels, targets, recipes, provenances, taskids, schedules
+    )
 
     shutil.rmtree(store)
     tmp.rename(store)
-    return len(taskids)
+    return len(taskids), new_policy_provs

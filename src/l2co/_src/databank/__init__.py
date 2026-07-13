@@ -11,12 +11,35 @@ under ``tasksets/``. Audit a store's integrity with
 layout and rationale.
 """
 
-from .layout import BUDGET_STEPS, databank_root, zarr_store_path
+from .layout import (
+    BUDGET_STEPS,
+    databank_root,
+    policy_artifacts_root,
+    zarr_store_path,
+)
+from .provenance import (
+    MissingManifestError,
+    WeightsHashMismatchError,
+    bump_manifest,
+    dumps_provenance,
+    load_manifest,
+    manifest_path,
+    mint_run_id,
+    parse_provenance,
+    policy_identity_hash,
+    provenance_record,
+    record_task_hashes,
+    record_weights_hash,
+    weights_hash,
+    write_manifest,
+)
 from .reader import (
+    held_out_task_ids,
     load_databank,
     load_databank_dataset,
     load_databank_performance,
     load_loss_raw,
+    load_provenance,
     populated_iterations,
     populated_pairs,
 )
@@ -32,18 +55,35 @@ from .writer import dump_databank
 __all__ = [
     "BUDGET_STEPS",
     "DatabankVerificationReport",
+    "MissingManifestError",
     "VerificationFinding",
+    "WeightsHashMismatchError",
+    "bump_manifest",
     "databank_root",
     "dump_databank",
+    "dumps_provenance",
+    "held_out_task_ids",
     "load_databank",
     "load_databank_dataset",
     "load_databank_performance",
     "load_loss_raw",
+    "load_manifest",
+    "load_provenance",
     "load_taskset",
     "loss_preprocess",
+    "manifest_path",
+    "mint_run_id",
+    "parse_provenance",
+    "policy_artifacts_root",
+    "policy_identity_hash",
     "populated_iterations",
     "populated_pairs",
+    "provenance_record",
+    "record_task_hashes",
+    "record_weights_hash",
     "save_taskset",
     "verify_databank",
+    "weights_hash",
+    "write_manifest",
     "zarr_store_path",
 ]

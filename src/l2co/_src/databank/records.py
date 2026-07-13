@@ -46,12 +46,15 @@ from l2co.naming import (
     GLOBAL_MIN,
     ITERATIONS,
     OPTIMIZATIONSTEP,
+    PROVENANCE,
     SCHEDULE,
     TARGET_VALUE,
     TASK_ID,
     TASK_LABELS,
     UPDATE_STEP,
 )
+
+from .provenance import POLICY_OPTIMIZERS
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -174,18 +177,31 @@ def _task_dataset(task: Any, target_value: xr.DataArray) -> xr.Dataset:
     return xr.Dataset({TASK_LABELS: task_labels, TARGET_VALUE: tv})
 
 
-def _optimizer_dataset(step: OptimizationStep) -> xr.Dataset:
-    """Build the per-optimizer payload (the ``optimizationstep`` recipe).
+def _optimizer_dataset(
+    step: OptimizationStep, provenance: str = ""
+) -> xr.Dataset:
+    """Build the per-optimizer payload (recipe + provenance record).
 
     Stores the full :class:`OptimizationStep` recipe as a JSON string on
-    the ``schedule`` axis (the human-readable name is the coord value).
+    the ``schedule`` axis (the human-readable name is the coord value),
+    plus the serialized provenance record for policy schedules (an
+    empty string for static optimizers — see
+    :mod:`l2co._src.databank.provenance`).
     """
-    recipe = xr.DataArray(
-        [json.dumps(step.to_dict())],
-        coords={SCHEDULE: [step.name]},
-        dims=[SCHEDULE],
+
+    def _da(value: str) -> xr.DataArray:
+        return xr.DataArray(
+            [value],
+            coords={SCHEDULE: [step.name]},
+            dims=[SCHEDULE],
+        )
+
+    return xr.Dataset(
+        {
+            OPTIMIZATIONSTEP: _da(json.dumps(step.to_dict())),
+            PROVENANCE: _da(provenance),
+        }
     )
-    return xr.Dataset({OPTIMIZATIONSTEP: recipe})
 
 
 def _build_task_records(
@@ -231,7 +247,29 @@ def _build_task_records(
         three dicts are keyed by ``OptimizationStep.hash``. When
         ``existing_targets`` was supplied, ``task_ds`` simply echoes
         those targets.
+
+    Raises
+    ------
+    ValueError
+        A policy schedule (``optimizer`` in
+        :data:`~l2co._src.databank.provenance.POLICY_OPTIMIZERS`)
+        arrives without a provenance record on its loss history — the
+        dump-time admissibility backstop (the evaluation pipeline
+        should have failed fast much earlier).
     """
+    for step, ds in ds_by_step.items():
+        if step.optimizer in POLICY_OPTIMIZERS and not str(
+            ds.attrs.get(PROVENANCE, "")
+        ):
+            raise ValueError(
+                f"Schedule '{step.name}' (optimizer='{step.optimizer}') "
+                "is a policy artifact but its loss history carries no "
+                f"'{PROVENANCE}' record: not admissible to the databank. "
+                "Evaluate through a pipeline that loads the checkpoint's "
+                "provenance manifest and attaches the record (there is "
+                "no bypass)."
+            )
+
     gmin = task.global_min if task.global_min is not None else np.nan
     b = xr.concat(
         [
@@ -260,5 +298,7 @@ def _build_task_records(
         perf_by_hash[step.hash] = perf_vars.sel(
             {SCHEDULE: [step.name]}
         ).expand_dims({TASK_ID: [task.hash]})
-        opt_by_hash[step.hash] = _optimizer_dataset(step)
+        opt_by_hash[step.hash] = _optimizer_dataset(
+            step, provenance=str(ds.attrs.get(PROVENANCE, ""))
+        )
     return task_ds, loss_by_hash, perf_by_hash, opt_by_hash

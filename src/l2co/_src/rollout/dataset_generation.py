@@ -20,8 +20,15 @@ from f3dasm import ExperimentSample
 from f3dasm.datageneration import DataGenerator
 from l2co_tasks import Task
 
+from l2co._src.databank.provenance import dumps_provenance
 from l2co._src.models import L2COModel
-from l2co._src.naming import BUDGET, OUTPUT_MEAN, OUTPUT_MIN, REALIZATION
+from l2co._src.naming import (
+    BUDGET,
+    OUTPUT_MEAN,
+    OUTPUT_MIN,
+    PROVENANCE,
+    REALIZATION,
+)
 from l2co._src.optimizer_schedule import OptimizationStep
 
 from .rollout_wrapper import RolloutWrapper
@@ -183,6 +190,7 @@ class RunOptimization(DataGenerator):
         task: Task,
         model: L2COModel,
         t: float,
+        provenance: dict | None = None,
     ) -> ExperimentSample:
         """Run two-stage L2CO optimization.
 
@@ -201,6 +209,13 @@ class RunOptimization(DataGenerator):
             Trained L2CO model for optimizer selection.
         t : float
             Fraction of total budget allocated to stage 0.
+        provenance : dict | None, optional
+            Policy-artifact provenance record (see
+            :func:`l2co.databank.provenance_record`), attached to the
+            stored loss history as the ``l2co.naming.PROVENANCE``
+            attribute so it travels into the databank. ``None`` (the
+            default) attaches nothing — such a run is not admissible
+            to the databank.
 
         Returns
         -------
@@ -308,6 +323,9 @@ class RunOptimization(DataGenerator):
                 dims=[REALIZATION],
             ),
         )
+
+        if provenance is not None:
+            data_xarr.attrs[PROVENANCE] = dumps_provenance(provenance)
 
         experiment_sample.store(
             name="loss history", object=data_xarr, to_disk=True

@@ -39,6 +39,7 @@ from l2co.naming import (
     COST,
     FEATURE,
     FEVALS,
+    IN_TRAINING,
     ITERATIONS,
     METRIC,
     OPTIMIZATIONSTEP,
@@ -46,6 +47,7 @@ from l2co.naming import (
     OUTPUT_MEAN,
     OUTPUT_MIN,
     OUTPUT_STD,
+    PROVENANCE,
     REALIZATION,
     SCHEDULE,
     SUCCESS,
@@ -97,7 +99,14 @@ _EXPECTED_DIMS: dict[str, frozenset[str]] = {
     TASK_LABELS: frozenset((TASK_ID, FEATURE)),
     TARGET_VALUE: frozenset((TASK_ID, TARGET)),
     OPTIMIZATIONSTEP: frozenset((SCHEDULE,)),
+    PROVENANCE: frozenset((SCHEDULE,)),
+    IN_TRAINING: frozenset((TASK_ID, SCHEDULE)),
 }
+
+# Variables added by the policy-provenance schema: absent from stores
+# written before it, so a missing one is an INFO (legacy store), not an
+# ERROR. Their dims are still checked when present.
+_OPTIONAL_VARS = frozenset((PROVENANCE, IN_TRAINING))
 
 # Display caps so a badly broken store still yields a readable summary.
 _MAX_FINDINGS_SHOWN = 50
@@ -235,6 +244,17 @@ def _check_structure(ds: xr.Dataset) -> list[VerificationFinding]:
     findings: list[VerificationFinding] = []
     for var, dims in _EXPECTED_DIMS.items():
         if var not in ds:
+            if var in _OPTIONAL_VARS:
+                findings.append(
+                    VerificationFinding(
+                        INFO,
+                        "structure.missing_optional_var",
+                        f"variable '{var}' is absent (store written "
+                        "before the policy-provenance schema)",
+                        variable=var,
+                    )
+                )
+                continue
             findings.append(
                 VerificationFinding(
                     ERROR,
@@ -313,6 +333,27 @@ def _check_structure(ds: xr.Dataset) -> list[VerificationFinding]:
                         f"'{name}' is not valid JSON",
                         schedule=str(name),
                         variable=OPTIMIZATIONSTEP,
+                    )
+                )
+
+    if PROVENANCE in ds:
+        for name, prov in zip(
+            ds[SCHEDULE].values, ds[PROVENANCE].values, strict=True
+        ):
+            # Empty string == static optimizer (no provenance) -- valid.
+            if not str(prov):
+                continue
+            try:
+                json.loads(str(prov))
+            except (json.JSONDecodeError, TypeError):
+                findings.append(
+                    VerificationFinding(
+                        ERROR,
+                        "structure.provenance_json",
+                        f"'{PROVENANCE}' record of schedule '{name}' "
+                        "is not valid JSON",
+                        schedule=str(name),
+                        variable=PROVENANCE,
                     )
                 )
     return findings
