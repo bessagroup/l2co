@@ -56,6 +56,19 @@
 
 ::: l2co.evaluate
 
+### L2CO strategy wrapper
+
+The canonical execution path for the two-stage L2CO strategy
+(`OptimizationStep(optimizer="l2co")`): the trained `L2COModel` is
+exposed as a duck-typed evosax population strategy and bridged into
+an `UpdateClass` through the optimizer registry, so it runs through
+the same jitted rollout machinery as any plain optimizer. The stage-0
+fire happens at construction; the stage-1 fire happens in-graph, once,
+at the switch generation. See the design record in
+`docs/adr/0002-l2co-strategy-canonical-path-via-updateclass-bridge.md`.
+
+::: l2co.l2co_population_strategy
+
 ## Data Processing
 
 ::: l2co.create_combined_odata

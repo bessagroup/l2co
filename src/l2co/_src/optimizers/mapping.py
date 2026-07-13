@@ -12,10 +12,16 @@ from .update_class import UpdateClass
 # that, when called with the keyword contract used by ``RunState.init``
 # (``**hyperparameters, task, opt_hash, bounded, stop_fn``), returns an
 # ``UpdateClass`` instance. Built-in entries come from the optax/evosax/
-# random-search/shade modules; sibling packages inject their own via
-# ``register_optimizer`` (see below) so l2co stays standalone.
+# random-search/shade modules, plus the ``"l2co"`` meta-optimizer (the
+# two-stage L2CO strategy as a strategy wrapper — see ``docs/adr/0002``);
+# sibling packages inject their own via ``register_optimizer`` (see below)
+# so l2co stays standalone.
 optimizers: dict[str, Callable[..., UpdateClass]] = (
-    evosax_mapping | optax_mapping | random_search_mapping | shade_mapping
+    evosax_mapping
+    | optax_mapping
+    | random_search_mapping
+    | shade_mapping
+    | {"l2co": UpdateClass.l2co_update}
 )
 
 

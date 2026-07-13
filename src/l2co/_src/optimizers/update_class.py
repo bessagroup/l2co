@@ -477,6 +477,242 @@ def evosax_population_based_fn(
 # =============================================================================
 
 
+def _row_has_nan(population: PyTree) -> jax.Array:
+    """Per-candidate NaN mask for a population.
+
+    Returns a boolean array of leading shape ``(population_size,)``,
+    ``True`` for each candidate whose params contain any NaN — the
+    strategy wrapper emits slots ``[sub.popsize:]`` as all-``NaN``
+    when the active sub-optimizer's popsize is below
+    ``population_size``.
+
+    Parameters
+    ----------
+    population : PyTree
+        Inexact-array partition of the population, leading axis
+        ``population_size``.
+
+    Returns
+    -------
+    jax.Array
+        Boolean array of shape ``(population_size,)``.
+    """
+    leaves = jax.tree.leaves(population)
+    mask = jnp.zeros((leaves[0].shape[0],), dtype=bool)
+    for leaf in leaves:
+        # Reduce over every axis but the leading candidate axis.
+        mask = mask | jnp.isnan(leaf).any(axis=tuple(range(1, leaf.ndim)))
+    return mask
+
+
+def l2co_population_based_fn(
+    strategy,
+    static: PyTree,
+    loss_fn: LossFunction,
+    bounded: tuple[float | None, float | None],
+    pass_rng: bool,
+) -> tuple[InitFunction, StepFunction]:
+    """Build ``(init_fn, step_fn)`` driving the L2CO strategy wrapper.
+
+    The analogue of :func:`evosax_population_based_fn` for
+    :func:`l2co._src.strategy_wrapper.l2co_population_strategy`
+    (mirroring rl2co's ``rl2co_population_based_fn``). Three
+    differences from the stock evosax factory:
+
+    * **Ask-eval-tell rhythm.** The wrapper proposes via ``ask``
+      before it can ``tell`` (the stage-1 fire and the handshake
+      happen inside ``ask``), so each ``step_fn`` asks, evaluates the
+      proposed population *with gradients*, then tells. The stock
+      factory instead evaluates the carried population, tells, then
+      asks.
+    * **Gradients are always computed, NaN-safely.** The menu mixes
+      gradient-based and population-based sub-optimizers, and the
+      wrapper's ``tell`` consumes ``grads=``. The emitted population
+      is NaN-padded past the active sub-optimizer's popsize; padding
+      rows ride through the batched evaluation and their loss/grads
+      are masked back to NaN afterwards (:func:`_row_has_nan`), so
+      the NaN sentinel is robust regardless of how ``loss_fn``
+      treats NaN inputs.
+    * **The ``update_step`` hash is dynamic.** Before the stage-1
+      fire every entry carries the stage-0 optimizer's hash, after a
+      switching fire the stage-1 optimizer's — read from the wrapper
+      state after each ``ask`` — so the stored history records which
+      optimizer produced each entry (one combined history instead of
+      the old path's two concatenated per-stage histories).
+
+    ``init_fn`` does **not** evaluate the initial population: it
+    forwards an all-``NaN`` fitness to ``strategy.init``, matching
+    the stock machinery (where the initial samples are only evaluated
+    by ``reset``'s hidden bookkeeping pass, outside any history) and
+    the old eager path's init point (``samples[0]``).
+
+    Parameters
+    ----------
+    strategy : l2co._src.strategy_wrapper._L2COPopulationStrategy
+        The wrapper returned by ``l2co_population_strategy``. Closed
+        over; its stage-1 weights become compile-time constants under
+        JIT. (Typed loosely to keep this module importable without
+        the strategy wrapper — see the deferred import in
+        :meth:`UpdateClass.l2co_update`.)
+    static : PyTree
+        Non-inexact-array partition of ``task.model``; recombined
+        with each population via :func:`equinox.combine` before
+        evaluation.
+    loss_fn : LossFunction
+        Task loss function (``task.loss_fn``).
+    bounded : tuple[float | None, float | None]
+        Box bounds clipped onto every asked population before
+        evaluation; ``(None, None)`` disables clipping.
+    pass_rng : bool
+        Whether ``loss_fn`` takes a ``key`` keyword
+        (``task.pass_rng``).
+
+    Returns
+    -------
+    tuple[InitFunction, StepFunction]
+        ``(init_fn, step_fn)`` ready to slot into an
+        :class:`UpdateClass`.
+    """
+    popsize = strategy.population_size
+    default_params = strategy.default_params
+    name_hashes = strategy.name_hashes_arr
+    popsizes = jnp.array(
+        [sub.popsize for sub in strategy.sub_optimizers], dtype=int
+    )
+
+    def init_fn(
+        params: InputParameters,
+        key: PRNGKeyArray,
+        **sample,
+    ) -> PyTree:
+        """Build the wrapper state from the initial population.
+
+        No evaluation happens here (see the factory docstring): the
+        fitness forwarded to ``strategy.init`` is all-``NaN``, so
+        best-tracking seeds to ``+inf`` and the sub-optimizers
+        initialise around ``params[0]``.
+
+        Parameters
+        ----------
+        params : InputParameters
+            Initial population, leading axis
+            ``strategy.population_size``.
+        key : PRNGKeyArray
+            Key for sub-optimizer initialisation.
+        **sample
+            Current data batch forwarded by
+            :func:`l2co._src.update_class.init_`; unused.
+
+        Returns
+        -------
+        PyTree
+            The wrapper state, used as the opt_state in the scan
+            carry.
+        """
+        fitness = jnp.full((popsize,), jnp.nan, dtype=float)
+        return strategy.init(key, params, fitness, default_params)
+
+    def step_fn(
+        carry: tuple[InputParameters, PyTree, PRNGKeyArray],
+        sample: dict,
+        *args,
+        **kwargs,
+    ) -> tuple[tuple[InputParameters, PyTree, PRNGKeyArray], OptHistory]:
+        """Run one ask-eval-tell generation of the L2CO wrapper.
+
+        Parameters
+        ----------
+        carry : tuple[InputParameters, PyTree, PRNGKeyArray]
+            ``(params, wrapper_state, key)``. ``params`` is the
+            scan's carried population; the asked population is
+            returned in its slot so ``history.params`` stays
+            meaningful.
+        sample : dict
+            Current data batch.
+
+        Returns
+        -------
+        tuple[tuple[InputParameters, PyTree, PRNGKeyArray], OptHistory]
+            ``((population, new_state, new_key), history)`` with
+            ``history.update_step`` carrying the dynamic hash of the
+            sub-optimizer active this generation.
+        """
+        _params, state, key = carry
+        new_key, ask_key, eval_key, tell_key = jr.split(key, 4)
+
+        # Ask: fires stage-1 at the switch generation and emits either
+        # the best_one handshake (on a switch) or the active
+        # sub-optimizer's own population.
+        population, state = strategy.ask(ask_key, state, default_params)
+        population = jax.tree.map(lambda p: jnp.clip(p, *bounded), population)
+
+        # The sub-optimizer active *this* generation; drives both the
+        # dynamic history hash and the feval count.
+        active_idx = state.active_opt_idx
+
+        # Eval with gradients — required by the wrapper's grad
+        # sub-optimizers; ignored by pop ones. Padding rows are fed
+        # through ``loss_fn`` too (cheap, per-candidate independent)
+        # and masked back to NaN afterwards.
+        model = eqx.combine(population, static)
+        eval_keys = jr.split(eval_key, popsize)
+        if pass_rng:
+            loss, grads = vmapped_loss_and_grad_with_rng(
+                model, loss_fn, sample, eval_keys
+            )
+        else:
+            loss, grads = vmapped_loss_and_grad(model, loss_fn, sample)
+
+        def value_fn(candidate_params: PyTree) -> jax.Array:
+            """Task loss of one candidate params partition.
+
+            Lets line-search grad sub-optimizers (``optax.lbfgs``)
+            probe trial points; reuses candidate 0's key for
+            stochastic losses so the line search is consistent with
+            the ``value``/``grad`` passed alongside it.
+            """
+            candidate_model = eqx.combine(candidate_params, static)
+            if pass_rng:
+                return loss_fn(candidate_model, key=eval_keys[0], **sample)
+            return loss_fn(candidate_model, **sample)
+
+        is_pad = _row_has_nan(population)
+        loss = jnp.where(is_pad, jnp.nan, loss)
+        grads = jax.tree.map(
+            lambda g: jnp.where(
+                is_pad.reshape((is_pad.shape[0],) + (1,) * (g.ndim - 1)),
+                jnp.nan,
+                g,
+            ),
+            grads,
+        )
+
+        state, _ = strategy.tell(
+            tell_key,
+            population,
+            loss,
+            state,
+            default_params,
+            grads=grads,
+            value_fn=value_fn,
+        )
+
+        history = OptHistory(
+            loss=loss,
+            params=population,
+            grads=grads,
+            update_step=name_hashes[active_idx].astype(int),
+            fevals=popsizes[active_idx],
+            iterations=jnp.array(1, dtype=int),
+        )
+        return (population, state, new_key), history
+
+    return init_fn, step_fn
+
+
+# =============================================================================
+
+
 def _default_stop_fn(*_, **__) -> bool:
     return False
 
@@ -819,6 +1055,154 @@ class UpdateClass(eqx.Module):
             init_fn=init_fn,
             step_fn=step_fn,
             popsize=popsize,
+            hash=opt_hash,
+            stop_fn=stop_fn,
+        )
+
+    @classmethod
+    def l2co_update(
+        cls,
+        task: Task,
+        opt_hash: int,
+        budget_fn: Callable,
+        stage0_model: str,
+        stage1_model: str,
+        t: float,
+        sampler: Callable,
+        swap_optimizers: list | None = None,
+        bounded: tuple[float, float] | None = (None, None),
+        stop_fn: StopFunction | None = None,
+        **hyperparameters,
+    ) -> UpdateClass:
+        """Construct an ``UpdateClass`` running the L2CO strategy.
+
+        The canonical execution path for
+        ``OptimizationStep(optimizer="l2co")`` (see
+        ``docs/adr/0002``): loads the two-stage
+        :class:`~l2co._src.models.l2co_model.L2COModel`, wraps it as
+        an evosax-style strategy via
+        :func:`~l2co._src.strategy_wrapper.l2co_population_strategy`
+        (which performs the stage-0 fire eagerly, at construction),
+        and bridges it through :func:`l2co_population_based_fn` so
+        the ordinary rollout machinery drives it like any plain
+        optimizer. The stage-1 fire happens in-graph at
+        ``round(t * budget_fn(task=task))`` completed generations.
+
+        This signature matches the registry contract called by
+        :meth:`l2co.RunState.init`: ``task``, ``opt_hash``,
+        ``bounded`` and ``stop_fn`` are supplied by ``RunState.init``
+        directly, and the remaining construction arguments arrive
+        through the :class:`~l2co._src.optimizer_schedule.
+        OptimizationStep`'s ``hyperparameters``.
+
+        Parameters
+        ----------
+        task : Task
+            Task providing the model, loss function, features, and
+            ``global_min`` (required — see the strategy factory).
+        opt_hash : int
+            Stable hash stored in the static ``hash`` field. Unlike
+            the stock factories it is **not** stamped into the
+            per-generation ``OptHistory.update_step``, which is
+            dynamic (the active sub-optimizer's hash); it is used
+            only for the ``skip_step`` dummy entry and
+            ``OptHistory.init``.
+        budget_fn : Callable
+            Budget function called as ``budget_fn(task=task)``
+            (matching ``l2co.budget.fixed_budget`` /
+            ``based_on_dimensionality``). Resolves the budget the
+            switch generation is computed against — it must equal
+            the ``n_iterations`` of the eventual run for ``t`` to
+            keep its meaning.
+        stage0_model : str
+            Path to the stage-0 model file (without extension),
+            forwarded to ``L2COModel.load``.
+        stage1_model : str
+            Path to the stage-1 model file (without extension).
+        t : float
+            Stage-0 fraction of the budget.
+        sampler : Callable
+            ``l2co.sampling`` function filling the post-fire
+            handshake population beyond slot 0. Configs should name
+            the same sampler the runner uses for initial sampling —
+            the old path implicitly reused it.
+        swap_optimizers : list | None, optional
+            Explicit replacement menu: a list of
+            ``OptimizationStep``s (or their ``to_dict`` dicts),
+            applied to both stages via
+            ``L2COModel.swap_optimizers``. ``None`` (default) keeps
+            the menu baked into the loaded model. Replaces the old
+            hardcoded four-optimizer list (``docs/adr/0002``).
+        bounded : tuple[float, float] | None, optional
+            Box bounds clipped onto every asked population before
+            evaluation. ``None`` is treated as ``(None, None)``.
+        stop_fn : StopFunction | None, optional
+            Stopping function.
+        **hyperparameters
+            Ignored; accepted so unrecognised schedule
+            hyperparameters do not break the registry call.
+
+        Returns
+        -------
+        UpdateClass
+            Configured L2CO meta-optimizer wrapper; its ``popsize``
+            is the strategy's ``population_size`` (max menu
+            popsize), so ``RunState.init`` and ``reset`` sample a
+            compatible population.
+
+        Raises
+        ------
+        ValueError
+            Propagated from the strategy factory: empty menu,
+            stage-0 choice missing from the menu, missing
+            ``task.global_min``, zero switch generation, or a
+            non-traceable stage-1 model.
+        """
+        # Deferred imports: the strategy wrapper imports
+        # ``sub_optimizer`` -> ``mapping`` -> this module, so a
+        # module-level import would be circular.
+        from l2co._src.models.l2co_model import L2COModel
+        from l2co._src.optimizer_schedule import OptimizationStep
+        from l2co._src.strategy_wrapper import l2co_population_strategy
+
+        model = L2COModel.load(
+            stage0_model=stage0_model, stage1_model=stage1_model
+        )
+        if swap_optimizers is not None:
+            steps = [
+                step
+                if isinstance(step, OptimizationStep)
+                else OptimizationStep.from_dict(step)
+                for step in swap_optimizers
+            ]
+            model = model.swap_optimizers(optimizers=steps)
+
+        if bounded is None:
+            bounded = (None, None)
+
+        max_iterations = budget_fn(task=task)
+
+        strategy = l2co_population_strategy(
+            model=model,
+            task=task,
+            sampler=sampler,
+            t=t,
+            max_iterations=max_iterations,
+        )
+
+        _, static = eqx.partition(task.model, eqx.is_inexact_array)
+        init_fn, step_fn = l2co_population_based_fn(
+            strategy=strategy,
+            static=static,
+            loss_fn=task.loss_fn,
+            bounded=bounded,
+            pass_rng=task.pass_rng,
+        )
+
+        return cls(
+            init_fn=init_fn,
+            step_fn=step_fn,
+            popsize=strategy.population_size,
             hash=opt_hash,
             stop_fn=stop_fn,
         )
