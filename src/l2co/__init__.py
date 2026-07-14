@@ -69,6 +69,7 @@ from l2co.optimization import (
     RunState,
     UpdateClass,
     evaluate,
+    l2co_population_strategy,
     reset,
     run,
 )
@@ -125,6 +126,7 @@ __all__ = [
     "evaluate",
     "features",
     "history",
+    "l2co_population_strategy",
     "models",
     "mse_loss",
     "naming",

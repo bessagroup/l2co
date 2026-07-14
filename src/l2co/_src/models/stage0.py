@@ -166,6 +166,13 @@ class Stage0Model(AbstractModel):
     ) -> Stage0Model:
         """Replace the optimizer set with a new collection.
 
+        Generic over the concrete subclass: replaces only the
+        ``optimizers`` field via :func:`equinox.tree_at`, so every
+        other field (including subclass-specific ones like ``model``)
+        is carried over unchanged. The previous implementation
+        instantiated the abstract base directly, which raised
+        ``TypeError`` for every concrete model.
+
         Parameters
         ----------
         optimizers : Iterable[OptimizationStep]
@@ -174,11 +181,14 @@ class Stage0Model(AbstractModel):
         Returns
         -------
         Stage0Model
-            New model instance with updated optimizers.
+            New model instance (same concrete class) with updated
+            optimizers.
         """
-        return Stage0Model(
-            feature_processor_task=self.feature_processor_task,
-            optimizers=optimizers,
+        return eqx.tree_at(
+            lambda m: m.optimizers,
+            self,
+            list(optimizers),
+            is_leaf=lambda x: isinstance(x, list),
         )
 
 

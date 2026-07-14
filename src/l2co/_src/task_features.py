@@ -101,6 +101,32 @@ class FeatureProcessor(eqx.Module):
     def __call__(self, x: dict[str, Any]) -> jax.Array:
         return self.transform(x)
 
+    def swap_names(self, name_mapping: dict[str, str]) -> FeatureProcessor:
+        """Rename features according to a mapping.
+
+        Names absent from ``name_mapping`` are kept as-is; vocabulary
+        contents and feature ordering are unchanged. Called by the
+        stage models' ``swap_optimizers`` (this method existed before
+        the module-structure refactor and was lost in it — restored
+        because the ``"l2co"`` registry path's explicit
+        ``swap_optimizers`` list exercises it).
+
+        Parameters
+        ----------
+        name_mapping : dict[str, str]
+            Mapping of old feature names to new feature names.
+
+        Returns
+        -------
+        FeatureProcessor
+            New instance with renamed features.
+        """
+        new_vocabs = {
+            name_mapping.get(name, name): vocab
+            for name, vocab in self.vocabs.items()
+        }
+        return FeatureProcessor(vocabs=new_vocabs)
+
     # ------------------------------------------------------------------
     # Serialization
     # ------------------------------------------------------------------
