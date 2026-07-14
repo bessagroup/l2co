@@ -103,12 +103,14 @@ class OptimizationDynamics:
         )
         x_history_mask = ~self.x_history.isnull().any([BUDGET, "kind"])
 
-        # combine masks
+        # Combine as numpy: the four masks can live on different array
+        # backends (dask via a lazy zarr selection, jax via the
+        # jnp-produced feature arrays), which reject a mixed `&`.
         combined_mask = (
-            y_mask
-            & x_features_task_mask
-            & x_features_optimizer_mask
-            & x_history_mask
+            y_mask.values
+            & x_features_task_mask.values
+            & x_features_optimizer_mask.values
+            & x_history_mask.values
         )
 
-        return self.select(combined_mask.values)
+        return self.select(combined_mask)

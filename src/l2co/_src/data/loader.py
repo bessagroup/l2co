@@ -288,10 +288,11 @@ class DataLoader:
         Parameters
         ----------
         schema : dict[str, str]
-            Feature name to type mapping for the processor.
+            Feature name to type mapping for the processor
+            (see :meth:`FeatureProcessor.init`).
         feature_processor : FeatureProcessor | None, optional
             Pre-fitted processor. If None, a new one is
-            initialized from the data, by default None.
+            initialized from the schema, by default None.
 
         Returns
         -------
@@ -309,9 +310,7 @@ class DataLoader:
         ]
 
         if feature_processor is None:
-            feature_processor_task = FeatureProcessor.init(
-                schema=schema, tags=tags_list
-            )
+            feature_processor_task = FeatureProcessor.init(schema=schema)
         else:
             feature_processor_task = feature_processor
 
@@ -356,11 +355,13 @@ class DataLoader:
             {"optimizer": str(xi)} for xi in opt_labels.values.flatten()
         ]
 
-        # OPTIMIZER FEATURES
+        # OPTIMIZER FEATURES: one categorical feature whose vocabulary
+        # is the data's schedule names, in schedule order.
         if feature_processor is None:
             feature_processor_optimizer = FeatureProcessor.init(
-                schema={"optimizer": "categorical"},
-                tags=[{"optimizer": str(xi)} for xi in self.optimizers.values],
+                schema={
+                    "optimizer": [str(xi) for xi in self.optimizers.values]
+                },
             )
         else:
             feature_processor_optimizer = feature_processor

@@ -364,6 +364,45 @@ def test_returns_compatible_dataloader(tmp_path, tasks, steps):
     assert d.data[OUTPUT_MIN].chunks is not None
 
 
+def test_load_databank_to_params(tmp_path, tasks, steps):
+    """The databank loader supports the training pipelines' ``to_params``.
+
+    End-to-end contract the supervised training experiments rely on: a
+    databank selection produces ``OptimizationDynamics`` whose label
+    axis is exactly the selected schedules, NaN-free after ``filter``.
+    Also a regression test for the ``FeatureProcessor`` call sites in
+    ``task_features`` / ``optimizer_features``, which kept passing the
+    pre-refactor ``tags`` kwarg (and the ``"categorical"`` string spec)
+    after the vocabs-only refactor — breaking every ``to_params`` call.
+    """
+    runs = _write_raw_runs(
+        tmp_path / "runs", [(tasks[0], 7), (tasks[1], 13)], steps
+    )
+    _create_zarr(tmp_path, runs)
+    d = load_databank("bbob", steps, tmp_path)
+
+    dynamics = d.to_params(
+        t=0.25,
+        t_end=100,
+        schema={
+            "dimensionality": "continuous",
+            "fn_name": ["sphere", "rastrigin"],
+        },
+    )
+    labels = [str(v) for v in dynamics.y["label"].values]
+    assert sorted(labels) == sorted(s.name for s in steps)
+    # The optimizer vocabulary is the data's schedule names.
+    assert set(dynamics.feature_processor_optimizer.vocabs["optimizer"]) == {
+        s.name for s in steps
+    }
+
+    filtered = dynamics.filter()
+    assert filtered.y.sizes["label"] == len(steps)
+    assert filtered.y.sizes["sample"] > 0
+    assert not np.isnan(np.asarray(filtered.y)).any()
+    assert not np.isnan(np.asarray(filtered.x_history)).any()
+
+
 def test_performance_loader_stays_lazy_and_matches_full(
     tmp_path, tasks, steps
 ):
