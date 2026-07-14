@@ -145,6 +145,14 @@ class OptimizationStep:
     def name(self) -> str:
         """Generate a descriptive name for this optimization step.
 
+        Learned meta-optimizers get compact model-derived names instead
+        of the generic ``{optimizer}_{k=v}`` join, whose path-valued
+        hyperparameters would otherwise leak into every SCHEDULE label,
+        plot legend, and databank key: ``rl2co`` names by its
+        checkpoint stem (``rl2co_10``), ``l2co`` by both stage
+        checkpoint stems plus the stage-0 fraction
+        (``l2co_s0-10_s1-25_t-0.05``).
+
         Returns
         -------
         str
@@ -154,6 +162,20 @@ class OptimizationStep:
             model_path = self.hyperparameters.get("model", "")
             stem = Path(model_path).stem if model_path else ""
             return f"rl2co_{stem}".strip("_")
+
+        elif self.optimizer == "l2co":
+            parts = ["l2co"]
+            for key, prefix in (
+                ("stage0_model", "s0"),
+                ("stage1_model", "s1"),
+            ):
+                path = self.hyperparameters.get(key, "")
+                if path:
+                    parts.append(f"{prefix}-{Path(path).stem}")
+            t = self.hyperparameters.get("t")
+            if t is not None:
+                parts.append(f"t-{t}")
+            return "_".join(parts)
 
         elif self.optimizer.startswith("randomsearch"):
             return "randomsearch"
