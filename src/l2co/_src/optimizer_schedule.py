@@ -85,13 +85,20 @@ class OptimizationStep:
         return {"opt_name": self.name, **self.hyperparameters}
 
     def __hash__(self):
-        """Hash based on :attr:`tag` (optimizer name + hyperparameters).
+        """Hash based on :attr:`tag_hashable` (name + hyperparameters).
 
         Intentionally narrower than the dataclass-generated ``__eq__``,
         which also compares ``stopping_criteria``. The asymmetry is fine:
         Python only requires ``a == b ⇒ hash(a) == hash(b)``.
+
+        Goes through :attr:`tag_hashable` (lists → tuples, dicts →
+        frozensets) because hyperparameters may hold unhashable
+        containers — e.g. an rl2co schedule's
+        ``n_iterations_per_action`` list — and a plain
+        ``tuple(sorted(tag.items()))`` would raise ``TypeError`` the
+        moment such a step is used as a dict key.
         """
-        return hash(tuple(sorted(self.tag.items())))
+        return hash(self.tag_hashable)
 
     @property
     def hash(self) -> int:

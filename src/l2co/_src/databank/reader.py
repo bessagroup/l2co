@@ -29,8 +29,10 @@ from l2co._src.optimizer_schedule import OptimizationStep
 # Local
 from l2co.naming import (
     COST,
+    IN_TRAINING,
     ITERATIONS,
     OPTIMIZATIONSTEP,
+    PROVENANCE,
     SCHEDULE,
     SUCCESS,
     TARGET_VALUE,
@@ -39,6 +41,7 @@ from l2co.naming import (
 )
 
 from . import layout
+from .provenance import parse_provenance
 from .records import loss_preprocess
 from .tasksets import load_taskset
 from .writer import silence_zarr_warnings
@@ -321,7 +324,10 @@ def load_databank(
     """Open a selection and wrap it in a ``DataLoader``.
 
     Thin wrapper over :func:`load_databank_dataset`: drops the
-    ``optimizationstep`` provenance variable and returns
+    per-schedule metadata variables (``optimizationstep``,
+    ``provenance``, ``in_training``) the DataLoader contract does not
+    cover -- read those via :func:`load_databank_dataset`,
+    :func:`load_provenance` or :func:`held_out_task_ids` -- and returns
     ``DataLoader.from_xarray(ds)``. The selection stays **lazy**
     (zarr-backed) -- dask reads only the chunks each downstream
     operation touches; call :meth:`l2co.DataLoader.load` to force the
@@ -340,8 +346,8 @@ def load_databank(
         task_ids=task_ids,
         taskset=taskset,
     )
-    if OPTIMIZATIONSTEP in ds:
-        ds = ds.drop_vars(OPTIMIZATIONSTEP)
+    drop = [v for v in (OPTIMIZATIONSTEP, PROVENANCE, IN_TRAINING) if v in ds]
+    ds = ds.drop_vars(drop)
     return DataLoader.from_xarray(ds)
 
 
@@ -433,3 +439,112 @@ def load_loss_raw(
     if budget_steps is not None:
         ds = loss_preprocess(ds, budget_steps)
     return ds
+
+
+def load_provenance(root: Path, dataset_name: str) -> dict[str, dict]:
+    """Parsed provenance record per policy schedule in a store.
+
+    Static-optimizer schedules (empty provenance) are omitted, as is
+    everything when the store predates the provenance schema, so the
+    result maps exactly the policy schedules to their
+    ``{"training": ..., "evaluation": ...}`` records (see
+    :mod:`l2co._src.databank.provenance`).
+
+    Parameters
+    ----------
+    root : pathlib.Path
+        The databank base directory.
+    dataset_name : str
+        Name of the dataset.
+
+    Returns
+    -------
+    dict[str, dict]
+        ``{schedule name: provenance record}`` for every policy
+        schedule.
+
+    Raises
+    ------
+    FileNotFoundError
+        The store does not exist.
+    """
+    store = layout.zarr_store_path(root, dataset_name)
+    if not store.exists():
+        raise FileNotFoundError(f"No zarr store found at {store}.")
+    with silence_zarr_warnings():
+        ds = xr.open_zarr(store, consolidated=True)
+    out: dict[str, dict] = {}
+    if PROVENANCE in ds:
+        for name, value in zip(
+            ds[SCHEDULE].values, ds[PROVENANCE].values, strict=True
+        ):
+            record = parse_provenance(value)
+            if record is not None:
+                out[str(name)] = record
+    ds.close()
+    return out
+
+
+def held_out_task_ids(
+    root: Path, dataset_name: str, schedule: str
+) -> list[str]:
+    """Task hashes a policy schedule was **not** trained on.
+
+    Reads the store's ``in_training`` mask (materialized at dump time
+    from the artifact's recorded training task hashes) and returns the
+    tasks where it is ``0`` -- the selection to pass as ``task_ids``
+    to :func:`load_databank` / :func:`load_databank_performance` for
+    held-out-only comparisons (e.g. an ERTD of learned vs. static on
+    unseen tasks).
+
+    Parameters
+    ----------
+    root : pathlib.Path
+        The databank base directory.
+    dataset_name : str
+        Name of the dataset.
+    schedule : str
+        Name of the policy schedule.
+
+    Returns
+    -------
+    list[str]
+        Held-out task hashes, in store order.
+
+    Raises
+    ------
+    FileNotFoundError
+        The store does not exist.
+    ValueError
+        The schedule is absent, is not a policy schedule (static
+        optimizers have no training set), or the store predates the
+        provenance schema.
+    """
+    store = layout.zarr_store_path(root, dataset_name)
+    if not store.exists():
+        raise FileNotFoundError(f"No zarr store found at {store}.")
+    with silence_zarr_warnings():
+        ds = xr.open_zarr(store, consolidated=True)
+    try:
+        if IN_TRAINING not in ds:
+            raise ValueError(
+                f"Store {store} has no '{IN_TRAINING}' variable (written "
+                "before the provenance schema); re-dump the policy runs."
+            )
+        if schedule not in [str(s) for s in ds[SCHEDULE].values]:
+            raise ValueError(
+                f"Schedule '{schedule}' is not present in {store}."
+            )
+        mask = ds[IN_TRAINING].sel({SCHEDULE: schedule}).load()
+        if mask.isnull().all():
+            raise ValueError(
+                f"Schedule '{schedule}' carries no in-training mask "
+                "(static optimizers have no training set)."
+            )
+        return [
+            str(t)
+            for t, v in zip(ds[TASK_ID].values, mask.values, strict=True)
+            if v == 0.0
+        ]
+    finally:
+        ds.close()

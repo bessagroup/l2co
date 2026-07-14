@@ -73,16 +73,16 @@ wheels = [
 
 [[package]]
 name = "bbob-jax"
-version = "1.6.5"
+version = "1.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jax" },
     { name = "jaxtyping" },
     { name = "softjax" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/84/f0/e0d7ab1de7c4c2207718cfa44ee876224e1721e1bc21e753c600514e96fd/bbob_jax-1.6.5.tar.gz", hash = "sha256:992496b96b9389f672ae1fe187f52022902afc6ccfe8f6da4d5dae9590aa2d39", size = 36357, upload-time = "2026-05-22T08:23:49.423Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7a/23/497f04ae346d51ccd1db104d9c2c4b937ddcede3a7bae3b018550a22546c/bbob_jax-1.8.0.tar.gz", hash = "sha256:88666095aa7593b435976fcf6bc741ba5bc38c3a92d2becbe373d13b5834bf02", size = 60759, upload-time = "2026-07-10T13:25:21.048Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/13/5a/e3ea144808120f0a97bc692b43f2035a7dd07aeed3881fa00a299724e2d5/bbob_jax-1.6.5-py3-none-any.whl", hash = "sha256:48ef2ff563f0f940d723a7df47878df4dbc0dd09512b72a80fa554165ff25dbc", size = 32340, upload-time = "2026-05-22T08:23:47.812Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/74/9273ff967bbf8bd2583e87598e052797178dd8adf59c0467c01be621edd0/bbob_jax-1.8.0-py3-none-any.whl", hash = "sha256:db20ce307867ed3de40443895c087b62c8d2e083d429099db0fb4feb44c0bd43", size = 54366, upload-time = "2026-07-10T13:25:19.951Z" },
 ]
 
 [[package]]
@@ -1308,7 +1308,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bbob-jax", specifier = ">=1.6.4" },
+    { name = "bbob-jax", specifier = ">=1.8.0" },
     { name = "build", marker = "extra == 'dev'" },
     { name = "cloudpickle", specifier = ">=3.1.1" },
     { name = "equinox", specifier = ">=0.13.0" },

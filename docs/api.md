@@ -97,6 +97,46 @@ reference in `src/l2co/_src/databank/README.md`). Exposed under the
 
 ::: l2co.databank.VerificationFinding
 
+### Policy-artifact provenance
+
+Learned optimizers (rl2co / l2co policies) enter the databank as regular
+schedules carrying a provenance record that identifies the evaluated
+*policy artifact* (one checkpoint of one training run). Training code
+writes a manifest next to every checkpoint; evaluation loads it (a
+checkpoint without one is not admissible) and attaches the assembled
+record to the loss history. See the design record in
+`docs/adr/0001-policy-artifact-provenance-manifest.md`.
+
+::: l2co.databank.mint_run_id
+
+::: l2co.databank.write_manifest
+
+::: l2co.databank.bump_manifest
+
+::: l2co.databank.load_manifest
+
+::: l2co.databank.manifest_path
+
+::: l2co.databank.weights_hash
+
+::: l2co.databank.provenance_record
+
+::: l2co.databank.record_weights_hash
+
+::: l2co.databank.record_task_hashes
+
+::: l2co.databank.policy_identity_hash
+
+::: l2co.databank.load_provenance
+
+::: l2co.databank.held_out_task_ids
+
+::: l2co.databank.policy_artifacts_root
+
+::: l2co.databank.MissingManifestError
+
+::: l2co.databank.WeightsHashMismatchError
+
 ## Sampling
 
 ::: l2co.sampling

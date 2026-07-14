@@ -11,13 +11,17 @@ filesystems where opening thousands of HDF5 files is expensive.
 <root>/<dataset_name>/loss_history_raw/           # per-pair raw netCDF
     loss_<taskID>_<optimizer_hash>.nc
 <root>/<dataset_name>/tasksets/<name>.txt         # named task selections
+<root>/<dataset_name>/policy_artifacts/<schedule>/  # archived policy artifacts
+    <checkpoint files> + <stem>.manifest.json + provenance.json
 ```
 
 `<root>` is the databank base directory supplied by the caller (the application
 resolves it from its own config, e.g. a per-cluster `databank_root` key — the
 library holds no machine paths). `<taskID>` is
 `l2co_tasks.Task.hash` (a 16-hex string); `<optimizer_hash>` is
-`l2co.OptimizationStep.hash` (`int(sha256(...)[:6], 16)`). The **human-readable
+`l2co.OptimizationStep.hash` (`int(sha256(...)[:6], 16)`) for static
+optimizers and `policy_identity_hash` (weights hash + evaluation settings,
+never file paths) for policy schedules. The **human-readable
 optimizer name** (`OptimizationStep.name`) is the `schedule` coordinate of the
 store; the integer hash is used only in the raw sidecar filenames.
 
@@ -60,10 +64,46 @@ exploding into one-file-per-record.
 | `task_labels` | `(taskID, feature)` | str |
 | `target_value` | `(taskID, target)` | float |
 | `optimizationstep` | `(schedule,)` | str (JSON recipe; dropped by the loader) |
+| `provenance` | `(schedule,)` | str (JSON policy-artifact record; `""` for static optimizers; dropped by the loader) |
+| `in_training` | `(taskID, schedule)` | float (1/0 for policy schedules, NaN for static; dropped by the loader) |
 
 `metric` coord is `["fevals", "iterations"]`. `target` is an integer index; the
 target *values* live in `target_value`. `task_labels` carries the task tag plus
 `global_min` (one `feature` per key).
+
+## Policy artifacts & provenance
+
+Learned optimizers (rl2co / l2co policies) enter the store as regular
+schedules — **format-identical arrays** — identified by a *policy artifact*:
+one checkpoint of one training run. The contract (design record:
+`docs/adr/0001-policy-artifact-provenance-manifest.md`):
+
+- **Training** writes a *manifest* next to every checkpoint
+  (`mint_run_id` + `write_manifest`, or `bump_manifest` for in-place
+  overwriting trainers): run id, step, full resolved config, git SHAs,
+  weights hash, and the **explicit training task-hash list** (task hashes
+  are cloudpickle-derived and not stable across versions — record them
+  eagerly). A checkpoint without a manifest is **not admissible**; there is
+  no backfill and no bypass flag.
+- **Evaluation** loads the manifest (`load_manifest` — fails fast on a
+  missing manifest or overwritten weights), assembles a record
+  (`provenance_record`, with a `components` map for composites like the
+  L2CO stage-0 + stage-1 pair) and attaches it to the loss-history dataset
+  as the `l2co.naming.PROVENANCE` attribute.
+- **The writer** stores the record in the `provenance` variable (a policy
+  schedule without one is refused — the backstop), materializes
+  `in_training` from the record's task hashes, archives the artifact files
+  listed under `evaluation.artifacts` into `policy_artifacts/<schedule>/`
+  (training dirs live on purged scratch; the dataset stays
+  self-sufficient), and enforces **alias consistency**: a schedule name may
+  only ever refer to one artifact (compared by combined weights hash).
+- **Switching sequence**: no extra variable — `update_step` already stamps
+  the active optimizer's `OptimizationStep.hash` per iteration (static
+  optimizers are constant at their own hash).
+
+Read back with `load_provenance` (parsed records per policy schedule) and
+`held_out_task_ids` (tasks a policy was *not* trained on — pass as
+`task_ids` for held-out-only ERTD comparisons).
 
 ## Writing
 
@@ -92,7 +132,8 @@ safe to parallelise; resizing and `consolidate_metadata` are single-writer.
 tasks/optimizers (optimizers given as `OptimizationStep`, schedule-name strings,
 or integer hashes), and returns the lazy selection — no per-pair resampling,
 since `loss_history` is already on the `BUDGET_STEPS` grid. `load_databank`
-drops `optimizationstep` and returns a lazy `DataLoader` (dask reads only the
+drops the per-schedule metadata variables (`optimizationstep`, `provenance`,
+`in_training`) and returns a lazy `DataLoader` (dask reads only the
 chunks each operation touches; call `.load()` to force it all into memory).
 `load_databank_performance` keeps only the performance variables, so the large
 loss chunks are never read (use it for ERTD reporting). `load_loss_raw` reaches
