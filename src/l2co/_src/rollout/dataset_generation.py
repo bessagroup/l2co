@@ -19,6 +19,8 @@ from f3dasm import ExperimentSample
 from f3dasm.datageneration import DataGenerator
 from l2co_tasks import Task
 
+from l2co._src.databank.provenance import dumps_provenance
+from l2co._src.naming import PROVENANCE
 from l2co._src.optimizer_schedule import OptimizationStep
 
 from .rollout_wrapper import RolloutWrapper
@@ -158,6 +160,7 @@ class RunOptimization(DataGenerator):
         experiment_sample: ExperimentSample,
         task: Task,
         optimizer: OptimizationStep,
+        provenance: dict | None = None,
     ) -> ExperimentSample:
         """
         Run the optimization process with specified configuration.
@@ -175,6 +178,15 @@ class RunOptimization(DataGenerator):
         optimizer : OptimizationStep
             The optimization step configuration containing optimizer type and
             hyperparameters.
+        provenance : dict | None, optional
+            Policy-artifact provenance record (see
+            :func:`l2co.databank.provenance_record`), attached to the
+            stored loss history as the ``l2co.naming.PROVENANCE``
+            attribute so it travels into the databank. Only meaningful
+            for learned optimizers (e.g. ``"l2co"``, which runs through
+            this generic path via the optimizer registry — see
+            ``docs/adr/0002``). ``None`` (the default) attaches
+            nothing — such a run is not admissible to the databank.
 
         Returns
         -------
@@ -210,6 +222,9 @@ class RunOptimization(DataGenerator):
         )
 
         data_xarr = history_state.to_xarray_realizations()
+
+        if provenance is not None:
+            data_xarr.attrs[PROVENANCE] = dumps_provenance(provenance)
 
         experiment_sample.store(
             name="loss history", object=data_xarr, to_disk=True
