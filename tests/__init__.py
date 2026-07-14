@@ -43,9 +43,18 @@ def _default_hyperparameters(name: str) -> dict:
     return {}
 
 
+# Registry entries that cannot be constructed bare: "l2co" is a
+# meta-optimizer whose hyperparameters must name trained artifacts
+# (stage0_model, stage1_model, t, sampler, budget_fn), so a
+# default-hyperparameter step has no meaning. Its registry path is
+# covered end-to-end — with real fixture checkpoints — in
+# tests/integration/test_strategy_wrapper_rollout.py.
+_ARTIFACT_BACKED = {"l2co"}
+
 ALL_OPTIMIZERS = [
     OptimizationStep(
         optimizer=name, hyperparameters=_default_hyperparameters(name)
     )
     for name in optimizers.keys()
+    if name not in _ARTIFACT_BACKED
 ]
