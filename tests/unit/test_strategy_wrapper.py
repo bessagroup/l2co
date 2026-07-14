@@ -200,6 +200,21 @@ class TestConstruction:
             expected = model.predict_stage0(task_features=task.tag)
             assert strategy.stage0_idx == MENU.index(expected) == idx
 
+    def test_swapped_model_constructs(self):
+        # The explicit swap_optimizers list of the "l2co" registry
+        # path goes through L2COModel.swap_optimizers, which relies on
+        # FeatureProcessor.swap_names (restored after being lost in
+        # the module-structure refactor).
+        model = _make_model(0, 0).swap_optimizers(list(MENU))
+        strategy = l2co_population_strategy(
+            model=model,
+            task=_task(),
+            sampler=normal_sampling,
+            t=T,
+            max_iterations=MAX_ITERATIONS,
+        )
+        assert strategy.population_size >= 1
+
     def test_requires_global_min(self):
         from l2co_tasks import Task
 
