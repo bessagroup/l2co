@@ -362,12 +362,12 @@ def test_create_stores_provenance_and_in_training(tmp_path, tasks):
     # in_training: NaN for static, 1/0 per task for the policy.
     it = ds[IN_TRAINING].load()
     assert it.sel({SCHEDULE: static.name}).isnull().all()
-    assert float(
-        it.sel({SCHEDULE: policy.name, TASK_ID: tasks[0].hash})
-    ) == 1.0
-    assert float(
-        it.sel({SCHEDULE: policy.name, TASK_ID: tasks[1].hash})
-    ) == 0.0
+    assert (
+        float(it.sel({SCHEDULE: policy.name, TASK_ID: tasks[0].hash})) == 1.0
+    )
+    assert (
+        float(it.sel({SCHEDULE: policy.name, TASK_ID: tasks[1].hash})) == 0.0
+    )
     # The dump reports exactly the policy schedules for archiving.
     assert set(provs) == {policy.name}
     ds.close()
@@ -467,12 +467,12 @@ def test_append_new_task_keeps_provenance(tmp_path, tasks):
     ds = xr.open_zarr(store, consolidated=True)
     it = ds[IN_TRAINING].load()
     # ... and the mask is recomputed over the union of tasks.
-    assert float(
-        it.sel({SCHEDULE: policy.name, TASK_ID: tasks[0].hash})
-    ) == 1.0
-    assert float(
-        it.sel({SCHEDULE: policy.name, TASK_ID: tasks[1].hash})
-    ) == 0.0
+    assert (
+        float(it.sel({SCHEDULE: policy.name, TASK_ID: tasks[0].hash})) == 1.0
+    )
+    assert (
+        float(it.sel({SCHEDULE: policy.name, TASK_ID: tasks[1].hash})) == 0.0
+    )
     stored = parse_provenance(
         str(ds[PROVENANCE].sel({SCHEDULE: policy.name}).values)
     )
@@ -549,9 +549,7 @@ def test_load_provenance_maps_policy_schedules_only(tmp_path, tasks):
 
 def test_held_out_task_ids(tmp_path, tasks):
     _, static, policy, _ = _mixed_store(tmp_path, tasks)
-    assert held_out_task_ids(tmp_path, "bbob", policy.name) == [
-        tasks[1].hash
-    ]
+    assert held_out_task_ids(tmp_path, "bbob", policy.name) == [tasks[1].hash]
     with pytest.raises(ValueError, match="no training set"):
         held_out_task_ids(tmp_path, "bbob", static.name)
     with pytest.raises(ValueError, match="not present"):
