@@ -15,7 +15,6 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jax.tree_util import Partial
 from jax_tqdm import scan_tqdm
 from jaxtyping import Array, Float, PRNGKeyArray, PyTree
 
@@ -166,6 +165,69 @@ batch_step_ = eqx.filter_vmap(
 # =============================================================================
 
 
+def _reduce_entry(
+    entry: OptHistory,
+) -> tuple[tuple[Array, ...], PyTree, Array]:
+    """Reduce one per-step ``OptHistory`` to the fields a run needs.
+
+    Returns ``(stats, step_best_params, step_best_loss)`` where ``stats``
+    is ``(output_min, output_mean, output_std, update_step, fevals,
+    iterations)`` for this single generation -- the same NaN-aware
+    reductions :meth:`HistoryState.from_history` computes over the
+    ``popsize`` axis, applied per step so the full ``(n_iter, popsize,
+    dim)`` population/gradient trajectory never has to be stacked as scan
+    output. ``step_best_params`` / ``step_best_loss`` are the best
+    (lowest-loss) member of this generation, threaded through the scan
+    carry to maintain a running best in place of a post-hoc
+    ``OptHistory.retrieve_best`` over the stacked trajectory.
+
+    Operates on an unbatched entry (``loss`` shape ``(popsize,)``); the
+    batched driver vmaps it over the realization axis.
+    """
+    loss = entry.loss
+    output_min = jnp.nanmin(loss)
+    stats = (
+        output_min,
+        jnp.nanmean(loss),
+        jnp.nanstd(loss),
+        entry.update_step,
+        entry.fevals,
+        entry.iterations,
+    )
+    # NaN-safe argmin: NaN slots (padding / skipped steps) are pushed to
+    # +inf so they are never selected, matching ``jnp.nanargmin`` on the
+    # flattened trajectory used by ``OptHistory.retrieve_best``.
+    safe = jnp.where(jnp.isnan(loss), jnp.inf, loss)
+    best_idx = jnp.argmin(safe)
+    step_best_params = jax.tree.map(lambda p: p[best_idx], entry.params)
+    return stats, step_best_params, output_min
+
+
+def _update_best(
+    best_params: PyTree,
+    best_loss: Array,
+    cand_params: PyTree,
+    cand_loss: Array,
+) -> tuple[PyTree, Array]:
+    """Keep the lower-loss of the running best and a new candidate.
+
+    Strict ``<`` so the *earliest* generation wins ties, matching the
+    row-major first-occurrence of ``jnp.nanargmin`` over the flattened
+    trajectory. A ``NaN`` candidate loss compares ``False`` and leaves the
+    running best untouched. Unbatched (scalar ``cand_loss``); the batched
+    driver vmaps it over the realization axis.
+    """
+    take = cand_loss < best_loss
+    best_loss = jnp.where(take, cand_loss, best_loss)
+    best_params = jax.tree.map(
+        lambda c, b: jnp.where(take, c, b), cand_params, best_params
+    )
+    return best_params, best_loss
+
+
+# =============================================================================
+
+
 def run_(
     update_class: UpdateClass,
     opt_state: PyTree,
@@ -220,40 +282,65 @@ def run_(
     # Run the optimization loop
     n = n_iterations + 1
 
-    scan_step = Partial(
-        step,
-        update_class=update_class,
-        dataset=dataset,
+    # Reduce each generation in place (``_reduce_entry``) instead of
+    # stacking the full ``(n, popsize, dim)`` population/gradient
+    # trajectory as scan output and reducing afterwards: the trajectory
+    # stays out of the scan output, so peak memory no longer scales with
+    # ``dim`` or ``popsize``. The running best and the last evaluated
+    # population ride in the carry. ``params[0]`` seeds the running best
+    # with a correctly shaped/typed member (overwritten on the first,
+    # always-executed step); ``best_loss`` is +inf in the loss dtype so
+    # the carry type is stable across the scan.
+    float_dtype = jax.tree.leaves(params)[0].dtype
+    best_params_init = jax.tree.map(lambda p: p[0], params)
+    best_loss_init = jnp.array(jnp.inf, dtype=float_dtype)
+    eval_params_init = jax.tree.map(
+        lambda p: jnp.full_like(p, jnp.nan), params
     )
+
+    def scan_step(carry_ext, xs):
+        carry, best_params, best_loss, _eval = carry_ext
+        new_carry, entry = step(carry, xs, update_class, dataset)
+        stats, cand_params, cand_loss = _reduce_entry(entry)
+        best_params, best_loss = _update_best(
+            best_params, best_loss, cand_params, cand_loss
+        )
+        # ``entry.params`` is the evaluated population (``input_params``,
+        # NaN on skipped steps) -- what the legacy path returned as
+        # ``final_params`` via ``history.params[-1]``. Thread it forward so
+        # the last step's value survives without stacking the trajectory.
+        return (new_carry, best_params, best_loss, entry.params), stats
 
     scan_fn = scan_tqdm(n)(scan_step) if verbose else scan_step
 
-    (_, opt_state, _, batch_state, _, _), history = jax.lax.scan(
+    init_carry = (
+        params,
+        opt_state,
+        key,
+        batch_state,
+        init_done,
+        recent_history_init,
+    )
+    final_ext, stats = jax.lax.scan(
         f=scan_fn,
         init=(
-            params,
-            opt_state,
-            key,
-            batch_state,
-            init_done,
-            recent_history_init,
+            init_carry,
+            best_params_init,
+            best_loss_init,
+            eval_params_init,
         ),
         xs=jnp.arange(n),
         length=n,
     )
 
-    best_params, best_loss = history.flatten().retrieve_best()
+    (_, opt_state, _, batch_state, _, _), best_params, best_loss, params = (
+        final_ext
+    )
 
-    # Remove first element for dim=0 history
-    ## TODO: If I don't do this, the history has the first element
-    # Is this a problem? Because for switching it is useful to have it for
-    # the first choice...
-    history: OptHistory = jax.tree.map(lambda x: x[1:], history)
-
-    params = jax.tree.map(lambda x: x[-1], history.params)
-
-    # Create history state
-    new_history_state = HistoryState.from_history(history)
+    # Drop the leading sentinel iteration (parity with the legacy
+    # ``history[1:]`` slice) before assembling the reduced HistoryState.
+    stats = tuple(s[1:] for s in stats)
+    new_history_state = HistoryState.from_reduced(*stats)
 
     return (
         params,
@@ -345,47 +432,62 @@ def batch_run_(
 
     n = n_iterations + 1
 
-    def scan_step(carry: Carry, xs):
-        return batch_step_(carry, xs, update_class, dataset)
+    # Per-realization running-best / last-evaluated-population seeds; see
+    # ``run_`` for the reduce-in-scan rationale. ``params[:, 0]`` seeds one
+    # correctly-shaped best member per realization; ``best_loss`` is +inf
+    # in the loss dtype so the carry type is stable across the scan.
+    float_dtype = jax.tree.leaves(params)[0].dtype
+    best_params_init = jax.tree.map(lambda p: p[:, 0], params)
+    best_loss_init = jnp.full((n_realizations,), jnp.inf, dtype=float_dtype)
+    eval_params_init = jax.tree.map(
+        lambda p: jnp.full_like(p, jnp.nan), params
+    )
+
+    reduce_batch = jax.vmap(_reduce_entry)
+    update_best_batch = jax.vmap(_update_best)
+
+    def scan_step(carry_ext, xs):
+        carry, best_params, best_loss, _eval = carry_ext
+        new_carry, entry = batch_step_(carry, xs, update_class, dataset)
+        stats, cand_params, cand_loss = reduce_batch(entry)
+        best_params, best_loss = update_best_batch(
+            best_params, best_loss, cand_params, cand_loss
+        )
+        return (new_carry, best_params, best_loss, entry.params), stats
 
     scan_fn = scan_tqdm(n)(scan_step) if verbose else scan_step
 
-    (_, opt_state, _, batch_state, _, _), history = jax.lax.scan(
+    init_carry = (
+        params,
+        opt_state,
+        key,
+        batch_state,
+        init_done,
+        recent_history_init,
+    )
+    final_ext, stats = jax.lax.scan(
         f=scan_fn,
         init=(
-            params,
-            opt_state,
-            key,
-            batch_state,
-            init_done,
-            recent_history_init,
+            init_carry,
+            best_params_init,
+            best_loss_init,
+            eval_params_init,
         ),
         xs=jnp.arange(n),
         length=n,
     )
 
-    # ``history`` leaves come out with shape (n_iter, n_realizations, ...);
-    # swap so realization is leading and per-realization helpers see the
-    # canonical (n_iter, ...) layout they were written against.
-    history: OptHistory = jax.tree.map(
-        lambda x: jnp.swapaxes(x, 0, 1), history
+    (_, opt_state, _, batch_state, _, _), best_params, best_loss, params = (
+        final_ext
     )
 
-    def _finalize(
-        h: OptHistory,
-    ) -> tuple[
-        InputParameters, InputParameters, Array[Float, ""], HistoryState
-    ]:
-        best_params, best_loss = h.flatten().retrieve_best()
-        # Drop the leading sentinel iteration from ``n_iterations + 1``.
-        h = jax.tree.map(lambda x: x[1:], h)
-        final_params = jax.tree.map(lambda x: x[-1], h.params)
-        history_state = HistoryState.from_history(h)
-        return final_params, best_params, best_loss, history_state
-
-    params, best_params, best_loss, new_history_state = eqx.filter_vmap(
-        _finalize
-    )(history)
+    # ``stats`` leaves are (n_iter, n_realizations); drop the leading
+    # sentinel iteration and move realization to the front so
+    # ``from_reduced`` (vmapped over realizations) sees canonical
+    # (n_iter,) fields. This transpose is on scalar-per-step arrays, not
+    # the (n, popsize, dim) trajectory the legacy swapaxes copied.
+    stats = tuple(jnp.swapaxes(s[1:], 0, 1) for s in stats)
+    new_history_state = jax.vmap(HistoryState.from_reduced)(*stats)
 
     return (
         params,
@@ -484,32 +586,35 @@ def run_randomsearch(
     else:
         losses = vmapped_loss(combined, update_class.loss_fn, sample)
 
-    # Reshape to (n_iter, popsize, ...) for OptHistory.
+    # Reduce the flat candidate losses per logical iteration directly into
+    # the HistoryState. Building an intermediate ``(n_iter, popsize, dim)``
+    # ``OptHistory`` -- and, worse, an all-NaN ``grads`` array of the same
+    # shape -- only to collapse it via ``from_history`` wastes memory that
+    # scales with ``dim``; random-search candidates carry no NaN padding,
+    # so the per-iteration ``nanmin/nanmean/nanstd`` match ``from_history``
+    # exactly.
     losses_2d = losses.reshape(n_iterations, update_class.popsize)
-    params_2d = jax.tree.map(
-        lambda x: x.reshape(n_iterations, update_class.popsize, *x.shape[1:]),
-        candidates,
+    history_state = HistoryState.from_reduced(
+        jnp.nanmin(losses_2d, axis=1),
+        jnp.nanmean(losses_2d, axis=1),
+        jnp.nanstd(losses_2d, axis=1),
+        jnp.full((n_iterations,), update_class.hash, dtype=int),
+        jnp.full((n_iterations,), update_class.popsize, dtype=int),
+        jnp.ones((n_iterations,), dtype=int),
     )
-    grads_2d = jax.tree.map(lambda p: jnp.full_like(p, jnp.nan), params_2d)
-
-    history = OptHistory(
-        loss=losses_2d,
-        params=params_2d,
-        grads=grads_2d,
-        update_step=jnp.full((n_iterations,), update_class.hash, dtype=int),
-        fevals=jnp.full((n_iterations,), update_class.popsize, dtype=int),
-        iterations=jnp.ones((n_iterations,), dtype=int),
-    )
-    history_state = HistoryState.from_history(history)
 
     # Global best across the full flat candidate set.
     best_idx = jnp.argmin(losses)
     best_params = jax.tree.map(lambda x: x[best_idx], candidates)
     best_loss = losses[best_idx]
 
-    # "Current population" returned to RunState -- last iteration's
-    # popsize candidates, matching run_'s contract.
-    final_params = jax.tree.map(lambda x: x[-1], params_2d)
+    # "Current population" returned to RunState -- the last logical
+    # iteration's ``popsize`` candidates (candidates are laid out
+    # iteration-major, so this is the final ``popsize`` rows), matching
+    # ``run_``'s contract and the previous ``params_2d[-1]``.
+    final_params = jax.tree.map(
+        lambda x: x[-update_class.popsize :], candidates
+    )
 
     return (
         final_params,
