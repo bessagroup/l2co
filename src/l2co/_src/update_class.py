@@ -502,6 +502,31 @@ def batch_run_(
 # =============================================================================
 
 
+# Target number of candidates per random-search chunk. Peak memory for a
+# chunk is roughly this many rows times the parameter dimension, times a
+# small constant for the RNG generation. ~1e5 keeps a 1024-dim chunk well
+# under 1 GiB while staying large enough that the per-chunk vectorised
+# evaluation is efficient.
+_RS_CHUNK_TARGET_CANDIDATES = 100_000
+
+
+def _rs_chunking(n_iterations: int, popsize: int) -> tuple[int, int]:
+    """Pick ``(n_chunks, chunk_iters)`` for chunked random search.
+
+    Splits the ``n_iterations`` logical iterations into ``n_chunks``
+    balanced chunks of ``chunk_iters`` iterations each such that a chunk
+    holds about :data:`_RS_CHUNK_TARGET_CANDIDATES` candidates. Both
+    values are static (``n_iterations``/``popsize`` are Python ints), so
+    they fix shapes at trace time. ``n_chunks * chunk_iters`` may slightly
+    exceed ``n_iterations`` (by fewer than ``n_chunks`` iterations); the
+    caller masks/drops that padding.
+    """
+    target_iters = max(1, _RS_CHUNK_TARGET_CANDIDATES // max(popsize, 1))
+    n_chunks = max(1, -(-n_iterations // target_iters))  # ceil div
+    chunk_iters = -(-n_iterations // n_chunks)  # ceil div -> balanced
+    return n_chunks, chunk_iters
+
+
 def run_randomsearch(
     update_class: UpdateClass,
     opt_state: PyTree,
@@ -519,18 +544,25 @@ def run_randomsearch(
     BatchState,
     HistoryState,
 ]:
-    """Run random search by evaluating all candidates in one batched call.
+    """Run random search over the candidate set, one chunk per scan step.
 
-    The entire ``n_iterations * popsize`` candidate set is drawn from
-    ``update_class.sampling_fn``, clipped to ``update_class.bounded``,
-    and evaluated in parallel via :func:`vmapped_loss` (or
-    :func:`vmapped_loss_with_rng` for stochastic losses). The flat loss
-    vector is reshaped into ``(n_iterations, popsize, ...)`` so the
-    downstream :class:`HistoryState` reduction yields one
-    ``output_min/mean/std`` value per logical iteration. The scan-loop
-    machinery used by :func:`run_` is bypassed -- random-search
-    candidates are independent and gain nothing from sequential
-    iteration.
+    Random search draws ``n_iterations * popsize`` independent candidates
+    from ``update_class.sampling_fn``, evaluates them via
+    :func:`vmapped_loss` (or :func:`vmapped_loss_with_rng` for stochastic
+    losses), and reports one ``output_min/mean/std`` per logical iteration
+    plus the global best. Rather than materialise and evaluate the whole
+    set at once -- which peaks at several times its own size (``jax.random``
+    uniform generation alone spikes to ~4x the result while producing
+    threefry bits), the cause of out-of-memory failures on
+    high-dimensional tasks -- the candidates are processed in chunks of
+    :func:`_rs_chunking` iterations under a :func:`jax.lax.scan`. Each
+    chunk's candidate array is transient (not part of the scan carry) and
+    freed before the next step, so peak memory is
+    ``O(chunk_iters * popsize * dim)`` independent of the total budget.
+    The scan-loop machinery of :func:`run_` is still bypassed within a
+    chunk: candidates are independent and evaluated in one vectorised
+    call. Per-iteration reductions and the global best are identical to a
+    single-shot evaluation of the same per-chunk draws.
 
     Parameters
     ----------
@@ -562,59 +594,109 @@ def run_randomsearch(
         batch_state, history_state)`` matching :func:`run_`.
     """
     del params, verbose
-    total = n_iterations * update_class.popsize
+    popsize = update_class.popsize
+    n_chunks, chunk_iters = _rs_chunking(n_iterations, popsize)
+    padded_iters = n_chunks * chunk_iters  # >= n_iterations
+    chunk_size = chunk_iters * popsize
 
     batch_key, sample_key, loss_key = jr.split(key, 3)
-    loss_keys = jr.split(loss_key, total)
 
     # One batch reused for all evaluations.
     batch_idxs, batch_state = batch_state.next(batch_key)
     sample = jax.tree.map(lambda x: x[batch_idxs], dataset)
 
-    # Flat candidate set.
-    candidates = update_class.sampling_fn(sample_key, total)
-    candidates = jax.tree.map(
-        lambda p: jnp.clip(p, *update_class.bounded), candidates
+    # Independent per-chunk sampling / loss keys.
+    sample_keys = jr.split(sample_key, n_chunks)
+    loss_keys = jr.split(loss_key, n_chunks)
+
+    # ``bounded`` is a static field, so this is resolved at trace time.
+    # With ``(None, None)`` -- the default for the random-search baseline
+    # -- ``jnp.clip`` is a no-op that still allocates a full copy of the
+    # chunk, so skip it unless a finite bound is actually set.
+    lo, hi = update_class.bounded
+    do_clip = lo is not None or hi is not None
+
+    def _chunk(carry, xs):
+        c_idx, s_key, l_key = xs
+
+        candidates = update_class.sampling_fn(s_key, chunk_size)
+        if do_clip:
+            candidates = jax.tree.map(
+                lambda p: jnp.clip(p, lo, hi), candidates
+            )
+        combined = eqx.combine(candidates, update_class.static_model)
+        if update_class.pass_rng:
+            losses = vmapped_loss_with_rng(
+                combined,
+                update_class.loss_fn,
+                sample,
+                jr.split(l_key, chunk_size),
+            )
+        else:
+            losses = vmapped_loss(combined, update_class.loss_fn, sample)
+
+        # Mask candidates in padded (out-of-range) iterations so they can
+        # neither win the global best nor pollute the trajectory.
+        valid_iter = (
+            c_idx * chunk_iters + jnp.arange(chunk_iters)
+        ) < n_iterations
+        valid_cand = jnp.repeat(valid_iter, popsize)
+        masked = jnp.where(valid_cand, losses, jnp.inf)
+
+        # Per-chunk best (``argmin`` keeps the earliest candidate on ties).
+        best_idx = jnp.argmin(masked)
+        chunk_best_loss = masked[best_idx]
+        chunk_best_params = jax.tree.map(lambda x: x[best_idx], candidates)
+
+        losses_2d = losses.reshape(chunk_iters, popsize)
+
+        # Population at this chunk's last in-range iteration. Only the
+        # final chunk's value is used downstream, giving the last logical
+        # iteration's ``popsize`` block (matches ``candidates[-popsize:]``
+        # of the previous one-shot implementation).
+        last_valid_local = jnp.clip(
+            n_iterations - 1 - c_idx * chunk_iters, 0, chunk_iters - 1
+        )
+        last_pop = jax.tree.map(
+            lambda x: jax.lax.dynamic_slice_in_dim(
+                x, last_valid_local * popsize, popsize, axis=0
+            ),
+            candidates,
+        )
+        return carry, (losses_2d, last_pop, chunk_best_loss, chunk_best_params)
+
+    _, (losses_2d_all, last_pops, chunk_best_losses, chunk_best_params) = (
+        jax.lax.scan(
+            _chunk,
+            (),
+            (jnp.arange(n_chunks), sample_keys, loss_keys),
+        )
     )
 
-    # Parallel evaluation.
-    combined = eqx.combine(candidates, update_class.static_model)
-    if update_class.pass_rng:
-        losses = vmapped_loss_with_rng(
-            combined, update_class.loss_fn, sample, loss_keys
-        )
-    else:
-        losses = vmapped_loss(combined, update_class.loss_fn, sample)
-
     # Reduce the flat candidate losses per logical iteration directly into
-    # the HistoryState. Building an intermediate ``(n_iter, popsize, dim)``
-    # ``OptHistory`` -- and, worse, an all-NaN ``grads`` array of the same
-    # shape -- only to collapse it via ``from_history`` wastes memory that
-    # scales with ``dim``; random-search candidates carry no NaN padding,
-    # so the per-iteration ``nanmin/nanmean/nanstd`` match ``from_history``
-    # exactly.
-    losses_2d = losses.reshape(n_iterations, update_class.popsize)
+    # the HistoryState (dropping the padded tail). Building an intermediate
+    # ``(n_iter, popsize, dim)`` ``OptHistory`` -- and an all-NaN ``grads``
+    # array of the same shape -- only to collapse it via ``from_history``
+    # wastes memory scaling with ``dim``; random-search candidates carry no
+    # NaN padding, so per-iteration ``nanmin/nanmean/nanstd`` match exactly.
+    losses_2d = losses_2d_all.reshape(padded_iters, popsize)[:n_iterations]
     history_state = HistoryState.from_reduced(
         jnp.nanmin(losses_2d, axis=1),
         jnp.nanmean(losses_2d, axis=1),
         jnp.nanstd(losses_2d, axis=1),
         jnp.full((n_iterations,), update_class.hash, dtype=int),
-        jnp.full((n_iterations,), update_class.popsize, dtype=int),
+        jnp.full((n_iterations,), popsize, dtype=int),
         jnp.ones((n_iterations,), dtype=int),
     )
 
-    # Global best across the full flat candidate set.
-    best_idx = jnp.argmin(losses)
-    best_params = jax.tree.map(lambda x: x[best_idx], candidates)
-    best_loss = losses[best_idx]
+    # Global best across all chunks (earliest chunk wins ties).
+    best_chunk = jnp.argmin(chunk_best_losses)
+    best_loss = chunk_best_losses[best_chunk]
+    best_params = jax.tree.map(lambda x: x[best_chunk], chunk_best_params)
 
     # "Current population" returned to RunState -- the last logical
-    # iteration's ``popsize`` candidates (candidates are laid out
-    # iteration-major, so this is the final ``popsize`` rows), matching
-    # ``run_``'s contract and the previous ``params_2d[-1]``.
-    final_params = jax.tree.map(
-        lambda x: x[-update_class.popsize :], candidates
-    )
+    # iteration's ``popsize`` candidates, matching ``run_``'s contract.
+    final_params = jax.tree.map(lambda x: x[-1], last_pops)
 
     return (
         final_params,
@@ -645,17 +727,29 @@ def batch_run_randomsearch(
 ]:
     """Run ``n_realizations`` independent random-search trajectories.
 
-    Vmaps :func:`run_randomsearch` over a leading ``n_realizations``
-    axis so each realization draws its own
-    ``n_iterations * popsize`` candidates from an independently split
-    PRNG key. The role of this function for random search mirrors what
-    :func:`batch_run_` does for the scan-based optimizers, and the
-    output shape contract matches.
+    Maps :func:`run_randomsearch` over a leading ``n_realizations`` axis
+    with :func:`jax.lax.map` -- i.e. *sequentially*, one realization at a
+    time -- so each realization draws its own ``n_iterations * popsize``
+    candidates from an independently split PRNG key. Unlike an
+    :func:`eqx.filter_vmap` (which materialises every realization's
+    ``(n_iterations * popsize, dim)`` candidate set concurrently, so peak
+    memory scales with ``n_realizations``), ``lax.map`` keeps only one
+    realization's candidate set live at a time: the transient candidates
+    are not part of the scan carry and are freed each step, while the
+    stacked per-realization outputs (``best_params``, ``history_state``,
+    ...) are small. Results match the vmap version because the
+    per-realization ``key`` slices -- and therefore the drawn candidates
+    -- are unchanged; only execution order (parallel -> sequential)
+    differs (up to float32 reduction-ordering noise XLA does not pin
+    across the two lowerings). The role of this function for random
+    search mirrors what
+    :func:`batch_run_` does for the scan-based optimizers, and the output
+    shape contract matches.
 
     Inputs ``opt_state``, ``params``, and ``key`` already carry the
     realization axis (``key`` is pre-split by the caller, see
     :func:`batch_evaluate`); ``batch_state`` is broadcast to that same
-    axis here so every leaf of the vmap input is mappable on axis 0.
+    axis here so every leaf of the mapped input is sliceable on axis 0.
 
     Parameters
     ----------
@@ -698,7 +792,8 @@ def batch_run_randomsearch(
         batch_state,
     )
 
-    def _single(opt_state, params, batch_state, key):
+    def _single(slices):
+        opt_state, params, batch_state, key = slices
         return run_randomsearch(
             update_class=update_class,
             opt_state=opt_state,
@@ -710,9 +805,10 @@ def batch_run_randomsearch(
             verbose=False,
         )
 
-    return eqx.filter_vmap(_single, in_axes=(0, 0, 0, 0))(
-        opt_state, params, batch_state, key
-    )
+    # Sequential (not vmapped) over realizations: bounds peak memory to a
+    # single realization's candidate set instead of all ``n_realizations``
+    # at once. See the docstring for why results are identical.
+    return jax.lax.map(_single, (opt_state, params, batch_state, key))
 
 
 # =============================================================================

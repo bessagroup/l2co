@@ -94,10 +94,14 @@ def random_sampling(
         key=key,
         params=params,
     )
-    constant_samples = constant_sampling(
-        key, params=params, value=lower_bound, n_samples=n_samples
-    )
-    return jax.tree.map(lambda x, y: x + y, random_samples, constant_samples)
+    # Fold ``lower_bound`` in as a scalar broadcast instead of building a
+    # full ``constant_sampling`` array and adding it: that materialised a
+    # second sample-sized buffer (all zeros in the common ``lower_bound=0``
+    # case) for no reason. A scalar add broadcasts and stays fusible; a
+    # zero offset is skipped entirely.
+    if lower_bound == 0.0:
+        return random_samples
+    return jax.tree.map(lambda x: x + lower_bound, random_samples)
 
 
 def normal_sampling(
