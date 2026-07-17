@@ -34,6 +34,12 @@
 
 ::: l2co.optimizers.shade_update
 
+::: l2co.optimizers.lbfgs_per_eval_key_update
+
+::: l2co.optimizers.lbfgs_per_eval_key
+
+::: l2co.optimizers.scale_by_zoom_linesearch_per_eval_key
+
 ## States
 
 ::: l2co.RunState
