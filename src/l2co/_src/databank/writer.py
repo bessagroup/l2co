@@ -16,9 +16,16 @@ Creation (``mode="error"`` / ``"replace"``) streams one ``(task,
 optimizer)`` cell at a time, so the full dense array is never held in
 memory. ``mode="append"`` rebuilds the store over the union of old and
 new ``taskID`` / ``schedule`` coordinates into a temporary store and
-swaps it in atomically, copying untouched cells from the old store one
-at a time (also memory-light, and it sidesteps the fixed-length-string
-truncation that an in-place coordinate resize would cause).
+swaps it in atomically (also memory-light, and it sidesteps the
+fixed-length-string truncation that an in-place coordinate resize would
+cause). Untouched cells are carried into the rebuilt store as hard
+links (or copies) of their single chunk file -- the store keeps one
+chunk per ``(task, optimizer)`` cell and the union coordinates preserve
+every old index, so the file key is unchanged -- with a decode /
+re-encode fallback for variables whose cell layout differs. All cell
+writes go through zarr array handles opened once per dump
+(:func:`_open_big_arrays`) rather than per-cell ``Dataset.to_zarr``
+calls, which would re-read the store metadata on every call.
 """
 
 #                                                                       Modules
@@ -29,8 +36,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import warnings
+from collections.abc import Iterable
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal
@@ -109,32 +118,99 @@ def _interp_loss(loss_raw: xr.Dataset, budget_steps: int) -> xr.Dataset:
     return normalize_budget_grid(loss_raw, budget_steps)
 
 
+def _open_big_arrays(
+    store: Path, names: Iterable[str]
+) -> dict[str, zarr.Array]:
+    """Open the store's big per-pair arrays once for repeated cell writes.
+
+    A per-cell ``Dataset.to_zarr(region=...)`` call re-opens the group
+    and re-reads every array's metadata, which dominates the write cost
+    of the small per-pair cells; the returned handles amortize that to
+    a single open per dump.
+    """
+    with silence_zarr_warnings():
+        group = zarr.open_group(store, mode="r+")
+        return {name: group[name] for name in names}
+
+
 def _write_pair(
-    store: Path,
-    loss_interp: xr.Dataset,
-    perf: xr.Dataset,
+    arrays: dict[str, zarr.Array],
+    ds: xr.Dataset,
     ti: int,
     sj: int,
 ) -> None:
-    """Region-write one ``(task, optimizer)`` cell into the store.
+    """Region-write one ``(task, optimizer)`` cell through open handles.
 
     ``ti`` / ``sj`` are the integer positions of the task / schedule in
-    the store's coordinates. Each variable is transposed to canonical
-    ``(taskID, schedule, ...)`` order, cast to float and stripped of
-    coordinates before the region write (see
-    :func:`l2co._src.databank.schema.to_region_cell`).
+    the store's coordinates; ``arrays`` holds the store's arrays keyed
+    by variable name (see :func:`_open_big_arrays`). Each variable is
+    transposed to canonical ``(taskID, schedule, ...)`` order, cast to
+    float and stripped of coordinates before the write (see
+    :func:`l2co._src.databank.schema.to_region_cell`); an interior dim
+    smaller than the store's leaves the remainder at the NaN fill.
     """
-    for ds in (loss_interp, perf):
-        cell = to_region_cell(ds)
-        region: dict[str, slice] = {
-            TASK_ID: slice(ti, ti + 1),
-            SCHEDULE: slice(sj, sj + 1),
-        }
-        for d in cell.dims:
-            if d not in (TASK_ID, SCHEDULE):
-                region[d] = slice(0, cell.sizes[d])
-        with silence_zarr_warnings():
-            cell.to_zarr(store, region=region, consolidated=False)
+    cell = to_region_cell(ds)
+    for name, var in cell.data_vars.items():
+        index = (
+            slice(ti, ti + 1),
+            slice(sj, sj + 1),
+            *(slice(0, size) for size in var.shape[2:]),
+        )
+        arrays[name][index] = var.values
+
+
+def _cell_layout_key(arr: zarr.Array) -> str:
+    """Serialized array metadata minus ``shape`` -- the cell layout.
+
+    Two arrays with equal keys (dtype, chunk grid, codecs, fill value,
+    ...) store a ``(taskID, schedule)`` cell as a byte-identical single
+    chunk file, so a cell can be carried between them by copying that
+    file. Serialized via JSON so the NaN fill value compares equal to
+    itself (``nan != nan`` under ``dict`` equality).
+    """
+    meta = {k: v for k, v in arr.metadata.to_dict().items() if k != "shape"}
+    return json.dumps(meta, sort_keys=True, default=str)
+
+
+def _file_copyable(src: zarr.Array, dst: zarr.Array) -> bool:
+    """Whether ``src`` cells can be carried into ``dst`` as file copies.
+
+    Requires one chunk file per ``(taskID, schedule)`` cell (leading
+    chunk axes of 1, interior chunk == interior shape) and an identical
+    cell layout on both sides; anything else (e.g. an old store with a
+    different realization count) falls back to the decode / re-encode
+    copy.
+    """
+    chunk_shape = tuple(src.metadata.chunk_grid.chunk_shape)
+    return chunk_shape == (1, 1, *src.shape[2:]) and _cell_layout_key(
+        src
+    ) == _cell_layout_key(dst)
+
+
+def _cell_file(
+    store: Path, name: str, arr: zarr.Array, i: int, j: int
+) -> Path:
+    """Path of the single chunk file holding cell ``(i, j)`` of ``arr``."""
+    key = arr.metadata.chunk_key_encoding.encode_chunk_key(
+        (i, j, *([0] * (arr.ndim - 2)))
+    )
+    return store / name / key
+
+
+def _link_or_copy(src: Path, dst: Path) -> None:
+    """Hard-link ``src`` to ``dst``, copying when linking is unsupported.
+
+    The rebuilt store sits next to the old one (same filesystem), so a
+    link is the common case; the copy fallback covers filesystems
+    without hard links. Linking is safe because the databank never
+    modifies a written chunk file in place -- rewrites always land in a
+    fresh temporary store that is swapped in whole.
+    """
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
 
 
 def _in_training_mask(
@@ -576,14 +652,14 @@ def _dump_create(
     targets: dict[str, xr.DataArray] = {}
     recipes: dict[str, xr.DataArray] = {}
     provenances: dict[str, xr.DataArray] = {}
-    created = False
+    arrays: dict[str, zarr.Array] = {}
 
     for task, step_paths in tqdm(runs, total=len(runs)):
         task_ds, hash_to_step, loss_interp, perf, opt = _records_for_task(
             task, step_paths, easiest_quantile, None, budget_steps, rawroot
         )
 
-        if not created:
+        if not arrays:
             h0 = next(iter(loss_interp))
             template, encoding = big_template(
                 loss_interp[h0], perf[h0], taskids, schedules
@@ -597,12 +673,13 @@ def _dump_create(
                     zarr_format=3,
                     consolidated=False,
                 )
-            created = True
+            arrays = _open_big_arrays(store, list(template.data_vars))
 
         ti = taskids.index(task.hash)
         for h, step in hash_to_step.items():
             sj = schedules.index(step.name)
-            _write_pair(store, loss_interp[h], perf[h], ti, sj)
+            _write_pair(arrays, loss_interp[h], ti, sj)
+            _write_pair(arrays, perf[h], ti, sj)
             _accumulate_schedule(step.name, opt[h], recipes, provenances)
         _accumulate_task(task_ds, task.hash, labels, targets)
 
@@ -645,14 +722,19 @@ def _dump_append(
 ) -> tuple[int, dict[str, str]]:
     """Rebuild the store over the union of old and new coordinates.
 
-    New cells come from ``runs`` and are written first; old cells are then
-    copied from the old store one at a time. A ``(task, optimizer)`` pair
-    present in **both** is *rewritten* from ``runs`` (the copy step skips
-    it), so re-running a pair -- e.g. at a higher iteration budget --
-    overwrites its stored cell instead of being clobbered by the stale
-    copy. Existing tasks keep their stored ERT targets so appended (and
-    re-run) optimizers stay comparable. The rebuild lands in a temporary
-    store that is swapped in atomically.
+    New cells come from ``runs`` and are written first; untouched old
+    cells are then carried over as hard links (or copies) of their
+    single chunk file -- the union coordinates keep every old index, so
+    a cell's file key is unchanged -- falling back to a decode /
+    re-encode copy for variables whose cell layout differs from the
+    rebuilt template (see :func:`_file_copyable`). A ``(task,
+    optimizer)`` pair present in **both** is *rewritten* from ``runs``
+    (the carry-over step skips it), so re-running a pair -- e.g. at a
+    higher iteration budget -- overwrites its stored cell instead of
+    being clobbered by the stale copy. Existing tasks keep their stored
+    ERT targets so appended (and re-run) optimizers stay comparable.
+    The rebuild lands in a temporary store that is swapped in
+    atomically.
 
     Returns ``(n_tasks, provenance_by_schedule)`` for the policy
     schedules written from ``runs`` (see :func:`_dump_create`).
@@ -710,6 +792,7 @@ def _dump_append(
     written: set[tuple[str, str]] = set()
 
     # New runs first: gives the template sample and (re)writes raw files.
+    arrays: dict[str, zarr.Array] = {}
     for task, step_paths in tqdm(runs, total=len(runs)):
         existing = (
             old_targets.sel({TASK_ID: task.hash}).values
@@ -724,7 +807,7 @@ def _dump_append(
             budget_steps,
             rawroot,
         )
-        if not tmp.exists():
+        if not arrays:
             h0 = next(iter(loss_interp))
             template, encoding = big_template(
                 loss_interp[h0], perf[h0], taskids, schedules
@@ -738,10 +821,12 @@ def _dump_append(
                     zarr_format=3,
                     consolidated=False,
                 )
+            arrays = _open_big_arrays(tmp, list(template.data_vars))
         ti = taskids.index(task.hash)
         for h, step in hash_to_step.items():
             sj = schedules.index(step.name)
-            _write_pair(tmp, loss_interp[h], perf[h], ti, sj)
+            _write_pair(arrays, loss_interp[h], ti, sj)
+            _write_pair(arrays, perf[h], ti, sj)
             if step.name in old_scheds:
                 # An alias may only ever mean one artifact -- also
                 # across appends into an existing store.
@@ -754,7 +839,25 @@ def _dump_append(
             written.add((task.hash, step.name))
         _accumulate_task(task_ds, task.hash, labels, targets)
 
-    # Copy untouched old cells (one at a time) into the rebuilt store.
+    # Carry untouched old cells into the rebuilt store. Variables whose
+    # cell layout matches the new template are carried as hard links /
+    # copies of their single chunk file (a missing source file stays
+    # absent -- it reads back as the NaN fill either way); the rest fall
+    # back to the per-cell decode / re-encode copy.
+    with silence_zarr_warnings():
+        old_group = zarr.open_group(store, mode="r")
+    all_vars = [*loss_vars, *perf_vars]
+    fast_vars = [
+        name
+        for name in all_vars
+        if _file_copyable(old_group[name], arrays[name])
+    ]
+    slow_vars = [name for name in all_vars if name not in fast_vars]
+    if slow_vars:
+        logger.info(
+            f"dump_databank: cell layout of {slow_vars} differs from the "
+            "existing store; carrying their cells via decode/re-encode."
+        )
     for oi, t in enumerate(old_taskids):
         ti = taskids.index(t)
         for oj, s in enumerate(old_scheds):
@@ -764,14 +867,20 @@ def _dump_append(
                 # A new run already (re)wrote this cell -- don't clobber it.
                 continue
             sj = schedules.index(s)
-            with silence_zarr_warnings():
-                loss_cell = (
-                    old[loss_vars].isel({TASK_ID: [oi], SCHEDULE: [oj]}).load()
-                )
-                perf_cell = (
-                    old[perf_vars].isel({TASK_ID: [oi], SCHEDULE: [oj]}).load()
-                )
-            _write_pair(tmp, loss_cell, perf_cell, ti, sj)
+            for name in fast_vars:
+                src = _cell_file(store, name, old_group[name], oi, oj)
+                if src.is_file():
+                    _link_or_copy(
+                        src, _cell_file(tmp, name, arrays[name], ti, sj)
+                    )
+            if slow_vars:
+                with silence_zarr_warnings():
+                    cell = (
+                        old[slow_vars]
+                        .isel({TASK_ID: [oi], SCHEDULE: [oj]})
+                        .load()
+                    )
+                _write_pair(arrays, cell, ti, sj)
 
     # Small arrays: old entries fall back to the stored values.
     for t in taskids:
