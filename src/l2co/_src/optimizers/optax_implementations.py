@@ -64,9 +64,11 @@ opt_names_normal = [
     "yogi",
 ]
 
-opt_names_from_state = [
-    "lbfgs",
-]
+# Optimizers needing the extra ``update`` kwargs (``value``, ``grad``,
+# ``value_fn``). L-BFGS used to live here; it now has its own module
+# (``l2co._src.optimizers.lbfgs``) so the ``"lbfgs"`` entry can switch
+# to per-eval-key noise semantics on stochastic tasks.
+opt_names_from_state: list[str] = []
 
 normalized_optax_normal = {
     normalize_key(name): getattr(optax, name) for name in opt_names_normal

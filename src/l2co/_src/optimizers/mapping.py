@@ -3,6 +3,7 @@
 from collections.abc import Callable
 
 from .evosax_implementations import evosax_mapping
+from .lbfgs import lbfgs_mapping
 from .optax_implementations import optax_mapping
 from .random_search import random_search_mapping
 from .shade import shade_mapping
@@ -21,6 +22,7 @@ optimizers: dict[str, Callable[..., UpdateClass]] = (
     | optax_mapping
     | random_search_mapping
     | shade_mapping
+    | lbfgs_mapping
     | {"l2co": UpdateClass.l2co_update}
 )
 
