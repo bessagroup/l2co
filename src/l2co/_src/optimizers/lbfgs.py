@@ -1,5 +1,6 @@
 """
-L-BFGS with a fresh PRNG key per linesearch evaluation.
+The ``"lbfgs"`` registry entry: L-BFGS with a fresh PRNG key per
+linesearch evaluation on stochastic tasks.
 
 ``optax.lbfgs`` freezes the extra keyword arguments of ``value_fn``
 (including a PRNG key) for the whole inner zoom linesearch: the key is
@@ -15,7 +16,8 @@ For stochastic objectives whose randomness is driven by an explicit
 key (the BBOB-noisy suite, mini-batched losses), the honest semantics
 for benchmarking is one independent noise realization per function
 evaluation — the same contract the evosax adapters implement by
-splitting one key per population member. This module provides that:
+splitting one key per population member. This module provides that,
+keyed on the task:
 
 * :func:`scale_by_zoom_linesearch_per_eval_key` — a drop-in for
   ``optax.scale_by_zoom_linesearch`` that carries a key through the
@@ -23,19 +25,19 @@ splitting one key per population member. This module provides that:
   evaluation.
 * :func:`lbfgs_per_eval_key` — ``optax.lbfgs`` chained with that
   linesearch.
-* :func:`lbfgs_per_eval_key_update` — the registry factory
-  (``optimizer="lbfgs_per_eval_key"``). On deterministic tasks
-  (``task.pass_rng`` false) fresh keys are a mathematical no-op, so
-  the factory degrades to the stock ``optax.lbfgs`` wiring of
-  ``UpdateClass.optax_update_extra_kwargs``.
+* :func:`lbfgs_update` — the registry factory behind
+  ``optimizer="lbfgs"``. On stochastic tasks (``task.pass_rng`` true)
+  it wires :func:`lbfgs_per_eval_key`; on deterministic tasks fresh
+  keys are a mathematical no-op, so it uses the stock ``optax.lbfgs``
+  wiring of ``UpdateClass.optax_update_extra_kwargs`` (no key is ever
+  handed to the loss function).
 
 Per-evaluation keys make L-BFGS strictly *more* exposed to noise than
-the stock per-step-realization wiring (the zoom bracketing invariants
-then compare values from different realizations), which is the point:
-the optimizer is billed the same noise contract as every other
-optimizer in the registry. Fevals accounting is unchanged (1 per
-iteration, matching the stock ``lbfgs`` entry — see
-``docs/adr/0006``).
+a per-step frozen realization (the zoom bracketing invariants then
+compare values from different realizations), which is the point: the
+optimizer is billed the same noise contract as every other optimizer
+in the registry. Fevals accounting is unchanged (1 per iteration —
+see ``docs/adr/0006``).
 """
 
 #                                                                       Modules
@@ -361,7 +363,7 @@ def optax_per_eval_key_fn(
     return init_fn, step_fn
 
 
-def lbfgs_per_eval_key_update(
+def lbfgs_update(
     task: Task,
     opt_hash: int,
     popsize: int = 1,
@@ -369,7 +371,7 @@ def lbfgs_per_eval_key_update(
     stop_fn: StopFunction | None = None,
     **hyperparameters,
 ) -> UpdateClass:
-    """Construct an ``UpdateClass`` for per-eval-key L-BFGS.
+    """Construct the ``UpdateClass`` behind ``optimizer="lbfgs"``.
 
     On stochastic tasks (``task.pass_rng`` true) the optimizer is
     :func:`lbfgs_per_eval_key`, driven by
@@ -377,8 +379,10 @@ def lbfgs_per_eval_key_update(
     draws an independent noise realization. On deterministic tasks
     fresh keys per evaluation are a mathematical no-op, so the
     factory delegates to ``UpdateClass.optax_update_extra_kwargs``
-    with a stock ``optax.lbfgs`` of the same configuration — the
-    resulting trajectories are identical to ``optimizer="lbfgs"``.
+    with a stock ``optax.lbfgs`` of the same configuration — no key
+    is ever passed to the loss function, and trajectories are
+    identical to the previous ``optax_implementations`` wiring of
+    ``"lbfgs"``.
 
     Parameters
     ----------
@@ -436,6 +440,4 @@ def lbfgs_per_eval_key_update(
     )
 
 
-lbfgs_per_eval_key_mapping = {
-    "lbfgs_per_eval_key": Partial(lbfgs_per_eval_key_update)
-}
+lbfgs_mapping = {"lbfgs": Partial(lbfgs_update)}

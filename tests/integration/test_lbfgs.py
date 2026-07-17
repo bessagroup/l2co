@@ -1,8 +1,8 @@
-"""Behavioral integration tests for the per-eval-key L-BFGS optimizer.
+"""Behavioral integration tests for the ``"lbfgs"`` registry entry.
 
 Complements the shape-level coverage that ``test_all_optimizers`` gives
-``lbfgs_per_eval_key`` (which, on its deterministic task, exercises the
-stock-L-BFGS fallback) with the stochastic path: a full
+``lbfgs`` (which, on its deterministic task, exercises the stock
+``optax.lbfgs`` path) with the stochastic path: a full
 ``RolloutWrapper`` rollout on a noisy BBOB task, driving the
 per-evaluation key splitting through the scan/batching machinery.
 """
@@ -31,7 +31,7 @@ def test_rollout_on_noisy_bbob():
 
     key = jr.key(0)
     rollout_wrapper = RolloutWrapper.init(
-        optimizer=OptimizationStep(optimizer="lbfgs_per_eval_key"),
+        optimizer=OptimizationStep(optimizer="lbfgs"),
         task=task,
         sampler=normal_sampling,
         key=key,

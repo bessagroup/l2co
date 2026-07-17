@@ -34,7 +34,7 @@
 
 ::: l2co.optimizers.shade_update
 
-::: l2co.optimizers.lbfgs_per_eval_key_update
+::: l2co.optimizers.lbfgs_update
 
 ::: l2co.optimizers.lbfgs_per_eval_key
 

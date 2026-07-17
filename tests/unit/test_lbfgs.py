@@ -1,9 +1,10 @@
-"""Unit tests for the per-eval-key L-BFGS optimizer.
+"""Unit tests for the ``"lbfgs"`` registry entry.
 
-Covers the key-flow contract (every linesearch evaluation receives its
-own freshly split PRNG key — the property the stock optax wiring cannot
-provide), the deterministic-task fallback (bit-identical trajectories
-to the stock ``lbfgs`` registry entry), and the registry wiring.
+Covers the key-flow contract on stochastic tasks (every linesearch
+evaluation receives its own freshly split PRNG key — the property the
+stock optax wiring cannot provide), the deterministic-task path
+(bit-identical trajectories to the previous ``optax.lbfgs`` registry
+wiring, no key ever handed to the loss), and the registry wiring.
 """
 
 import equinox as eqx
@@ -11,9 +12,12 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+import optax
 from l2co_tasks import Task
 
+from l2co._src.optimizers.lbfgs import lbfgs_update
 from l2co._src.optimizers.mapping import optimizer_mapping, optimizers
+from l2co._src.optimizers.update_class import UpdateClass
 
 # =============================================================================
 
@@ -32,7 +36,7 @@ def _quadratic(model):
 
 
 def _build(task: Task):
-    return optimizer_mapping("lbfgs_per_eval_key")(
+    return optimizer_mapping("lbfgs")(
         task=task,
         opt_hash=1,
         bounded=(-5.0, 5.0),
@@ -58,9 +62,9 @@ def _run_steps(update_class, n_steps: int, dim: int = 4, jit: bool = True):
 #                                                                      Registry
 
 
-def test_registry_contains_lbfgs_per_eval_key():
-    assert "lbfgs_per_eval_key" in optimizers
-    assert callable(optimizer_mapping("lbfgs_per_eval_key"))
+def test_registry_routes_lbfgs_to_lbfgs_update():
+    assert "lbfgs" in optimizers
+    assert optimizers["lbfgs"].func is lbfgs_update
 
 
 # =============================================================================
@@ -114,15 +118,17 @@ def test_every_linesearch_evaluation_gets_a_fresh_key():
 
 
 # =============================================================================
-#                                                        Deterministic fallback
+#                                                            Deterministic path
 
 
-def test_deterministic_task_matches_stock_lbfgs():
-    """Without ``pass_rng`` the factory degrades to plain L-BFGS.
+def test_deterministic_task_matches_previous_registry_wiring():
+    """Without ``pass_rng`` the factory uses stock ``optax.lbfgs``.
 
     Fresh keys per evaluation of a deterministic loss are a
-    mathematical no-op, so the trajectories must be bit-identical to
-    the stock ``lbfgs`` registry entry under the same seeds.
+    mathematical no-op, so the ``"lbfgs"`` entry must produce
+    trajectories bit-identical to the previous registry wiring
+    (``UpdateClass.optax_update_extra_kwargs`` with ``optax.lbfgs``)
+    under the same seeds — and must never hand the loss a key.
     """
     task = Task(
         model=jnp.zeros(4),
@@ -130,17 +136,18 @@ def test_deterministic_task_matches_stock_lbfgs():
         global_min=0.0,
         pass_rng=False,
     )
-    per_eval = _build(task)
-    stock = optimizer_mapping("lbfgs")(
+    new_wiring = _build(task)
+    old_wiring = UpdateClass.optax_update_extra_kwargs(
         task=task,
+        optimizer=optax.lbfgs,
         opt_hash=1,
         bounded=(-5.0, 5.0),
         stop_fn=None,
     )
-    params_per_eval, losses_per_eval = _run_steps(per_eval, n_steps=5)
-    params_stock, losses_stock = _run_steps(stock, n_steps=5)
-    assert jnp.array_equal(params_per_eval, params_stock)
-    assert jnp.array_equal(losses_per_eval, losses_stock)
+    params_new, losses_new = _run_steps(new_wiring, n_steps=5)
+    params_old, losses_old = _run_steps(old_wiring, n_steps=5)
+    assert jnp.array_equal(params_new, params_old)
+    assert jnp.array_equal(losses_new, losses_old)
 
 
 # =============================================================================

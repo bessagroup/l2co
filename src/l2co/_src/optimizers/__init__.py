@@ -1,9 +1,9 @@
 """Optimizer subpackage providing mappings from names to implementations."""
 
 from .experimentdata import create_schedules_experimentdata
-from .lbfgs_per_eval_key import (
+from .lbfgs import (
     lbfgs_per_eval_key,
-    lbfgs_per_eval_key_update,
+    lbfgs_update,
     scale_by_zoom_linesearch_per_eval_key,
 )
 from .mapping import optimizer_mapping, optimizers, register_optimizer
@@ -16,7 +16,7 @@ __all__ = [
     "UpdateClass",
     "create_schedules_experimentdata",
     "lbfgs_per_eval_key",
-    "lbfgs_per_eval_key_update",
+    "lbfgs_update",
     "optimizer_mapping",
     "optimizers",
     "register_optimizer",

@@ -2,7 +2,7 @@
 
 Constraints of the `optax` API encountered while implementing
 optimizers against it (first case: per-eval-key L-BFGS,
-`l2co._src.optimizers.lbfgs_per_eval_key`). Recorded so future
+`l2co._src.optimizers.lbfgs`). Recorded so future
 integrations don't re-discover them. Verified against optax 0.2.8.
 
 ## `fn_kwargs` is frozen for the whole zoom linesearch
@@ -26,7 +26,7 @@ Only the assembled `scale_by_zoom_linesearch` (plus
 by `optax`'s public namespace; the underlying
 `(init_fn, step_fn, cond_fn)` triple must be imported from
 `optax._src.linesearch`. This is the one private import in
-`lbfgs_per_eval_key.py` — re-check it on optax upgrades
+`lbfgs.py` — re-check it on optax upgrades
 (`uv.lock` pins 0.2.8).
 
 ## `value_and_grad_from_state` serves one-realization-stale caches

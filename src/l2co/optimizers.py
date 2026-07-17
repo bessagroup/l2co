@@ -4,16 +4,16 @@ Stable import surface for the ``optimizer_mapping`` and ``optimizers`` dicts,
 the ``register_optimizer`` extension point, the
 ``create_schedules_experimentdata`` helper, the built-in ``SHADE``
 algorithm (``shade_update`` factory, ``shade_popsize`` default), and the
-per-eval-key L-BFGS variant (``lbfgs_per_eval_key_update`` factory,
-``lbfgs_per_eval_key`` optimizer,
-``scale_by_zoom_linesearch_per_eval_key`` linesearch).
+L-BFGS entry (``lbfgs_update`` factory — per-eval-key noise semantics on
+stochastic tasks — with the ``lbfgs_per_eval_key`` optimizer and
+``scale_by_zoom_linesearch_per_eval_key`` linesearch building blocks).
 """
 
 from ._src.optimizers import (
     SHADE,
     create_schedules_experimentdata,
     lbfgs_per_eval_key,
-    lbfgs_per_eval_key_update,
+    lbfgs_update,
     optimizer_mapping,
     optimizers,
     register_optimizer,
@@ -26,7 +26,7 @@ __all__ = [
     "SHADE",
     "create_schedules_experimentdata",
     "lbfgs_per_eval_key",
-    "lbfgs_per_eval_key_update",
+    "lbfgs_update",
     "optimizer_mapping",
     "optimizers",
     "register_optimizer",
