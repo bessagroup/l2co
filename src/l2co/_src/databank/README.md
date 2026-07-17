@@ -114,13 +114,23 @@ the raw history to `loss_history_raw/` and region-writes the interpolated histor
 
 - **Creation** (`mode="error"` / `"replace"`) streams one `(task, optimizer)`
   cell at a time into a `compute=False` template, so the full dense array is
-  never held in memory.
+  never held in memory. All cell writes go through zarr array handles opened
+  once per dump (`_open_big_arrays`) — a per-cell `Dataset.to_zarr` call would
+  re-open the store and re-read every array's metadata, which dominates the
+  cost of the small per-pair writes.
 - **Append** (`mode="append"`) rebuilds the store over the union of old and new
-  `taskID` / `schedule` into a temporary store and swaps it in atomically,
-  copying untouched cells from the old store one at a time. It reuses the
-  existing budget grid and each existing task's stored ERT `target_value` (so
-  appended optimizers stay comparable). The rebuild — rather than an in-place
-  coordinate resize — avoids silently truncating optimizer names in the
+  `taskID` / `schedule` into a temporary store and swaps it in atomically.
+  Untouched cells are carried over as hard links (or copies, on filesystems
+  without links) of their single chunk file: the store keeps one chunk per
+  cell and the union coordinates preserve every old index, so a cell's file
+  key is unchanged — the append costs O(new cells) of compute plus O(old
+  cells) of file links instead of decoding and re-encoding the whole store.
+  Variables whose cell layout differs from the rebuilt template (e.g. an old
+  store with a different realization count) fall back to a per-cell decode /
+  re-encode copy. Append reuses the existing budget grid and each existing
+  task's stored ERT `target_value` (so appended optimizers stay comparable).
+  The rebuild — rather than an in-place coordinate resize — keeps the swap
+  crash-atomic and avoids silently truncating optimizer names in the
   fixed-length string `schedule` coordinate.
 
 Writes that touch distinct `(taskID, schedule)` cells are chunk-disjoint and

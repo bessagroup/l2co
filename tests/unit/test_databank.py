@@ -30,6 +30,7 @@ import zarr
 
 from l2co import DataLoader, databank
 from l2co._src.databank import layout
+from l2co._src.databank import writer as databank_writer
 from l2co._src.databank.reader import (
     load_databank,
     load_databank_dataset,
@@ -622,6 +623,84 @@ def test_append_overwrites_higher_budget(tmp_path, tasks, steps):
             _interp_loss(loss13[s.hash], BS)[OUTPUT_MIN],
             zd[OUTPUT_MIN].sel(sel),
         )
+
+
+def test_append_carries_old_cells_as_file_copies(
+    tmp_path, tasks, steps, monkeypatch
+):
+    """Untouched cells are carried over as chunk-file copies: the append
+    only region-writes the appended runs' cells, and the carried cells
+    read back unchanged."""
+    runs0 = _write_raw_runs(tmp_path / "r0", [(tasks[0], 7)], steps)
+    store = _create_zarr(tmp_path, runs0)
+    rawroot = layout.raw_root(tmp_path, "bbob")
+    before = load_databank_dataset("bbob", steps, tmp_path).load()
+
+    calls: list[tuple[int, int]] = []
+    orig = databank_writer._write_pair
+
+    def counting(arrays, ds, ti, sj):
+        calls.append((ti, sj))
+        return orig(arrays, ds, ti, sj)
+
+    monkeypatch.setattr(databank_writer, "_write_pair", counting)
+    runs1 = _write_raw_runs(tmp_path / "r1", [(tasks[1], 7)], steps)
+    _dump_append(store, rawroot, runs1, easiest_quantile=0.75)
+
+    # Only the appended task's cells were written (one loss + one perf
+    # write each); task0's cells never went through _write_pair.
+    assert len(calls) == 2 * len(steps)
+    assert {ti for ti, _ in calls} == {1}
+
+    zd = load_databank_dataset("bbob", steps, tmp_path).load()
+    for s in steps:
+        sel = {TASK_ID: tasks[0].hash, SCHEDULE: s.name}
+        _assert_da_close(before[OUTPUT_MIN].sel(sel), zd[OUTPUT_MIN].sel(sel))
+
+
+def test_append_fallback_mismatched_realizations(tmp_path, tasks, steps):
+    """An appended run with a different realization count rebuilds the
+    loss arrays with a new cell layout, so old loss cells take the
+    decode/re-encode fallback: carried values intact, extra realization
+    rows NaN."""
+    runs0 = _write_raw_runs(tmp_path / "r0", [(tasks[0], 7)], steps)
+    store = _create_zarr(tmp_path, runs0)
+    rawroot = layout.raw_root(tmp_path, "bbob")
+    before = load_databank_dataset("bbob", steps, tmp_path).load()
+
+    rundir = tmp_path / "r1"
+    rundir.mkdir()
+    step_paths = {}
+    for s in steps:
+        ds6 = xr.concat(
+            [make_loss_ds(7, scale=10.0)] * 2, dim=REALIZATION
+        ).assign_coords({REALIZATION: list(range(2 * N_REAL))})
+        p = rundir / f"{tasks[1].hash}_{s.hash}.nc"
+        ds6.to_netcdf(p)
+        step_paths[s] = p
+    _dump_append(
+        store, rawroot, [(tasks[1], step_paths)], easiest_quantile=0.75
+    )
+
+    zd = load_databank_dataset("bbob", steps, tmp_path).load()
+    assert zd.sizes[REALIZATION] == 2 * N_REAL
+    for s in steps:
+        old_cell = zd[OUTPUT_MIN].sel(
+            {TASK_ID: tasks[0].hash, SCHEDULE: s.name}
+        )
+        # The old store's realizations carry over ...
+        _assert_da_close(
+            before[OUTPUT_MIN].sel({TASK_ID: tasks[0].hash, SCHEDULE: s.name}),
+            old_cell.isel({REALIZATION: slice(0, N_REAL)}),
+        )
+        # ... and the rows beyond its realization count stay NaN.
+        assert bool(
+            np.isnan(old_cell.isel({REALIZATION: slice(N_REAL, None)})).all()
+        )
+        new_cell = zd[OUTPUT_MIN].sel(
+            {TASK_ID: tasks[1].hash, SCHEDULE: s.name}
+        )
+        assert not bool(np.isnan(new_cell).any())
 
 
 #                                                                      Tasksets
