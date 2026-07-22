@@ -1,0 +1,56 @@
+sampler:
+  _target_: f3dasm.create_sampler
+  sampler: "grid"
+sampler_kwargs:
+
+experimentdata:
+  domain:
+    input:
+      fn_name:
+        type: category
+        categories:
+          - 'attractive_sector'
+          - 'bent_cigar'
+          - 'discuss'
+          - 'ellipsoid'
+          - 'ellipsoid_seperable'
+          - 'gallagher_101_peaks'
+          - 'gallagher_21_peaks'
+          - 'griewank_rosenbrock_f8f2'
+          - 'katsuura'
+          - 'linear_slope'
+          - 'lunacek_bi_rastrigin'
+          - 'rastrigin'
+          - 'rastrigin_seperable'
+          - 'rosenbrock'
+          - 'rosenbrock_rotated'
+          - 'schaffer_f7_condition_10'
+          - 'schaffer_f7_condition_1000'
+          - 'schwefel_xsinx'
+          - 'sharp_ridge'
+          - 'skew_rastrigin_bueche'
+          - 'sphere'
+          - 'step_ellipsoid'
+          - 'sum_of_different_powers'
+          - 'weierstrass'
+      dimensionality:
+        type: category
+        categories: 
+          - 50
+          - 100
+          - 200
+      seed:
+        type: int
+        low: 1
+        high: 1
+
+task_kwargs:
+
+data_generator:
+  _target_: l2co._src.tasks.benchmark_task.create_bbob_task
+  _partial_: True
+
+schema:
+  dimensionality: continuous
+  separable: boolean
+  unimodal: boolean

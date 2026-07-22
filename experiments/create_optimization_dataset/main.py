@@ -28,7 +28,7 @@ from hydra.utils import instantiate
 from l2co import OptimizationStep, Task, create_combined_odata
 import l2co
 import numpy as np
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from l2co import RunOptimization
 
 #                                                          Authorship & Credits
@@ -45,19 +45,25 @@ __status__ = "Stable"
 # =============================================================================
 
 
-def create_experimentdata(
+def _build_task_experimentdata(
+    experimentdata_cfg: DictConfig,
+    sampler_cfg: DictConfig,
+    sampler_kwargs: DictConfig,
+    data_generator_cfg: DictConfig,
+    task_kwargs: DictConfig,
     project_dir: Path,
-    config: DictConfig,
-) -> None:
-    """Set up tasks, optimizer schedules, and grid-sampled jobs."""
-    # --- Sample tasks from config ---
-    experiment_data_tasks = ExperimentData.from_yaml(
-        config.tasks.experimentdata
-    )
-    experiment_data_tasks = experiment_data_tasks.set_project_dir(
-        project_dir / "tasks"
-    )
-    experiment_data_tasks.domain.add_output(
+) -> ExperimentData:
+    """Build a task ExperimentData from one factory and its sampled rows."""
+    # `input_data` rows must reach ExperimentData as plain list-of-dicts;
+    # an OmegaConf ListConfig is rejected by its _dict_factory. The
+    # domain/grid path is left untouched.
+    if "input_data" in experimentdata_cfg:
+        experimentdata_cfg = OmegaConf.to_container(
+            experimentdata_cfg, resolve=True
+        )
+    experiment_data = ExperimentData.from_yaml(experimentdata_cfg)
+    experiment_data = experiment_data.set_project_dir(project_dir / "tasks")
+    experiment_data.domain.add_output(
         name="task",
         to_disk=True,
         store_function=Task.save,
@@ -65,20 +71,58 @@ def create_experimentdata(
     )
 
     sampler = Block.from_yaml(
-        init_config=config.tasks.sampler,
-        call_config=config.tasks.sampler_kwargs,
+        init_config=sampler_cfg,
+        call_config=sampler_kwargs,
     )
-    sampler.arm(experiment_data_tasks)
-    experiment_data_tasks = sampler.call(data=experiment_data_tasks)
+    sampler.arm(experiment_data)
+    experiment_data = sampler.call(data=experiment_data)
 
     task_fn = datagenerator(
         output_names="task",
-        domain=experiment_data_tasks.domain,
-    )(instantiate(config.tasks.data_generator, _partial_=True))
+        domain=experiment_data.domain,
+    )(instantiate(data_generator_cfg, _partial_=True))
 
-    task_kwargs = config.tasks.task_kwargs or {}
-    experiment_data_tasks = task_fn.call(
-        data=experiment_data_tasks, **task_kwargs
+    return task_fn.call(data=experiment_data, **(task_kwargs or {}))
+
+
+def create_experimentdata(
+    project_dir: Path,
+    config: DictConfig,
+) -> None:
+    """Set up tasks, optimizer schedules, and grid-sampled jobs."""
+    # --- Sample tasks from config (single factory or composite `parts`) ---
+    # A `parts` list mixes several task factories in one config: each part
+    # carries its own data_generator + input_data and is built independently,
+    # then the resulting tasks are row-concatenated. Without `parts` this is
+    # the classic single-factory grid/explicit path.
+    tasks_cfg = config.tasks
+    if tasks_cfg.get("parts") is not None:
+        built = [
+            _build_task_experimentdata(
+                OmegaConf.create({"input_data": part.input_data}),
+                tasks_cfg.sampler,
+                tasks_cfg.sampler_kwargs,
+                part.data_generator,
+                part.get("task_kwargs"),
+                project_dir,
+            )
+            for part in tasks_cfg.parts
+        ]
+        experiment_data_tasks = built[0]
+        for part_data in built[1:]:
+            experiment_data_tasks = experiment_data_tasks + part_data
+    else:
+        experiment_data_tasks = _build_task_experimentdata(
+            tasks_cfg.experimentdata,
+            tasks_cfg.sampler,
+            tasks_cfg.sampler_kwargs,
+            tasks_cfg.data_generator,
+            tasks_cfg.task_kwargs,
+            project_dir,
+        )
+
+    experiment_data_tasks = experiment_data_tasks.set_project_dir(
+        project_dir / "tasks"
     )
     experiment_data_tasks.store()
 
