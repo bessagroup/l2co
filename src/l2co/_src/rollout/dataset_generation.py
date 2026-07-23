@@ -139,9 +139,9 @@ class RunOptimization(DataGenerator):
 
         # No dispatch on the optimizer name: ``"l2co"`` resolves through
         # the ordinary optimizer registry to the strategy-wrapper bridge
-        # (``UpdateClass.l2co_update`` — see ``docs/adr/0002``), so the
-        # L2CO strategy runs through the same path as any plain
-        # optimizer.
+        # (``L2COUpdateClass.l2co_population_update`` — see
+        # ``docs/adr/0002`` and ``0007``), so the L2CO strategy runs
+        # through the same path as any plain optimizer.
         experiment_sample = self.run_optimization(
             experiment_sample=experiment_sample,
             task=task,

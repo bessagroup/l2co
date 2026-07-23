@@ -63,6 +63,7 @@ from l2co.models import (
     train_equinox,
 )
 from l2co.optimization import (
+    ALIAS_HYPERPARAMETER,
     OptimizationStep,
     RolloutWrapper,
     RunOptimization,
@@ -96,6 +97,7 @@ __status__ = "Stable"
 __all__ = [
     "MLP",
     "AbstractModel",
+    "ALIAS_HYPERPARAMETER",
     "BatchState",
     "DataLoader",
     "EquinoxStage0Model",
@@ -145,3 +147,10 @@ __all__ = [
     "validation",
     "validation_fn",
 ]
+
+# Side-effecting import (kept after the public re-exports): registers the
+# "l2co" meta-optimizer into l2co's own optimizer registry, so
+# ``OptimizationStep(optimizer="l2co", ...)`` resolves to ``L2COUpdateClass``
+# in ``RunState.init``. Mirrors how importing rl2co registers "rl2co"; the
+# base registry no longer hardcodes it (see ``docs/adr/0007``).
+from l2co._src import meta_optimizer as _meta_optimizer  # noqa: F401
