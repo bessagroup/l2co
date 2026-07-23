@@ -552,8 +552,9 @@ def l2co_population_based_fn(
         The wrapper returned by ``l2co_population_strategy``. Closed
         over; its stage-1 weights become compile-time constants under
         JIT. (Typed loosely to keep this module importable without
-        the strategy wrapper — see the deferred import in
-        :meth:`UpdateClass.l2co_update`.)
+        the strategy wrapper, which is imported instead by
+        :meth:`l2co._src.meta_optimizer.L2COUpdateClass.
+        l2co_population_update`, the sole caller.)
     static : PyTree
         Non-inexact-array partition of ``task.model``; recombined
         with each population via :func:`equinox.combine` before
@@ -1055,154 +1056,6 @@ class UpdateClass(eqx.Module):
             init_fn=init_fn,
             step_fn=step_fn,
             popsize=popsize,
-            hash=opt_hash,
-            stop_fn=stop_fn,
-        )
-
-    @classmethod
-    def l2co_update(
-        cls,
-        task: Task,
-        opt_hash: int,
-        budget_fn: Callable,
-        stage0_model: str,
-        stage1_model: str,
-        t: float,
-        sampler: Callable,
-        swap_optimizers: list | None = None,
-        bounded: tuple[float, float] | None = (None, None),
-        stop_fn: StopFunction | None = None,
-        **hyperparameters,
-    ) -> UpdateClass:
-        """Construct an ``UpdateClass`` running the L2CO strategy.
-
-        The canonical execution path for
-        ``OptimizationStep(optimizer="l2co")`` (see
-        ``docs/adr/0002``): loads the two-stage
-        :class:`~l2co._src.models.l2co_model.L2COModel`, wraps it as
-        an evosax-style strategy via
-        :func:`~l2co._src.strategy_wrapper.l2co_population_strategy`
-        (which performs the stage-0 fire eagerly, at construction),
-        and bridges it through :func:`l2co_population_based_fn` so
-        the ordinary rollout machinery drives it like any plain
-        optimizer. The stage-1 fire happens in-graph at
-        ``round(t * budget_fn(task=task))`` completed generations.
-
-        This signature matches the registry contract called by
-        :meth:`l2co.RunState.init`: ``task``, ``opt_hash``,
-        ``bounded`` and ``stop_fn`` are supplied by ``RunState.init``
-        directly, and the remaining construction arguments arrive
-        through the :class:`~l2co._src.optimizer_schedule.
-        OptimizationStep`'s ``hyperparameters``.
-
-        Parameters
-        ----------
-        task : Task
-            Task providing the model, loss function, features, and
-            ``global_min`` (required — see the strategy factory).
-        opt_hash : int
-            Stable hash stored in the static ``hash`` field. Unlike
-            the stock factories it is **not** stamped into the
-            per-generation ``OptHistory.update_step``, which is
-            dynamic (the active sub-optimizer's hash); it is used
-            only for the ``skip_step`` dummy entry and
-            ``OptHistory.init``.
-        budget_fn : Callable
-            Budget function called as ``budget_fn(task=task)``
-            (matching ``l2co.budget.fixed_budget`` /
-            ``based_on_dimensionality``). Resolves the budget the
-            switch generation is computed against — it must equal
-            the ``n_iterations`` of the eventual run for ``t`` to
-            keep its meaning.
-        stage0_model : str
-            Path to the stage-0 model file (without extension),
-            forwarded to ``L2COModel.load``.
-        stage1_model : str
-            Path to the stage-1 model file (without extension).
-        t : float
-            Stage-0 fraction of the budget.
-        sampler : Callable
-            ``l2co.sampling`` function filling the post-fire
-            handshake population beyond slot 0. Configs should name
-            the same sampler the runner uses for initial sampling —
-            the old path implicitly reused it.
-        swap_optimizers : list | None, optional
-            Explicit replacement menu: a list of
-            ``OptimizationStep``s (or their ``to_dict`` dicts),
-            applied to both stages via
-            ``L2COModel.swap_optimizers``. ``None`` (default) keeps
-            the menu baked into the loaded model. Replaces the old
-            hardcoded four-optimizer list (``docs/adr/0002``).
-        bounded : tuple[float, float] | None, optional
-            Box bounds clipped onto every asked population before
-            evaluation. ``None`` is treated as ``(None, None)``.
-        stop_fn : StopFunction | None, optional
-            Stopping function.
-        **hyperparameters
-            Ignored; accepted so unrecognised schedule
-            hyperparameters do not break the registry call.
-
-        Returns
-        -------
-        UpdateClass
-            Configured L2CO meta-optimizer wrapper; its ``popsize``
-            is the strategy's ``population_size`` (max menu
-            popsize), so ``RunState.init`` and ``reset`` sample a
-            compatible population.
-
-        Raises
-        ------
-        ValueError
-            Propagated from the strategy factory: empty menu,
-            stage-0 choice missing from the menu, missing
-            ``task.global_min``, zero switch generation, or a
-            non-traceable stage-1 model.
-        """
-        # Deferred imports: the strategy wrapper imports
-        # ``sub_optimizer`` -> ``mapping`` -> this module, so a
-        # module-level import would be circular.
-        from l2co._src.models.l2co_model import L2COModel
-        from l2co._src.optimizer_schedule import OptimizationStep
-        from l2co._src.strategy_wrapper import l2co_population_strategy
-
-        model = L2COModel.load(
-            stage0_model=stage0_model, stage1_model=stage1_model
-        )
-        if swap_optimizers is not None:
-            steps = [
-                step
-                if isinstance(step, OptimizationStep)
-                else OptimizationStep.from_dict(step)
-                for step in swap_optimizers
-            ]
-            model = model.swap_optimizers(optimizers=steps)
-
-        if bounded is None:
-            bounded = (None, None)
-
-        max_iterations = budget_fn(task=task)
-
-        strategy = l2co_population_strategy(
-            model=model,
-            task=task,
-            sampler=sampler,
-            t=t,
-            max_iterations=max_iterations,
-        )
-
-        _, static = eqx.partition(task.model, eqx.is_inexact_array)
-        init_fn, step_fn = l2co_population_based_fn(
-            strategy=strategy,
-            static=static,
-            loss_fn=task.loss_fn,
-            bounded=bounded,
-            pass_rng=task.pass_rng,
-        )
-
-        return cls(
-            init_fn=init_fn,
-            step_fn=step_fn,
-            popsize=strategy.population_size,
             hash=opt_hash,
             stop_fn=stop_fn,
         )

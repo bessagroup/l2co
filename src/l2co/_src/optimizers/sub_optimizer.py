@@ -1,20 +1,20 @@
 """Sub-optimizer adapters shared by the strategy wrappers.
 
-A :class:`_SubOpt` is a thin static adapter that hides whether a
+A :class:`SubOpt` is a thin static adapter that hides whether a
 sub-optimizer is gradient-based (an optax ``GradientTransformation``)
 or population-based (an evosax-style ``(init, ask, tell)`` triple).
 Wrappers that expose a selection model as a duck-typed evosax
 strategy — l2co's own :mod:`l2co._src.strategy_wrapper` and rl2co's
 policy-deployment wrappers (``rl2co._src.optax_wrapper`` /
 ``rl2co._src.evosax_wrapper``, which import this module through a
-shim) — dispatch across a tuple of ``_SubOpt`` adapters via
+shim) — dispatch across a tuple of ``SubOpt`` adapters via
 :func:`jax.lax.switch`, reading the static ``is_pop`` flag at Python
 trace time to pick which branch implementation to build for each
 slot.
 
-Two factory functions build ``_SubOpt`` instances directly
+Two factory functions build ``SubOpt`` instances directly
 (:func:`grad_sub_optimizer`, :func:`pop_sub_optimizer`); a third,
-:func:`_optstep_to_subopt`, dispatches an
+:func:`optstep_to_subopt`, dispatches an
 :class:`~l2co._src.optimizer_schedule.OptimizationStep` to the
 appropriate factory by looking the optimizer name up in the canonical
 l2co registries.
@@ -53,25 +53,26 @@ from .utils import normalize_key
 # =============================================================================
 
 __all__ = [
-    "_SubOpt",
-    "_optstep_to_subopt",
-    "_resolve_popsize",
+    "CONSTRUCTOR_HYPERPARAMETERS",
+    "SubOpt",
     "grad_sub_optimizer",
     "l2co_native_evosax",
+    "optstep_to_subopt",
     "pop_sub_optimizer",
+    "resolve_popsize",
 ]
 
 
 # l2co-native evosax-style algorithms: absent from evosax's own
 # registries but subclassing its base API, so the generic evosax branch
-# of ``_optstep_to_subopt`` drives them unchanged.
+# of ``optstep_to_subopt`` drives them unchanged.
 l2co_native_evosax: dict[str, type] = {"shade": SHADE}
 
 # Shape-affecting hyperparameter names consumed by an algorithm's
 # *constructor* rather than its flax-struct ``Params`` (which only
 # holds value-like leaves). These are stripped from the hyperparameters
 # before the ``default_params.replace(...)`` overrides.
-_CONSTRUCTOR_HYPERPARAMETERS: dict[str, tuple[str, ...]] = {
+CONSTRUCTOR_HYPERPARAMETERS: dict[str, tuple[str, ...]] = {
     "shade": ("memory_size", "archive_size"),
 }
 
@@ -80,20 +81,20 @@ _CONSTRUCTOR_HYPERPARAMETERS: dict[str, tuple[str, ...]] = {
 # =============================================================================
 
 
-class _SubOpt(eqx.Module):
+class SubOpt(eqx.Module):
     """Internal adapter for one sub-optimizer.
 
-    Every entry of a wrapper's sub-optimizer tuple is a ``_SubOpt``;
+    Every entry of a wrapper's sub-optimizer tuple is a ``SubOpt``;
     the wrapper dispatches across them via :func:`jax.lax.switch` and
     reads the static ``is_pop`` flag at Python trace time to decide
     which branch implementation to build for each slot. All fields
-    are static — a ``_SubOpt`` contributes no array leaves to the
+    are static — a ``SubOpt`` contributes no array leaves to the
     surrounding pytree.
 
     Build via :func:`grad_sub_optimizer` or :func:`pop_sub_optimizer`,
     or have the wrapper factories build them automatically from
     :class:`~l2co._src.optimizer_schedule.OptimizationStep` entries
-    via :func:`_optstep_to_subopt`.
+    via :func:`optstep_to_subopt`.
 
     Attributes
     ----------
@@ -135,8 +136,8 @@ class _SubOpt(eqx.Module):
 def grad_sub_optimizer(
     transform: optax.GradientTransformation,
     name_hash: int,
-) -> _SubOpt:
-    """Wrap an optax gradient transformation as a ``_SubOpt``.
+) -> SubOpt:
+    """Wrap an optax gradient transformation as a ``SubOpt``.
 
     Hyperparameters live inside ``transform`` (closed over per the
     optax convention; see rl2co's
@@ -154,7 +155,7 @@ def grad_sub_optimizer(
 
     Returns
     -------
-    _SubOpt
+    SubOpt
         Adapter ready to slot into a wrapper factory.
     """
 
@@ -217,7 +218,7 @@ def grad_sub_optimizer(
         del key
         return transform.update(grads, sub_state, params, **extra_args)
 
-    return _SubOpt(
+    return SubOpt(
         is_pop=False,
         popsize=1,
         name_hash=int(name_hash),
@@ -233,12 +234,12 @@ def pop_sub_optimizer(
     tell_fn: Callable[[PyTree, PyTree, Array, PRNGKeyArray], PyTree],
     popsize: int,
     name_hash: int,
-) -> _SubOpt:
-    """Wrap an evosax-style ``(init, ask, tell)`` triple as a ``_SubOpt``.
+) -> SubOpt:
+    """Wrap an evosax-style ``(init, ask, tell)`` triple as a ``SubOpt``.
 
     The ``init/ask/tell`` callables are supplied by the user so this
     layer does not import evosax directly; see
-    :func:`_optstep_to_subopt` for the canonical wiring.
+    :func:`optstep_to_subopt` for the canonical wiring.
 
     Parameters
     ----------
@@ -256,10 +257,10 @@ def pop_sub_optimizer(
 
     Returns
     -------
-    _SubOpt
+    SubOpt
         Adapter ready to slot into a wrapper factory.
     """
-    return _SubOpt(
+    return SubOpt(
         is_pop=True,
         popsize=int(popsize),
         name_hash=int(name_hash),
@@ -269,11 +270,11 @@ def pop_sub_optimizer(
     )
 
 
-#                                       OptimizationStep -> _SubOpt dispatch
+#                                       OptimizationStep -> SubOpt dispatch
 # =============================================================================
 
 
-def _resolve_popsize(opt_step: OptimizationStep, task: Task) -> int:
+def resolve_popsize(opt_step: OptimizationStep, task: Task) -> int:
     """Resolve the canonical popsize for ``opt_step`` via l2co's rules.
 
     Builds an :class:`~l2co._src.optimizers.update_class.UpdateClass`
@@ -311,11 +312,11 @@ def _resolve_popsize(opt_step: OptimizationStep, task: Task) -> int:
     return int(update_class.popsize)
 
 
-def _optstep_to_subopt(
+def optstep_to_subopt(
     opt_step: OptimizationStep,
     task: Task,
-) -> _SubOpt:
-    """Convert one :class:`OptimizationStep` to a :class:`_SubOpt`.
+) -> SubOpt:
+    """Convert one :class:`OptimizationStep` to a :class:`SubOpt`.
 
     Dispatch is by ``opt_step.optimizer`` against
     :data:`~l2co._src.optimizers.optax_implementations.
@@ -323,7 +324,7 @@ def _optstep_to_subopt(
     :data:`~l2co._src.optimizers.evosax_implementations.
     normalized_evosax`, and :data:`l2co_native_evosax` (l2co's own
     evosax-style algorithms, e.g. ``'shade'``). Population size is
-    resolved by :func:`_resolve_popsize`.
+    resolved by :func:`resolve_popsize`.
 
     Note that this path has no ``bounded`` channel: algorithms whose
     internals use box bounds (SHADE's midpoint boundary repair and
@@ -338,17 +339,17 @@ def _optstep_to_subopt(
         by lowercase/alphanumeric, matching ``l2co``'s registry),
         and ``opt_step.hyperparameters`` is forwarded to the
         underlying optax/evosax constructor (after stripping
-        ``popsize`` itself and any :data:`_CONSTRUCTOR_HYPERPARAMETERS`
+        ``popsize`` itself and any :data:`CONSTRUCTOR_HYPERPARAMETERS`
         entries, which go to the algorithm constructor rather than
         its ``Params``).
     task : Task
         Task containing the model whose trainable arrays size the
         evosax ``solution=`` template, and which is forwarded to
-        :func:`_resolve_popsize` for popsize resolution.
+        :func:`resolve_popsize` for popsize resolution.
 
     Returns
     -------
-    _SubOpt
+    SubOpt
         Adapter ready to slot into a wrapper factory.
 
     Raises
@@ -358,9 +359,9 @@ def _optstep_to_subopt(
     """
     name = normalize_key(opt_step.optimizer)
     hyperparams = dict(opt_step.hyperparameters)
-    popsize = _resolve_popsize(opt_step, task)
+    popsize = resolve_popsize(opt_step, task)
 
-    # ``popsize`` has now been consumed by ``_resolve_popsize``;
+    # ``popsize`` has now been consumed by ``resolve_popsize``;
     # strip it before forwarding ``hyperparams`` to the optax /
     # evosax constructors below, neither of which accepts it as a
     # kwarg.
@@ -382,7 +383,7 @@ def _optstep_to_subopt(
         # ``default_params.replace`` (e.g. SHADE's memory/archive size).
         constructor_kwargs = {
             kwarg: hyperparams.pop(kwarg)
-            for kwarg in _CONSTRUCTOR_HYPERPARAMETERS.get(name, ())
+            for kwarg in CONSTRUCTOR_HYPERPARAMETERS.get(name, ())
             if kwarg in hyperparams
         }
         # evosax wants ``solution`` to infer per-candidate shape;
@@ -407,7 +408,7 @@ def _optstep_to_subopt(
             raise ValueError(
                 f"evosax algorithm {algo_cls.__name__} is not registered "
                 f"as distribution-based or population-based; cannot "
-                f"build a _SubOpt automatically."
+                f"build a SubOpt automatically."
             )
 
         def init_fn(params: PyTree, key: PRNGKeyArray) -> PyTree:
@@ -526,6 +527,40 @@ def _optstep_to_subopt(
     raise ValueError(
         f"Optimizer {opt_step.optimizer!r} is not registered in "
         f"l2co's optax_mapping or evosax_mapping; cannot build a "
-        f"_SubOpt automatically. Consider passing a hand-built "
-        f"_SubOpt via grad_sub_optimizer/pop_sub_optimizer."
+        f"SubOpt automatically. Consider passing a hand-built "
+        f"SubOpt via grad_sub_optimizer/pop_sub_optimizer."
     )
+
+
+#                                                    Deprecated import aliases
+# =============================================================================
+
+# These symbols were renamed to public (non-underscore) names when the
+# optimizer-authoring surface was consolidated behind the ``l2co.optimizers``
+# facade (``docs/adr/0007``). The old underscore names remain importable for
+# one release as deprecated shims so downstream deep-importers (rl2co,
+# agentic-l2co) keep working until they migrate to ``l2co.optimizers``; they
+# are scheduled for removal in l2co 1.6.0.
+_DEPRECATED_ALIASES = {
+    "_SubOpt": "SubOpt",
+    "_optstep_to_subopt": "optstep_to_subopt",
+    "_resolve_popsize": "resolve_popsize",
+    "_CONSTRUCTOR_HYPERPARAMETERS": "CONSTRUCTOR_HYPERPARAMETERS",
+}
+
+
+def __getattr__(name: str):
+    """Emit a ``DeprecationWarning`` for the pre-rename underscore names."""
+    new = _DEPRECATED_ALIASES.get(name)
+    if new is not None:
+        import warnings
+
+        warnings.warn(
+            f"l2co._src.optimizers.sub_optimizer.{name} is deprecated and "
+            f"will be removed in l2co 1.6.0; import {new} from the "
+            f"l2co.optimizers facade instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return globals()[new]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

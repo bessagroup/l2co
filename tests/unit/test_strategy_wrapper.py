@@ -35,8 +35,8 @@ from l2co import (
     L2COModel,
     MixedEmbedding,
     OptimizationStep,
-    UpdateClass,
 )
+from l2co._src.meta_optimizer import L2COUpdateClass
 from l2co._src.optimizers.update_class import l2co_population_based_fn
 from l2co._src.strategy_wrapper import State, l2co_population_strategy
 from l2co.models import MLP, LSTM_Encoder
@@ -649,7 +649,7 @@ class TestBridge:
             lambda cls, stage0_model, stage1_model: model
         )
         try:
-            update_class = UpdateClass.l2co_update(
+            update_class = L2COUpdateClass.l2co_population_update(
                 task=task,
                 opt_hash=1234,
                 budget_fn=lambda *, task: MAX_ITERATIONS,
@@ -667,6 +667,6 @@ class TestBridge:
 
 
 def _resolved_popsize(step: OptimizationStep, task) -> int:
-    from l2co._src.optimizers.sub_optimizer import _resolve_popsize
+    from l2co._src.optimizers.sub_optimizer import resolve_popsize
 
-    return _resolve_popsize(step, task)
+    return resolve_popsize(step, task)

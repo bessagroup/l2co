@@ -1,16 +1,40 @@
-"""Public API for available optimizer configurations.
+"""Public API for optimizers and for *authoring* new ones.
 
-Stable import surface for the ``optimizer_mapping`` and ``optimizers`` dicts,
-the ``register_optimizer`` extension point, the
-``create_schedules_experimentdata`` helper, the built-in ``SHADE``
-algorithm (``shade_update`` factory, ``shade_popsize`` default), and the
-L-BFGS entry (``lbfgs_update`` factory — per-eval-key noise semantics on
-stochastic tasks — with the ``lbfgs_per_eval_key`` optimizer and
-``scale_by_zoom_linesearch_per_eval_key`` linesearch building blocks).
+This module is the single stable surface an optimizer author builds
+against (``docs/adr/0007``). Everything needed to write a new optimizer
+-- or a meta-optimizer that self-registers via
+:func:`register_optimizer` -- is re-exported here, so downstream packages
+(rl2co, agentic-l2co) never have to reach into ``l2co._src``:
+
+* **Registry & construction** -- ``optimizer_mapping`` / ``optimizers``
+  (name -> factory), the ``register_optimizer`` extension point, the
+  ``UpdateClass`` container every factory returns, and the
+  ``create_schedules_experimentdata`` helper.
+* **Contract types** -- the ``InitFunction`` / ``StepFunction`` /
+  ``StopFunction`` signatures, ``InputParameters`` / ``OptState`` /
+  ``SamplerFunction`` aliases, and the ``PopSize`` spec.
+* **Loss helpers** -- the ``vmapped_loss*`` helpers that evaluate a
+  task's loss (and gradients) over a population.
+* **Sub-optimizer primitives** -- ``SubOpt`` and the
+  ``grad_sub_optimizer`` / ``pop_sub_optimizer`` / ``optstep_to_subopt``
+  factories, ``resolve_popsize``, ``l2co_native_evosax``, and
+  ``CONSTRUCTOR_HYPERPARAMETERS`` -- the shared adapter layer both
+  strategy wrappers dispatch across.
+* **Base optimizer factories** -- the ``normalized_optax_normal`` /
+  ``normalized_optax_from_state`` optax registries and
+  ``random_search_update``.
+* **Built-in algorithms** -- the ``SHADE`` algorithm (``shade_update``
+  factory, ``shade_popsize`` default) and the L-BFGS entry
+  (``lbfgs_update`` factory with per-eval-key noise semantics on
+  stochastic tasks, plus the ``lbfgs_per_eval_key`` optimizer and
+  ``scale_by_zoom_linesearch_per_eval_key`` linesearch building blocks).
 """
 
+# Registry, construction, built-in algorithms
+from ._src.opt_history import OptHistory
 from ._src.optimizers import (
     SHADE,
+    UpdateClass,
     create_schedules_experimentdata,
     lbfgs_per_eval_key,
     lbfgs_update,
@@ -22,15 +46,75 @@ from ._src.optimizers import (
     shade_update,
 )
 
+# Base optimizer factories / registries
+from ._src.optimizers.optax_implementations import (
+    normalized_optax_from_state,
+    normalized_optax_normal,
+)
+from ._src.optimizers.random_search import random_search_update
+
+# Sub-optimizer primitives shared by the strategy wrappers
+from ._src.optimizers.sub_optimizer import (
+    CONSTRUCTOR_HYPERPARAMETERS,
+    SubOpt,
+    grad_sub_optimizer,
+    l2co_native_evosax,
+    optstep_to_subopt,
+    pop_sub_optimizer,
+    resolve_popsize,
+)
+
+# Loss helpers
+from ._src.tree_utils import (
+    vmapped_loss,
+    vmapped_loss_and_grad,
+    vmapped_loss_and_grad_with_rng,
+    vmapped_loss_with_rng,
+)
+
+# Contract types
+from ._src.typing import (
+    InitFunction,
+    InputParameters,
+    OptState,
+    PopSize,
+    SamplerFunction,
+    StepFunction,
+    StopFunction,
+)
+
 __all__ = [
+    "CONSTRUCTOR_HYPERPARAMETERS",
+    "InitFunction",
+    "InputParameters",
+    "OptHistory",
+    "OptState",
+    "PopSize",
     "SHADE",
+    "SamplerFunction",
+    "StepFunction",
+    "StopFunction",
+    "SubOpt",
+    "UpdateClass",
     "create_schedules_experimentdata",
+    "grad_sub_optimizer",
+    "l2co_native_evosax",
     "lbfgs_per_eval_key",
     "lbfgs_update",
+    "normalized_optax_from_state",
+    "normalized_optax_normal",
     "optimizer_mapping",
     "optimizers",
+    "optstep_to_subopt",
+    "pop_sub_optimizer",
+    "random_search_update",
     "register_optimizer",
+    "resolve_popsize",
     "scale_by_zoom_linesearch_per_eval_key",
     "shade_popsize",
     "shade_update",
+    "vmapped_loss",
+    "vmapped_loss_and_grad",
+    "vmapped_loss_and_grad_with_rng",
+    "vmapped_loss_with_rng",
 ]
