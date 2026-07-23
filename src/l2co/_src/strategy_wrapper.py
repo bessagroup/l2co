@@ -100,7 +100,7 @@ from l2co_tasks import Task
 from .models.l2co_model import L2COModel
 from .models.stage1 import Stage1Model
 from .optimizer_schedule import OptimizationStep
-from .optimizers.sub_optimizer import _optstep_to_subopt, _SubOpt
+from .optimizers.sub_optimizer import SubOpt, optstep_to_subopt
 from .tree_utils import traj_and_stair
 from .typing import SamplerFunction
 
@@ -117,7 +117,7 @@ class Params(eqx.Module):
     """Per-generation hyperparameter container.
 
     Empty: sub-optimizer hyperparameters are captured at construction
-    time inside the :class:`_SubOpt` closures and never reach this
+    time inside the :class:`SubOpt` closures and never reach this
     surface. Kept as an explicit class for evosax-API parity and to
     leave room for future per-generation overrides.
     """
@@ -304,7 +304,7 @@ def l2co_population_strategy(
         ) from None
 
     sub_optimizers = tuple(
-        _optstep_to_subopt(step, task=task) for step in menu
+        optstep_to_subopt(step, task=task) for step in menu
     )
     population_size = max(sub.popsize for sub in sub_optimizers)
     name_hashes_arr = jnp.array(
@@ -379,7 +379,7 @@ class _L2COPopulationStrategy(eqx.Module):
     stage1_model : Stage1Model
         Trained stage-1 network; fires in-graph at the switch
         generation.
-    sub_optimizers : tuple[_SubOpt, ...]
+    sub_optimizers : tuple[SubOpt, ...]
         Static adapters for the menu (order = logit order).
     name_hashes_arr : Int[Array, " n_opt"]
         Per-menu-entry hashes, stamped into the external history so
@@ -406,7 +406,7 @@ class _L2COPopulationStrategy(eqx.Module):
     """
 
     stage1_model: Stage1Model
-    sub_optimizers: tuple[_SubOpt, ...]
+    sub_optimizers: tuple[SubOpt, ...]
     name_hashes_arr: Int[Array, " n_opt"]
     task_features: Float[Array, " task_dim"]
     optimizer_features: Float[Array, " optimizer_dim"]

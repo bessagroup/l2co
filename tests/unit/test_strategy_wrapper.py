@@ -667,6 +667,6 @@ class TestBridge:
 
 
 def _resolved_popsize(step: OptimizationStep, task) -> int:
-    from l2co._src.optimizers.sub_optimizer import _resolve_popsize
+    from l2co._src.optimizers.sub_optimizer import resolve_popsize
 
-    return _resolve_popsize(step, task)
+    return resolve_popsize(step, task)
