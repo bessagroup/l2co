@@ -51,15 +51,20 @@ the base step-fn factories `normalized_optax_normal` /
 **documents the surface three consumers already reach for**, rather than
 inventing one. Rejected: a minimal facade that forces `agentic-l2co` to
 rewrite rather than re-path — a facade that pushes consumers back into
-`_src` is not a boundary. **(4)** The boundary is enforced. The
-existing `test_experiments_no_private_imports.py` guard (which today
-covers only l2co's own `experiments/`) is complemented by ruff
-`TID251` banned-api rules forbidding `_src/optimizers/**` from importing
-`models`/`strategy_wrapper` (per-file-ignore scoped) and banning
-`l2co._src.*` imports in the `rl2co` and `agentic-l2co` repos, plus a
-pytest registry guard (in the spirit of `l2co-tasks`'
-`test_task_registry_guard.py`) asserting every registered optimizer
-resolves through `optimizer_mapping` and that `import l2co` /
+`_src` is not a boundary. **(4)** The boundary is enforced with two
+mechanisms, each where it fits. The **cross-repo** ban — `rl2co` and
+`agentic-l2co` must never import `l2co._src.*` — is a ruff `TID251`
+banned-api rule in each consumer's `pyproject.toml` (repo-global, the
+natural fit; catches every submodule, no false positives on the
+consumers' own `_src`). The **in-repo cycle** ban — `_src/optimizers/**`
+must not import `models` / `strategy_wrapper` / `meta_optimizer` — is an
+AST-walk pytest guard (`test_optimizers_no_upward_imports.py`), because
+ruff cannot *scope an added ban to a directory* (`per-file-ignores` only
+*removes* rules); the AST guard also matches the existing
+`test_experiments_no_private_imports.py` idiom. Plus a pytest registry
+guard (`test_optimizer_registry_guard.py`, in the spirit of
+`l2co-tasks`' `test_task_registry_guard.py`) asserting every registered
+optimizer resolves through `optimizer_mapping` and that `import l2co` /
 `import rl2co` register `"l2co"` / `"rl2co"`.
 
 ## Consequences
