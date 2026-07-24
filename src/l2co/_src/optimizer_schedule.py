@@ -29,6 +29,15 @@ __credits__ = ["Martin van der Schelling"]
 __status__ = "Stable"
 # =============================================================================
 
+# Hyperparameter key holding an explicit human-facing schedule alias. When
+# set, :attr:`OptimizationStep.name` returns it verbatim instead of the
+# derived ``{optimizer}_{k=v}`` label — used to key a learned-optimizer
+# evaluation by its training run id (e.g. ``rl2co_<run_id>``) rather than by
+# its checkpoint file stem. It is a label only: policy identity stays
+# weights-based (:func:`l2co._src.databank.provenance.policy_identity_hash`
+# excludes this key).
+ALIAS_HYPERPARAMETER = "alias"
+
 
 @dataclass
 class OptimizationStep:
@@ -145,19 +154,32 @@ class OptimizationStep:
     def name(self) -> str:
         """Generate a descriptive name for this optimization step.
 
-        Learned meta-optimizers get compact model-derived names instead
-        of the generic ``{optimizer}_{k=v}`` join, whose path-valued
-        hyperparameters would otherwise leak into every SCHEDULE label,
-        plot legend, and databank key: ``rl2co`` names by its
-        checkpoint stem (``rl2co_10``), ``l2co`` by both stage
+        An explicit :data:`ALIAS_HYPERPARAMETER` (``"alias"``), when set,
+        is returned verbatim and short-circuits every derivation below —
+        the eval pipeline uses it to key a learned-optimizer run by its
+        training run id (``rl2co_<run_id>`` /
+        ``l2co_<s0_run_id>_<s1_run_id>``) rather than by the checkpoint
+        file stem, which is not a stable identity (a multi-file stage-0
+        checkpoint cannot be renamed without changing its weights hash).
+
+        Otherwise, learned meta-optimizers get compact model-derived
+        names instead of the generic ``{optimizer}_{k=v}`` join, whose
+        path-valued hyperparameters would otherwise leak into every
+        SCHEDULE label, plot legend, and databank key: ``rl2co`` names by
+        its checkpoint stem (``rl2co_10``), ``l2co`` by both stage
         checkpoint stems plus the stage-0 fraction
         (``l2co_s0-10_s1-25_t-0.05``).
 
         Returns
         -------
         str
-            Name combining optimizer and hyperparameters.
+            The explicit alias when set, else a name combining optimizer
+            and hyperparameters.
         """
+        alias = self.hyperparameters.get(ALIAS_HYPERPARAMETER)
+        if alias:
+            return str(alias)
+
         if self.optimizer == "rl2co":
             model_path = self.hyperparameters.get("model", "")
             stem = Path(model_path).stem if model_path else ""

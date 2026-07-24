@@ -228,49 +228,44 @@ def populated_iterations(
     return stored
 
 
-def load_databank_dataset(
+def _load_one(
     dataset_name: str,
     optimizers: list[OptimizationStep] | list[int] | list[str],
     root: Path,
     *,
-    task_ids: list[str] | None = None,
-    taskset: str | None = None,
-) -> xr.Dataset:
-    """Open a ``(task, optimizer)`` selection from the consolidated store.
+    task_ids: list[str] | None,
+    taskset: str | None,
+    strict: bool,
+) -> xr.Dataset | None:
+    """Open a ``(task, optimizer)`` selection from one store.
+
+    The single-store worker behind :func:`load_databank_dataset`. With
+    ``strict=True`` (the single-root default) a missing store or a
+    selection with no present tasks / schedules raises. With
+    ``strict=False`` (used per overlay root, where a store legitimately
+    holds only *some* of the requested schedules — or none of them) the
+    same conditions return ``None`` so the caller can skip that root's
+    contribution instead of aborting the union.
 
     Parameters
     ----------
-    dataset_name : str
-        Name of the dataset.
-    optimizers : list[OptimizationStep] | list[int] | list[str]
-        Selected optimizers, as :class:`OptimizationStep` recipes (their
-        ``.name`` is matched), schedule-name strings (matched directly),
-        or integer hashes (matched via the stored recipes).
-    root : pathlib.Path
-        The databank base directory (the application supplies it).
-    task_ids : list[str] | None, optional
-        Explicit task hashes. Mutually exclusive with ``taskset``. If
-        both are ``None``, every task in the store is selected.
-    taskset : str | None, optional
-        Name of a taskset file to resolve the task hashes from.
+    dataset_name, optimizers, root, task_ids, taskset
+        See :func:`load_databank_dataset`.
+    strict : bool
+        Raise (``True``) vs. return ``None`` (``False``) when the store
+        is absent or contributes no cell.
 
     Returns
     -------
-    xarray.Dataset
-        Lazy (zarr-backed) selection. ``loss_history`` is already on the
-        store's fixed budget grid; numerical variables are ``float``.
-
-    Raises
-    ------
-    FileNotFoundError
-        The store does not exist.
-    ValueError
-        ``optimizers`` is empty, or both ``task_ids`` and ``taskset``
-        are given.
+    xarray.Dataset | None
+        The lazy selection, or ``None`` when ``strict=False`` and this
+        store contributes nothing.
     """
     store = layout.zarr_store_path(root, dataset_name)
     if not store.exists():
-        raise FileNotFoundError(f"No zarr store found at {store}.")
+        if strict:
+            raise FileNotFoundError(f"No zarr store found at {store}.")
+        return None
 
     with silence_zarr_warnings():
         ds = xr.open_zarr(store, consolidated=True)
@@ -287,16 +282,20 @@ def load_databank_dataset(
             f"task(s) absent from {store}: {missing_ids}"
         )
     if not present_ids:
-        raise FileNotFoundError(
-            f"None of the requested tasks are present in {store}."
-        )
+        if strict:
+            raise FileNotFoundError(
+                f"None of the requested tasks are present in {store}."
+            )
+        return None
 
     store_names = set(str(s) for s in ds[SCHEDULE].values)
     present_names = [n for n in names if n in store_names]
     if not present_names:
-        raise FileNotFoundError(
-            f"None of the requested optimizers are present in {store}."
-        )
+        if strict:
+            raise FileNotFoundError(
+                f"None of the requested optimizers are present in {store}."
+            )
+        return None
 
     ds = ds.sel({TASK_ID: present_ids, SCHEDULE: present_names})
 
@@ -313,6 +312,142 @@ def load_databank_dataset(
     return ds
 
 
+def load_databank_dataset(
+    dataset_name: str,
+    optimizers: list[OptimizationStep] | list[int] | list[str],
+    root: Path,
+    *,
+    task_ids: list[str] | None = None,
+    taskset: str | None = None,
+    overlay_roots: list[Path] | None = None,
+) -> xr.Dataset:
+    """Open a ``(task, optimizer)`` selection from the consolidated store.
+
+    When ``overlay_roots`` is given, the same ``dataset_name`` is opened
+    from ``root`` **and** each overlay root and the selections are unioned
+    along ``schedule`` — the design for combining a read-only baseline
+    databank with a separate learned-optimizer *runs* store (each store
+    holds a disjoint slice of the requested schedules) without copying
+    either. The union is virtual (lazy) and:
+
+    - restricts to the ``taskID`` **intersection** across the contributing
+      stores (a fair per-task comparison needs every schedule present on
+      the same tasks);
+    - keeps the first occurrence of a duplicated schedule name (``root``
+      wins), so an overlay never shadows a primary record;
+    - requires the contributing stores to share the same budget /
+      realization grid (``xarray`` concat with ``join="exact"`` raises
+      otherwise) — mixing stores dumped with different ``budget_steps`` is
+      an error, not a silent truncation.
+
+    Parameters
+    ----------
+    dataset_name : str
+        Name of the dataset.
+    optimizers : list[OptimizationStep] | list[int] | list[str]
+        Selected optimizers, as :class:`OptimizationStep` recipes (their
+        ``.name`` is matched), schedule-name strings (matched directly),
+        or integer hashes (matched via the stored recipes). The selection
+        may span schedules living in different roots.
+    root : pathlib.Path
+        The primary databank base directory (the application supplies it).
+        Task-id / taskset resolution is anchored here.
+    task_ids : list[str] | None, optional
+        Explicit task hashes. Mutually exclusive with ``taskset``. If
+        both are ``None``, every task in the primary store is selected.
+    taskset : str | None, optional
+        Name of a taskset file to resolve the task hashes from (read from
+        the primary ``root``).
+    overlay_roots : list[pathlib.Path] | None, optional
+        Additional databank base directories overlaid on ``root``. Each is
+        opened for the same ``dataset_name`` and its requested schedules
+        are appended. ``None`` (default) is the single-store read.
+
+    Returns
+    -------
+    xarray.Dataset
+        Lazy (zarr-backed) selection. ``loss_history`` is already on the
+        store's fixed budget grid; numerical variables are ``float``.
+
+    Raises
+    ------
+    FileNotFoundError
+        The primary store does not exist, or the selection is empty.
+    ValueError
+        ``optimizers`` is empty, or both ``task_ids`` and ``taskset``
+        are given.
+    """
+    primary = _load_one(
+        dataset_name,
+        optimizers,
+        root,
+        task_ids=task_ids,
+        taskset=taskset,
+        strict=True,
+    )
+    if not overlay_roots:
+        return primary
+
+    # Anchor the task selection on the primary store: overlay roots are
+    # restricted to the tasks the primary already resolved (explicit ids,
+    # no re-resolution of a taskset that may not exist under an overlay).
+    primary_ids = [str(t) for t in primary[TASK_ID].values]
+    parts = [primary]
+    seen_schedules = {str(s) for s in primary[SCHEDULE].values}
+    for oroot in overlay_roots:
+        part = _load_one(
+            dataset_name,
+            optimizers,
+            oroot,
+            task_ids=primary_ids,
+            taskset=None,
+            strict=False,
+        )
+        if part is None:
+            continue
+        fresh = [
+            s
+            for s in map(str, part[SCHEDULE].values)
+            if s not in seen_schedules
+        ]
+        if not fresh:
+            continue
+        seen_schedules.update(fresh)
+        parts.append(part.sel({SCHEDULE: fresh}))
+
+    if len(parts) == 1:
+        return primary
+
+    # taskID intersection across every contributing store (primary order
+    # preserved), then concat along schedule. join="exact" makes a budget /
+    # realization grid mismatch fail loudly instead of silently dropping
+    # points.
+    present_per_part = [{str(t) for t in p[TASK_ID].values} for p in parts]
+    common_ids = [
+        t for t in primary_ids if all(t in s for s in present_per_part)
+    ]
+    if not common_ids:
+        raise FileNotFoundError(
+            "Overlay union is empty: the primary and overlay stores share "
+            f"no task in dataset '{dataset_name}'."
+        )
+    parts = [p.sel({TASK_ID: common_ids}) for p in parts]
+    combined = xr.concat(
+        parts,
+        dim=SCHEDULE,
+        data_vars="minimal",
+        coords="minimal",
+        compat="override",
+        join="exact",
+    )
+    logger.info(
+        f"load_databank_dataset: overlaid {len(parts)} store(s) into "
+        f"{combined.sizes[SCHEDULE]} schedule(s) over "
+        f"{len(common_ids)} shared task(s) for '{dataset_name}'"
+    )
+    return combined
+
+
 def load_databank(
     dataset_name: str,
     optimizers: list[OptimizationStep] | list[int] | list[str],
@@ -320,6 +455,7 @@ def load_databank(
     *,
     task_ids: list[str] | None = None,
     taskset: str | None = None,
+    overlay_roots: list[Path] | None = None,
 ) -> DataLoader:
     """Open a selection and wrap it in a ``DataLoader``.
 
@@ -332,7 +468,7 @@ def load_databank(
     (zarr-backed) -- dask reads only the chunks each downstream
     operation touches; call :meth:`l2co.DataLoader.load` to force the
     whole dataset into memory. See :func:`load_databank_dataset` for the
-    parameter contract.
+    parameter contract (including ``overlay_roots``).
 
     Returns
     -------
@@ -345,6 +481,7 @@ def load_databank(
         root,
         task_ids=task_ids,
         taskset=taskset,
+        overlay_roots=overlay_roots,
     )
     drop = [v for v in (OPTIMIZATIONSTEP, PROVENANCE, IN_TRAINING) if v in ds]
     ds = ds.drop_vars(drop)
@@ -358,6 +495,7 @@ def load_databank_performance(
     *,
     task_ids: list[str] | None = None,
     taskset: str | None = None,
+    overlay_roots: list[Path] | None = None,
 ) -> DataLoader:
     """Open only the performance half of a selection as a loader.
 
@@ -369,8 +507,10 @@ def load_databank_performance(
 
     Parameters
     ----------
-    dataset_name, optimizers, root, task_ids, taskset
-        See :func:`load_databank_dataset`.
+    dataset_name, optimizers, root, task_ids, taskset, overlay_roots
+        See :func:`load_databank_dataset`. ``overlay_roots`` unions a
+        read-only baseline databank with a separate runs store for the
+        combined ERTD report.
 
     Returns
     -------
@@ -383,6 +523,7 @@ def load_databank_performance(
         root,
         task_ids=task_ids,
         taskset=taskset,
+        overlay_roots=overlay_roots,
     )
     # Drop the loss arrays (and the budget axis) by keeping only the
     # performance/task variables; the loss chunks stay unread.

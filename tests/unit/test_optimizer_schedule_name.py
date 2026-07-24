@@ -9,7 +9,47 @@ from both stage checkpoints plus the stage-0 fraction ``t``, so every
 legible label.
 """
 
-from l2co import OptimizationStep
+from l2co import ALIAS_HYPERPARAMETER, OptimizationStep
+
+
+def test_alias_overrides_derived_name():
+    # An explicit alias short-circuits the stem-derived name for a learned
+    # optimizer (the eval pipeline keys the run by its training run id).
+    step = OptimizationStep(
+        optimizer="rl2co",
+        hyperparameters={
+            "model": "/x/experiment_data/model/7",
+            ALIAS_HYPERPARAMETER: "rl2co_2026-07-22T10-00-00Z",
+        },
+    )
+    assert step.name == "rl2co_2026-07-22T10-00-00Z"
+
+
+def test_empty_alias_falls_back_to_derivation():
+    step = OptimizationStep(
+        optimizer="rl2co",
+        hyperparameters={
+            "model": "/x/experiment_data/model/7",
+            ALIAS_HYPERPARAMETER: "",
+        },
+    )
+    assert step.name == "rl2co_7"
+
+
+def test_alias_does_not_change_policy_identity():
+    # Two evaluations of the SAME weights under different aliases must share
+    # one policy identity (identity is weights-based, alias is a label).
+    from l2co.databank import policy_identity_hash
+
+    record = {"training": {"weights_hash": "deadbeef"}}
+    base_hp = {"model": "/x/model/7", "n_steps": 100}
+    a = OptimizationStep(
+        optimizer="rl2co", hyperparameters={**base_hp, "alias": "rl2co_A"}
+    )
+    b = OptimizationStep(
+        optimizer="rl2co", hyperparameters={**base_hp, "alias": "rl2co_B"}
+    )
+    assert policy_identity_hash(record, a) == policy_identity_hash(record, b)
 
 
 def test_l2co_name_from_stems_and_t():

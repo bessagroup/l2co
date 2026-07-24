@@ -1133,3 +1133,144 @@ def test_verify_facade(tmp_path, tasks, steps):
     report = databank.verify_databank(tmp_path, "bbob")
     assert isinstance(report, databank.DatabankVerificationReport)
     assert isinstance(report.findings[0], databank.VerificationFinding)
+
+
+#                                                        overlay_roots (union)
+# =============================================================================
+# Combining a read-only baseline databank with a separate learned-optimizer
+# runs store: the two stores hold a disjoint slice of the requested schedules
+# and load_databank_dataset(..., overlay_roots=[runs]) unions them lazily.
+
+
+def _overlay_step() -> OptimizationStep:
+    """A schedule absent from the `steps` fixture, standing in for a
+    learned-optimizer run dumped into the separate runs store."""
+    return OptimizationStep(optimizer="lbfgs")
+
+
+def test_overlay_unions_schedules(tmp_path, tasks, steps):
+    primary = tmp_path / "databank"
+    runs = tmp_path / "runs"
+    _create_zarr(
+        primary,
+        _write_raw_runs(
+            primary / "raw", [(tasks[0], 12), (tasks[1], 12)], steps
+        ),
+    )
+    ostep = _overlay_step()
+    _create_zarr(
+        runs,
+        _write_raw_runs(
+            runs / "raw", [(tasks[0], 12), (tasks[1], 12)], [ostep]
+        ),
+    )
+
+    requested = steps + [ostep]
+    ds = load_databank_dataset(
+        "bbob", requested, primary, overlay_roots=[runs]
+    ).load()
+
+    assert {str(s) for s in ds[SCHEDULE].values} == {s.name for s in requested}
+    assert ds.sizes[TASK_ID] == 2
+
+
+def test_overlay_restricts_to_task_intersection(tmp_path, tasks, steps):
+    primary = tmp_path / "databank"
+    runs = tmp_path / "runs"
+    _create_zarr(
+        primary,
+        _write_raw_runs(
+            primary / "raw", [(tasks[0], 12), (tasks[1], 12)], steps
+        ),
+    )
+    ostep = _overlay_step()
+    # Runs store evaluated only the first task.
+    _create_zarr(
+        runs, _write_raw_runs(runs / "raw", [(tasks[0], 12)], [ostep])
+    )
+
+    ds = load_databank_dataset(
+        "bbob", steps + [ostep], primary, overlay_roots=[runs]
+    ).load()
+
+    assert [str(t) for t in ds[TASK_ID].values] == [tasks[0].hash]
+    assert {str(s) for s in ds[SCHEDULE].values} == {
+        s.name for s in steps + [ostep]
+    }
+
+
+def test_overlay_dedups_primary_wins(tmp_path, tasks, steps):
+    primary = tmp_path / "databank"
+    runs = tmp_path / "runs"
+    _create_zarr(
+        primary,
+        _write_raw_runs(
+            primary / "raw", [(tasks[0], 12), (tasks[1], 12)], steps
+        ),
+    )
+    ostep = _overlay_step()
+    # Runs store carries a duplicate of adam plus the fresh lbfgs.
+    _create_zarr(
+        runs,
+        _write_raw_runs(
+            runs / "raw", [(tasks[0], 12), (tasks[1], 12)], [steps[1], ostep]
+        ),
+    )
+
+    ds = load_databank_dataset(
+        "bbob", steps + [ostep], primary, overlay_roots=[runs]
+    ).load()
+
+    names = [str(s) for s in ds[SCHEDULE].values]
+    assert names.count("adam_lr=0.01") == 1  # primary wins, no duplicate
+    assert set(names) == {s.name for s in steps + [ostep]}
+
+
+def test_overlay_budget_grid_mismatch_raises(tmp_path, tasks, steps):
+    primary = tmp_path / "databank"
+    runs = tmp_path / "runs"
+    _create_zarr(
+        primary,
+        _write_raw_runs(
+            primary / "raw", [(tasks[0], 12), (tasks[1], 12)], steps
+        ),
+        budget_steps=BS,
+    )
+    ostep = _overlay_step()
+    # A store dumped on a different budget grid must fail loudly, not
+    # silently drop points (join="exact" inside the concat).
+    _create_zarr(
+        runs,
+        _write_raw_runs(
+            runs / "raw", [(tasks[0], 12), (tasks[1], 12)], [ostep]
+        ),
+        budget_steps=BS * 2,
+    )
+
+    with pytest.raises(ValueError):
+        load_databank_dataset(
+            "bbob", steps + [ostep], primary, overlay_roots=[runs]
+        )
+
+
+def test_overlay_performance_loader(tmp_path, tasks, steps):
+    primary = tmp_path / "databank"
+    runs = tmp_path / "runs"
+    _create_zarr(
+        primary,
+        _write_raw_runs(
+            primary / "raw", [(tasks[0], 12), (tasks[1], 12)], steps
+        ),
+    )
+    ostep = _overlay_step()
+    _create_zarr(
+        runs,
+        _write_raw_runs(
+            runs / "raw", [(tasks[0], 12), (tasks[1], 12)], [ostep]
+        ),
+    )
+
+    pl = load_databank_performance(
+        "bbob", steps + [ostep], primary, overlay_roots=[runs]
+    )
+    assert pl.data.sizes[SCHEDULE] == len(steps) + 1

@@ -66,6 +66,14 @@ _PATH_HYPERPARAMETERS = (
     "stage1_model",
 )
 
+# Hyperparameter keys that are labels/provenance, not evaluation settings,
+# and so are excluded from :func:`policy_identity_hash` alongside the path
+# keys. ``alias`` (see
+# :data:`l2co._src.optimizer_schedule.ALIAS_HYPERPARAMETER`) only sets the
+# human-facing SCHEDULE label; two evaluations of the same weights under
+# different aliases must still share one identity.
+_NON_IDENTITY_HYPERPARAMETERS = (*_PATH_HYPERPARAMETERS, "alias")
+
 # Sidecar files a checkpoint may consist of, next to the ``.eqx`` main
 # file (e.g. a scikit Stage-0 model keeps its estimator in ``.joblib``).
 _WEIGHTS_SUFFIXES = (".eqx", ".joblib", ".pkl")
@@ -408,8 +416,8 @@ def policy_identity_hash(record: dict, step) -> int:
         The provenance record (see :func:`provenance_record`).
     step : OptimizationStep
         The evaluated schedule; its hyperparameters minus the
-        path-valued keys (:data:`_PATH_HYPERPARAMETERS`) enter the
-        hash.
+        non-identity keys (:data:`_NON_IDENTITY_HYPERPARAMETERS` — the
+        path-valued keys plus the label-only ``alias``) enter the hash.
 
     Returns
     -------
@@ -420,7 +428,7 @@ def policy_identity_hash(record: dict, step) -> int:
     settings = {
         k: v
         for k, v in sorted(step.hyperparameters.items())
-        if k not in _PATH_HYPERPARAMETERS
+        if k not in _NON_IDENTITY_HYPERPARAMETERS
     }
     payload = json.dumps(
         {"weights": record_weights_hash(record), "settings": settings},

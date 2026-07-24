@@ -73,16 +73,16 @@ wheels = [
 
 [[package]]
 name = "bbob-jax"
-version = "1.8.0"
+version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jax" },
     { name = "jaxtyping" },
     { name = "softjax" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7a/23/497f04ae346d51ccd1db104d9c2c4b937ddcede3a7bae3b018550a22546c/bbob_jax-1.8.0.tar.gz", hash = "sha256:88666095aa7593b435976fcf6bc741ba5bc38c3a92d2becbe373d13b5834bf02", size = 60759, upload-time = "2026-07-10T13:25:21.048Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a6/e8/18e4b57cb5d50707da07e8d12ef13bb8abfa9632491bcb699cbd6e403fa1/bbob_jax-2.0.0.tar.gz", hash = "sha256:12a6d85700f0e2638323a21517dfc53a4aa8b27eb73feb3ef5acdec7d07f741e", size = 73708, upload-time = "2026-07-15T13:07:27.624Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a0/74/9273ff967bbf8bd2583e87598e052797178dd8adf59c0467c01be621edd0/bbob_jax-1.8.0-py3-none-any.whl", hash = "sha256:db20ce307867ed3de40443895c087b62c8d2e083d429099db0fb4feb44c0bd43", size = 54366, upload-time = "2026-07-10T13:25:19.951Z" },
+    { url = "https://files.pythonhosted.org/packages/76/ae/0c1717a0e97ebbc9c3fd7afad4c98a661a4ae80b99045b4c908a71ae0126/bbob_jax-2.0.0-py3-none-any.whl", hash = "sha256:940d5464acd25a3c1e7684b9a5f760ed6f441051d135bfeb3933412ff142cb80", size = 63735, upload-time = "2026-07-15T13:07:26.658Z" },
 ]
 
 [[package]]
@@ -186,7 +186,7 @@ name = "cffi"
 version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pycparser", marker = "implementation_name != 'PyPy'" },
+    { name = "pycparser" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/eb/56/b1ba7935a17738ae8453301356628e8147c79dbb825bcbc73dc7401f9846/cffi-2.0.0.tar.gz", hash = "sha256:44d1b5909021139fe36001ae048dbdde8214afa20200eda0f64c068cac5d5529", size = 523588, upload-time = "2025-09-08T23:24:04.541Z" }
 wheels = [
@@ -1308,7 +1308,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bbob-jax", specifier = ">=1.8.0" },
+    { name = "bbob-jax", specifier = ">=2.0.0" },
     { name = "build", marker = "extra == 'dev'" },
     { name = "cloudpickle", specifier = ">=3.1.1" },
     { name = "equinox", specifier = ">=0.13.0" },
