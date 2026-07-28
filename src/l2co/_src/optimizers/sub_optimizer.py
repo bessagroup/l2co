@@ -42,6 +42,7 @@ from l2co_tasks import Task
 
 from ..optimizer_schedule import OptimizationStep
 from .evosax_implementations import normalized_evosax
+from .lbfgs import stock_lbfgs
 from .mapping import optimizer_mapping
 from .optax_implementations import (
     normalized_optax_from_state,
@@ -57,6 +58,7 @@ __all__ = [
     "SubOpt",
     "grad_sub_optimizer",
     "l2co_native_evosax",
+    "l2co_native_optax",
     "optstep_to_subopt",
     "pop_sub_optimizer",
     "resolve_popsize",
@@ -67,6 +69,18 @@ __all__ = [
 # registries but subclassing its base API, so the generic evosax branch
 # of ``optstep_to_subopt`` drives them unchanged.
 l2co_native_evosax: dict[str, type] = {"shade": SHADE}
+
+# l2co-native optax-style transforms: assembled by l2co rather than
+# named on the ``optax`` module, so they are absent from the
+# ``normalized_optax_*`` registries but the generic gradient branch of
+# ``optstep_to_subopt`` drives them unchanged. ``"lbfgs"`` lives here
+# because it moved out of ``opt_names_from_state`` into its own module
+# (``l2co._src.optimizers.lbfgs``) to gain per-eval-key semantics; the
+# ``SubOpt`` path takes the stock variant, which is the only one it can
+# drive (see :func:`optstep_to_subopt`).
+l2co_native_optax: dict[str, Callable[..., optax.GradientTransformation]] = {
+    "lbfgs": stock_lbfgs,
+}
 
 # Shape-affecting hyperparameter names consumed by an algorithm's
 # *constructor* rather than its flax-struct ``Params`` (which only
@@ -321,7 +335,8 @@ def optstep_to_subopt(
     Dispatch is by ``opt_step.optimizer`` against
     :data:`~l2co._src.optimizers.optax_implementations.
     normalized_optax_normal`, :data:`...normalized_optax_from_state`,
-    :data:`~l2co._src.optimizers.evosax_implementations.
+    :data:`l2co_native_optax` (l2co's own optax-style transforms, e.g.
+    ``'lbfgs'``), :data:`~l2co._src.optimizers.evosax_implementations.
     normalized_evosax`, and :data:`l2co_native_evosax` (l2co's own
     evosax-style algorithms, e.g. ``'shade'``). Population size is
     resolved by :func:`resolve_popsize`.
@@ -331,6 +346,20 @@ def optstep_to_subopt(
     turning-based mutation) receive them as ordinary ``x_min`` /
     ``x_max`` hyperparameters instead; without them SHADE runs
     unbounded (its repair degrades to a no-op).
+
+    Nor does it have a per-evaluation-key channel: the ``value_fn``
+    reaching a line search here is the caller's plain ``params ->
+    scalar`` callable, with no key to split. ``'lbfgs'`` therefore
+    resolves to :func:`~l2co._src.optimizers.lbfgs.stock_lbfgs` on
+    *every* task, including stochastic ones — whereas the registry
+    factory :func:`~l2co._src.optimizers.lbfgs.lbfgs_update` switches
+    to :func:`~l2co._src.optimizers.lbfgs.lbfgs_per_eval_key` when
+    ``task.pass_rng`` is set. On a stochastic task the noise contract
+    of a wrapper-driven L-BFGS is whatever the caller's ``value_fn``
+    implements, not the one-realization-per-evaluation contract the
+    registry path guarantees — see
+    ``docs/adr/0008-lbfgs-on-the-subopt-path-takes-the-stock-
+    linesearch.md``.
 
     Parameters
     ----------
@@ -368,11 +397,17 @@ def optstep_to_subopt(
     hyperparams.pop("popsize", None)
 
     # --- Optax / gradient-based ----------------------------------------
-    if name in normalized_optax_normal or name in normalized_optax_from_state:
+    if (
+        name in normalized_optax_normal
+        or name in normalized_optax_from_state
+        or name in l2co_native_optax
+    ):
         if name in normalized_optax_normal:
             optax_cls = normalized_optax_normal[name]
-        else:
+        elif name in normalized_optax_from_state:
             optax_cls = normalized_optax_from_state[name]
+        else:
+            optax_cls = l2co_native_optax[name]
         transform = optax_cls(**hyperparams)
         return grad_sub_optimizer(transform, name_hash=opt_step.hash)
 
@@ -525,9 +560,13 @@ def optstep_to_subopt(
         )
 
     raise ValueError(
-        f"Optimizer {opt_step.optimizer!r} is not registered in "
-        f"l2co's optax_mapping or evosax_mapping; cannot build a "
-        f"SubOpt automatically. Consider passing a hand-built "
+        f"Optimizer {opt_step.optimizer!r} is not resolvable to a "
+        f"SubOpt: it is absent from normalized_optax_normal, "
+        f"normalized_optax_from_state, l2co_native_optax, "
+        f"normalized_evosax and l2co_native_evosax. Note these are "
+        f"narrower than l2co's optimizer registry — an optimizer that "
+        f"``optimizer_mapping`` resolves may still be missing here. "
+        f"Add it to the matching registry, or pass a hand-built "
         f"SubOpt via grad_sub_optimizer/pop_sub_optimizer."
     )
 

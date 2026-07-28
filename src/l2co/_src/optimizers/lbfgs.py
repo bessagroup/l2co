@@ -236,14 +236,21 @@ def lbfgs_per_eval_key(
     )
 
 
-def _stock_lbfgs(
+def stock_lbfgs(
     learning_rate: float | None = None,
     memory_size: int = 10,
     scale_init_precond: bool = True,
     max_linesearch_steps: int = 20,
 ) -> optax.GradientTransformationExtraArgs:
     """``optax.lbfgs`` accepting the same signature as the per-eval
-    variant, for the deterministic-task fallback."""
+    variant.
+
+    Used by :func:`lbfgs_update` as the deterministic-task fallback,
+    and by ``l2co._src.optimizers.sub_optimizer.l2co_native_optax`` as
+    the *only* L-BFGS variant on the ``SubOpt`` path — that path has no
+    channel for a per-evaluation key (see
+    :func:`~l2co._src.optimizers.sub_optimizer.optstep_to_subopt`).
+    """
     return optax.lbfgs(
         learning_rate=learning_rate,
         memory_size=memory_size,
@@ -413,7 +420,7 @@ def lbfgs_update(
     if not task.pass_rng:
         return UpdateClass.optax_update_extra_kwargs(
             task=task,
-            optimizer=_stock_lbfgs,
+            optimizer=stock_lbfgs,
             opt_hash=opt_hash,
             popsize=popsize,
             bounded=bounded,

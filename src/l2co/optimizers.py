@@ -17,9 +17,9 @@ against (``docs/adr/0007``). Everything needed to write a new optimizer
   task's loss (and gradients) over a population.
 * **Sub-optimizer primitives** -- ``SubOpt`` and the
   ``grad_sub_optimizer`` / ``pop_sub_optimizer`` / ``optstep_to_subopt``
-  factories, ``resolve_popsize``, ``l2co_native_evosax``, and
-  ``CONSTRUCTOR_HYPERPARAMETERS`` -- the shared adapter layer both
-  strategy wrappers dispatch across.
+  factories, ``resolve_popsize``, ``l2co_native_optax``,
+  ``l2co_native_evosax``, and ``CONSTRUCTOR_HYPERPARAMETERS`` -- the
+  shared adapter layer both strategy wrappers dispatch across.
 * **Base optimizer factories** -- the ``normalized_optax_normal`` /
   ``normalized_optax_from_state`` optax registries and
   ``random_search_update``.
@@ -59,6 +59,7 @@ from ._src.optimizers.sub_optimizer import (
     SubOpt,
     grad_sub_optimizer,
     l2co_native_evosax,
+    l2co_native_optax,
     optstep_to_subopt,
     pop_sub_optimizer,
     resolve_popsize,
@@ -99,6 +100,7 @@ __all__ = [
     "create_schedules_experimentdata",
     "grad_sub_optimizer",
     "l2co_native_evosax",
+    "l2co_native_optax",
     "lbfgs_per_eval_key",
     "lbfgs_update",
     "normalized_optax_from_state",
