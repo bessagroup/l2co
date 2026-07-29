@@ -51,7 +51,12 @@ _Avoid_: "step" (overloaded with optimizer-internal steps), "epoch"
 The state transfer applied when the active optimizer changes: which
 population the incoming optimizer sees, and whether its internal
 state is reset or continued. Named variants: `best`, `best_one`,
-`reset_opt_state`, `continue_opt_state`.
+`reset_opt_state`, `continue_opt_state`. Which variants a given
+optimizer needs is tabulated once, in
+`l2co.optimizers.HANDSHAKE_POLICY`, and shared by every consumer.
+It is due exactly when `last_optimizer_idx >= 0` and the optimizer
+about to run differs from it — optimizer identity is by *menu index*,
+never by `OptimizationStep.hash`.
 
 **Menu**:
 The ordered tuple of candidate optimizers (`OptimizationStep`s) a

@@ -25,6 +25,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 import pytest
 from l2co_tasks import create_bbob_task
 
@@ -670,3 +671,114 @@ def _resolved_popsize(step: OptimizationStep, task) -> int:
     from l2co._src.optimizers.sub_optimizer import resolve_popsize
 
     return resolve_popsize(step, task)
+
+
+#                                                  opt_state handshake gating
+# =============================================================================
+
+
+class TestOptStateHandshakeGate:
+    """``legacy_reset`` vs ``per_optimizer`` (``docs/adr/0009``).
+
+    The unconditional reset reproduces the published ``reset_from_stage0``
+    semantics, so it stays the default; honouring the shared
+    ``HANDSHAKE_POLICY`` table (as the rl2co env does) is opt-in because
+    it changes results. ``MENU`` is (sepcmaes, adam) and both say
+    ``continue``, so under ``per_optimizer`` a switching fire resets
+    nothing.
+    """
+
+    def test_default_is_legacy_reset(self):
+        strategy, _ = _make_strategy()
+        assert strategy.opt_state_handshake == "legacy_reset"
+
+    def test_rejects_unknown_variant(self):
+        with pytest.raises(ValueError, match="opt_state_handshake"):
+            l2co_population_strategy(
+                model=_make_model(0, 0),
+                task=_task(),
+                sampler=normal_sampling,
+                t=T,
+                max_iterations=MAX_ITERATIONS,
+                opt_state_handshake="reset_everything",
+            )
+
+    def _switching_fire(self, opt_state_handshake):
+        """Fire stage-1 from adam (idx 1) onto sepcmaes (idx 0).
+
+        ``best_solution`` is displaced before the firing ask. Without
+        that, this harness feeds zero grads, so adam's iterate — and
+        hence ``best_solution`` — never leaves the point every
+        sub-state was initialised at, and ``init_fn(best_solution)``
+        reproduces the construction state exactly: the reset becomes a
+        no-op and neither variant is observable. Displacing it is the
+        situation the handshake exists for.
+        """
+        strategy = l2co_population_strategy(
+            model=_make_model(1, 0),
+            task=_task(),
+            sampler=normal_sampling,
+            t=T,
+            max_iterations=MAX_ITERATIONS,
+            opt_state_handshake=opt_state_handshake,
+        )
+        n = strategy.population_size
+        _, state = _initial_state(strategy)
+        values = [LOSS_BASE + v for v in (5.0, 4.0, 6.0, 3.0)][
+            : strategy.switch_generation
+        ]
+        fits = [jnp.full((n,), jnp.nan).at[0].set(v) for v in values]
+        state = _run_generations(strategy, state, fits)
+        state = eqx.tree_at(
+            lambda s: s.best_solution,
+            state,
+            jax.tree.map(lambda x: x + 5.0, state.best_solution),
+        )
+        before = jax.tree.leaves(state.sub_states[0])
+        population, state = strategy.ask(
+            jr.key(999), state, strategy.default_params
+        )
+        assert bool(state.fired)
+        assert int(state.active_opt_idx) == 0
+        return population, before, jax.tree.leaves(state.sub_states[0]), state
+
+    @staticmethod
+    def _leaves_equal(before, after) -> bool:
+        """Leafwise equality treating same-position NaNs as equal.
+
+        ``jnp.array_equal`` reports NaN != NaN, and these ES sub-states
+        carry NaN fitness placeholders, so a plain comparison would call
+        an untouched state "changed".
+        """
+        try:
+            for a, b in zip(after, before, strict=True):
+                np.testing.assert_array_equal(np.asarray(a), np.asarray(b))
+        except AssertionError:
+            return False
+        return True
+
+    def test_per_optimizer_preserves_continue_substate(self):
+        _, before, after, _ = self._switching_fire("per_optimizer")
+        assert self._leaves_equal(before, after)
+
+    def test_legacy_reset_still_resets_the_same_substate(self):
+        # The contrast case: identical trajectory, only the flag differs.
+        _, before, after, _ = self._switching_fire("legacy_reset")
+        assert not self._leaves_equal(before, after)
+
+    def test_the_two_variants_are_observably_different(self):
+        # Guards the pair above against both collapsing to a no-op: the
+        # post-fire sub-state must actually depend on the flag.
+        _, _, legacy, _ = self._switching_fire("legacy_reset")
+        _, _, per_opt, _ = self._switching_fire("per_optimizer")
+        assert not self._leaves_equal(per_opt, legacy)
+
+    def test_population_handshake_is_unaffected_by_the_flag(self):
+        # Only the ``opt_state`` half is gated; ``best_one`` still emits
+        # ``[best_solution, *sampler_draws]`` either way.
+        for variant in ("legacy_reset", "per_optimizer"):
+            population, _, _, state = self._switching_fire(variant)
+            leaf = jax.tree.leaves(population)[0]
+            best_leaf = jax.tree.leaves(state.best_solution)[0]
+            assert jnp.allclose(leaf[0], best_leaf), variant
+            assert jnp.isfinite(leaf[1:]).all(), variant

@@ -48,6 +48,14 @@ def test_all_symbols_are_importable():
         ("pop_sub_optimizer", "l2co._src.optimizers.sub_optimizer"),
         ("l2co_native_evosax", "l2co._src.optimizers.sub_optimizer"),
         ("CONSTRUCTOR_HYPERPARAMETERS", "l2co._src.optimizers.sub_optimizer"),
+        # Handshake policy (docs/adr/0009)
+        ("HandshakePolicy", "l2co._src.optimizers.handshake_policy"),
+        ("HANDSHAKE_POLICY", "l2co._src.optimizers.handshake_policy"),
+        (
+            "DEFAULT_HANDSHAKE_POLICY",
+            "l2co._src.optimizers.handshake_policy",
+        ),
+        ("handshake_policy_for", "l2co._src.optimizers.handshake_policy"),
         # Base optimizer factories / registries
         (
             "normalized_optax_normal",

@@ -33,9 +33,7 @@ FORBIDDEN_PREFIXES = (
 
 def _python_files() -> list[Path]:
     return [
-        p
-        for p in OPTIMIZERS_DIR.rglob("*.py")
-        if "__pycache__" not in p.parts
+        p for p in OPTIMIZERS_DIR.rglob("*.py") if "__pycache__" not in p.parts
     ]
 
 
