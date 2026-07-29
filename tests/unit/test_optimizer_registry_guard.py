@@ -34,9 +34,8 @@ def test_every_registered_optimizer_resolves() -> None:
 
 def test_optimizer_lookup_is_case_insensitive() -> None:
     for name in list(l2co.optimizers.optimizers):
-        assert (
-            l2co.optimizer_mapping(name.upper())
-            is l2co.optimizer_mapping(name)
+        assert l2co.optimizer_mapping(name.upper()) is l2co.optimizer_mapping(
+            name
         )
 
 

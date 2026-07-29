@@ -331,9 +331,7 @@ def l2co_population_strategy(
             f"must share one menu (use L2COModel.swap_optimizers)."
         ) from None
 
-    sub_optimizers = tuple(
-        optstep_to_subopt(step, task=task) for step in menu
-    )
+    sub_optimizers = tuple(optstep_to_subopt(step, task=task) for step in menu)
     population_size = max(sub.popsize for sub in sub_optimizers)
     name_hashes_arr = jnp.array(
         [sub.name_hash for sub in sub_optimizers], dtype=int
