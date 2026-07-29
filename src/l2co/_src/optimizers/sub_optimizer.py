@@ -42,6 +42,7 @@ from l2co_tasks import Task
 
 from ..optimizer_schedule import OptimizationStep
 from .evosax_implementations import normalized_evosax
+from .handshake_policy import handshake_policy_for
 from .lbfgs import stock_lbfgs
 from .mapping import optimizer_mapping
 from .optax_implementations import (
@@ -137,6 +138,15 @@ class SubOpt(eqx.Module):
     tell_fn : Callable | None
         Population-based only: ``(sub_state, population, fitnesses,
         key) -> new_sub_state``. ``None`` for gradient-based.
+    opt_state_handshake : str
+        ``"continue"`` (default) or ``"reset"`` — whether this
+        sub-optimizer's internal state survives a handshake, or must be
+        re-initialised around the best parameters because it cannot.
+        Resolved from :data:`~l2co._src.optimizers.handshake_policy.
+        HANDSHAKE_POLICY` by :func:`optstep_to_subopt`; read at Python
+        trace time by the strategy wrappers, so a ``'continue'``
+        sub-optimizer's reset branch is never traced. See
+        ``docs/adr/0009-shared-handshake-policy-table.md``.
     """
 
     is_pop: bool = eqx.field(static=True)
@@ -145,11 +155,13 @@ class SubOpt(eqx.Module):
     init_fn: Callable = eqx.field(static=True)
     step_fn: Callable = eqx.field(static=True)
     tell_fn: Callable | None = eqx.field(static=True)
+    opt_state_handshake: str = eqx.field(static=True, default="continue")
 
 
 def grad_sub_optimizer(
     transform: optax.GradientTransformation,
     name_hash: int,
+    opt_state_handshake: str = "continue",
 ) -> SubOpt:
     """Wrap an optax gradient transformation as a ``SubOpt``.
 
@@ -166,6 +178,10 @@ def grad_sub_optimizer(
         Stable identifier written into ``HistoryState.update_step``;
         must be unique across the sub-optimizer tuple. Typically the
         hash of the source :class:`OptimizationStep`.
+    opt_state_handshake : str, optional
+        ``"continue"`` (default) or ``"reset"``; see
+        :class:`SubOpt`. Defaulted so hand-built adapters keep the
+        universal behaviour without opting in.
 
     Returns
     -------
@@ -239,6 +255,7 @@ def grad_sub_optimizer(
         init_fn=init_fn,
         step_fn=step_fn,
         tell_fn=None,
+        opt_state_handshake=opt_state_handshake,
     )
 
 
@@ -248,6 +265,7 @@ def pop_sub_optimizer(
     tell_fn: Callable[[PyTree, PyTree, Array, PRNGKeyArray], PyTree],
     popsize: int,
     name_hash: int,
+    opt_state_handshake: str = "continue",
 ) -> SubOpt:
     """Wrap an evosax-style ``(init, ask, tell)`` triple as a ``SubOpt``.
 
@@ -268,6 +286,8 @@ def pop_sub_optimizer(
         Number of candidates emitted per ``ask``. Static.
     name_hash : int
         Stable identifier; see :func:`grad_sub_optimizer`.
+    opt_state_handshake : str, optional
+        ``"continue"`` (default) or ``"reset"``; see :class:`SubOpt`.
 
     Returns
     -------
@@ -281,6 +301,7 @@ def pop_sub_optimizer(
         init_fn=init_fn,
         step_fn=ask_fn,
         tell_fn=tell_fn,
+        opt_state_handshake=opt_state_handshake,
     )
 
 
@@ -409,7 +430,11 @@ def optstep_to_subopt(
         else:
             optax_cls = l2co_native_optax[name]
         transform = optax_cls(**hyperparams)
-        return grad_sub_optimizer(transform, name_hash=opt_step.hash)
+        return grad_sub_optimizer(
+            transform,
+            name_hash=opt_step.hash,
+            opt_state_handshake=handshake_policy_for(opt_step).opt_state,
+        )
 
     # --- Evosax / population-based -------------------------------------
     if name in normalized_evosax or name in l2co_native_evosax:
@@ -557,6 +582,7 @@ def optstep_to_subopt(
             tell_fn=tell_fn,
             popsize=popsize,
             name_hash=opt_step.hash,
+            opt_state_handshake=handshake_policy_for(opt_step).opt_state,
         )
 
     raise ValueError(

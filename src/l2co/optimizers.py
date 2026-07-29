@@ -20,6 +20,11 @@ against (``docs/adr/0007``). Everything needed to write a new optimizer
   factories, ``resolve_popsize``, ``l2co_native_optax``,
   ``l2co_native_evosax``, and ``CONSTRUCTOR_HYPERPARAMETERS`` -- the
   shared adapter layer both strategy wrappers dispatch across.
+* **Handshake policy** -- ``HandshakePolicy``, the ``HANDSHAKE_POLICY``
+  table, ``DEFAULT_HANDSHAKE_POLICY`` and ``handshake_policy_for``: which
+  handshake variants an optimizer needs when control passes to it. The
+  single source of truth shared by the rl2co environment and both
+  deployment wrappers (``docs/adr/0009``).
 * **Base optimizer factories** -- the ``normalized_optax_normal`` /
   ``normalized_optax_from_state`` optax registries and
   ``random_search_update``.
@@ -44,6 +49,14 @@ from ._src.optimizers import (
     scale_by_zoom_linesearch_per_eval_key,
     shade_popsize,
     shade_update,
+)
+from ._src.optimizers.handshake_policy import (
+    DEFAULT_HANDSHAKE_POLICY,
+    HANDSHAKE_POLICY,
+    OPT_STATE_VARIANTS,
+    POPULATION_VARIANTS,
+    HandshakePolicy,
+    handshake_policy_for,
 )
 
 # Base optimizer factories / registries
@@ -86,10 +99,15 @@ from ._src.typing import (
 
 __all__ = [
     "CONSTRUCTOR_HYPERPARAMETERS",
+    "DEFAULT_HANDSHAKE_POLICY",
+    "HANDSHAKE_POLICY",
+    "HandshakePolicy",
     "InitFunction",
     "InputParameters",
+    "OPT_STATE_VARIANTS",
     "OptHistory",
     "OptState",
+    "POPULATION_VARIANTS",
     "PopSize",
     "SHADE",
     "SamplerFunction",
@@ -99,6 +117,7 @@ __all__ = [
     "UpdateClass",
     "create_schedules_experimentdata",
     "grad_sub_optimizer",
+    "handshake_policy_for",
     "l2co_native_evosax",
     "l2co_native_optax",
     "lbfgs_per_eval_key",

@@ -44,9 +44,16 @@ re-initialised around ``state.best_solution`` and the emitted
 population for that one generation is ``[best_solution,
 *sampler_draws, NaN, …]`` instead of the sub-optimizer's own ``ask``.
 When it re-selects the stage-0 optimizer, nothing is reset and the
-run simply continues. This deliberately differs from rl2co's
-``rl2co_population_strategy`` (``continue_opt_state``: states
-initialised once and never reset).
+run simply continues.
+
+The unconditional reset is the **default** (``opt_state_handshake=
+"legacy_reset"``) because it is what the published L2CO results and
+``docs/adr/0004``'s feval accounting were produced with. Passing
+``opt_state_handshake="per_optimizer"`` instead honours each
+optimizer's shared ``HANDSHAKE_POLICY`` entry, so only ``lbfgs`` is
+reset and adaptive ES state survives the switch -- the same behaviour
+the rl2co environment and (since ``docs/adr/0009``) rl2co's
+``rl2co_population_strategy`` apply.
 
 **Population size.** ``population_size = max(sub.popsize)`` over the
 menu. When the active sub-optimizer has fewer candidates, slots
@@ -210,6 +217,7 @@ def l2co_population_strategy(
     sampler: SamplerFunction,
     t: float,
     max_iterations: int,
+    opt_state_handshake: str = "legacy_reset",
 ) -> _L2COPopulationStrategy:
     """Wrap a trained L2CO model as an evosax-style strategy.
 
@@ -249,6 +257,18 @@ def l2co_population_strategy(
     max_iterations : int
         The iteration budget the switch generation is computed
         against. Also sizes the trajectory buffers.
+    opt_state_handshake : str, optional
+        Which ``opt_state`` handshake the stage-1 switch applies.
+        ``"legacy_reset"`` (default) re-initialises *every* incoming
+        sub-optimizer around the best-so-far, reproducing the published
+        ``reset_from_stage0`` semantics that ``docs/adr/0004``'s feval
+        accounting is written against. ``"per_optimizer"`` instead
+        honours each optimizer's
+        :data:`~l2co._src.optimizers.handshake_policy.HANDSHAKE_POLICY`
+        entry, so only optimizers that genuinely cannot survive an
+        iterate jump (``lbfgs``) are reset and adaptive ES state is
+        preserved -- matching what the rl2co environment does. Opt-in
+        because it changes L2CO results; see ``docs/adr/0009``.
 
     Returns
     -------
@@ -262,9 +282,17 @@ def l2co_population_strategy(
     ValueError
         If the menu is empty, the stage-0 prediction is not in the
         menu, ``task.global_min`` is ``None``, the resolved switch
-        generation is ``0``, the stage-1 model is not traceable, or
-        its logit head does not match the menu size.
+        generation is ``0``, the stage-1 model is not traceable, its
+        logit head does not match the menu size, or
+        ``opt_state_handshake`` is not one of ``"legacy_reset"`` /
+        ``"per_optimizer"``.
     """
+    if opt_state_handshake not in ("legacy_reset", "per_optimizer"):
+        raise ValueError(
+            f"opt_state_handshake must be 'legacy_reset' or "
+            f"'per_optimizer'; got {opt_state_handshake!r}"
+        )
+
     menu: tuple[OptimizationStep, ...] = tuple(model.stage1_model.optimizers)
     if not menu:
         raise ValueError("model.stage1_model.optimizers must be non-empty")
@@ -361,6 +389,7 @@ def l2co_population_strategy(
         switch_generation=switch_generation,
         population_size=population_size,
         sampler=sampler,
+        opt_state_handshake=opt_state_handshake,
     )
 
 
@@ -403,6 +432,12 @@ class _L2COPopulationStrategy(eqx.Module):
     sampler : SamplerFunction
         Static. Fills the post-fire handshake population beyond
         slot 0.
+    opt_state_handshake : str
+        Static. ``"legacy_reset"`` (default) resets every incoming
+        sub-optimizer on a switching fire; ``"per_optimizer"`` resets
+        only those whose ``SubOpt.opt_state_handshake`` is
+        ``"reset"``. See :meth:`_reset_active_substate` and
+        ``docs/adr/0009``.
     """
 
     stage1_model: Stage1Model
@@ -415,6 +450,7 @@ class _L2COPopulationStrategy(eqx.Module):
     switch_generation: int = eqx.field(static=True)
     population_size: int = eqx.field(static=True)
     sampler: SamplerFunction = eqx.field(static=True)
+    opt_state_handshake: str = eqx.field(static=True, default="legacy_reset")
 
     @property
     def n_opt(self) -> int:
@@ -561,14 +597,27 @@ class _L2COPopulationStrategy(eqx.Module):
         key : PRNGKeyArray
             Sub-optimizer initialisation key.
 
+        Under ``opt_state_handshake="per_optimizer"`` only
+        sub-optimizers whose
+        :attr:`~l2co._src.optimizers.sub_optimizer.SubOpt.
+        opt_state_handshake` is ``"reset"`` are re-initialised; the
+        others keep their adapted state, matching the rl2co
+        environment. The flag is static, so the untouched slots become
+        identity branches at trace time (``docs/adr/0009``).
+
         Returns
         -------
         State
-            State with the incoming sub-optimizer's state reset.
+            State with the incoming sub-optimizer's state reset, or
+            unchanged when its policy says continue.
         """
+        per_optimizer = self.opt_state_handshake == "per_optimizer"
 
         def make_branch(i: int):
             sub_i = self.sub_optimizers[i]
+
+            if per_optimizer and sub_i.opt_state_handshake != "reset":
+                return lambda state: state
 
             def branch(state: State) -> State:
                 new_sub_state = sub_i.init_fn(state.best_solution, key)
@@ -580,6 +629,11 @@ class _L2COPopulationStrategy(eqx.Module):
                 )
 
             return branch
+
+        if per_optimizer and all(
+            sub.opt_state_handshake != "reset" for sub in self.sub_optimizers
+        ):
+            return state
 
         branches = tuple(make_branch(i) for i in range(self.n_opt))
         return jax.lax.switch(state.active_opt_idx, branches, state)
