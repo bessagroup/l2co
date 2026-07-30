@@ -64,3 +64,23 @@ selection model chooses from; logit index i corresponds to menu
 entry i.
 _Avoid_: "portfolio" (reserved for the benchmark algorithm
 portfolio run during dataset creation), "optimizer list"
+
+**Generation width**:
+The fixed leading axis of every population a strategy wrapper emits:
+`max(popsize)` over the menu. A property of the *menu*, constant for
+a whole run — one `ask` must return one shape whichever optimizer is
+active.
+
+**Evaluation width**:
+How many rows of an emitted population a generation actually
+evaluates: the active optimizer's `popsize`, or 1 for a
+gradient-based one (only the iterate is consumed). A property of the
+*active optimizer*, and never larger than the generation width.
+_Avoid_: conflating with generation width — they coincide only when
+the active optimizer is the widest in the menu.
+
+**Padding row**:
+A row of an emitted population beyond the current evaluation width.
+Carried as `NaN` and never evaluated; masked out of history
+aggregation and best-tracking.
+_Avoid_: "dummy candidate", "slack slot"

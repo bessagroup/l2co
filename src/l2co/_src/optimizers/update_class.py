@@ -38,6 +38,7 @@ from optax import OptState as OptaxState
 
 # Local
 from l2co._src.opt_history import OptHistory
+from l2co._src.optimizers.menu_eval import menu_loss_and_grad
 from l2co._src.optimizers.utils import resolve_popsize, variable_popsize
 from l2co._src.sampler import random_sampling
 from l2co._src.tree_utils import (
@@ -543,34 +544,6 @@ def evosax_population_based_fn(
 # =============================================================================
 
 
-def _row_has_nan(population: PyTree) -> jax.Array:
-    """Per-candidate NaN mask for a population.
-
-    Returns a boolean array of leading shape ``(population_size,)``,
-    ``True`` for each candidate whose params contain any NaN — the
-    strategy wrapper emits slots ``[sub.popsize:]`` as all-``NaN``
-    when the active sub-optimizer's popsize is below
-    ``population_size``.
-
-    Parameters
-    ----------
-    population : PyTree
-        Inexact-array partition of the population, leading axis
-        ``population_size``.
-
-    Returns
-    -------
-    jax.Array
-        Boolean array of shape ``(population_size,)``.
-    """
-    leaves = jax.tree.leaves(population)
-    mask = jnp.zeros((leaves[0].shape[0],), dtype=bool)
-    for leaf in leaves:
-        # Reduce over every axis but the leading candidate axis.
-        mask = mask | jnp.isnan(leaf).any(axis=tuple(range(1, leaf.ndim)))
-    return mask
-
-
 def l2co_population_based_fn(
     strategy,
     static: PyTree,
@@ -588,17 +561,21 @@ def l2co_population_based_fn(
     * **Ask-eval-tell rhythm.** The wrapper proposes via ``ask``
       before it can ``tell`` (the stage-1 fire and the handshake
       happen inside ``ask``), so each ``step_fn`` asks, evaluates the
-      proposed population *with gradients*, then tells. The stock
-      factory instead evaluates the carried population, tells, then
-      asks.
-    * **Gradients are always computed, NaN-safely.** The menu mixes
-      gradient-based and population-based sub-optimizers, and the
-      wrapper's ``tell`` consumes ``grads=``. The emitted population
-      is NaN-padded past the active sub-optimizer's popsize; padding
-      rows ride through the batched evaluation and their loss/grads
-      are masked back to NaN afterwards (:func:`_row_has_nan`), so
-      the NaN sentinel is robust regardless of how ``loss_fn``
-      treats NaN inputs.
+      proposed population, then tells. The stock factory instead
+      evaluates the carried population, tells, then asks.
+    * **Evaluation is dispatched to the active optimizer's width.**
+      The menu mixes gradient-based and population-based
+      sub-optimizers, and the wrapper's ``tell`` consumes ``grads=``
+      but reads only ``grads[0]``. Rather than evaluating the full
+      generation width with gradients every generation, the evaluation
+      goes through :func:`~l2co._src.optimizers.menu_eval.
+      menu_loss_and_grad`, which evaluates ``popsize`` rows value-only
+      for a population generation and the single iterate with
+      gradients for a gradient one. That helper also owns the NaN
+      contract (padding rows and diverged candidates alike), so the
+      sentinel is robust regardless of how ``loss_fn`` treats NaN
+      inputs. See ``docs/adr/0011-per-optimizer-evaluation-width-on-
+      the-strategy-bridge.md``.
     * **The ``update_step`` hash is dynamic.** Before the stage-1
       fire every entry carries the stage-0 optimizer's hash, after a
       switching fire the stage-1 optimizer's — read from the wrapper
@@ -645,6 +622,13 @@ def l2co_population_based_fn(
     name_hashes = strategy.name_hashes_arr
     popsizes = jnp.array(
         [sub.popsize for sub in strategy.sub_optimizers], dtype=int
+    )
+    evaluate = menu_loss_and_grad(
+        sub_optimizers=strategy.sub_optimizers,
+        population_size=popsize,
+        static=static,
+        loss_fn=loss_fn,
+        pass_rng=pass_rng,
     )
 
     def init_fn(
@@ -717,18 +701,12 @@ def l2co_population_based_fn(
         # dynamic history hash and the feval count.
         active_idx = state.active_opt_idx
 
-        # Eval with gradients — required by the wrapper's grad
-        # sub-optimizers; ignored by pop ones. Padding rows are fed
-        # through ``loss_fn`` too (cheap, per-candidate independent)
-        # and masked back to NaN afterwards.
-        model = eqx.combine(population, static)
+        # Eval at the active sub-optimizer's evaluation width: a
+        # population generation gets ``popsize`` rows value-only, a
+        # gradient one gets the single iterate with gradients. Padding
+        # rows and diverged candidates come back NaN.
         eval_keys = jr.split(eval_key, popsize)
-        if pass_rng:
-            loss, grads = vmapped_loss_and_grad_with_rng(
-                model, loss_fn, sample, eval_keys
-            )
-        else:
-            loss, grads = vmapped_loss_and_grad(model, loss_fn, sample)
+        loss, grads = evaluate(active_idx, population, sample, eval_keys)
 
         def value_fn(candidate_params: PyTree) -> jax.Array:
             """Task loss of one candidate params partition.
@@ -742,17 +720,6 @@ def l2co_population_based_fn(
             if pass_rng:
                 return loss_fn(candidate_model, key=eval_keys[0], **sample)
             return loss_fn(candidate_model, **sample)
-
-        is_pad = _row_has_nan(population)
-        loss = jnp.where(is_pad, jnp.nan, loss)
-        grads = jax.tree.map(
-            lambda g: jnp.where(
-                is_pad.reshape((is_pad.shape[0],) + (1,) * (g.ndim - 1)),
-                jnp.nan,
-                g,
-            ),
-            grads,
-        )
 
         state, _ = strategy.tell(
             tell_key,
