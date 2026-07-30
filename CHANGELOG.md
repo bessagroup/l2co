@@ -37,6 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`"lbfgs"` now bills one function evaluation per line-search trial**
+  instead of a flat 1 per iteration, on both the deterministic and the
+  stochastic wiring (`docs/adr/0010`, taking the decision `docs/adr/0006`
+  deferred). Optimizer trajectories are unaffected — this is accounting only —
+  but `fevals` and every metric derived from it change for `lbfgs`. The
+  under-reporting was largest *after* convergence, where the line search
+  exhausts its budget every iteration without making progress. `lbfgs` records
+  written before this change under-report their cost.
 - `l2co.__version__` is now populated at runtime via
   `importlib.metadata.version("l2co")`. The version lives in
   `pyproject.toml` only.

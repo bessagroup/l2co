@@ -36,8 +36,15 @@ Per-evaluation keys make L-BFGS strictly *more* exposed to noise than
 a per-step frozen realization (the zoom bracketing invariants then
 compare values from different realizations), which is the point: the
 optimizer is billed the same noise contract as every other optimizer
-in the registry. Fevals accounting is unchanged (1 per iteration —
-see ``docs/adr/0006``).
+in the registry.
+
+Fevals are billed per linesearch trial, not per iteration
+(``docs/adr/0010``, superseding the flat ``1`` that ``docs/adr/0006``
+deferred): the count comes from
+:func:`~l2co._src.optimizers.update_class.step_fevals`, which reads
+the linesearch's own ``num_linesearch_steps``. Both wirings below are
+billed the same way, so deterministic and stochastic tasks stay
+comparable.
 """
 
 #                                                                       Modules
@@ -64,7 +71,7 @@ from optax._src.linesearch import zoom_linesearch
 
 # Local
 from l2co._src.opt_history import OptHistory
-from l2co._src.optimizers.update_class import UpdateClass
+from l2co._src.optimizers.update_class import UpdateClass, step_fevals
 from l2co._src.typing import (
     InitFunction,
     InputParameters,
@@ -80,9 +87,17 @@ __credits__ = ["Martin van der Schelling"]
 __status__ = "Stable"
 # =============================================================================
 
+DEFAULT_MAX_LINESEARCH_STEPS = 20
+"""Linesearch trials allowed per outer step, matching ``optax.lbfgs``.
+
+Also the per-iteration feval bound (plus one for the cache miss of
+``optax.value_and_grad_from_state``) that :func:`lbfgs_update` reports
+as ``UpdateClass.max_fevals_per_step``.
+"""
+
 
 def scale_by_zoom_linesearch_per_eval_key(
-    max_linesearch_steps: int = 20,
+    max_linesearch_steps: int = DEFAULT_MAX_LINESEARCH_STEPS,
 ) -> optax.GradientTransformationExtraArgs:
     """Zoom linesearch drawing a fresh PRNG key per evaluation.
 
@@ -203,7 +218,7 @@ def lbfgs_per_eval_key(
     learning_rate: float | None = None,
     memory_size: int = 10,
     scale_init_precond: bool = True,
-    max_linesearch_steps: int = 20,
+    max_linesearch_steps: int = DEFAULT_MAX_LINESEARCH_STEPS,
 ) -> optax.GradientTransformationExtraArgs:
     """``optax.lbfgs`` with the per-eval-key zoom linesearch.
 
@@ -240,7 +255,7 @@ def stock_lbfgs(
     learning_rate: float | None = None,
     memory_size: int = 10,
     scale_init_precond: bool = True,
-    max_linesearch_steps: int = 20,
+    max_linesearch_steps: int = DEFAULT_MAX_LINESEARCH_STEPS,
 ) -> optax.GradientTransformationExtraArgs:
     """``optax.lbfgs`` accepting the same signature as the per-eval
     variant.
@@ -356,7 +371,7 @@ def optax_per_eval_key_fn(
             params=jax.tree.map(lambda x: jnp.expand_dims(x, 0), input_params),
             grads=jax.tree.map(lambda x: jnp.expand_dims(x, 0), grads),
             update_step=jnp.array(opt_hash, dtype=int),
-            fevals=jnp.array(1, dtype=int),
+            fevals=step_fevals(opt_state, new_opt_state),
             iterations=jnp.array(1, dtype=int),
         )
 
@@ -417,6 +432,15 @@ def lbfgs_update(
     if bounded is None:
         bounded = (None, None)
 
+    # One evaluation per linesearch trial, plus the cache miss of
+    # ``optax.value_and_grad_from_state`` on the first step.
+    max_fevals_per_step = (
+        hyperparameters.get(
+            "max_linesearch_steps", DEFAULT_MAX_LINESEARCH_STEPS
+        )
+        + 1
+    )
+
     if not task.pass_rng:
         return UpdateClass.optax_update_extra_kwargs(
             task=task,
@@ -425,6 +449,7 @@ def lbfgs_update(
             popsize=popsize,
             bounded=bounded,
             stop_fn=stop_fn,
+            max_fevals_per_step=max_fevals_per_step,
             **hyperparameters,
         )
 
@@ -444,6 +469,7 @@ def lbfgs_update(
         popsize=popsize,
         hash=opt_hash,
         stop_fn=stop_fn,
+        max_fevals_per_step=max_fevals_per_step,
     )
 
 
