@@ -7,9 +7,16 @@ simply produced them while traversing the problem -- and surface as
 warnings. What signals a broken dataset, and surfaces as an error, is a
 ``loss_history`` variable that is entirely non-finite for a written
 pair, any non-finite value in the performance variables (``success`` /
-``cost``), or a half-written cell (performance without loss data, or
-vice versa). Fully-unwritten pairs are by design ``NaN`` and are only
-reported as completeness info.
+``cost``), a half-written cell (performance without loss data, or vice
+versa), or a store an aborted in-place append left mid-flight (see
+:mod:`l2co._src.databank.writer`). Fully-unwritten pairs are by design
+``NaN`` and are only reported as completeness info.
+
+Verification reads the store with ``allow_incomplete=True`` (unlike
+every other reader entry point, which refuses a mid-append store
+outright -- see :func:`l2co._src.databank.reader._open_store`): auditing
+a broken store is exactly this module's job, so a leftover append marker
+surfaces as an ``error``-level finding instead of an exception.
 
 All per-pair checks are evaluated as one batch of lazy dask reductions
 over the store and computed in a single pass, so verifying a large
@@ -59,9 +66,8 @@ from l2co.naming import (
 )
 
 from . import layout
-from .reader import _resolve_task_ids
+from .reader import _open_store, _resolve_task_ids
 from .tasksets import load_taskset
-from .writer import silence_zarr_warnings
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -718,10 +724,12 @@ def verify_databank(
     * **error** -- a ``loss_history`` variable that is *entirely*
       non-finite for a populated pair, any non-finite value in the
       performance variables (``success`` / ``cost``), a half-written
-      cell (performance without loss data or vice versa), schema
-      violations, and internal inconsistencies (non-binary or
-      target-non-monotone ``success``, negative ``output_std`` or
-      counters, non-finite / unsorted ``target_value``);
+      cell (performance without loss data or vice versa), a store an
+      aborted append left mid-flight (``append.in_progress`` -- see
+      :mod:`l2co._src.databank.writer`), schema violations, and
+      internal inconsistencies (non-binary or target-non-monotone
+      ``success``, negative ``output_std`` or counters, non-finite /
+      unsorted ``target_value``);
     * **info** -- completeness (fully-unwritten pairs read back as
       ``NaN`` by design and are *not* errors), non-default budget-grid
       resolution.
@@ -765,13 +773,26 @@ def verify_databank(
         empty, or no requested task/schedule is present in the store.
     """
     store = layout.zarr_store_path(root, dataset_name)
-    if not store.exists():
-        raise FileNotFoundError(f"No zarr store found at {store}.")
-
-    with silence_zarr_warnings():
-        ds = xr.open_zarr(store, consolidated=True)
+    ds = _open_store(root, dataset_name, allow_incomplete=True)
 
     findings: list[VerificationFinding] = []
+    marker = layout.append_marker_path(root, dataset_name)
+    if marker.exists():
+        try:
+            info = json.loads(marker.read_text())
+        except (OSError, json.JSONDecodeError):
+            info = {}
+        findings.append(
+            VerificationFinding(
+                ERROR,
+                "append.in_progress",
+                f"store is marked mid-append (started "
+                f"{info.get('started', 'unknown time')}, "
+                f"+{info.get('incoming_tasks', '?')} task(s) / "
+                f"+{info.get('incoming_schedules', '?')} schedule(s)); "
+                "re-run the dump to complete it before trusting this store",
+            )
+        )
     if TASK_ID not in ds.coords or SCHEDULE not in ds.coords:
         findings.append(
             VerificationFinding(

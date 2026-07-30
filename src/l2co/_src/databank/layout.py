@@ -20,6 +20,14 @@ dense and uniform; a subset read is a lazy ``.sel`` over the ``taskID`` /
 the interpolated store can be regenerated at a different ``BUDGET_STEPS``
 without re-running the sweep. See ``README.md`` in this package for the
 full data-structure reference.
+
+``mode="append"`` grows the store's arrays in place (see
+:mod:`l2co._src.databank.writer`) rather than rebuilding it, so it marks
+the store mid-flight with an :func:`append_marker_path` sidecar (removed
+on success; a leftover marker means a crashed append) and stages an
+:func:`rollback_path` snapshot of every path the grow is about to mutate
+(removed on success; a leftover snapshot is auto-restored by the next
+append).
 """
 
 #                                                                       Modules
@@ -57,6 +65,17 @@ POLICY_ARTIFACTS_DIR = "policy_artifacts"
 # ``loss_history_raw`` keep their original length, so regenerating the
 # store with a different value is always possible.
 BUDGET_STEPS = 1000
+
+# Name of the in-store marker an append writes before growing the store
+# and removes on successful finalize (see ``writer._template_append``).
+# Living *inside* the store keeps the "do not trust this" flag attached
+# to the store bytes across a copy (e.g. ``sync_databank.sh``).
+APPEND_MARKER_NAME = "append_in_progress.json"
+
+# Suffix of the sibling directory an append snapshots the store's
+# about-to-be-mutated paths into before growing (see
+# ``writer._snapshot_for_append`` / ``writer._restore_rollback``).
+ROLLBACK_SUFFIX = ".rollback"
 
 
 def databank_root(root: Path, dataset_name: str) -> Path:
@@ -125,6 +144,45 @@ def loss_raw_path(rawroot: Path, task_id: str, optimizer_hash: int) -> Path:
     file paths).
     """
     return rawroot / f"loss_{task_id}_{optimizer_hash}.nc"
+
+
+def append_marker_path(root: Path, dataset_name: str) -> Path:
+    """Path of the in-store "append in progress" marker.
+
+    Parameters
+    ----------
+    root : pathlib.Path
+        The databank base directory.
+    dataset_name : str
+        Name of the dataset.
+
+    Returns
+    -------
+    pathlib.Path
+        ``<root>/<dataset_name>.zarr/append_in_progress.json`` (not
+        required to exist -- its presence is the signal).
+    """
+    return zarr_store_path(root, dataset_name) / APPEND_MARKER_NAME
+
+
+def rollback_path(root: Path, dataset_name: str) -> Path:
+    """Path of an in-flight append's rollback snapshot directory.
+
+    Parameters
+    ----------
+    root : pathlib.Path
+        The databank base directory.
+    dataset_name : str
+        Name of the dataset.
+
+    Returns
+    -------
+    pathlib.Path
+        ``<root>/<dataset_name>.zarr.rollback`` (sibling of the store,
+        not required to exist).
+    """
+    store = zarr_store_path(root, dataset_name)
+    return store.with_name(store.name + ROLLBACK_SUFFIX)
 
 
 def policy_artifacts_root(root: Path, dataset_name: str) -> Path:

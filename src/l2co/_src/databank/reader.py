@@ -110,14 +110,74 @@ def _resolve_task_ids(
     return available
 
 
+def _open_store(
+    root: Path,
+    dataset_name: str,
+    *,
+    allow_incomplete: bool = False,
+) -> xr.Dataset:
+    """Open a dataset's consolidated store, guarding against a mid-append one.
+
+    Every reader entry point that opens the zarr store routes through
+    here, so the guard applies uniformly. An append grows the store *in
+    place* (:func:`l2co._src.databank.writer._template_append`), so a
+    store an aborted append left mid-flight would otherwise read back
+    with the incoming ``(task, schedule)`` cells as ``NaN`` --
+    indistinguishable from "not yet run". This raises instead unless
+    ``allow_incomplete=True``; :func:`~l2co._src.databank.verify.
+    verify_databank` passes that and reports the marker as a finding,
+    since auditing a broken store is its job.
+
+    Parameters
+    ----------
+    root : pathlib.Path
+        The databank base directory.
+    dataset_name : str
+        Name of the dataset.
+    allow_incomplete : bool, optional
+        Read the store even if it is marked mid-append. Default
+        ``False``.
+
+    Returns
+    -------
+    xarray.Dataset
+        The lazy (zarr-backed), consolidated store.
+
+    Raises
+    ------
+    FileNotFoundError
+        The store does not exist.
+    RuntimeError
+        The store is marked mid-append and ``allow_incomplete=False``.
+    """
+    store = layout.zarr_store_path(root, dataset_name)
+    if not store.exists():
+        raise FileNotFoundError(f"No zarr store found at {store}.")
+    if not allow_incomplete:
+        marker = layout.append_marker_path(root, dataset_name)
+        if marker.exists():
+            try:
+                info = json.loads(marker.read_text())
+            except (OSError, json.JSONDecodeError):
+                info = {}
+            raise RuntimeError(
+                f"databank '{dataset_name}' at {store} is mid-append "
+                f"(started {info.get('started', 'unknown time')}, "
+                f"+{info.get('incoming_tasks', '?')} task(s) / "
+                f"+{info.get('incoming_schedules', '?')} schedule(s)); "
+                "re-run the dump to complete it, or pass "
+                "allow_incomplete=True to read the store as-is."
+            )
+    with silence_zarr_warnings():
+        return xr.open_zarr(store, consolidated=True)
+
+
 def populated_pairs(root: Path, dataset_name: str) -> set[tuple[str, str]]:
     """Return the ``(taskID, schedule)`` cells already written to a store.
 
     A cell counts as populated when its ``success`` is non-null for any
     interior index -- i.e. the ``(task, optimizer)`` pair was actually
-    written (the same criterion :func:`l2co._src.databank.writer._dump_append`
-    uses to copy untouched cells). Unwritten cells read back as ``NaN`` and
-    are excluded.
+    written. Unwritten cells read back as ``NaN`` and are excluded.
 
     Returns an **empty set** when the store does not exist yet, so a caller
     deciding which runs to launch can treat a missing store as "nothing
@@ -135,12 +195,10 @@ def populated_pairs(root: Path, dataset_name: str) -> set[tuple[str, str]]:
     set[tuple[str, str]]
         Every populated ``(task hash, schedule name)`` pair in the store.
     """
-    store = layout.zarr_store_path(root, dataset_name)
-    if not store.exists():
+    if not layout.zarr_store_path(root, dataset_name).exists():
         return set()
 
-    with silence_zarr_warnings():
-        ds = xr.open_zarr(store, consolidated=True)
+    ds = _open_store(root, dataset_name)
 
     mask = ds[SUCCESS].notnull()
     for d in list(mask.dims):
@@ -197,12 +255,10 @@ def populated_iterations(
         ``{(task hash, schedule name): max_iterations}`` for every
         populated cell in the store.
     """
-    store = layout.zarr_store_path(root, dataset_name)
-    if not store.exists():
+    if not layout.zarr_store_path(root, dataset_name).exists():
         return {}
 
-    with silence_zarr_warnings():
-        ds = xr.open_zarr(store, consolidated=True)
+    ds = _open_store(root, dataset_name)
 
     mask = ds[SUCCESS].notnull()
     for d in list(mask.dims):
@@ -267,8 +323,11 @@ def _load_one(
             raise FileNotFoundError(f"No zarr store found at {store}.")
         return None
 
-    with silence_zarr_warnings():
-        ds = xr.open_zarr(store, consolidated=True)
+    # A mid-append store refuses to load regardless of ``strict`` -- an
+    # overlay root silently contributing NaN cells for the schedules an
+    # aborted append was writing is exactly the failure mode the guard
+    # exists to prevent, not something "no cell here" should paper over.
+    ds = _open_store(root, dataset_name)
 
     names = _resolve_schedule_names(ds, optimizers)
     available = [str(t) for t in ds[TASK_ID].values]
@@ -609,11 +668,7 @@ def load_provenance(root: Path, dataset_name: str) -> dict[str, dict]:
     FileNotFoundError
         The store does not exist.
     """
-    store = layout.zarr_store_path(root, dataset_name)
-    if not store.exists():
-        raise FileNotFoundError(f"No zarr store found at {store}.")
-    with silence_zarr_warnings():
-        ds = xr.open_zarr(store, consolidated=True)
+    ds = _open_store(root, dataset_name)
     out: dict[str, dict] = {}
     if PROVENANCE in ds:
         for name, value in zip(
@@ -662,10 +717,7 @@ def held_out_task_ids(
         provenance schema.
     """
     store = layout.zarr_store_path(root, dataset_name)
-    if not store.exists():
-        raise FileNotFoundError(f"No zarr store found at {store}.")
-    with silence_zarr_warnings():
-        ds = xr.open_zarr(store, consolidated=True)
+    ds = _open_store(root, dataset_name)
     try:
         if IN_TRAINING not in ds:
             raise ValueError(

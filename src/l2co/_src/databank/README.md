@@ -118,20 +118,33 @@ the raw history to `loss_history_raw/` and region-writes the interpolated histor
   once per dump (`_open_big_arrays`) — a per-cell `Dataset.to_zarr` call would
   re-open the store and re-read every array's metadata, which dominates the
   cost of the small per-pair writes.
-- **Append** (`mode="append"`) rebuilds the store over the union of old and new
-  `taskID` / `schedule` into a temporary store and swaps it in atomically.
-  Untouched cells are carried over as hard links (or copies, on filesystems
-  without links) of their single chunk file: the store keeps one chunk per
-  cell and the union coordinates preserve every old index, so a cell's file
-  key is unchanged — the append costs O(new cells) of compute plus O(old
-  cells) of file links instead of decoding and re-encoding the whole store.
-  Variables whose cell layout differs from the rebuilt template (e.g. an old
-  store with a different realization count) fall back to a per-cell decode /
-  re-encode copy. Append reuses the existing budget grid and each existing
-  task's stored ERT `target_value` (so appended optimizers stay comparable).
-  The rebuild — rather than an in-place coordinate resize — keeps the swap
-  crash-atomic and avoids silently truncating optimizer names in the
-  fixed-length string `schedule` coordinate.
+- **Append** (`mode="append"`) **grows the existing store in place** rather
+  than rebuilding it. `zarr.Array.resize` on these sharded arrays is
+  metadata-only — every untouched old cell keeps its file key and its bytes,
+  and a new `(taskID, schedule)` position simply reads back as the fill value
+  — so the append costs O(new cells), not O(existing store size). The
+  `taskID` / `schedule` coordinate arrays are the one exception (their
+  fixed-length string dtype would truncate a longer new entry), so they are
+  deleted and rewritten fresh at the union values. Append reuses the
+  existing budget grid and each existing task's stored ERT `target_value`
+  (so appended optimizers stay comparable), and requires the incoming runs'
+  variable set and interior shapes (e.g. `realization` count) to match the
+  store's exactly — a mismatch raises rather than silently growing an
+  interior axis, which would need every stored cell re-encoded.
+
+  Growing in place means a crashed append can leave the store mid-mutation.
+  Before touching anything, the template step writes an
+  `append_in_progress.json` marker *inside* the store (every reader routes
+  through a guard that refuses a marked store — see Reading below) and
+  stages a hard-linked snapshot of every path the grow is about to mutate
+  under a sibling `<dataset_name>.zarr.rollback/` directory — root/array
+  metadata, the two coordinate arrays, the five small arrays, and the chunk
+  file of any incoming pair that already has a stored cell (a re-run pair
+  overwrites it). The snapshot costs disk proportional to the *incoming*
+  runs, not to the store. Finalize removes the marker and snapshot on
+  success; a leftover snapshot found by the *next* append is auto-restored
+  before that append proceeds, so re-submitting a dump chain after a crash
+  always converges.
 
 Writes that touch distinct `(taskID, schedule)` cells are chunk-disjoint and
 safe to parallelise; resizing and `consolidate_metadata` are single-writer.
@@ -157,6 +170,13 @@ max_iterations}` (the `iterations` counter's max, which equals the stored run's
 `n_iterations`), so a caller can also re-run a cell whose proposed budget
 *exceeds* the stored one — `mode="append"` then overwrites that cell in place.
 
+Every reader entry point that opens the zarr store routes through one choke
+point (`reader._open_store`) that refuses a store an aborted append left
+mid-flight (see Writing above), raising with the marker's timestamp and
+incoming task/schedule counts unless called with `allow_incomplete=True`.
+`verify_databank` passes that flag and reports the marker as an
+`append.in_progress` finding instead — auditing a broken store is its job.
+
 **Notes / gotchas**
 - Missing `(task, schedule)` cells read back as `NaN`; `load_databank_dataset`
   logs an `n_filled / n_expected` completeness check.
@@ -180,7 +200,8 @@ fail on `not report.ok`. The severity model ("non-finite" = `NaN` or
 - **error** — a `loss_history` variable *entirely* non-finite for a
   populated pair; any non-finite value in `success` / `cost`; a
   half-written cell (performance present but all loss variables NaN, or
-  vice versa — an interrupted region write); schema violations (missing
+  vice versa — an interrupted region write); a store an aborted append
+  left mid-flight (`append.in_progress`); schema violations (missing
   variables, wrong dims, bad budget grid / metric coord / recipe JSON);
   internal inconsistencies (non-binary or target-non-monotone `success`,
   negative `output_std` or counters, non-finite / unsorted
