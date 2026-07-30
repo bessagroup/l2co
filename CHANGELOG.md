@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `UpdateClass.max_fevals_per_step` (static, defaults to `None`) and the
+  `UpdateClass.fevals_bound` property resolving it to `popsize`. The bound is
+  what an optimizer can bill in one iteration; it exceeds `popsize` only for
+  line-search optimizers. Consumers that size a budget or normalize a
+  per-evaluation cost must read `fevals_bound` rather than `popsize`.
+- `l2co._src.optimizers.update_class.step_fevals`, the shared feval count for
+  optax step functions, and
+  `l2co._src.optimizers.lbfgs.DEFAULT_MAX_LINESEARCH_STEPS`.
 - Three-phase parallel databank dump on `l2co.databank`: `dump_databank_template`,
   `dump_databank_task`, `dump_databank_finalize` and the `DumpPlan` hand-off
   between them. Decomposes `dump_databank` into a single-process store layout,

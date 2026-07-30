@@ -157,9 +157,7 @@ def optax_fn(
     return init_fn, step_fn
 
 
-def step_fevals(
-    opt_state: OptaxState, new_opt_state: OptaxState
-) -> jax.Array:
+def step_fevals(opt_state: OptaxState, new_opt_state: OptaxState) -> jax.Array:
     """Function evaluations one optax step actually spent.
 
     Optimizers that search along a direction before committing to a
