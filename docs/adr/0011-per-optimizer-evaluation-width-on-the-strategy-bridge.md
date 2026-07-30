@@ -89,22 +89,30 @@ tolerance, so tightening it to exact equality fails loudly and sends
 the reader back here.
 
 **Nothing bit-reproduces pre-change runs, not even population-only
-menus — and that was a late correction.** The gradient-width change
-above accounts for gradient menus. Population menus were expected to be
-safe, on the reasoning that the widest branch slices nothing and so only
-drops a discarded backward pass. That reasoning was wrong: before this
-change a population generation's loss was the *primal of a linearised
-trace* (`vmapped_loss_and_grad`), and it is now a plain forward pass
-(`vmapped_loss`). XLA does not guarantee those agree. They do agree on
-x86_64 Linux, which is why this was not caught locally; they differ in
-the last bit on macOS/arm64, which is how CI caught it — an
-exact-equality assertion failed there while passing on Linux.
+menus.** The gradient-width change above accounts for gradient menus.
+Population menus were expected to be safe, on the reasoning that the
+widest branch slices nothing (`popsize == population_size`) and so
+merely drops a discarded backward pass. That reasoning was wrong twice
+over, and CI on `macos-latest` caught it both times while
+`ubuntu-latest` passed.
 
-The test therefore compares the population branch against a full-width
-*value-only* reference, which is genuinely the same computation and
-holds everywhere, and a second test records the last-bit tolerance
-against the old value+grad path so the platform-dependence stays
-written down rather than rediscovered.
+The actual cause is not dropping the backward pass. Dispatching emits a
+*different HLO graph* than a bare full-width call — there is a slice,
+which is a no-op on the values but not on the graph, and there is a
+conditional — and XLA is free to fuse the two differently. Evidence: on
+arm64 the two full-width references (`vmapped_loss` and
+`vmapped_loss_and_grad`'s primal) agree with **each other** to the bit,
+and the dispatched branch differs from both by up to one float32 ulp. So
+the shift is attributable to the dispatch, not to the value-only switch.
+
+Consequences for how this is tested: bit-exactness of the population
+branch is not an assertable property on any platform, and the test
+compares to `rtol=1e-6` (~8 ulp) instead — loose enough for fusion
+noise, tight enough to catch evaluating the wrong rows, the wrong count,
+or under the wrong keys, which is what the test is actually for. The
+general lesson, since this cost two CI rounds: float32 bit-exactness
+across two different HLO graphs is not something XLA promises, so it
+does not belong in an assertion.
 
 **Population generations now record all-NaN gradients.** They no longer
 compute any, so `OptHistory.grads` is NaN for them. This is

@@ -42,11 +42,13 @@ semantically identical to but not bit-reproducible against runs
 predating it.
 
 **No menu bit-reproduces pre-dispatch runs.** Gradient menus shift for
-the reason above. Population menus shift too, on some platforms: a
-population generation's loss used to be the primal of a linearised
-trace (``vmapped_loss_and_grad``) and is now a plain forward pass
-(``vmapped_loss``), and XLA does not guarantee those agree. They do on
-x86_64 Linux; they differ in the last bit on macOS/arm64.
+the reason above. Population menus shift too, on some platforms --
+*not* because the backward pass is gone, but because dispatching emits
+a different HLO graph than a bare full-width call (a slice, which is a
+no-op on the values but not on the graph, plus a conditional) and XLA
+may fuse it differently. Identical on x86_64 Linux; up to one float32
+ulp apart on macOS/arm64. Bit-exactness here is not an assertable
+property -- see ``docs/adr/0011``.
 
 **NaN contract.** Returned ``loss`` and ``grads`` are ``NaN`` in a row
 whenever that row is padding *or* its parameters are non-finite. The

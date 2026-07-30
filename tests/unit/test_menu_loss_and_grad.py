@@ -202,50 +202,38 @@ def test_diverged_candidate_is_masked_even_when_loss_is_finite():
 # =============================================================================
 
 
-def test_pop_generation_is_bit_exact_with_full_width_value_only():
-    """The widest population branch slices nothing, so bits match.
+def test_pop_generation_matches_a_full_width_evaluation():
+    """A population generation evaluates every row of its popsize.
 
-    The reference is a full-width *value-only* evaluation, because that
-    is precisely what the branch performs when the active optimizer is
-    the widest in the menu (``popsize == population_size``, so the
-    slice is a no-op). Portable: this holds on every platform.
+    Compared to float32 tolerance rather than exactly, and deliberately
+    so. Dispatching through ``lax.switch`` emits a different HLO graph
+    than a bare full-width call — there is a slice (a no-op on the
+    values, *not* on the graph) and a conditional — and XLA may fuse the
+    two differently. On x86_64 Linux the results are bit-identical; on
+    macOS/arm64 they differ by up to one float32 ulp. Both full-width
+    references agree with *each other* there, so the difference comes
+    from the dispatch restructuring the graph, not from dropping the
+    backward pass.
 
-    Deliberately *not* compared against ``vmapped_loss_and_grad``'s
-    primal — see
-    :func:`test_pop_loss_may_differ_in_last_bit_from_the_value_and_grad_primal`.
+    ``rtol=1e-6`` is ~8 float32 ulp: loose enough for fusion noise,
+    tight enough to catch evaluating the wrong rows, the wrong number of
+    rows, or under the wrong keys.
+
+    Consequence recorded in ``docs/adr/0011``: **no** menu is guaranteed
+    to bit-reproduce runs predating the dispatch.
     """
     evaluate = _build()
     pop, static = _split(_population(jr.key(1)))
     keys = jr.split(jr.key(2), POPSIZE)
 
     loss, _ = evaluate(jnp.array(0), pop, {}, keys)
-    reference = vmapped_loss(eqx.combine(pop, static), _loss, {})
-
-    assert bool(jnp.array_equal(loss, reference))
-
-
-def test_pop_loss_may_differ_in_last_bit_from_the_value_and_grad_primal():
-    """Dropping the backward pass can move the loss's last bit.
-
-    Before ``docs/adr/0011`` a population generation's loss came out of
-    ``vmapped_loss_and_grad``; it now comes out of ``vmapped_loss``. The
-    primal of a linearised trace is not required to be bit-identical to
-    a plain forward pass, and on some platforms it is not — this
-    assertion was originally written as exact equality and failed on
-    macOS/arm64 in CI while passing on x86_64 Linux.
-
-    So the tolerance here is not laziness: **no** menu is guaranteed to
-    bit-reproduce pre-ADR-0011 runs. Population-only menus can shift by
-    a last bit on some platforms, and gradient menus shift everywhere
-    (see the ``GRAD_EVALUATION_WIDTH`` test above).
-    """
-    evaluate = _build()
-    pop, static = _split(_population(jr.key(1)))
-    keys = jr.split(jr.key(2), POPSIZE)
-
-    loss, _ = evaluate(jnp.array(0), pop, {}, keys)
+    value_only = vmapped_loss(eqx.combine(pop, static), _loss, {})
     old_path, _ = vmapped_loss_and_grad(eqx.combine(pop, static), _loss, {})
 
+    # Every row is really evaluated -- no silent truncation to slot 0.
+    assert bool(jnp.all(jnp.isfinite(loss)))
+    assert loss.shape == (POPSIZE,)
+    assert bool(jnp.allclose(loss, value_only, rtol=1e-6, atol=0.0))
     assert bool(jnp.allclose(loss, old_path, rtol=1e-6, atol=0.0))
 
 

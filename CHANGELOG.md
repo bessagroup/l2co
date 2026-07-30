@@ -68,11 +68,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   different code path than the wide pass and the gradient differs by 4.33e-06
   relative; Adam is chaotic enough that a stored convergence curve will
   visibly diverge over a few hundred iterations. Population iterations are
-  also affected on some platforms: their loss used to be the primal of a
-  gradient-carrying trace and is now a plain forward evaluation, which XLA
-  does not guarantee to match bit-for-bit (identical on x86_64 Linux, last-bit
-  differences on macOS/arm64). Trajectories are semantically unchanged
-  throughout — this is float32 last-bit noise, not a behaviour change.
+  also affected on some platforms, because dispatching per optimizer emits a
+  different compiled graph than the old single-shape call and XLA may fuse it
+  differently (identical on x86_64 Linux, up to one float32 ulp apart on
+  macOS/arm64). Trajectories are semantically unchanged throughout — this is
+  float32 last-bit noise, not a behaviour change.
 - Population iterations of the `"l2co"` meta-optimizer now record all-`NaN`
   gradients in `OptHistory.grads`, matching what the native EvoSax factories
   already record. Unobservable on every configured path — `run_` discards
