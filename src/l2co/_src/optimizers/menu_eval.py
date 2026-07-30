@@ -41,6 +41,13 @@ width 2 (26.7x vs 8.5x the 1114 ms pre-dispatch pass), so results are
 semantically identical to but not bit-reproducible against runs
 predating it.
 
+**No menu bit-reproduces pre-dispatch runs.** Gradient menus shift for
+the reason above. Population menus shift too, on some platforms: a
+population generation's loss used to be the primal of a linearised
+trace (``vmapped_loss_and_grad``) and is now a plain forward pass
+(``vmapped_loss``), and XLA does not guarantee those agree. They do on
+x86_64 Linux; they differ in the last bit on macOS/arm64.
+
 **NaN contract.** Returned ``loss`` and ``grads`` are ``NaN`` in a row
 whenever that row is padding *or* its parameters are non-finite. The
 second half matters because a ``loss_fn`` that clips or masks can

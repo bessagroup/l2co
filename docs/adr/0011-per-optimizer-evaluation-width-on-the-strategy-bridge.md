@@ -88,6 +88,24 @@ test_grad_iterate_matches_full_width_within_tolerance` pins the
 tolerance, so tightening it to exact equality fails loudly and sends
 the reader back here.
 
+**Nothing bit-reproduces pre-change runs, not even population-only
+menus — and that was a late correction.** The gradient-width change
+above accounts for gradient menus. Population menus were expected to be
+safe, on the reasoning that the widest branch slices nothing and so only
+drops a discarded backward pass. That reasoning was wrong: before this
+change a population generation's loss was the *primal of a linearised
+trace* (`vmapped_loss_and_grad`), and it is now a plain forward pass
+(`vmapped_loss`). XLA does not guarantee those agree. They do agree on
+x86_64 Linux, which is why this was not caught locally; they differ in
+the last bit on macOS/arm64, which is how CI caught it — an
+exact-equality assertion failed there while passing on Linux.
+
+The test therefore compares the population branch against a full-width
+*value-only* reference, which is genuinely the same computation and
+holds everywhere, and a second test records the last-bit tolerance
+against the old value+grad path so the platform-dependence stays
+written down rather than rediscovered.
+
 **Population generations now record all-NaN gradients.** They no longer
 compute any, so `OptHistory.grads` is NaN for them. This is
 unobservable on every configured path — `_reduce_entry` discards

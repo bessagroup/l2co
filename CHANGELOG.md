@@ -63,13 +63,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a population iteration needs 219 ms and a gradient one 42 ms. Now 4.9x
   faster on population iterations, 25.3x on gradient ones, and 4.9x per
   realization under the batched driver (`docs/adr/0011`).
-- **Gradient iterations of the `"l2co"` meta-optimizer are no longer
-  bit-reproducible against earlier runs.** They now evaluate one row, where
-  XLA takes a different code path than the wide pass and the gradient differs
-  by 4.33e-06 relative. Trajectories are semantically unchanged, but Adam is
-  chaotic enough that a stored convergence curve will visibly diverge over a
-  few hundred iterations. Only menus containing a gradient optimizer are
-  affected; population-only menus are bit-identical.
+- **The `"l2co"` meta-optimizer is no longer bit-reproducible against earlier
+  runs.** Gradient iterations now evaluate one candidate, where XLA takes a
+  different code path than the wide pass and the gradient differs by 4.33e-06
+  relative; Adam is chaotic enough that a stored convergence curve will
+  visibly diverge over a few hundred iterations. Population iterations are
+  also affected on some platforms: their loss used to be the primal of a
+  gradient-carrying trace and is now a plain forward evaluation, which XLA
+  does not guarantee to match bit-for-bit (identical on x86_64 Linux, last-bit
+  differences on macOS/arm64). Trajectories are semantically unchanged
+  throughout — this is float32 last-bit noise, not a behaviour change.
 - Population iterations of the `"l2co"` meta-optimizer now record all-`NaN`
   gradients in `OptHistory.grads`, matching what the native EvoSax factories
   already record. Unobservable on every configured path — `run_` discards

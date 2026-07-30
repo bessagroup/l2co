@@ -20,6 +20,7 @@ from l2co.optimizers import (
     GRAD_EVALUATION_WIDTH,
     SubOpt,
     menu_loss_and_grad,
+    vmapped_loss,
     vmapped_loss_and_grad,
 )
 
@@ -201,16 +202,51 @@ def test_diverged_candidate_is_masked_even_when_loss_is_finite():
 # =============================================================================
 
 
-def test_pop_generation_is_bit_exact_with_full_width_evaluation():
-    """The widest population branch does not slice, so bits match."""
+def test_pop_generation_is_bit_exact_with_full_width_value_only():
+    """The widest population branch slices nothing, so bits match.
+
+    The reference is a full-width *value-only* evaluation, because that
+    is precisely what the branch performs when the active optimizer is
+    the widest in the menu (``popsize == population_size``, so the
+    slice is a no-op). Portable: this holds on every platform.
+
+    Deliberately *not* compared against ``vmapped_loss_and_grad``'s
+    primal — see
+    :func:`test_pop_loss_may_differ_in_last_bit_from_the_value_and_grad_primal`.
+    """
     evaluate = _build()
     pop, static = _split(_population(jr.key(1)))
     keys = jr.split(jr.key(2), POPSIZE)
 
     loss, _ = evaluate(jnp.array(0), pop, {}, keys)
-    reference, _ = vmapped_loss_and_grad(eqx.combine(pop, static), _loss, {})
+    reference = vmapped_loss(eqx.combine(pop, static), _loss, {})
 
     assert bool(jnp.array_equal(loss, reference))
+
+
+def test_pop_loss_may_differ_in_last_bit_from_the_value_and_grad_primal():
+    """Dropping the backward pass can move the loss's last bit.
+
+    Before ``docs/adr/0011`` a population generation's loss came out of
+    ``vmapped_loss_and_grad``; it now comes out of ``vmapped_loss``. The
+    primal of a linearised trace is not required to be bit-identical to
+    a plain forward pass, and on some platforms it is not — this
+    assertion was originally written as exact equality and failed on
+    macOS/arm64 in CI while passing on x86_64 Linux.
+
+    So the tolerance here is not laziness: **no** menu is guaranteed to
+    bit-reproduce pre-ADR-0011 runs. Population-only menus can shift by
+    a last bit on some platforms, and gradient menus shift everywhere
+    (see the ``GRAD_EVALUATION_WIDTH`` test above).
+    """
+    evaluate = _build()
+    pop, static = _split(_population(jr.key(1)))
+    keys = jr.split(jr.key(2), POPSIZE)
+
+    loss, _ = evaluate(jnp.array(0), pop, {}, keys)
+    old_path, _ = vmapped_loss_and_grad(eqx.combine(pop, static), _loss, {})
+
+    assert bool(jnp.allclose(loss, old_path, rtol=1e-6, atol=0.0))
 
 
 def test_grad_iterate_matches_full_width_within_tolerance():
