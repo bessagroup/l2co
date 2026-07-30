@@ -59,6 +59,7 @@ from ..naming import (
 )
 from ..optimization_dynamics import OptimizationDynamics
 from ..performance import (
+    ERTD_SEED_BATCH,
     ertd,
     output_cummin,
     scale_by_task,
@@ -800,9 +801,17 @@ class DataLoader:
         include_best: bool = False,
         exclude_optimizer: str | None = None,
         cost_values: np.ndarray = DEFAULT_COST_VALUES,
+        seed_batch: int = ERTD_SEED_BATCH,
     ) -> xr.DataArray:
         """
         Compute the expected runtime distribution (ERTD) profile.
+
+        The profile is per-problem: it is never reduced over ``taskID``,
+        and the bootstrap draws depend only on the *number* of
+        realizations. A task subset therefore yields exactly the rows the
+        full selection would, so a caller may shard the computation over
+        tasks and concatenate the partials along ``problem`` (see
+        ``tests/unit/test_ertd_separability.py``).
 
         Parameters
         ----------
@@ -812,6 +821,10 @@ class DataLoader:
             Optimizer to exclude, by default None.
         cost_values : np.ndarray, optional
             Cost budget thresholds, by default ``DEFAULT_COST_VALUES``.
+        seed_batch : int, optional
+            Bootstrap replicates held in memory at once, forwarded to
+            :func:`l2co._src.performance.ertd`. Affects peak memory only,
+            not the result.
 
         Returns
         -------
@@ -831,6 +844,7 @@ class DataLoader:
             performance=d.data,
             dims=dims,
             cost_values=cost_values,
+            seed_batch=seed_batch,
         )
 
         # Expand realization and stack dimensions to match valid_files
