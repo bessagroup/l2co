@@ -12,18 +12,44 @@ Reuses the shared f3dasm preamble and per-task ERT pipeline
    region-written into the consolidated zarr store alongside the
    performance, task and optimizer arrays.
 
-Creation (``mode="error"`` / ``"replace"``) streams one ``(task,
-optimizer)`` cell at a time, so the full dense array is never held in
-memory. ``mode="append"`` rebuilds the store over the union of old and
-new ``taskID`` / ``schedule`` coordinates into a temporary store and
-swaps it in atomically (also memory-light, and it sidesteps the
-fixed-length-string truncation that an in-place coordinate resize would
-cause). Untouched cells are carried into the rebuilt store as hard
-links (or copies) of their single chunk file -- the store keeps one
-chunk per ``(task, optimizer)`` cell and the union coordinates preserve
-every old index, so the file key is unchanged -- with a decode /
-re-encode fallback for variables whose cell layout differs. All cell
-writes go through zarr array handles opened once per dump
+Every mode is driven through the same three phases (:func:`dump_databank`
+is a thin serial wrapper over them; see the "Parallel dump" section
+below): a **template** step lays out the store, a **task** step
+region-writes each ``(task, optimizer)`` cell, and a **finalize** step
+writes the small string / target arrays and consolidates.
+
+Creation (``mode="error"`` / ``"replace"``) builds a fresh **deferred**
+zarr template (``compute=False``) over the full ``(taskID, schedule)``
+grid, so the full dense array is never held in memory -- only the cells
+the task step actually writes touch disk.
+
+``mode="append"`` **grows the existing store in place** rather than
+rebuilding it: :meth:`zarr.Array.resize` on these sharded arrays is
+metadata-only, so every untouched old cell keeps its file key and its
+bytes and a new ``(taskID, schedule)`` position simply reads back as the
+fill value. The ``taskID`` / ``schedule`` coordinate arrays are the one
+exception -- their fixed-length string dtype would truncate a longer new
+entry -- so they are deleted and rewritten fresh at the union values
+(see :func:`_grow_store_for_append`). The upshot: append cost scales
+with the *incoming* runs, not with however many cells the store already
+holds.
+
+Growing in place means a crashed append can leave the store
+mid-mutation, so :func:`_template_append` writes an
+:data:`l2co._src.databank.layout.APPEND_MARKER_NAME` sidecar *inside*
+the store before touching anything (the reader's :func:`_open_store`
+choke point in :mod:`l2co._src.databank.reader` refuses to load a
+marked store) and stages an :func:`_snapshot_for_append` of every path
+the grow is about to mutate -- root/array metadata, the two coordinate
+arrays, the five small arrays, and the chunk file of any *incoming* pair
+that already has a stored cell (a re-run pair overwrites it). The
+snapshot is hard-linked, so it costs disk proportional to the incoming
+runs, not to the store. :func:`dump_databank_finalize` removes both the
+marker and the snapshot on success; a leftover snapshot found by the
+*next* append is auto-restored (:func:`_restore_rollback`) before that
+append proceeds.
+
+All cell writes go through zarr array handles opened once per dump
 (:func:`_open_big_arrays`) rather than per-cell ``Dataset.to_zarr``
 calls, which would re-read the store metadata on every call.
 """
@@ -42,6 +68,7 @@ import warnings
 from collections.abc import Iterable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -50,7 +77,6 @@ import numpy as np
 import xarray as xr
 import zarr
 from l2co_tasks import Task
-from tqdm import tqdm
 
 # Local
 from l2co._src.optimizer_schedule import OptimizationStep
@@ -62,7 +88,6 @@ from l2co.naming import (
     OPTIMIZATIONSTEP,
     PROVENANCE,
     SCHEDULE,
-    SUCCESS,
     TARGET_VALUE,
     TASK_ID,
     TASK_LABELS,
@@ -79,7 +104,13 @@ from .provenance import (
     weights_hash,
 )
 from .records import _build_task_records, _iter_task_runs
-from .schema import STORE_DTYPE, big_template, downcast_floats, to_region_cell
+from .schema import (
+    STORE_DTYPE,
+    big_template,
+    canonical_dims,
+    downcast_floats,
+    to_region_cell,
+)
 from .tasksets import save_taskset
 
 #                                                          Authorship & Credits
@@ -128,9 +159,16 @@ def _open_big_arrays(
     and re-reads every array's metadata, which dominates the write cost
     of the small per-pair cells; the returned handles amortize that to
     a single open per dump.
+
+    Opens with ``use_consolidated=False``: an append's template step
+    just grew these arrays via :meth:`zarr.Array.resize`, which leaves
+    *consolidated* metadata stale (still reporting the pre-grow shape)
+    until the next explicit ``consolidate_metadata`` -- reading the
+    live per-array metadata directly sidesteps that regardless of
+    whether the template step's re-consolidate has landed on disk yet.
     """
     with silence_zarr_warnings():
-        group = zarr.open_group(store, mode="r+")
+        group = zarr.open_group(store, mode="r+", use_consolidated=False)
         return {name: group[name] for name in names}
 
 
@@ -160,34 +198,6 @@ def _write_pair(
         arrays[name][index] = var.values
 
 
-def _cell_layout_key(arr: zarr.Array) -> str:
-    """Serialized array metadata minus ``shape`` -- the cell layout.
-
-    Two arrays with equal keys (dtype, chunk grid, codecs, fill value,
-    ...) store a ``(taskID, schedule)`` cell as a byte-identical single
-    chunk file, so a cell can be carried between them by copying that
-    file. Serialized via JSON so the NaN fill value compares equal to
-    itself (``nan != nan`` under ``dict`` equality).
-    """
-    meta = {k: v for k, v in arr.metadata.to_dict().items() if k != "shape"}
-    return json.dumps(meta, sort_keys=True, default=str)
-
-
-def _file_copyable(src: zarr.Array, dst: zarr.Array) -> bool:
-    """Whether ``src`` cells can be carried into ``dst`` as file copies.
-
-    Requires one chunk file per ``(taskID, schedule)`` cell (leading
-    chunk axes of 1, interior chunk == interior shape) and an identical
-    cell layout on both sides; anything else (e.g. an old store with a
-    different realization count) falls back to the decode / re-encode
-    copy.
-    """
-    chunk_shape = tuple(src.metadata.chunk_grid.chunk_shape)
-    return chunk_shape == (1, 1, *src.shape[2:]) and _cell_layout_key(
-        src
-    ) == _cell_layout_key(dst)
-
-
 def _cell_file(
     store: Path, name: str, arr: zarr.Array, i: int, j: int
 ) -> Path:
@@ -201,11 +211,14 @@ def _cell_file(
 def _link_or_copy(src: Path, dst: Path) -> None:
     """Hard-link ``src`` to ``dst``, copying when linking is unsupported.
 
-    The rebuilt store sits next to the old one (same filesystem), so a
-    link is the common case; the copy fallback covers filesystems
-    without hard links. Linking is safe because the databank never
-    modifies a written chunk file in place -- rewrites always land in a
-    fresh temporary store that is swapped in whole.
+    Used both to snapshot a store path before an append mutates it
+    (:func:`_snapshot_for_append`) and to restore one after (source and
+    destination swap roles, via :func:`_restore_rollback`'s ``os.replace``
+    instead). The snapshot sits next to the store (same filesystem), so a
+    link is the common case; the copy fallback covers filesystems without
+    hard links. Linking a chunk file for a snapshot is safe because zarr's
+    local store writes via a temp file + rename -- overwriting a cell
+    allocates a fresh inode rather than mutating the linked one in place.
     """
     dst.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -376,6 +389,13 @@ def dump_databank(
     the derived ``in_training`` mask, and an archived copy of the
     artifact files under ``policy_artifacts/<schedule>/``.
 
+    A thin serial driver over the same three phases the SLURM-array
+    parallel dump uses (:func:`dump_databank_template` ->
+    :func:`dump_databank_task` -> :func:`dump_databank_finalize`; see the
+    module docstring), run here in one process. ``mode="append"`` grows
+    the existing store in place, so its cost scales with the incoming
+    runs rather than with the store's existing size.
+
     Parameters
     ----------
     experiment_data : f3dasm.ExperimentData
@@ -395,7 +415,9 @@ def dump_databank(
         ``"replace"`` wipes and rewrites, ``"append"`` extends the store
         with new tasks / optimizers (existing tasks keep their stored
         ERT ``target_value``). Append reuses the existing store's
-        ``budget`` grid, ignoring ``budget_steps``.
+        ``budget`` grid, ignoring ``budget_steps``, and requires the
+        incoming runs' variable set and interior shapes (e.g.
+        ``realization`` count) to match the store's exactly.
     easiest_quantile : float, optional
         Forwarded to the per-task ERT target computation.
     taskset : str | None, optional
@@ -416,25 +438,10 @@ def dump_databank(
     FileExistsError
         The store exists and ``mode="error"``.
     ValueError
-        No runs are present, or a task's ``feature`` axis is
-        inconsistent with the others.
+        No runs are present, a task's ``feature`` axis is inconsistent
+        with the others, or (``mode="append"``) the incoming runs'
+        schema does not match the existing store's.
     """
-    store = layout.zarr_store_path(root, dataset_name)
-    rawroot = layout.raw_root(root, dataset_name)
-    exists = store.exists()
-
-    if exists and mode == "error":
-        raise FileExistsError(
-            f"Zarr store {store} already exists; pass mode='replace' to "
-            "wipe and rewrite, or mode='append' to extend it."
-        )
-    if mode == "replace":
-        if store.exists():
-            shutil.rmtree(store)
-        if rawroot.exists():
-            shutil.rmtree(rawroot)
-        exists = False
-
     runs = [
         (task, step_paths)
         for task, step_paths in _iter_task_runs(
@@ -444,33 +451,17 @@ def dump_databank(
         )
         if step_paths
     ]
-    if not runs:
-        raise ValueError("No finished (task, optimizer) runs to write.")
-
-    rawroot.mkdir(parents=True, exist_ok=True)
-
-    if mode == "append" and exists:
-        n_tasks, policy_provs = _dump_append(
-            store, rawroot, runs, easiest_quantile
-        )
-    else:
-        n_tasks, policy_provs = _dump_create(
-            store, rawroot, runs, easiest_quantile, budget_steps
-        )
-
-    _archive_policy_artifacts(root, dataset_name, policy_provs)
-
-    if taskset is not None:
-        save_taskset(
-            layout.databank_root(root, dataset_name),
-            taskset,
-            [task.hash for task, _ in runs],
-        )
-
-    logger.info(
-        f"dump_databank: done -- {n_tasks} task(s) -> {store} (mode={mode})"
+    plan = _dump_template_runs(
+        runs,
+        root,
+        dataset_name,
+        mode=mode,
+        easiest_quantile=easiest_quantile,
+        taskset=taskset,
+        budget_steps=budget_steps,
     )
-    return store.resolve()
+    task_smalls = _dump_task_runs(runs, plan)
+    return dump_databank_finalize(task_smalls, plan)
 
 
 def _safe_dirname(schedule_name: str) -> str:
@@ -679,67 +670,6 @@ def _accumulate_schedule(
     provenances[step_name] = opt_ds[PROVENANCE]
 
 
-def _dump_create(
-    store: Path,
-    rawroot: Path,
-    runs: list,
-    easiest_quantile: float,
-    budget_steps: int,
-) -> tuple[int, dict[str, str]]:
-    """Stream a fresh store, one ``(task, optimizer)`` cell at a time.
-
-    Returns ``(n_tasks, provenance_by_schedule)`` where the dict holds
-    the serialized provenance record of every *policy* schedule written
-    (used by :func:`dump_databank` to archive the artifacts).
-    """
-    taskids = [task.hash for task, _ in runs]
-    schedules: list[str] = []
-    for _, step_paths in runs:
-        for step in step_paths:
-            if step.name not in schedules:
-                schedules.append(step.name)
-
-    labels: dict[str, xr.DataArray] = {}
-    targets: dict[str, xr.DataArray] = {}
-    recipes: dict[str, xr.DataArray] = {}
-    provenances: dict[str, xr.DataArray] = {}
-    arrays: dict[str, zarr.Array] = {}
-
-    for task, step_paths in tqdm(runs, total=len(runs)):
-        task_ds, hash_to_step, loss_interp, perf, opt = _records_for_task(
-            task, step_paths, easiest_quantile, None, budget_steps, rawroot
-        )
-
-        if not arrays:
-            h0 = next(iter(loss_interp))
-            template, encoding = big_template(
-                loss_interp[h0], perf[h0], taskids, schedules
-            )
-            with silence_zarr_warnings():
-                template.to_zarr(
-                    store,
-                    mode="w",
-                    compute=False,
-                    encoding=encoding,
-                    zarr_format=3,
-                    consolidated=False,
-                )
-            arrays = _open_big_arrays(store, list(template.data_vars))
-
-        ti = taskids.index(task.hash)
-        for h, step in hash_to_step.items():
-            sj = schedules.index(step.name)
-            _write_pair(arrays, loss_interp[h], ti, sj)
-            _write_pair(arrays, perf[h], ti, sj)
-            _accumulate_schedule(step.name, opt[h], recipes, provenances)
-        _accumulate_task(task_ds, task.hash, labels, targets)
-
-    _finalize_small(
-        store, labels, targets, recipes, provenances, taskids, schedules
-    )
-    return len(taskids), _policy_provenances(provenances)
-
-
 def _policy_provenances(
     provenances: dict[str, xr.DataArray],
 ) -> dict[str, str]:
@@ -752,263 +682,18 @@ def _policy_provenances(
     return out
 
 
-def _populated_mask(old: xr.Dataset) -> xr.DataArray:
-    """Return a ``(taskID, schedule)`` bool mask of written cells.
-
-    A cell counts as populated when its ``success`` is non-null for any
-    interior index -- i.e. the ``(task, optimizer)`` pair was written.
-    """
-    mask = old[SUCCESS].notnull()
-    for d in list(mask.dims):
-        if d not in (TASK_ID, SCHEDULE):
-            mask = mask.any(d)
-    return mask.load()
-
-
-def _carry_old_cells(
-    *,
-    old_store: Path,
-    tmp: Path,
-    old: xr.Dataset,
-    mask: xr.DataArray,
-    arrays: dict[str, zarr.Array],
-    old_taskids: list[str],
-    old_scheds: list[str],
-    taskids: list[str],
-    schedules: list[str],
-    written: set[tuple[str, str]],
-    loss_vars: list[str],
-    perf_vars: list[str],
-) -> None:
-    """Carry untouched old cells from ``old_store`` into rebuilt ``tmp``.
-
-    Variables whose cell layout matches the new template are carried as
-    hard links / copies of their single chunk file (a missing source file
-    stays absent -- it reads back as the NaN fill either way); the rest
-    fall back to the per-cell decode / re-encode copy. A ``(task,
-    schedule)`` pair in ``written`` (rewritten by the new runs) is skipped
-    so the fresh cell is not clobbered by the stale copy.
-
-    Shared by the serial :func:`_dump_append` and the parallel
-    :func:`dump_databank_template`: in the parallel path the new-run cells
-    are written by the array step *after* this carry-over, so ``written``
-    holds every incoming ``(task, schedule)`` and those cells are left
-    absent here for the array step to fill.
-    """
-    with silence_zarr_warnings():
-        old_group = zarr.open_group(old_store, mode="r")
-    all_vars = [*loss_vars, *perf_vars]
-    fast_vars = [
-        name
-        for name in all_vars
-        if _file_copyable(old_group[name], arrays[name])
-    ]
-    slow_vars = [name for name in all_vars if name not in fast_vars]
-    if slow_vars:
-        logger.info(
-            f"dump_databank: cell layout of {slow_vars} differs from the "
-            "existing store; carrying their cells via decode/re-encode."
-        )
-    for oi, t in enumerate(old_taskids):
-        ti = taskids.index(t)
-        for oj, s in enumerate(old_scheds):
-            if not bool(mask.isel({TASK_ID: oi, SCHEDULE: oj})):
-                continue
-            if (t, s) in written:
-                # A new run already (re)wrote this cell -- don't clobber it.
-                continue
-            sj = schedules.index(s)
-            for name in fast_vars:
-                src = _cell_file(old_store, name, old_group[name], oi, oj)
-                if src.is_file():
-                    _link_or_copy(
-                        src, _cell_file(tmp, name, arrays[name], ti, sj)
-                    )
-            if slow_vars:
-                with silence_zarr_warnings():
-                    cell = (
-                        old[slow_vars]
-                        .isel({TASK_ID: [oi], SCHEDULE: [oj]})
-                        .load()
-                    )
-                _write_pair(arrays, cell, ti, sj)
-
-
-def _dump_append(
-    store: Path,
-    rawroot: Path,
-    runs: list,
-    easiest_quantile: float,
-) -> tuple[int, dict[str, str]]:
-    """Rebuild the store over the union of old and new coordinates.
-
-    New cells come from ``runs`` and are written first; untouched old
-    cells are then carried over as hard links (or copies) of their
-    single chunk file -- the union coordinates keep every old index, so
-    a cell's file key is unchanged -- falling back to a decode /
-    re-encode copy for variables whose cell layout differs from the
-    rebuilt template (see :func:`_file_copyable`). A ``(task,
-    optimizer)`` pair present in **both** is *rewritten* from ``runs``
-    (the carry-over step skips it), so re-running a pair -- e.g. at a
-    higher iteration budget -- overwrites its stored cell instead of
-    being clobbered by the stale copy. Existing tasks keep their stored
-    ERT targets so appended (and re-run) optimizers stay comparable.
-    The rebuild lands in a temporary store that is swapped in
-    atomically.
-
-    Returns ``(n_tasks, provenance_by_schedule)`` for the policy
-    schedules written from ``runs`` (see :func:`_dump_create`).
-    Schedule names arriving for an already-present name must refer to
-    the same policy artifact (:func:`_check_alias_consistency`); stores
-    written before the provenance schema read back as all-static
-    (empty provenance) and the derived ``in_training`` mask is
-    recomputed over the union.
-    """
-    with silence_zarr_warnings():
-        old = xr.open_zarr(store, consolidated=True)
-    budget_steps = int(old.sizes["budget"])
-    old_taskids = [str(t) for t in old[TASK_ID].values]
-    old_scheds = [str(s) for s in old[SCHEDULE].values]
-    old_targets = old[TARGET_VALUE].load()
-    old_labels = old[TASK_LABELS].load()
-    old_recipes = old[OPTIMIZATIONSTEP].load()
-    if PROVENANCE in old:
-        old_provenances = old[PROVENANCE].astype(object).load()
-    else:
-        # Pre-provenance store: every existing schedule is static.
-        old_provenances = xr.DataArray(
-            np.array([""] * len(old_scheds), dtype=object),
-            coords={SCHEDULE: old_scheds},
-            dims=[SCHEDULE],
-        )
-    mask = _populated_mask(old)
-    loss_vars = [v for v in old.data_vars if "budget" in old[v].dims]
-    perf_vars = [
-        v
-        for v in old.data_vars
-        if "target" in old[v].dims and v != TARGET_VALUE
-    ]
-
-    # Union coordinates: old first (stable), then the new arrivals.
-    taskids = list(old_taskids)
-    schedules = list(old_scheds)
-    for task, step_paths in runs:
-        if task.hash not in taskids:
-            taskids.append(task.hash)
-        for step in step_paths:
-            if step.name not in schedules:
-                schedules.append(step.name)
-
-    tmp = store.with_name(store.name + ".tmp")
-    if tmp.exists():
-        shutil.rmtree(tmp)
-
-    labels: dict[str, xr.DataArray] = {}
-    targets: dict[str, xr.DataArray] = {}
-    recipes: dict[str, xr.DataArray] = {}
-    provenances: dict[str, xr.DataArray] = {}
-    # (taskID, schedule) cells written from runs -- the copy step below
-    # must skip these so a re-run pair overwrites rather than gets clobbered.
-    written: set[tuple[str, str]] = set()
-
-    # New runs first: gives the template sample and (re)writes raw files.
-    arrays: dict[str, zarr.Array] = {}
-    for task, step_paths in tqdm(runs, total=len(runs)):
-        existing = (
-            old_targets.sel({TASK_ID: task.hash}).values
-            if task.hash in old_taskids
-            else None
-        )
-        task_ds, hash_to_step, loss_interp, perf, opt = _records_for_task(
-            task,
-            step_paths,
-            easiest_quantile,
-            existing,
-            budget_steps,
-            rawroot,
-        )
-        if not arrays:
-            h0 = next(iter(loss_interp))
-            template, encoding = big_template(
-                loss_interp[h0], perf[h0], taskids, schedules
-            )
-            with silence_zarr_warnings():
-                template.to_zarr(
-                    tmp,
-                    mode="w",
-                    compute=False,
-                    encoding=encoding,
-                    zarr_format=3,
-                    consolidated=False,
-                )
-            arrays = _open_big_arrays(tmp, list(template.data_vars))
-        ti = taskids.index(task.hash)
-        for h, step in hash_to_step.items():
-            sj = schedules.index(step.name)
-            _write_pair(arrays, loss_interp[h], ti, sj)
-            _write_pair(arrays, perf[h], ti, sj)
-            if step.name in old_scheds:
-                # An alias may only ever mean one artifact -- also
-                # across appends into an existing store.
-                _check_alias_consistency(
-                    step.name,
-                    str(old_provenances.sel({SCHEDULE: step.name}).values),
-                    str(opt[h][PROVENANCE].values.flat[0]),
-                )
-            _accumulate_schedule(step.name, opt[h], recipes, provenances)
-            written.add((task.hash, step.name))
-        _accumulate_task(task_ds, task.hash, labels, targets)
-
-    # Carry untouched old cells into the rebuilt store.
-    _carry_old_cells(
-        old_store=store,
-        tmp=tmp,
-        old=old,
-        mask=mask,
-        arrays=arrays,
-        old_taskids=old_taskids,
-        old_scheds=old_scheds,
-        taskids=taskids,
-        schedules=schedules,
-        written=written,
-        loss_vars=loss_vars,
-        perf_vars=perf_vars,
-    )
-
-    # Small arrays: old entries fall back to the stored values.
-    for t in taskids:
-        if t not in labels:
-            labels[t] = old_labels.sel({TASK_ID: [t]})
-            targets[t] = old_targets.sel({TASK_ID: [t]})
-    for s in schedules:
-        if s not in recipes:
-            recipes[s] = old_recipes.sel({SCHEDULE: [s]})
-            provenances[s] = old_provenances.sel({SCHEDULE: [s]})
-
-    old.close()
-    new_policy_provs = _policy_provenances(
-        {s: provenances[s] for s in {name for _, name in written}}
-    )
-    _finalize_small(
-        tmp, labels, targets, recipes, provenances, taskids, schedules
-    )
-
-    shutil.rmtree(store)
-    tmp.rename(store)
-    return len(taskids), new_policy_provs
-
-
 #                          Parallel dump: template / per-task / finalize
 # =============================================================================
-# The three functions below decompose the serial dump into a shape that a
-# SLURM-array pipeline can fan out: a single-process *template* that lays
-# out the empty union store, an embarrassingly parallel *per-task* step
-# that region-writes each task's disjoint cells (one shard file per
-# ``(task, schedule)`` -- so separate processes never touch the same
-# file), and a single-process *finalize* that writes the small string /
-# target arrays, consolidates, archives policy artifacts and (append)
-# swaps the rebuilt store in. They reuse the exact helpers the serial path
-# uses, so the two paths stay behaviourally identical.
+# The three functions below split a dump into a shape that a SLURM-array
+# pipeline can fan out -- a single-process *template* that lays out the
+# store (creating it fresh, or growing an existing one in place for
+# append), an embarrassingly parallel *per-task* step that region-writes
+# each task's disjoint cells (one shard file per ``(task, schedule)`` --
+# so separate processes never touch the same file), and a single-process
+# *finalize* that writes the small string / target arrays and
+# consolidates. :func:`dump_databank` (the serial entry point) is a thin
+# wrapper running the same three phases in one process, so the two paths
+# share one implementation.
 
 
 @dataclass
@@ -1022,12 +707,13 @@ class DumpPlan:
     Attributes
     ----------
     store : str
-        The store the per-task step region-writes into. For ``append``
-        this is the ``<store>.tmp`` rebuild; for ``create`` it is the
-        final store itself.
+        The store the per-task step region-writes into. Append grows
+        this store *in place* (no separate rebuild target), so this
+        always equals ``final_store``.
     final_store : str
-        Where the store lands. Equals ``store`` for ``create``; for
-        ``append`` the finalize step swaps ``store`` -> ``final_store``.
+        Where the store lands. Always equals ``store`` (kept as a
+        separate field for compatibility with existing serialized
+        plans / call sites, not because the two paths can differ).
     rawroot : str
         ``loss_history_raw/`` directory the per-task step writes sidecars
         to.
@@ -1056,6 +742,14 @@ class DumpPlan:
         ``existing_targets=`` path).
     taskset : str | None
         Optional ``tasksets/<name>.txt`` to write in finalize.
+    old_schedules : list[str]
+        For append: the schedule names present in the store *before*
+        this dump grew it (empty for create). The store's own
+        ``schedule`` coordinate is the union by the time finalize runs
+        an in-place append, so this is what finalize's alias-consistency
+        check must test "already present" against -- reading it off the
+        (already-grown) store there would treat every brand-new schedule
+        as pre-existing.
     """
 
     store: str
@@ -1072,6 +766,7 @@ class DumpPlan:
     dataset_name: str
     existing_targets: dict[str, list[float]] = field(default_factory=dict)
     taskset: str | None = None
+    old_schedules: list[str] = field(default_factory=list)
 
 
 def dump_databank_template(
@@ -1086,19 +781,22 @@ def dump_databank_template(
     taskset: str | None = None,
     budget_steps: int = layout.BUDGET_STEPS,
 ) -> DumpPlan:
-    """Phase A: lay out the empty union store; return a :class:`DumpPlan`.
+    """Phase A: lay out the union store; return a :class:`DumpPlan`.
 
-    Single-process, cheap: it creates the deferred (NaN, ``compute=False``)
-    zarr template over the full ``(taskID, schedule)`` union and -- for
-    ``append`` -- carries every untouched old cell into a ``<store>.tmp``
-    rebuild via hard links, leaving the incoming cells absent for the
-    per-task step to fill. No per-task loss history is written here (the
-    one task loaded to size the template uses ``write_raw=False``).
+    Single-process, cheap. For ``create`` it builds the deferred (NaN,
+    ``compute=False``) zarr template over the full ``(taskID, schedule)``
+    grid. For ``append`` it *grows the existing store in place* over the
+    old ∪ new union (see :func:`_template_append`) -- metadata-only for
+    every array, so the cost scales with the incoming runs rather than
+    with the store's existing size. Neither path writes any per-task
+    loss history here (the one task loaded to size a fresh template's
+    sample cell uses ``write_raw=False``).
 
     Takes the same three source ExperimentData as :func:`dump_databank`.
     Raises the same ``FileExistsError`` / ``ValueError`` as
-    :func:`dump_databank` for ``mode="error"`` on an existing store and
-    for an empty run set.
+    :func:`dump_databank` for ``mode="error"`` on an existing store, for
+    an empty run set, and (``mode="append"``) for a schema mismatch
+    between the incoming runs and the store.
     """
     runs = [
         (task, step_paths)
@@ -1189,7 +887,7 @@ def _template_create(
     budget_steps: int,
     taskset: str | None,
 ) -> DumpPlan:
-    """Template for a fresh store (mirrors :func:`_dump_create` setup)."""
+    """Lay out the deferred zarr template for a fresh store."""
     taskids = [task.hash for task, _ in runs]
     schedules: list[str] = []
     for _, step_paths in runs:
@@ -1231,6 +929,187 @@ def _template_create(
     )
 
 
+def _validate_append_schema(
+    old: xr.Dataset,
+    sample_loss: xr.Dataset,
+    sample_perf: xr.Dataset,
+    loss_vars: list[str],
+    perf_vars: list[str],
+) -> None:
+    """Refuse an append whose incoming runs don't match the store's schema.
+
+    Two things must match exactly: the *set* of big per-pair variable
+    names (a variable dropped from the incoming runs would otherwise
+    silently vanish from the grown store; an extra one would crash deep
+    in a parallel array job with a bare ``KeyError``), and each
+    variable's *interior* shape -- the ``{dim name: size}`` beyond
+    ``(taskID, schedule)``, e.g. ``realization`` or ``target`` (growing
+    one of those would need every already-stored cell re-encoded, which
+    in-place growth cannot do; the store's ``budget`` grid is already
+    authoritative on append the same way, see :func:`_template_append`).
+    Compared by name, not physical dim order: the incoming sample's
+    natural dim order need not match the store's -- :func:`_write_pair`
+    transposes explicitly at write time either way. Both raise, naming
+    the old vs. incoming shapes/names and pointing at ``mode="replace"``
+    as the remedy.
+    """
+    incoming_shape: dict[str, dict[str, int]] = {}
+    for sample in (sample_loss, sample_perf):
+        for name, var in sample.data_vars.items():
+            interior = canonical_dims(var.dims)[2:]
+            incoming_shape[name] = {d: sample.sizes[d] for d in interior}
+
+    store_vars = set(loss_vars) | set(perf_vars)
+    incoming_vars = set(incoming_shape)
+    if store_vars != incoming_vars:
+        raise ValueError(
+            "cannot append to the store: its per-pair variables do not "
+            "match the incoming runs' -- variables only in the store: "
+            f"{sorted(store_vars - incoming_vars)}; variables only in "
+            f"the incoming runs: {sorted(incoming_vars - store_vars)}. "
+            "Append requires an identical schema; re-dump with "
+            "mode='replace' if the schema has genuinely changed."
+        )
+    for name in sorted(store_vars):
+        old_interior = {
+            d: old.sizes[d] for d in canonical_dims(old[name].dims)[2:]
+        }
+        if old_interior != incoming_shape[name]:
+            raise ValueError(
+                f"cannot append to the store: variable '{name}' has "
+                f"interior shape {old_interior} in the store but "
+                f"{incoming_shape[name]} in the incoming runs. Growing "
+                "an interior axis would require re-encoding every "
+                "stored cell; re-dump with mode='replace' instead."
+            )
+
+
+def _snapshot_for_append(
+    store: Path,
+    rollback: Path,
+    *,
+    big_vars: list[str],
+    small_vars: list[str],
+    incoming_pairs: set[tuple[str, str]],
+    old_taskids: list[str],
+    old_scheds: list[str],
+) -> None:
+    """Snapshot every path an in-place append is about to mutate.
+
+    Growing the store touches: the root ``zarr.json``, each grown
+    array's own ``zarr.json`` (rewritten by ``resize`` /
+    ``consolidate_metadata``), the ``taskID`` / ``schedule`` coordinate
+    directories (deleted and recreated -- their fixed-length string
+    dtype cannot simply grow), and the single chunk file of any
+    *incoming* ``(task, schedule)`` pair that already has a stored cell
+    (a re-run pair overwrites it). Untouched old cells are never
+    written to and need no snapshot.
+
+    The coordinate and small-array directories are snapshotted whole --
+    they hold O(1) chunks regardless of store size -- while the big
+    per-pair arrays are snapshotted cell-by-cell for only the incoming
+    pairs, so the whole call costs disk proportional to the incoming
+    runs, not to the existing store. Every path is hard-linked (falling
+    back to a copy across filesystems; see :func:`_link_or_copy`).
+    """
+    if rollback.exists():
+        shutil.rmtree(rollback)
+    rollback.mkdir(parents=True)
+
+    _link_or_copy(store / "zarr.json", rollback / "zarr.json")
+
+    for name in (TASK_ID, SCHEDULE, *small_vars):
+        src_dir = store / name
+        for f in src_dir.rglob("*"):
+            if f.is_file():
+                _link_or_copy(f, rollback / name / f.relative_to(src_dir))
+
+    with silence_zarr_warnings():
+        group = zarr.open_group(store, mode="r", use_consolidated=False)
+    old_ti = {t: i for i, t in enumerate(old_taskids)}
+    old_sj = {s: j for j, s in enumerate(old_scheds)}
+    rerun_positions = {
+        (old_ti[t], old_sj[s])
+        for t, s in incoming_pairs
+        if t in old_ti and s in old_sj
+    }
+    for name in big_vars:
+        _link_or_copy(
+            store / name / "zarr.json", rollback / name / "zarr.json"
+        )
+        arr = group[name]
+        for i, j in rerun_positions:
+            src = _cell_file(store, name, arr, i, j)
+            if src.is_file():
+                _link_or_copy(src, _cell_file(rollback, name, arr, i, j))
+
+
+def _restore_rollback(store: Path, rollback: Path) -> None:
+    """Undo an aborted append by replaying its rollback snapshot.
+
+    The mirror of :func:`_snapshot_for_append`: every file the snapshot
+    captured is moved back over its live counterpart -- same filesystem,
+    so a rename -- returning the store to exactly its pre-append state.
+    Paths the snapshot doesn't cover were never touched by the abort and
+    are left alone. Called by :func:`_template_append` when it finds a
+    leftover snapshot from a crashed append, before that append proceeds.
+    """
+    for f in rollback.rglob("*"):
+        if f.is_file():
+            rel = f.relative_to(rollback)
+            dst = store / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(f, dst)
+    shutil.rmtree(rollback, ignore_errors=True)
+
+
+def _grow_store_for_append(
+    store: Path,
+    taskids: list[str],
+    schedules: list[str],
+    grow_vars: list[str],
+) -> None:
+    """Grow every array in ``store`` to the union ``(taskID, schedule)`` shape.
+
+    Metadata-only for both the big region-written arrays and the small
+    wholesale-written ones: :meth:`zarr.Array.resize` changes only the
+    recorded shape, so every existing cell keeps its file key and bytes,
+    and a position beyond the old shape simply reads back as the fill
+    value. The ``taskID`` / ``schedule`` coordinate arrays are the one
+    exception -- their fixed-length string dtype would truncate a
+    longer new entry -- so they are deleted and rewritten fresh at the
+    union values (creating them at union shape is what lets a variable
+    the old store never had, e.g. ``provenance`` on a pre-provenance
+    store, come into existence here with no special-casing: it simply
+    isn't in ``grow_vars`` and gets created wholesale later by
+    :func:`_finalize_small`). Re-consolidates at the end -- a resize
+    alone leaves *consolidated* metadata stale (see
+    :func:`_open_big_arrays`), so a plain ``xr.open_zarr`` right after
+    this call would still report the pre-grow shape without it.
+    """
+    n_task, n_sched = len(taskids), len(schedules)
+    with silence_zarr_warnings():
+        group = zarr.open_group(store, mode="r+", use_consolidated=False)
+        for name in grow_vars:
+            arr = group[name]
+            dim_names = arr.metadata.dimension_names
+            new_shape = tuple(
+                n_task
+                if d == TASK_ID
+                else (n_sched if d == SCHEDULE else s)
+                for d, s in zip(dim_names, arr.shape, strict=True)
+            )
+            if new_shape != arr.shape:
+                arr.resize(new_shape)
+
+        shutil.rmtree(store / TASK_ID)
+        shutil.rmtree(store / SCHEDULE)
+        xr.Dataset(coords={TASK_ID: taskids, SCHEDULE: schedules}).to_zarr(
+            store, mode="a", consolidated=False
+        )
+        zarr.consolidate_metadata(store)
+
+
 def _template_append(
     store: Path,
     rawroot: Path,
@@ -1240,25 +1119,54 @@ def _template_append(
     easiest_quantile: float,
     taskset: str | None,
 ) -> DumpPlan:
-    """Template + old-cell carry-over for append (like :func:`_dump_append`).
+    """Grow the existing store in place over the old ∪ new union.
 
-    Rebuilds into ``<store>.tmp`` over the old ∪ new coordinates and links
-    every untouched old cell across; the incoming ``(task, schedule)``
-    cells are left absent for the per-task step to write. The old store
-    stays intact until the finalize step swaps.
+    Recovers first if a previous append crashed mid-flight -- a leftover
+    rollback snapshot is restored (:func:`_restore_rollback`) before
+    anything else happens. Then validates the incoming runs' schema
+    against the store's (:func:`_validate_append_schema`), snapshots
+    every path the grow is about to mutate and marks the store
+    mid-append (:func:`_snapshot_for_append`), and finally grows every
+    array to the union shape (:func:`_grow_store_for_append`) -- cost
+    proportional to the incoming runs, not to the store's existing
+    size. The incoming ``(task, schedule)`` cells read back as the fill
+    value until the per-task step writes them; every untouched old cell
+    is never written to, so its bytes are exactly what they were
+    before this call.
     """
+    rollback = layout.rollback_path(root, dataset_name)
+    marker = layout.append_marker_path(root, dataset_name)
+    if rollback.exists():
+        logger.info(
+            f"dump_databank: found a leftover rollback snapshot for "
+            f"'{dataset_name}' from an aborted append; restoring it "
+            "before proceeding."
+        )
+        _restore_rollback(store, rollback)
+        marker.unlink(missing_ok=True)
+
     with silence_zarr_warnings():
         old = xr.open_zarr(store, consolidated=True)
     budget_steps = int(old.sizes["budget"])
     old_taskids = [str(t) for t in old[TASK_ID].values]
     old_scheds = [str(s) for s in old[SCHEDULE].values]
     old_targets = old[TARGET_VALUE].load()
-    mask = _populated_mask(old)
     loss_vars = [v for v in old.data_vars if "budget" in old[v].dims]
     perf_vars = [
         v
         for v in old.data_vars
         if "target" in old[v].dims and v != TARGET_VALUE
+    ]
+    small_vars = [
+        v
+        for v in (
+            TASK_LABELS,
+            TARGET_VALUE,
+            OPTIMIZATIONSTEP,
+            PROVENANCE,
+            IN_TRAINING,
+        )
+        if v in old.data_vars
     ]
 
     taskids = list(old_taskids)
@@ -1269,10 +1177,6 @@ def _template_append(
         for step in step_paths:
             if step.name not in schedules:
                 schedules.append(step.name)
-
-    tmp = store.with_name(store.name + ".tmp")
-    if tmp.exists():
-        shutil.rmtree(tmp)
 
     task0, steps0 = runs[0]
     existing0 = (
@@ -1287,38 +1191,35 @@ def _template_append(
         budget_steps,
         existing_targets=existing0,
     )
-    template, encoding = big_template(
-        sample_loss, sample_perf, taskids, schedules
+    _validate_append_schema(
+        old, sample_loss, sample_perf, loss_vars, perf_vars
     )
-    with silence_zarr_warnings():
-        template.to_zarr(
-            tmp,
-            mode="w",
-            compute=False,
-            encoding=encoding,
-            zarr_format=3,
-            consolidated=False,
-        )
-    arrays = _open_big_arrays(tmp, list(template.data_vars))
 
-    written = {
+    big_vars = [*loss_vars, *perf_vars]
+    incoming_pairs = {
         (task.hash, step.name)
         for task, step_paths in runs
         for step in step_paths
     }
-    _carry_old_cells(
-        old_store=store,
-        tmp=tmp,
-        old=old,
-        mask=mask,
-        arrays=arrays,
+    _snapshot_for_append(
+        store,
+        rollback,
+        big_vars=big_vars,
+        small_vars=small_vars,
+        incoming_pairs=incoming_pairs,
         old_taskids=old_taskids,
         old_scheds=old_scheds,
-        taskids=taskids,
-        schedules=schedules,
-        written=written,
-        loss_vars=loss_vars,
-        perf_vars=perf_vars,
+    )
+    marker.write_text(
+        json.dumps(
+            {
+                "started": datetime.now(UTC).isoformat(),
+                "old_tasks": len(old_taskids),
+                "old_schedules": len(old_scheds),
+                "incoming_tasks": len(taskids) - len(old_taskids),
+                "incoming_schedules": len(schedules) - len(old_scheds),
+            }
+        )
     )
 
     existing_targets = {
@@ -1331,8 +1232,12 @@ def _template_append(
     run_taskids = [task.hash for task, _ in runs]
     old.close()
 
+    _grow_store_for_append(
+        store, taskids, schedules, [*big_vars, *small_vars]
+    )
+
     return DumpPlan(
-        store=str(tmp),
+        store=str(store),
         final_store=str(store),
         rawroot=str(rawroot),
         taskids=taskids,
@@ -1341,11 +1246,12 @@ def _template_append(
         budget_steps=budget_steps,
         mode="append",
         easiest_quantile=easiest_quantile,
-        var_names=list(template.data_vars),
+        var_names=big_vars,
         root=str(root),
         dataset_name=dataset_name,
         existing_targets=existing_targets,
         taskset=taskset,
+        old_schedules=old_scheds,
     )
 
 
@@ -1468,17 +1374,45 @@ def dump_databank_finalize(
     task_smalls: list[xr.Dataset],
     plan: DumpPlan,
 ) -> Path:
-    """Phase C: write small arrays, consolidate, archive, and (append) swap.
+    """Phase C: write small arrays, consolidate, archive, clear append state.
 
-    Reassembles ``task_labels`` / ``target_value`` / ``optimizationstep``
-    / ``provenance`` from the per-task payloads (dedup schedules,
-    first-contributor-wins with the same alias-consistency guard as the
-    serial path), fills old-store fallbacks for append, writes the small
-    arrays + derived ``in_training`` mask via :func:`_finalize_small`,
-    archives every *new* policy schedule's artifacts, optionally writes
-    the taskset, and finally swaps ``<store>.tmp`` -> store for append.
+    Refuses first if the per-task step didn't cover every task this
+    dump's runs should have written (a SLURM array row that died, e.g.
+    under ``dump_collect``'s ``afterany`` dependency): the store is left
+    exactly as the template step grew it, marker and rollback snapshot
+    still in place, so re-submitting the dump chain always converges.
+
+    Otherwise reassembles ``task_labels`` / ``target_value`` /
+    ``optimizationstep`` / ``provenance`` from the per-task payloads
+    (:func:`_accumulate_task` asserting every task shares the same
+    ``feature`` ordering; dedup schedules, first-contributor-wins with
+    the same alias-consistency guard as the serial path), fills
+    old-store fallbacks for append (using :attr:`DumpPlan.old_schedules`
+    for the alias check -- the store's own ``schedule`` coordinate is
+    already the union by this point, so it can't tell old from new),
+    writes the small arrays + derived ``in_training`` mask via
+    :func:`_finalize_small`, archives every *new* policy schedule's
+    artifacts, optionally writes the taskset, and (append) removes the
+    append marker and rollback snapshot -- the store is grown in place,
+    so there is no swap.
     """
     store = Path(plan.store)
+
+    covered = {str(ds.attrs["task_hash"]) for ds in task_smalls}
+    missing = [t for t in plan.run_taskids if t not in covered]
+    if missing:
+        note = (
+            " The store is left marked mid-append (rollback snapshot "
+            "intact); re-submit the dump to complete it."
+            if plan.mode == "append"
+            else " Re-submit the dump to complete it."
+        )
+        raise RuntimeError(
+            f"dump_databank_finalize: {len(missing)} of "
+            f"{len(plan.run_taskids)} task(s) this dump should have "
+            f"written produced no payload: {missing}." + note
+        )
+
     labels: dict[str, xr.DataArray] = {}
     targets: dict[str, xr.DataArray] = {}
     recipes: dict[str, xr.DataArray] = {}
@@ -1486,8 +1420,7 @@ def dump_databank_finalize(
 
     for ds in task_smalls:
         th = str(ds.attrs["task_hash"])
-        labels[th] = ds[TASK_LABELS]
-        targets[th] = ds[TARGET_VALUE]
+        _accumulate_task(ds, th, labels, targets)
         for name, rp in json.loads(ds.attrs["schedules_json"]).items():
             _accumulate_schedule_payload(
                 name, rp["recipe"], rp["provenance"], recipes, provenances
@@ -1495,13 +1428,12 @@ def dump_databank_finalize(
 
     # Policy artifacts are archived only for schedules written by this
     # dump's runs -- capture the new names before the append fallback adds
-    # old ones (mirrors _dump_append's new_policy_provs).
+    # old ones.
     new_schedule_names = set(recipes)
 
     if plan.mode == "append":
         with silence_zarr_warnings():
-            old = xr.open_zarr(Path(plan.final_store), consolidated=True)
-        old_scheds = [str(s) for s in old[SCHEDULE].values]
+            old = xr.open_zarr(store, consolidated=True)
         old_labels = old[TASK_LABELS].load()
         old_targets = old[TARGET_VALUE].load()
         old_recipes = old[OPTIMIZATIONSTEP].load()
@@ -1509,13 +1441,15 @@ def dump_databank_finalize(
             old_provenances = old[PROVENANCE].astype(object).load()
         else:
             old_provenances = xr.DataArray(
-                np.array([""] * len(old_scheds), dtype=object),
-                coords={SCHEDULE: old_scheds},
+                np.array([""] * len(plan.old_schedules), dtype=object),
+                coords={SCHEDULE: plan.old_schedules},
                 dims=[SCHEDULE],
             )
         # An alias may only ever mean one artifact -- also across appends.
+        # plan.old_schedules (captured before the grow) -- not the store's
+        # own SCHEDULE coordinate, already the union -- says what's old.
         for name in list(provenances):
-            if name in old_scheds:
+            if name in plan.old_schedules:
                 _check_alias_consistency(
                     name,
                     str(old_provenances.sel({SCHEDULE: name}).values),
@@ -1555,8 +1489,12 @@ def dump_databank_finalize(
         )
 
     if plan.mode == "append":
-        shutil.rmtree(Path(plan.final_store))
-        store.rename(Path(plan.final_store))
+        layout.append_marker_path(
+            Path(plan.root), plan.dataset_name
+        ).unlink(missing_ok=True)
+        rollback = layout.rollback_path(Path(plan.root), plan.dataset_name)
+        if rollback.exists():
+            shutil.rmtree(rollback)
 
     logger.info(
         f"dump_databank: finalized {len(plan.taskids)} task(s) -> "

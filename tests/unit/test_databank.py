@@ -2,12 +2,14 @@
 (:mod:`l2co._src.databank`).
 
 Covers the f3dasm-free record core (``_build_task_records``), budget
-resampling (``loss_preprocess``), tasksets, the streaming creation /
-append core (driven with hand-built ``runs`` so no f3dasm is needed),
-the read path and loaders, the raw-history round-trip, and the
-NaN-for-missing-pair semantics. The full ``dump_databank`` f3dasm
-preamble is exercised end-to-end by the ``create_optimization_dataset``
-pipeline, not here.
+resampling (``loss_preprocess``), tasksets, the create / append core
+(driven with hand-built ``runs`` through the shared template -> per-task
+-> finalize phases so no f3dasm is needed -- ``dump_databank`` and the
+SLURM-array parallel dump both drive the exact same three functions,
+serially or fanned out), the read path and loaders, the raw-history
+round-trip, and the NaN-for-missing-pair semantics. The full
+``dump_databank`` f3dasm preamble is exercised end-to-end by the
+``create_optimization_dataset`` pipeline, not here.
 
 The databank takes an explicit ``root`` directory (no machine paths in
 the library), so every test points it at the test's ``tmp_path``. The
@@ -30,7 +32,6 @@ import zarr
 
 from l2co import DataLoader, databank
 from l2co._src.databank import layout
-from l2co._src.databank import writer as databank_writer
 from l2co._src.databank.reader import (
     load_databank,
     load_databank_dataset,
@@ -41,8 +42,6 @@ from l2co._src.databank.records import _build_task_records, loss_preprocess
 from l2co._src.databank.tasksets import load_taskset, save_taskset
 from l2co._src.databank.verify import verify_databank
 from l2co._src.databank.writer import (
-    _dump_append,
-    _dump_create,
     _dump_task_runs,
     _dump_template_runs,
     _interp_loss,
@@ -164,15 +163,38 @@ def _write_raw_runs(rundir: Path, task_budgets: list, steps, omit=()) -> list:
     return runs
 
 
-def _create_zarr(root: Path, runs, budget_steps=BS):
-    """Drive the streaming creation core directly (no f3dasm)."""
-    store = layout.zarr_store_path(root, "bbob")
-    rawroot = layout.raw_root(root, "bbob")
-    rawroot.mkdir(parents=True, exist_ok=True)
-    _dump_create(
-        store, rawroot, runs, easiest_quantile=0.75, budget_steps=budget_steps
+def _dump(root: Path, runs, *, mode: str, budget_steps=BS) -> Path:
+    """Drive the shared template -> per-task -> finalize phases directly
+    (no f3dasm; single process). ``dump_databank`` and the SLURM-array
+    parallel dump both drive these same three functions, so this is the
+    one core every entry point shares -- serial, parallel, create,
+    append alike.
+    """
+    plan = _dump_template_runs(
+        runs,
+        root,
+        "bbob",
+        mode=mode,
+        easiest_quantile=0.75,
+        taskset=None,
+        budget_steps=budget_steps,
     )
-    return store
+    smalls = _dump_task_runs(runs, plan)
+    return dump_databank_finalize(smalls, plan)
+
+
+def _create_zarr(root: Path, runs, budget_steps=BS) -> Path:
+    """Create a fresh store (``mode="error"``) via the shared core."""
+    return _dump(root, runs, mode="error", budget_steps=budget_steps)
+
+
+def _append_zarr(root: Path, runs) -> Path:
+    """Append to an existing store (``mode="append"``) via the shared core.
+
+    ``budget_steps`` is not accepted -- append always reuses the
+    existing store's grid, per :func:`l2co.databank.dump_databank`.
+    """
+    return _dump(root, runs, mode="append")
 
 
 def _records(task, nb, steps):
@@ -560,70 +582,80 @@ def test_regenerate_from_raw(tmp_path, tasks, steps):
 # =============================================================================
 
 
-def test_append_optimizer_and_task(tmp_path, tasks, steps):
+def test_append_matches_replace_over_union(tmp_path, tasks, steps):
+    """Append reproduces a from-scratch create over the exact same union
+    of runs, for the scenarios where the two are mathematically
+    equivalent: an entirely new task, and an existing task gaining a
+    schedule it never had before. Both draw their ERT target from the
+    unchanged randomsearch baseline, so reusing vs. recomputing the
+    target agrees -- growing the store in place (append) lands on the
+    same store a full rebuild would. Re-running an existing pair does
+    *not* hold this property; see test_append_rerun_keeps_old_target.
+    """
     rs, adam = steps
     # create: task0 with rs only
     runs0 = _write_raw_runs(tmp_path / "r0", [(tasks[0], 7)], [rs])
-    store = _create_zarr(tmp_path, runs0)
-    rawroot = layout.raw_root(tmp_path, "bbob")
+    append_root = tmp_path / "append"
+    _create_zarr(append_root, runs0)
 
-    base = load_databank_dataset("bbob", [rs], tmp_path).load()
-    target0_before = base[TARGET_VALUE].sel({TASK_ID: tasks[0].hash}).values
-
-    # append: task0 gains adam, and a brand-new task1 gains rs + adam
+    # append: task0 gains adam (new schedule on an existing task), and a
+    # brand-new task1 gains rs + adam (new task).
     runs1 = _write_raw_runs(
         tmp_path / "r1", [(tasks[0], 7)], [adam]
     ) + _write_raw_runs(tmp_path / "r2", [(tasks[1], 7)], [rs, adam])
-    _dump_append(store, rawroot, runs1, easiest_quantile=0.75)
+    _append_zarr(append_root, runs1)
 
-    zd = load_databank_dataset("bbob", steps, tmp_path).load()
-    assert zd.sizes[TASK_ID] == 2
-    assert zd.sizes[SCHEDULE] == 2
-
-    # old (task0, rs) cell preserved
-    old_cell = zd[OUTPUT_MIN].sel(
-        {TASK_ID: tasks[0].hash, SCHEDULE: "randomsearch"}
+    # replace: one shot over the same tasks/schedules/budget, written
+    # fresh (make_loss_ds is a pure function of (n_budget, scale), so
+    # this reproduces byte-identical loss data to the pieces above).
+    union_runs = _write_raw_runs(
+        tmp_path / "union_raw", [(tasks[0], 7), (tasks[1], 7)], steps
     )
-    assert not bool(np.isnan(old_cell).all())
-    # newly appended cells populated
-    for tid, sch in [
-        (tasks[0].hash, "adam_lr=0.01"),
-        (tasks[1].hash, "randomsearch"),
-        (tasks[1].hash, "adam_lr=0.01"),
-    ]:
-        c = zd[OUTPUT_MIN].sel({TASK_ID: tid, SCHEDULE: sch})
-        assert not bool(np.isnan(c).all())
+    union_root = tmp_path / "union"
+    _create_zarr(union_root, union_runs)
 
-    # task0 kept its original ERT targets (append reuses stored targets)
-    target0_after = zd[TARGET_VALUE].sel({TASK_ID: tasks[0].hash}).values
-    np.testing.assert_array_equal(target0_before, target0_after)
+    _assert_stores_equal(
+        layout.zarr_store_path(append_root, "bbob"),
+        layout.zarr_store_path(union_root, "bbob"),
+    )
 
 
-def test_append_overwrites_higher_budget(tmp_path, tasks, steps):
+def test_append_rerun_keeps_old_target(tmp_path, tasks, steps):
+    """Re-running an existing ``(task, schedule)`` pair at a higher
+    budget overwrites its stored loss cell but keeps the task's ERT
+    target -- computed once, from the original run, so appended / re-run
+    optimizers stay comparable to records already scored against it. This
+    is the one case where append legitimately does *not* reproduce a
+    fresh replace-over-union (see test_append_matches_replace_over_union):
+    a replace would recompute the target from the higher-budget data
+    instead of reusing the stored one.
+    """
     # create: task0 with rs + adam at a low budget (nb=7) ...
     runs0 = _write_raw_runs(tmp_path / "r0", [(tasks[0], 7)], steps)
-    store = _create_zarr(tmp_path, runs0)
-    rawroot = layout.raw_root(tmp_path, "bbob")
+    root = tmp_path / "root"
+    _create_zarr(root, runs0)
     # ... plus an unrelated task1 (also nb=7) that is never re-run.
     runs0b = _write_raw_runs(tmp_path / "r0b", [(tasks[1], 7)], steps)
-    _dump_append(store, rawroot, runs0b, easiest_quantile=0.75)
+    _append_zarr(root, runs0b)
+
+    before = load_databank_dataset("bbob", steps, root).load()
+    target0_before = before[TARGET_VALUE].sel({TASK_ID: tasks[0].hash}).values
 
     # append: re-run task0's cells at a HIGHER budget (nb=13).
     runs1 = _write_raw_runs(tmp_path / "r1", [(tasks[0], 13)], steps)
-    _dump_append(store, rawroot, runs1, easiest_quantile=0.75)
+    _append_zarr(root, runs1)
 
     # the re-run cells now report the higher iteration count; task1 is
     # untouched.
-    iters = databank.populated_iterations(tmp_path, "bbob")
+    iters = databank.populated_iterations(root, "bbob")
     for s in steps:
         assert iters[(tasks[0].hash, s.name)] == 13
         assert iters[(tasks[1].hash, s.name)] == 7
 
-    # the stored loss matches the nb=13 records, not the stale nb=7 ones --
-    # i.e. the copy-old-cells step did not clobber the re-run. (OUTPUT_MIN
-    # is target-independent, so reusing task0's old ERT targets on the
-    # re-run does not affect this comparison.)
-    zd = load_databank_dataset("bbob", steps, tmp_path).load()
+    # the stored loss matches the nb=13 records, not the stale nb=7 ones.
+    # (OUTPUT_MIN is target-independent, so reusing task0's old ERT
+    # target on the re-run does not affect this comparison.)
+    zd = load_databank_dataset("bbob", steps, root).load()
     _, loss13, _, _ = _records(tasks[0], 13, steps)
     for s in steps:
         sel = {TASK_ID: tasks[0].hash, SCHEDULE: s.name}
@@ -632,83 +664,76 @@ def test_append_overwrites_higher_budget(tmp_path, tasks, steps):
             zd[OUTPUT_MIN].sel(sel),
         )
 
+    # task0 kept its original ERT target despite the higher-budget re-run
+    # -- the invariant that keeps appended/re-run optimizers comparable
+    # to what was already scored.
+    target0_after = zd[TARGET_VALUE].sel({TASK_ID: tasks[0].hash}).values
+    np.testing.assert_array_equal(target0_before, target0_after)
 
-def test_append_carries_old_cells_as_file_copies(
-    tmp_path, tasks, steps, monkeypatch
-):
-    """Untouched cells are carried over as chunk-file copies: the append
-    only region-writes the appended runs' cells, and the carried cells
-    read back unchanged."""
+
+def test_append_rollback_restores_on_recovery(tmp_path, tasks, steps):
+    """A crash between the template step (snapshot + marker + grow) and
+    finalize leaves the store marked mid-append with a rollback snapshot
+    in place; a reader refuses it, and the *next* template call for the
+    same append detects the leftover snapshot, restores the store to its
+    pre-append state, and proceeds -- so re-submitting the dump chain
+    after a crash always converges to the same result a clean, one-shot
+    append would give.
+    """
     runs0 = _write_raw_runs(tmp_path / "r0", [(tasks[0], 7)], steps)
-    store = _create_zarr(tmp_path, runs0)
-    rawroot = layout.raw_root(tmp_path, "bbob")
-    before = load_databank_dataset("bbob", steps, tmp_path).load()
+    root = tmp_path / "root"
+    _create_zarr(root, runs0)
+    before = load_databank_dataset("bbob", steps, root).load()
 
-    calls: list[tuple[int, int]] = []
-    orig = databank_writer._write_pair
+    marker = layout.append_marker_path(root, "bbob")
+    rollback = layout.rollback_path(root, "bbob")
+    assert not marker.exists()
+    assert not rollback.exists()
 
-    def counting(arrays, ds, ti, sj):
-        calls.append((ti, sj))
-        return orig(arrays, ds, ti, sj)
-
-    monkeypatch.setattr(databank_writer, "_write_pair", counting)
+    # Simulate a crash right after the template step: run only the
+    # template phase (snapshot + marker + grow), never task/finalize.
     runs1 = _write_raw_runs(tmp_path / "r1", [(tasks[1], 7)], steps)
-    _dump_append(store, rawroot, runs1, easiest_quantile=0.75)
-
-    # Only the appended task's cells were written (one loss + one perf
-    # write each); task0's cells never went through _write_pair.
-    assert len(calls) == 2 * len(steps)
-    assert {ti for ti, _ in calls} == {1}
-
-    zd = load_databank_dataset("bbob", steps, tmp_path).load()
-    for s in steps:
-        sel = {TASK_ID: tasks[0].hash, SCHEDULE: s.name}
-        _assert_da_close(before[OUTPUT_MIN].sel(sel), zd[OUTPUT_MIN].sel(sel))
-
-
-def test_append_fallback_mismatched_realizations(tmp_path, tasks, steps):
-    """An appended run with a different realization count rebuilds the
-    loss arrays with a new cell layout, so old loss cells take the
-    decode/re-encode fallback: carried values intact, extra realization
-    rows NaN."""
-    runs0 = _write_raw_runs(tmp_path / "r0", [(tasks[0], 7)], steps)
-    store = _create_zarr(tmp_path, runs0)
-    rawroot = layout.raw_root(tmp_path, "bbob")
-    before = load_databank_dataset("bbob", steps, tmp_path).load()
-
-    rundir = tmp_path / "r1"
-    rundir.mkdir()
-    step_paths = {}
-    for s in steps:
-        ds6 = xr.concat(
-            [make_loss_ds(7, scale=10.0)] * 2, dim=REALIZATION
-        ).assign_coords({REALIZATION: list(range(2 * N_REAL))})
-        p = rundir / f"{tasks[1].hash}_{s.hash}.nc"
-        ds6.to_netcdf(p)
-        step_paths[s] = p
-    _dump_append(
-        store, rawroot, [(tasks[1], step_paths)], easiest_quantile=0.75
+    _dump_template_runs(
+        runs1,
+        root,
+        "bbob",
+        mode="append",
+        easiest_quantile=0.75,
+        taskset=None,
+        budget_steps=BS,
     )
+    assert marker.exists()
+    assert rollback.exists()
 
-    zd = load_databank_dataset("bbob", steps, tmp_path).load()
-    assert zd.sizes[REALIZATION] == 2 * N_REAL
+    # A reader refuses the mid-append store.
+    with pytest.raises(RuntimeError, match="mid-append"):
+        load_databank_dataset("bbob", steps, root)
+
+    # The next append call (same runs, as a real re-submit would do)
+    # recovers: the leftover rollback is restored before it proceeds.
+    plan = _dump_template_runs(
+        runs1,
+        root,
+        "bbob",
+        mode="append",
+        easiest_quantile=0.75,
+        taskset=None,
+        budget_steps=BS,
+    )
+    smalls = _dump_task_runs(runs1, plan)
+    dump_databank_finalize(smalls, plan)
+
+    assert not marker.exists()
+    assert not rollback.exists()
+
+    zd = load_databank_dataset("bbob", steps, root).load()
     for s in steps:
-        old_cell = zd[OUTPUT_MIN].sel(
-            {TASK_ID: tasks[0].hash, SCHEDULE: s.name}
-        )
-        # The old store's realizations carry over ...
+        sel0 = {TASK_ID: tasks[0].hash, SCHEDULE: s.name}
         _assert_da_close(
-            before[OUTPUT_MIN].sel({TASK_ID: tasks[0].hash, SCHEDULE: s.name}),
-            old_cell.isel({REALIZATION: slice(0, N_REAL)}),
+            before[OUTPUT_MIN].sel(sel0), zd[OUTPUT_MIN].sel(sel0)
         )
-        # ... and the rows beyond its realization count stay NaN.
-        assert bool(
-            np.isnan(old_cell.isel({REALIZATION: slice(N_REAL, None)})).all()
-        )
-        new_cell = zd[OUTPUT_MIN].sel(
-            {TASK_ID: tasks[1].hash, SCHEDULE: s.name}
-        )
-        assert not bool(np.isnan(new_cell).any())
+        sel1 = {TASK_ID: tasks[1].hash, SCHEDULE: s.name}
+        assert not bool(np.isnan(zd[OUTPUT_MIN].sel(sel1)).all())
 
 
 #                                                                      Tasksets
@@ -1286,11 +1311,15 @@ def test_overlay_performance_loader(tmp_path, tasks, steps):
 
 #                    Parallel dump: template / per-task / finalize
 # =============================================================================
-# The three-phase parallel dump must produce a byte-for-byte equivalent
-# store to the serial streaming path. The per-task phase is exercised
-# across real processes to validate the "one shard file per (task,
-# schedule) cell, so disjoint tasks never touch the same file" contract
-# that lets a SLURM array write one store concurrently.
+# dump_databank (via _create_zarr / _append_zarr above) and the SLURM-array
+# parallel dump both drive the exact same three phases -- template, per-task,
+# finalize -- so there is no separate "serial" implementation left to compare
+# against; what these tests exercise is that fanning the per-task phase
+# across real *processes* is safe. The per-task phase is run across a real
+# process pool to validate the "one shard file per (task, schedule) cell, so
+# disjoint tasks never touch the same file" contract that lets a SLURM array
+# write one store concurrently, and that a concurrent write reproduces
+# exactly what a single-process run of the same phases would.
 
 
 def _dump_one_task_worker(run, plan):
@@ -1368,21 +1397,27 @@ def test_parallel_dump_create_matches_serial(tmp_path, steps):
 
 
 def test_parallel_dump_append_matches_serial(tmp_path, tasks, steps):
-    """Parallel append (tmp rebuild + carry-over) matches serial append."""
+    """Concurrent per-task append writes reproduce a single-process append.
+
+    The append template step grows the store in place and returns before
+    any cell is written, so the process pool's workers only ever touch a
+    store that is already at its final shape -- no race between the grow
+    and the concurrent region writes.
+    """
     base = _write_raw_runs(tmp_path / "base", [(tasks[0], 8)], steps)
     extra = _write_raw_runs(tmp_path / "extra", [(tasks[1], 8)], steps)
 
-    # Serial: create then append.
+    # Single-process reference: create then append.
     serial_root = tmp_path / "serial"
     _create_zarr(serial_root, base, budget_steps=BS)
+    _append_zarr(serial_root, extra)
     store_s = layout.zarr_store_path(serial_root, "bbob")
-    rawroot_s = layout.raw_root(serial_root, "bbob")
-    _dump_append(store_s, rawroot_s, extra, easiest_quantile=0.75)
 
-    # Parallel: template(create)+finalize, then template(append)+finalize.
+    # Create sequentially, then append with the per-task cell writes
+    # fanned across a real process pool.
     par_root = tmp_path / "parallel"
     _parallel_dump(par_root, base, mode="error", concurrent=False)
-    store_p = _parallel_dump(par_root, extra, mode="append", concurrent=False)
+    store_p = _parallel_dump(par_root, extra, mode="append", concurrent=True)
 
     _assert_stores_equal(Path(store_p), store_s)
 
