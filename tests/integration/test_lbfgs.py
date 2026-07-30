@@ -44,3 +44,59 @@ def test_rollout_on_noisy_bbob():
     )
     data = history_state.to_xarray_realizations()
     assert bool(jnp.isfinite(jnp.asarray(data["output_min"].values)).all())
+
+
+@pytest.mark.slow
+def test_converged_lbfgs_keeps_billing_the_linesearch():
+    """A converged run keeps spending its full linesearch budget.
+
+    On a real BBOB landscape L-BFGS drives the gradient down to a
+    small but *non-zero* residual. The Wolfe curvature criterion
+    compares ``|slope_step|`` against ``0.9 * |slope_init|`` with
+    ``tol=0.0``, so at that residual it can no longer be satisfied
+    exactly: the search runs to ``max_linesearch_steps`` and fails out,
+    every step, for the rest of the budget. Those evaluations are real,
+    and the flat ``1`` of ``docs/adr/0006`` hid them -- a converged
+    optimizer looked free (``docs/adr/0010``).
+
+    This needs a real task: a textbook quadratic converges to an
+    *exactly* zero gradient, where both Wolfe errors are exactly
+    ``0.0`` and the search legitimately succeeds in one trial. The
+    saturation is a property of realistic landscapes, not of L-BFGS in
+    the abstract.
+    """
+    import equinox as eqx
+
+    from l2co._src.optimizers.mapping import optimizer_mapping
+    from l2co._src.sampler import random_sampling
+
+    cap = 5
+    task = create_bbob_task(fn_name="sphere", seed=0, dimensionality=10)
+    assert not task.pass_rng
+
+    update_class = optimizer_mapping("lbfgs")(
+        task=task,
+        opt_hash=1,
+        bounded=(None, None),
+        stop_fn=None,
+        max_linesearch_steps=cap,
+    )
+    assert update_class.fevals_bound == cap + 1
+
+    key, sample_key = jr.split(jr.key(0))
+    template, _ = eqx.partition(task.model, eqx.is_inexact_array)
+    params = random_sampling(sample_key, template, 1)
+    carry = (params, update_class.init_fn(params, key=key), key)
+
+    fevals = []
+    for _ in range(12):
+        carry, history = update_class.step_fn(carry, {})
+        fevals.append(int(history.fevals))
+
+    # Cheap while descending; dominated by exhausted searches after.
+    # (The post-convergence tail is not uniformly at the cap -- at
+    # small caps it alternates -- so assert the balance, not a pin.)
+    descent, converged = fevals[1:3], fevals[3:]
+    assert max(descent) == 1, fevals
+    assert converged.count(cap) >= len(converged) // 2, fevals
+    assert max(fevals) <= update_class.fevals_bound, fevals

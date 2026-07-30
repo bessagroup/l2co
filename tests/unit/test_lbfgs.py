@@ -4,7 +4,9 @@ Covers the key-flow contract on stochastic tasks (every linesearch
 evaluation receives its own freshly split PRNG key — the property the
 stock optax wiring cannot provide), the deterministic-task path
 (bit-identical trajectories to the previous ``optax.lbfgs`` registry
-wiring, no key ever handed to the loss), and the registry wiring.
+wiring, no key ever handed to the loss), the registry wiring, and the
+feval accounting (one evaluation per linesearch trial —
+``docs/adr/0010``).
 """
 
 import equinox as eqx
@@ -15,9 +17,12 @@ import numpy as np
 import optax
 from l2co_tasks import Task
 
-from l2co._src.optimizers.lbfgs import lbfgs_update
+from l2co._src.optimizers.lbfgs import (
+    DEFAULT_MAX_LINESEARCH_STEPS,
+    lbfgs_update,
+)
 from l2co._src.optimizers.mapping import optimizer_mapping, optimizers
-from l2co._src.optimizers.update_class import UpdateClass
+from l2co._src.optimizers.update_class import UpdateClass, step_fevals
 
 # =============================================================================
 
@@ -180,3 +185,143 @@ def test_stays_finite_under_severe_noise():
     final_params, losses = _run_steps(update_class, n_steps=15)
     assert bool(jnp.isfinite(losses).all())
     assert bool(jnp.isfinite(final_params).all())
+
+
+# =============================================================================
+#                                                             Feval accounting
+
+
+def _run_collect(update_class, n_steps: int, dim: int = 4):
+    """Run ``n_steps`` and return the billed and actual trial counts.
+
+    Returns ``(fevals, num_linesearch_steps)`` as plain int lists, the
+    second read straight off the optimizer state so the assertions
+    compare the billed number against the linesearch's own bookkeeping
+    rather than against a hard-coded expectation.
+    """
+    params = jnp.full((1, dim), 2.0)
+    carry = (params, update_class.init_fn(params, jr.key(0)), jr.key(0))
+    fevals, trials = [], []
+    for _ in range(n_steps):
+        carry, history = update_class.step_fn(carry, {})
+        fevals.append(int(history.fevals))
+        trials.append(int(optax.tree.get(carry[1], "num_linesearch_steps")))
+    return fevals, trials
+
+
+def _deterministic_task():
+    return Task(
+        model=jnp.zeros(4),
+        loss_fn=_quadratic,
+        global_min=0.0,
+        pass_rng=False,
+    )
+
+
+def _stochastic_task():
+    return Task(
+        model=jnp.zeros(4),
+        loss_fn=_noisy_quadratic(beta=1.0),
+        global_min=0.0,
+        pass_rng=True,
+    )
+
+
+def test_fevals_bill_every_linesearch_trial():
+    """``fevals`` tracks the linesearch, not the iteration count.
+
+    Each zoom-linesearch trial is one objective evaluation, so the
+    billed count must equal ``num_linesearch_steps`` — plus one on the
+    first step only, where ``optax.value_and_grad_from_state`` has no
+    cached value and recomputes. Guards against the flat ``1`` that
+    ``docs/adr/0006`` deferred and ``docs/adr/0010`` replaced.
+
+    Both wirings are checked: the stock linesearch on deterministic
+    tasks and the per-eval-key linesearch on stochastic ones.
+    """
+    for task in (_deterministic_task(), _stochastic_task()):
+        fevals, trials = _run_collect(_build(task), n_steps=8)
+        expected = [trials[0] + 1] + trials[1:]
+        assert fevals == expected, (
+            f"pass_rng={task.pass_rng}: billed {fevals}, "
+            f"linesearch spent {trials}"
+        )
+
+
+def test_fevals_vary_across_steps():
+    """The count is dynamic, not a constant.
+
+    A step that accepts its first trial bills 1; a step whose search
+    struggles bills more. Several distinct values must appear,
+    otherwise the accounting has collapsed back to a constant.
+
+    Uses the stochastic task deliberately: on a *deterministic*
+    quadratic the linesearch accepts its first trial on essentially
+    every step, so the count is nearly constant there and would make a
+    vacuous assertion.
+    """
+    fevals, _ = _run_collect(_build(_stochastic_task()), n_steps=15)
+    assert len(set(fevals)) >= 3, fevals
+
+
+def test_exhausted_linesearch_bills_the_cap():
+    """A search that runs out of trials bills every one of them.
+
+    When the Wolfe conditions cannot be met the loop runs to
+    ``max_linesearch_steps`` and fails out. Those really are
+    evaluations spent, and hiding them behind a flat ``1`` is what
+    ``docs/adr/0010`` corrects. The bound must also hold: no step may
+    bill more than ``fevals_bound``.
+    """
+    cap = 5
+    update_class = optimizer_mapping("lbfgs")(
+        task=_stochastic_task(),
+        opt_hash=1,
+        bounded=(-5.0, 5.0),
+        stop_fn=None,
+        max_linesearch_steps=cap,
+    )
+    fevals, _ = _run_collect(update_class, n_steps=15)
+    assert cap in fevals, fevals
+    assert max(fevals) <= update_class.fevals_bound
+
+
+def test_fevals_bound_tracks_max_linesearch_steps():
+    """``fevals_bound`` is the cap plus the first-step recompute."""
+    default = _build(_deterministic_task())
+    assert default.fevals_bound == DEFAULT_MAX_LINESEARCH_STEPS + 1
+
+    override = optimizer_mapping("lbfgs")(
+        task=_deterministic_task(),
+        opt_hash=1,
+        bounded=(-5.0, 5.0),
+        stop_fn=None,
+        max_linesearch_steps=7,
+    )
+    assert override.fevals_bound == 8
+
+
+def test_non_linesearch_optimizers_still_bill_one():
+    """Optimizers without a linesearch are unaffected.
+
+    ``optax.tree.get`` returns ``None`` for states carrying no
+    ``num_linesearch_steps``, so ``step_fevals`` falls back statically
+    to ``1`` and every non-L-BFGS entry keeps its accounting.
+    """
+    params = jnp.zeros(3)
+    for optimizer in (optax.adam(1e-3), optax.sgd(1e-3)):
+        state = optimizer.init(params)
+        _, new_state = optimizer.update(jnp.ones(3), state, params)
+        assert int(step_fevals(state, new_state)) == 1
+
+
+def test_fevals_bound_defaults_to_popsize():
+    """Optimizers that never set the bound report ``popsize``."""
+    update_class = UpdateClass(
+        init_fn=lambda *a, **k: None,
+        step_fn=lambda *a, **k: None,
+        popsize=7,
+        hash=0,
+    )
+    assert update_class.max_fevals_per_step is None
+    assert update_class.fevals_bound == 7
