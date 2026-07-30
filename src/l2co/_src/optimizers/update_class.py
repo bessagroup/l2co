@@ -157,6 +157,74 @@ def optax_fn(
     return init_fn, step_fn
 
 
+def step_fevals(
+    opt_state: OptaxState, new_opt_state: OptaxState
+) -> jax.Array:
+    """Function evaluations one optax step actually spent.
+
+    Optimizers that search along a direction before committing to a
+    step -- L-BFGS and anything else built on
+    ``optax.scale_by_zoom_linesearch`` -- evaluate the objective once
+    per linesearch trial, not once per iteration. Billing them a flat
+    ``1`` under-reports their cost, and most severely *after* they
+    converge: once the gradient bottoms out at a small but non-zero
+    residual, the Wolfe curvature criterion (``|slope_step|`` against
+    ``0.9 * |slope_init|``, with ``tol=0.0``) can no longer be
+    satisfied exactly, so the search exhausts ``max_linesearch_steps``
+    and fails out on most subsequent iterations. That tail is
+    landscape-dependent -- an objective that converges to an *exactly*
+    zero gradient, like a textbook quadratic, keeps costing one trial
+    per step -- but on realistic problems it dominates the run. See
+    ``docs/adr/0010``.
+
+    The count comes from the linesearch's own bookkeeping
+    (``ZoomLinesearchInfo.num_linesearch_steps``, reset per outer
+    update), which is exactly the number of objective evaluations:
+    optax's linesearch ``step_fn`` dispatches to *either* the interval
+    search *or* the zoom, each of which evaluates once and increments
+    the count once. Optimizers with no linesearch carry no such field
+    and keep billing ``1``.
+
+    The extra evaluation is the cache miss in
+    ``optax.value_and_grad_from_state``, which recomputes only when
+    the value cached by the previous step is non-finite -- in practice
+    the first step alone. This mirrors optax's own branch condition.
+    It is billed *logically*: under ``eqx.filter_vmap`` the underlying
+    ``lax.cond`` degrades to a ``select`` and both branches execute, so
+    a batched rollout really pays for it on every step, but billing the
+    logical cost keeps single and batched runs reporting the same
+    number.
+
+    Parameters
+    ----------
+    opt_state : OptaxState
+        Optimizer state *before* the update, holding the value cached
+        by the previous step.
+    new_opt_state : OptaxState
+        Optimizer state returned by ``optimizer.update``, holding this
+        step's linesearch info.
+
+    Returns
+    -------
+    jax.Array
+        Scalar integer count for ``OptHistory.fevals``.
+    """
+    n_linesearch = optax.tree.get(new_opt_state, "num_linesearch_steps")
+
+    # Absent for every optimizer without a linesearch (adam, sgd, ...);
+    # ``optax.tree.get`` returns a Python ``None`` at trace time, so
+    # this branch is static.
+    if n_linesearch is None:
+        return jnp.array(1, dtype=int)
+
+    cached_value = optax.tree.get(opt_state, "value")
+    if cached_value is None:
+        return jnp.asarray(n_linesearch, dtype=int)
+
+    recompute = jnp.isinf(cached_value) | jnp.isnan(cached_value)
+    return jnp.asarray(n_linesearch, dtype=int) + recompute.astype(int)
+
+
 def optax_extra_kwargs_fn(
     static: PyTree,
     optimizer: optax.GradientTransformationExtraArgs,
@@ -240,7 +308,7 @@ def optax_extra_kwargs_fn(
             params=jax.tree.map(lambda x: jnp.expand_dims(x, 0), input_params),
             grads=jax.tree.map(lambda x: jnp.expand_dims(x, 0), grads),
             update_step=jnp.array(opt_hash, dtype=int),
-            fevals=jnp.array(1, dtype=int),
+            fevals=step_fevals(opt_state, new_opt_state),
             iterations=jnp.array(1, dtype=int),
         )
 
@@ -741,6 +809,18 @@ class UpdateClass(eqx.Module):
     stop_fn : StopFunction
         Function to check stopping criteria. Defaults to a function
         that never stops.
+    max_fevals_per_step : int or None
+        Most function evaluations this optimizer can bill in one
+        iteration, or ``None`` (default) when that is just ``popsize``.
+        Only linesearch optimizers set it: L-BFGS bills one evaluation
+        per linesearch trial, so it can spend far more than its
+        population of one (see :func:`step_fevals` and
+        ``docs/adr/0010``). Read it through :attr:`fevals_bound`, which
+        resolves the ``None``. Consumers that size a budget or
+        normalize a per-evaluation cost must use that bound rather than
+        ``popsize`` -- notably rl2co's ``AUCEnv``, whose reward
+        normalization assumes no optimizer bills more than
+        ``max_iterations * max(popsize)``.
     """
 
     init_fn: InitFunction = eqx.field(static=True)
@@ -748,6 +828,20 @@ class UpdateClass(eqx.Module):
     popsize: int = eqx.field(static=True)
     hash: int = eqx.field(static=True)
     stop_fn: StopFunction = eqx.field(static=True, default=_default_stop_fn)
+    max_fevals_per_step: int | None = eqx.field(static=True, default=None)
+
+    @property
+    def fevals_bound(self) -> int:
+        """Upper bound on ``OptHistory.fevals`` for one iteration.
+
+        Returns
+        -------
+        int
+            :attr:`max_fevals_per_step` when set, else :attr:`popsize`.
+        """
+        if self.max_fevals_per_step is None:
+            return self.popsize
+        return self.max_fevals_per_step
 
     @classmethod
     def optax_update(
@@ -813,6 +907,7 @@ class UpdateClass(eqx.Module):
         popsize: int = 1,
         bounded: tuple[float, float] | None = None,
         stop_fn: StopFunction | None = None,
+        max_fevals_per_step: int | None = None,
         **hyperparameters,
     ) -> UpdateClass:
         """Construct an ``UpdateClass`` for optax optimizers with extra
@@ -833,6 +928,11 @@ class UpdateClass(eqx.Module):
             Box bounds applied to parameters after each step.
         stop_fn : StopFunction or None, optional
             Stopping function.
+        max_fevals_per_step : int or None, optional
+            Forwarded to :attr:`UpdateClass.max_fevals_per_step`. Set
+            it for linesearch optimizers, whose per-iteration cost is
+            not ``popsize``; ``None`` (default) leaves the bound at
+            ``popsize``.
         **hyperparameters
             Forwarded to the optimizer constructor.
 
@@ -858,6 +958,7 @@ class UpdateClass(eqx.Module):
             popsize=popsize,
             hash=opt_hash,
             stop_fn=stop_fn,
+            max_fevals_per_step=max_fevals_per_step,
         )
 
     @classmethod

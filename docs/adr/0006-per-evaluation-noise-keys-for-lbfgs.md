@@ -49,6 +49,20 @@ under-reporting itself is a separate, registry-wide decision in the
 spirit of `docs/adr/0004` (it would shift every ERT curve, so it
 must not ride along in this change).
 
+> [!NOTE]
+> **Superseded in part by `docs/adr/0010`.** That deferred decision
+> has since been taken: `lbfgs` now bills one feval per linesearch
+> trial, on both wirings. Two premises of the paragraph above did not
+> survive measurement — the flat `1` is *not* neutral for relative
+> comparisons once a consumer depends on the absolute number
+> (rl2co's `AUCEnv` reward normalization did), and the ERT shift is
+> ~1.3x rather than the ~20x this framing implied — the linesearch is
+> cheap during the descent phase ERT measures and expensive only
+> after convergence, so total-budget metrics move ~19x while ERT
+> barely does. Everything else in this ADR — the per-evaluation key
+> semantics, the single-registry-entry decision, and the
+> regeneration note for noisy-task data — still stands.
+
 Rejected alternatives: patching the behavior into optax upstream
 (no appetite for per-iteration `fn_kwargs` upstream yet; tracked in
 `FEEDBACK_optax.md`), and deriving keys from the iterate's bits
