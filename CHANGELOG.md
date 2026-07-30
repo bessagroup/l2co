@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `l2co.optimizers.menu_loss_and_grad`, the menu-dispatched population
+  evaluator, and the `GRAD_EVALUATION_WIDTH` constant naming how many rows a
+  gradient generation evaluates. Given a menu it evaluates only the *active*
+  optimizer's rows — its `popsize` value-only for a population optimizer, the
+  single iterate with gradients for a gradient one — instead of the menu-wide
+  `max(popsize)`. Exposes `branches` / `menu_to_branch` for introspecting how
+  many distinct evaluation shapes a menu compiles to (`docs/adr/0011`).
+- `UpdateClass.max_fevals_per_step` (static, defaults to `None`) and the
+  `UpdateClass.fevals_bound` property resolving it to `popsize`. The bound is
+  what an optimizer can bill in one iteration; it exceeds `popsize` only for
+  line-search optimizers. Consumers that size a budget or normalize a
+  per-evaluation cost must read `fevals_bound` rather than `popsize`.
+- `l2co._src.optimizers.update_class.step_fevals`, the shared feval count for
+  optax step functions, and
+  `l2co._src.optimizers.lbfgs.DEFAULT_MAX_LINESEARCH_STEPS`.
 - Three-phase parallel databank dump on `l2co.databank`: `dump_databank_template`,
   `dump_databank_task`, `dump_databank_finalize` and the `DumpPlan` hand-off
   between them. Decomposes `dump_databank` into a single-process store layout,
@@ -37,6 +52,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The `"l2co"` meta-optimizer no longer evaluates its whole population every
+  iteration.** `l2co_population_based_fn` used to call
+  `vmapped_loss_and_grad` over all `max(popsize)` candidates unconditionally,
+  so an Adam or L-BFGS iteration — which consumes a single point — paid a
+  population-wide forward *and* backward pass, and a CMA-ES or PSO iteration
+  paid a backward pass it discards. Function-evaluation counts were always
+  correct, so no recorded metric was wrong; only wall-clock time was spent.
+  On a Helmholtz PINN (`d=2971`, popsize 27) one iteration cost 1067 ms where
+  a population iteration needs 219 ms and a gradient one 42 ms. Now 4.9x
+  faster on population iterations, 25.3x on gradient ones, and 4.9x per
+  realization under the batched driver (`docs/adr/0011`).
+- **The `"l2co"` meta-optimizer is no longer bit-reproducible against earlier
+  runs.** Gradient iterations now evaluate one candidate, where XLA takes a
+  different code path than the wide pass and the gradient differs by 4.33e-06
+  relative; Adam is chaotic enough that a stored convergence curve will
+  visibly diverge over a few hundred iterations. Population iterations are
+  also affected on some platforms, because dispatching per optimizer emits a
+  different compiled graph than the old single-shape call and XLA may fuse it
+  differently (identical on x86_64 Linux, up to one float32 ulp apart on
+  macOS/arm64). Trajectories are semantically unchanged throughout — this is
+  float32 last-bit noise, not a behaviour change.
+- Population iterations of the `"l2co"` meta-optimizer now record all-`NaN`
+  gradients in `OptHistory.grads`, matching what the native EvoSax factories
+  already record. Unobservable on every configured path — `run_` discards
+  gradients, and the opt-in `gradient_based_stopping_criteria` was already
+  inapplicable to population optimizers.
 - **`"lbfgs"` now bills one function evaluation per line-search trial**
   instead of a flat 1 per iteration, on both the deterministic and the
   stochastic wiring (`docs/adr/0010`, taking the decision `docs/adr/0006`

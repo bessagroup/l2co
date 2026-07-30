@@ -14,7 +14,10 @@ against (``docs/adr/0007``). Everything needed to write a new optimizer
   ``StopFunction`` signatures, ``InputParameters`` / ``OptState`` /
   ``SamplerFunction`` aliases, and the ``PopSize`` spec.
 * **Loss helpers** -- the ``vmapped_loss*`` helpers that evaluate a
-  task's loss (and gradients) over a population.
+  task's loss (and gradients) over a population, plus
+  ``menu_loss_and_grad``, the menu-dispatched evaluator that spends
+  only the *active* optimizer's evaluation width instead of the
+  menu-wide generation width (``docs/adr/0011``).
 * **Sub-optimizer primitives** -- ``SubOpt`` and the
   ``grad_sub_optimizer`` / ``pop_sub_optimizer`` / ``optstep_to_subopt``
   factories, ``resolve_popsize``, ``l2co_native_optax``,
@@ -58,6 +61,10 @@ from ._src.optimizers.handshake_policy import (
     HandshakePolicy,
     handshake_policy_for,
 )
+from ._src.optimizers.menu_eval import (
+    GRAD_EVALUATION_WIDTH,
+    menu_loss_and_grad,
+)
 
 # Base optimizer factories / registries
 from ._src.optimizers.optax_implementations import (
@@ -100,6 +107,7 @@ from ._src.typing import (
 __all__ = [
     "CONSTRUCTOR_HYPERPARAMETERS",
     "DEFAULT_HANDSHAKE_POLICY",
+    "GRAD_EVALUATION_WIDTH",
     "HANDSHAKE_POLICY",
     "HandshakePolicy",
     "InitFunction",
@@ -122,6 +130,7 @@ __all__ = [
     "l2co_native_optax",
     "lbfgs_per_eval_key",
     "lbfgs_update",
+    "menu_loss_and_grad",
     "normalized_optax_from_state",
     "normalized_optax_normal",
     "optimizer_mapping",
