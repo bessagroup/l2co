@@ -40,6 +40,8 @@
 
 ::: l2co.optimizers.scale_by_zoom_linesearch_per_eval_key
 
+::: l2co.optimizers.menu_loss_and_grad
+
 ## States
 
 ::: l2co.RunState
