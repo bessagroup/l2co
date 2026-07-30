@@ -9,14 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `UpdateClass.max_fevals_per_step` (static, defaults to `None`) and the
-  `UpdateClass.fevals_bound` property resolving it to `popsize`. The bound is
-  what an optimizer can bill in one iteration; it exceeds `popsize` only for
-  line-search optimizers. Consumers that size a budget or normalize a
-  per-evaluation cost must read `fevals_bound` rather than `popsize`.
-- `l2co._src.optimizers.update_class.step_fevals`, the shared feval count for
-  optax step functions, and
-  `l2co._src.optimizers.lbfgs.DEFAULT_MAX_LINESEARCH_STEPS`.
+- Three-phase parallel databank dump on `l2co.databank`: `dump_databank_template`,
+  `dump_databank_task`, `dump_databank_finalize` and the `DumpPlan` hand-off
+  between them. Decomposes `dump_databank` into a single-process store layout,
+  an embarrassingly parallel per-task region write (one shard file per
+  `(task, schedule)`, so separate processes never touch the same file), and a
+  single-process finalize. `dump_databank` itself is unchanged and the two
+  paths produce identical stores.
+- `l2co.features.DERIVED_FEATURES`, mapping a feature name to a function of the
+  task tag for schema features that are computed rather than stored (currently
+  `deterministic`, read off the `noise` tag). `FeatureProcessor.transform`
+  computes a derived feature when the key is absent, so an existing databank
+  gains the feature with no trajectory re-runs.
+- `seed_batch` on `l2co._src.performance.ertd` and `DataLoader.ertd_profile`,
+  bounding the bootstrap's peak memory. Affects allocation only, never the
+  result.
 - Public facade modules `l2co.data`, `l2co.models`, `l2co.optimization`,
   `l2co.features`, `l2co.history`, and `l2co.validation`. Every public symbol
   is now reachable through exactly one topical facade in addition to the

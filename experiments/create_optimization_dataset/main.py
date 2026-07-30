@@ -423,7 +423,13 @@ def build_pipeline(config: DictConfig) -> Pipeline:
                 block=generate_report,
                 dependency="afterany",
                 resources=SlurmResources(
-                    time="00:30:00",
+                    # Renders one RTD figure per function, so the cost scales
+                    # with the task count. 30 min was enough at 144 tasks but
+                    # timed out at 576 (the 4-seed `bbob` pool), which breaks
+                    # the SLURM dependency chain and marks the entry failed
+                    # even though the dump already succeeded. 4h covers the
+                    # 1728-task `bbob_embedded` pool.
+                    time="04:00:00",
                     mem="4G",
                     cpus_per_task=1,
                 ),

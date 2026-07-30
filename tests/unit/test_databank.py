@@ -40,7 +40,15 @@ from l2co._src.databank.reader import (
 from l2co._src.databank.records import _build_task_records, loss_preprocess
 from l2co._src.databank.tasksets import load_taskset, save_taskset
 from l2co._src.databank.verify import verify_databank
-from l2co._src.databank.writer import _dump_append, _dump_create, _interp_loss
+from l2co._src.databank.writer import (
+    _dump_append,
+    _dump_create,
+    _dump_task_runs,
+    _dump_template_runs,
+    _interp_loss,
+    _minimal_sample_steps,
+    dump_databank_finalize,
+)
 from l2co.naming import (
     BUDGET,
     COST,
@@ -1274,3 +1282,136 @@ def test_overlay_performance_loader(tmp_path, tasks, steps):
         "bbob", steps + [ostep], primary, overlay_roots=[runs]
     )
     assert pl.data.sizes[SCHEDULE] == len(steps) + 1
+
+
+#                    Parallel dump: template / per-task / finalize
+# =============================================================================
+# The three-phase parallel dump must produce a byte-for-byte equivalent
+# store to the serial streaming path. The per-task phase is exercised
+# across real processes to validate the "one shard file per (task,
+# schedule) cell, so disjoint tasks never touch the same file" contract
+# that lets a SLURM array write one store concurrently.
+
+
+def _dump_one_task_worker(run, plan):
+    """Process-pool worker: region-write ONE task's cells into plan.store."""
+    payloads = _dump_task_runs([run], plan)
+    return payloads[0] if payloads else None
+
+
+def _assert_stores_equal(store_a: Path, store_b: Path) -> None:
+    """Assert two zarr databank stores are equal (NaN-aware, order-strict)."""
+    a = xr.open_zarr(store_a, consolidated=True).load()
+    b = xr.open_zarr(store_b, consolidated=True).load()
+    assert set(a.data_vars) == set(b.data_vars)
+    assert list(a[TASK_ID].values) == list(b[TASK_ID].values)
+    assert list(a[SCHEDULE].values) == list(b[SCHEDULE].values)
+    for v in a.data_vars:
+        av = a[v]
+        bv = b[v].transpose(*av.dims)
+        if np.issubdtype(av.dtype, np.floating):
+            np.testing.assert_allclose(
+                av.values, bv.values, rtol=1e-6, atol=1e-7, equal_nan=True
+            )
+        else:
+            assert np.array_equal(av.values, bv.values), v
+
+
+def _parallel_dump(root: Path, runs, *, mode: str, concurrent: bool):
+    """Drive template -> per-task (optionally concurrent) -> finalize."""
+    plan = _dump_template_runs(
+        runs,
+        root,
+        "bbob",
+        mode=mode,
+        easiest_quantile=0.75,
+        taskset=None,
+        budget_steps=BS,
+    )
+    if concurrent:
+        from concurrent.futures import ProcessPoolExecutor
+
+        with ProcessPoolExecutor(max_workers=4) as ex:
+            payloads = list(
+                ex.map(_dump_one_task_worker, list(runs), [plan] * len(runs))
+            )
+        payloads = [p for p in payloads if p is not None]
+    else:
+        payloads = [_dump_one_task_worker(r, plan) for r in runs]
+        payloads = [p for p in payloads if p is not None]
+    return dump_databank_finalize(payloads, plan)
+
+
+def _many_task_runs(rundir: Path, steps, n_tasks: int = 6):
+    """A wider set of tasks so the concurrent write actually contends."""
+    tasks_ = [
+        FakeTask(hash=f"task{ti:02d}", fn_name="sphere", dimensionality=10)
+        for ti in range(n_tasks)
+    ]
+    return _write_raw_runs(rundir, [(t, 8) for t in tasks_], steps)
+
+
+def test_parallel_dump_create_matches_serial(tmp_path, steps):
+    """Concurrent per-task writes reproduce the serial streaming store."""
+    runs = _many_task_runs(tmp_path / "runs", steps, n_tasks=6)
+
+    serial_root = tmp_path / "serial"
+    _create_zarr(serial_root, runs, budget_steps=BS)
+
+    par_root = tmp_path / "parallel"
+    _parallel_dump(par_root, runs, mode="error", concurrent=True)
+
+    _assert_stores_equal(
+        layout.zarr_store_path(par_root, "bbob"),
+        layout.zarr_store_path(serial_root, "bbob"),
+    )
+
+
+def test_parallel_dump_append_matches_serial(tmp_path, tasks, steps):
+    """Parallel append (tmp rebuild + carry-over) matches serial append."""
+    base = _write_raw_runs(tmp_path / "base", [(tasks[0], 8)], steps)
+    extra = _write_raw_runs(tmp_path / "extra", [(tasks[1], 8)], steps)
+
+    # Serial: create then append.
+    serial_root = tmp_path / "serial"
+    _create_zarr(serial_root, base, budget_steps=BS)
+    store_s = layout.zarr_store_path(serial_root, "bbob")
+    rawroot_s = layout.raw_root(serial_root, "bbob")
+    _dump_append(store_s, rawroot_s, extra, easiest_quantile=0.75)
+
+    # Parallel: template(create)+finalize, then template(append)+finalize.
+    par_root = tmp_path / "parallel"
+    _parallel_dump(par_root, base, mode="error", concurrent=False)
+    store_p = _parallel_dump(par_root, extra, mode="append", concurrent=False)
+
+    _assert_stores_equal(Path(store_p), store_s)
+
+
+def test_parallel_dump_template_is_shape_only(tmp_path):
+    """The template loads only a 1-2 optimizer subset yet lays out a store
+    byte-equal to the serial (full-optimizer) dump."""
+    steps3 = [
+        OptimizationStep(optimizer="randomsearch"),
+        OptimizationStep(optimizer="adam", hyperparameters={"lr": 0.01}),
+        OptimizationStep(optimizer="adam", hyperparameters={"lr": 0.1}),
+    ]
+    task = FakeTask(hash="t0", fn_name="sphere", dimensionality=10)
+    runs = _write_raw_runs(tmp_path / "runs", [(task, 8)], steps3)
+
+    # The template's sample subset is randomsearch + one representative
+    # optimizer -- NOT the task's full optimizer set.
+    subset = _minimal_sample_steps(runs[0][1])
+    assert len(subset) == 2
+    assert any(s.optimizer == "randomsearch" for s in subset)
+    assert any(s.optimizer != "randomsearch" for s in subset)
+
+    serial_root = tmp_path / "serial"
+    _create_zarr(serial_root, runs, budget_steps=BS)
+
+    par_root = tmp_path / "parallel"
+    _parallel_dump(par_root, runs, mode="error", concurrent=False)
+
+    _assert_stores_equal(
+        layout.zarr_store_path(par_root, "bbob"),
+        layout.zarr_store_path(serial_root, "bbob"),
+    )

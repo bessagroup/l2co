@@ -57,6 +57,20 @@ EPSILON = 1e-8
 DEFAULT_COST_VALUES = np.append(np.logspace(-1, 6, 1000) ** 0.8, 10**5)
 DEFAULT_TARGETS = np.linspace(0.0, 1.0, 51)
 
+#: Bootstrap replicates the ERTD averages over (the ``seed`` axis).
+ERTD_N_SEEDS = 50
+
+#: Realizations drawn (with replacement) per replicate.
+ERTD_N_PICKS = 50
+
+#: Replicates evaluated at once inside :func:`ertd`. The resampled
+#: ``cost`` / ``success`` arrays carry a ``seed x picks`` axis in place of
+#: ``realization``, so the peak footprint scales with this batch, not with
+#: :data:`ERTD_N_SEEDS`: on a full databank selection (~150 tasks x ~60
+#: schedules x 51 targets) the unbatched form allocates tens of GB to
+#: produce a sub-GB profile. The batching is exact -- see :func:`ertd`.
+ERTD_SEED_BATCH = 5
+
 
 def output_cummin(da: xr.DataArray) -> xr.DataArray:
     """
@@ -352,16 +366,73 @@ def rtd(performance: xr.DataArray) -> xr.DataArray:
     return (1.0 - performance).mean(PROBLEM)
 
 
+def _ert_for_seeds(ds: xr.Dataset, samples: xr.DataArray) -> xr.DataArray:
+    """Expected runtime for one batch of bootstrap seed replicates.
+
+    Resamples the ``realization`` axis with the given draws, sums the cost
+    up to (and including) each problem's first success, and normalizes by
+    the problem's dimensionality. Replicates without a single success
+    become NaN, so the caller's ``mean(SEED)`` skips them.
+
+    This is the memory-heavy inner step: the ``isel`` below replaces the
+    store's ``realization`` axis with ``seed x picks``, so the resampled
+    ``cost`` / ``success`` arrays are ``n_picks * n_seeds_in_batch /
+    n_realizations`` times the footprint of the input. Keeping the batch
+    small is what bounds :func:`ertd`'s peak.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Unstacked dataset with ``cost``, ``success`` and ``dims``.
+    samples : xr.DataArray
+        Bootstrap indices for this batch, dims ``(seed, realization)``.
+
+    Returns
+    -------
+    xr.DataArray
+        ERT for this batch's seeds, with the ``realization`` axis reduced
+        away. Materialized (not lazy) so the resampled arrays are released
+        before the next batch allocates its own.
+    """
+    ds_selected = ds.isel({REALIZATION: samples})
+    success = ds_selected[SUCCESS]
+    any_success = success.any(REALIZATION)
+
+    # Index of the first success, -1 where there is none at all.
+    first_true = success.argmax(REALIZATION).where(any_success, other=-1)
+
+    idx = xr.DataArray(
+        np.arange(ds_selected.sizes[REALIZATION]), dims=REALIZATION
+    )
+    mask = (idx <= first_true).fillna(False)
+
+    # Sum cost up to the first success; NaN when nothing was solved.
+    ert = ds_selected[COST].where(mask, 0).sum(REALIZATION)
+    ert = ert.where(any_success)
+
+    return (ert / ds_selected["dims"].mean(REALIZATION)).compute()
+
+
 def ertd(
     performance: xr.Dataset,
     dims: xr.DataArray,
     cost_values: np.ndarray = DEFAULT_COST_VALUES,
+    seed_batch: int = ERTD_SEED_BATCH,
 ) -> xr.DataArray:
     """Compute the Expected Runtime Distribution (ERTD).
 
     Estimates the fraction of problems solved within
     each cost budget, normalized by problem dimensionality,
     using bootstrap sampling over realizations.
+
+    The bootstrap is evaluated in batches of ``seed_batch`` replicates
+    (see :func:`_ert_for_seeds`) and the per-batch ERTs are concatenated
+    back into one ``seed`` axis before the mean. Batching only changes
+    *when* the resampled arrays are allocated, never the arithmetic: each
+    ERT element reduces over its own replicate's ``realization`` axis
+    alone, and the concatenated axis preserves seed order, so the result
+    is independent of ``seed_batch`` (asserted in
+    ``tests/unit/test_ertd_separability.py``).
 
     Parameters
     ----------
@@ -372,12 +443,20 @@ def ertd(
     cost_values : np.ndarray, optional
         Cost budget thresholds, by default
         ``DEFAULT_COST_VALUES``.
+    seed_batch : int, optional
+        Bootstrap replicates held in memory at once, by default
+        :data:`ERTD_SEED_BATCH`. Trades peak memory against Python-level
+        loop overhead; pass :data:`ERTD_N_SEEDS` for the unbatched
+        computation.
 
     Returns
     -------
     xr.DataArray
         ERTD profile indexed by ``cost_per_dim``.
     """
+    if seed_batch < 1:
+        raise ValueError(f"seed_batch must be >= 1, got {seed_batch}.")
+
     ds = xr.Dataset(
         {
             COST: performance[COST],
@@ -391,9 +470,11 @@ def ertd(
     samples = np.stack(
         [
             draw_samples(
-                seed=s, n_realizations=ds[REALIZATION].size, n_picks=50
+                seed=s,
+                n_realizations=ds[REALIZATION].size,
+                n_picks=ERTD_N_PICKS,
             )
-            for s in np.arange(50)
+            for s in np.arange(ERTD_N_SEEDS)
         ],
         axis=0,
     )
@@ -403,52 +484,27 @@ def ertd(
         dims=(SEED, REALIZATION),
     )
 
-    ds_selected = ds.isel({REALIZATION: samples_da})
-
-    # # Find index of first True along "problem"
-    first_true = ds_selected[SUCCESS].argmax(REALIZATION)
-
-    # # Handle case where there is no True at all
-    first_true = first_true.where(
-        ds_selected[SUCCESS].any(REALIZATION), other=-1
+    ert = xr.concat(
+        [
+            _ert_for_seeds(
+                ds, samples_da.isel({SEED: slice(lo, lo + seed_batch)})
+            )
+            for lo in range(0, ERTD_N_SEEDS, seed_batch)
+        ],
+        dim=SEED,
     )
 
-    # # Coordinate index
-    idx = xr.DataArray(
-        np.arange(ds_selected.sizes[REALIZATION]), dims=REALIZATION
-    )
-
-    # # Mask up to first True
-    mask = (idx <= first_true).fillna(False)
-
-    # # Sum cost up to first True
-    ert = ds_selected[COST].where(mask, 0).sum(REALIZATION)
-    # # If not any success, put NaN
-    ert = ert.where(ds_selected[SUCCESS].any(REALIZATION))
-
-    # # Divide by the dimensionality of the problem
-    ert = ert / ds_selected["dims"].mean(REALIZATION)
-
+    # NaN-skipping mean: replicates that solved nothing do not count.
     ert_multi = ert.mean(SEED)
-    values = np.unique(DEFAULT_COST_VALUES)
-    budgets = xr.DataArray(
-        values,
-        dims="cost_per_dim",
-        coords={"cost_per_dim": values},
-    )
-
-    ertd = (ert_multi <= budgets).mean([OUTPUT_DIM, TARGET])
 
     values = np.unique(cost_values)
-
     budgets = xr.DataArray(
         values,
         dims="cost_per_dim",
         coords={"cost_per_dim": values},
     )
-    ertd = (ert_multi <= budgets).mean([OUTPUT_DIM, TARGET])
 
-    return ertd
+    return (ert_multi <= budgets).mean([OUTPUT_DIM, TARGET])
 
 
 def draw_samples(seed: int, n_realizations: int, n_picks: int):
