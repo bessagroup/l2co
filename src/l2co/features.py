@@ -5,9 +5,14 @@ Stable import surface for ``FeatureProcessor``, ``MixedEmbedding``, and the
 """
 
 from l2co._src.preprocessing import preprocessing_factory
-from l2co._src.task_features import FeatureProcessor, MixedEmbedding
+from l2co._src.task_features import (
+    DERIVED_FEATURES,
+    FeatureProcessor,
+    MixedEmbedding,
+)
 
 __all__ = [
+    "DERIVED_FEATURES",
     "FeatureProcessor",
     "MixedEmbedding",
     "preprocessing_factory",

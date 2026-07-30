@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,65 @@ Schema = dict[str, str | list]
 
 
 # =============================================================================
+#                                                            Derived features
+# =============================================================================
+# Features a schema may request that are *computed from* the task tag rather
+# than stored in it. Deriving keeps ``Task.hash`` — and therefore every
+# databank ``taskID`` — unchanged, so an existing store gains the feature
+# without re-running a single trajectory. A tag that already carries the key
+# wins over the derivation, so promoting one of these into the tag later is
+# backwards compatible.
+
+
+def _is_deterministic(tag: dict[str, Any]) -> bool:
+    """Whether the task's loss is a deterministic function of its input.
+
+    Read off the ``noise`` tag, which the task factories set for every
+    benchmark suite: a noise *level* for the plain and embedded BBOB
+    suites (``0.0`` when none is injected) and ``True`` for the
+    inherently stochastic noisy suite. Values arrive either as native
+    Python objects (live ``Task.tag``) or as the strings a databank
+    store round-trips, so both spellings are accepted. A missing
+    ``noise`` key is read as deterministic.
+
+    Parameters
+    ----------
+    tag : dict[str, Any]
+        Raw task tag (or the stringified ``task_labels`` row).
+
+    Returns
+    -------
+    bool
+        True when the task is noise-free.
+    """
+    noise = tag.get("noise", 0.0)
+
+    if isinstance(noise, bool):
+        return not noise
+
+    if isinstance(noise, str):
+        token = noise.strip().lower()
+        if token in ("", "none", "false"):
+            return True
+        if token == "true":
+            return False
+        try:
+            return float(token) == 0.0
+        except ValueError:
+            return False
+
+    try:
+        return float(noise) == 0.0
+    except (TypeError, ValueError):
+        return True
+
+
+DERIVED_FEATURES: dict[str, Callable[[dict[str, Any]], Any]] = {
+    "deterministic": _is_deterministic,
+}
+
+
+# =============================================================================
 
 
 class FeatureProcessor(eqx.Module):
@@ -24,6 +84,10 @@ class FeatureProcessor(eqx.Module):
     boolean values are mapped to integer indices via a per-feature
     vocabulary; booleans use the fixed mapping
     ``{"false": 0, "true": 1}``.
+
+    A schema may also name an entry of :data:`DERIVED_FEATURES` (e.g.
+    ``deterministic``), which :meth:`transform` computes from the rest
+    of the tag when the key is absent.
 
     Parameters
     ----------
@@ -78,7 +142,9 @@ class FeatureProcessor(eqx.Module):
         Parameters
         ----------
         x : dict[str, Any]
-            Raw feature dict. All keys in ``vocabs`` must be present.
+            Raw feature dict. Every key in ``vocabs`` must either be
+            present or name an entry of :data:`DERIVED_FEATURES`, which
+            is computed from ``x`` when the key is absent.
 
         Returns
         -------
@@ -86,10 +152,24 @@ class FeatureProcessor(eqx.Module):
             Shape (num_features,); dtype follows JAX's default float
             precision (``float32`` by default, ``float64`` when
             ``jax_enable_x64`` is set).
+
+        Raises
+        ------
+        KeyError
+            If a feature is neither present in ``x`` nor derivable.
         """
         feats = []
         for name, vocab in self.vocabs.items():
-            val = x[name]
+            if name in x:
+                val = x[name]
+            elif name in DERIVED_FEATURES:
+                val = DERIVED_FEATURES[name](x)
+            else:
+                raise KeyError(
+                    f"Feature {name!r} is absent from the task tag and "
+                    f"is not derivable (derived features: "
+                    f"{sorted(DERIVED_FEATURES)})."
+                )
             if vocab is None:
                 feats.append(val)
             else:
