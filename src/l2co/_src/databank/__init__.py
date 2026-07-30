@@ -50,17 +50,27 @@ from .verify import (
     VerificationFinding,
     verify_databank,
 )
-from .writer import dump_databank
+from .writer import (
+    DumpPlan,
+    dump_databank,
+    dump_databank_finalize,
+    dump_databank_task,
+    dump_databank_template,
+)
 
 __all__ = [
     "BUDGET_STEPS",
     "DatabankVerificationReport",
+    "DumpPlan",
     "MissingManifestError",
     "VerificationFinding",
     "WeightsHashMismatchError",
     "bump_manifest",
     "databank_root",
     "dump_databank",
+    "dump_databank_finalize",
+    "dump_databank_task",
+    "dump_databank_template",
     "dumps_provenance",
     "held_out_task_ids",
     "load_databank",
