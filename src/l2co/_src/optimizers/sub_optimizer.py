@@ -46,7 +46,7 @@ from .handshake_policy import (
     POPULATION_HANDSHAKES,
     handshake_policy_for,
 )
-from .lbfgs import stock_lbfgs
+from .lbfgs import DEFAULT_MAX_LINESEARCH_STEPS, stock_lbfgs
 from .mapping import optimizer_mapping
 from .optax_implementations import (
     normalized_optax_from_state,
@@ -60,6 +60,7 @@ from .utils import normalize_key
 
 __all__ = [
     "CONSTRUCTOR_HYPERPARAMETERS",
+    "LINESEARCH_FEVAL_BOUND",
     "SubOpt",
     "grad_sub_optimizer",
     "l2co_native_evosax",
@@ -85,6 +86,20 @@ l2co_native_evosax: dict[str, type] = {"shade": SHADE}
 # drive (see :func:`optstep_to_subopt`).
 l2co_native_optax: dict[str, Callable[..., optax.GradientTransformation]] = {
     "lbfgs": stock_lbfgs,
+}
+
+# Gradient transforms that spend more than one evaluation per step, keyed
+# as in the registry, mapping their hyperparameters to the worst case.
+# A line search evaluates the objective once per trial, so its cost is
+# unrelated to its population of one -- consumers that size a budget or
+# normalise a per-evaluation quantity must use ``SubOpt.fevals_bound``
+# rather than ``popsize`` (see ``docs/adr/0010``). Mirrors what
+# ``UpdateClass.max_fevals_per_step`` carries on the registry path.
+LINESEARCH_FEVAL_BOUND: dict[str, Callable[[dict], int]] = {
+    "lbfgs": lambda hp: int(
+        hp.get("max_linesearch_steps", DEFAULT_MAX_LINESEARCH_STEPS)
+    )
+    + 1,
 }
 
 # Shape-affecting hyperparameter names consumed by an algorithm's
@@ -179,6 +194,31 @@ class SubOpt(eqx.Module):
     opt_state_handshake: str = eqx.field(static=True, default="continue")
     fevals_fn: Callable | None = eqx.field(static=True, default=None)
     population_handshake: str = eqx.field(static=True, default="best_one")
+    max_fevals_per_step: int | None = eqx.field(static=True, default=None)
+
+    @property
+    def fevals_bound(self) -> int:
+        """Worst-case function evaluations one step of this can spend.
+
+        :attr:`max_fevals_per_step` when set, else :attr:`popsize`. The two
+        differ for line-search transforms, which evaluate the objective
+        once per trial against a population of one.
+
+        This is the *bound*, for sizing and normalising; the actual cost of
+        a given step comes from :meth:`bill_fevals`. Consumers that
+        normalise a per-evaluation quantity (rl2co's ``AUCEnv`` reward and
+        its feval-progress observation channel) must use this rather than
+        ``popsize``, or they under-estimate the worst case and let a
+        normalised quantity leave its intended range.
+
+        Returns
+        -------
+        int
+            Positive upper bound on one step's evaluations.
+        """
+        if self.max_fevals_per_step is None:
+            return self.popsize
+        return self.max_fevals_per_step
 
     def handshake_population(
         self,
@@ -258,6 +298,7 @@ def grad_sub_optimizer(
     name_hash: int,
     opt_state_handshake: str = "continue",
     population_handshake: str = "best_one",
+    max_fevals_per_step: int | None = None,
 ) -> SubOpt:
     """Wrap an optax gradient transformation as a ``SubOpt``.
 
@@ -353,6 +394,7 @@ def grad_sub_optimizer(
         tell_fn=None,
         opt_state_handshake=opt_state_handshake,
         population_handshake=population_handshake,
+        max_fevals_per_step=max_fevals_per_step,
         # A plain transform bills 1 (== popsize) and a line-search
         # transform its true trial count, from the same helper the
         # registry path uses -- so an ask/tell wrapper's fevals are
@@ -370,6 +412,7 @@ def pop_sub_optimizer(
     name_hash: int,
     opt_state_handshake: str = "continue",
     population_handshake: str = "best_one",
+    max_fevals_per_step: int | None = None,
 ) -> SubOpt:
     """Wrap an evosax-style ``(init, ask, tell)`` triple as a ``SubOpt``.
 
@@ -407,6 +450,7 @@ def pop_sub_optimizer(
         tell_fn=tell_fn,
         opt_state_handshake=opt_state_handshake,
         population_handshake=population_handshake,
+        max_fevals_per_step=max_fevals_per_step,
     )
 
 
@@ -535,11 +579,15 @@ def optstep_to_subopt(
         else:
             optax_cls = l2co_native_optax[name]
         transform = optax_cls(**hyperparams)
+        bound_fn = LINESEARCH_FEVAL_BOUND.get(name)
         return grad_sub_optimizer(
             transform,
             name_hash=opt_step.hash,
             opt_state_handshake=handshake_policy_for(opt_step).opt_state,
             population_handshake=handshake_policy_for(opt_step).population,
+            max_fevals_per_step=(
+                None if bound_fn is None else bound_fn(hyperparams)
+            ),
         )
 
     # --- Evosax / population-based -------------------------------------
