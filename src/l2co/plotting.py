@@ -8,7 +8,7 @@ Plotting module
 # Local
 from ._src.visualize import bbob_plot as bbob
 from ._src.visualize import cec2005_plot as cec2005
-from ._src.visualize.colors import get_schedule_styles
+from ._src.visualize.colors import display_name, get_schedule_styles
 from ._src.visualize.plotting import (
     ertd_per_group,
     generate_report,
@@ -46,6 +46,7 @@ __all__ = [
     "plot_2d_loss_landscape_slice_grid",
     "plot_3d_loss_landscape_only",
     "get_schedule_styles",
+    "display_name",
     "ertd_per_group",
     "generate_report",
     "bbob",

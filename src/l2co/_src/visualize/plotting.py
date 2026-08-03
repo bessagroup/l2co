@@ -46,7 +46,7 @@ from l2co._src.optimizer_schedule import OptimizationStep
 from l2co._src.performance import EPSILON
 from l2co._src.sampler import grid_sampling
 from l2co._src.update_class import evaluate
-from l2co._src.visualize.colors import LABEL_MAP, get_schedule_styles
+from l2co._src.visualize.colors import display_name, get_schedule_styles
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -667,7 +667,7 @@ def plot_ertd(
         linestyle = style[schedule].linestyle
         # marker = style[schedule].marker
         marker = None
-        pretty_label = LABEL_MAP.get(schedule, schedule)
+        pretty_label = display_name(schedule)
         y = ertd.sel({SCHEDULE: schedule})
 
         # FAILSAFE: Check if the entire series is NaN
@@ -1030,7 +1030,7 @@ def plot_update_step(
     opt_hashes = [opt.hash for opt in optimizers]
     styles = get_schedule_styles([opt.name for opt in optimizers])
     hex_colors = [styles[opt.name].color for opt in optimizers]
-    display_names = [LABEL_MAP[opt.name] for opt in optimizers]
+    display_names = [display_name(opt.name) for opt in optimizers]
 
     # 3. Reclassification
     # Cells of `update_step` that were never written by the rollout (the
