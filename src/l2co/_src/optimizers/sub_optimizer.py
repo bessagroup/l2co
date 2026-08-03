@@ -50,6 +50,7 @@ from .optax_implementations import (
     normalized_optax_normal,
 )
 from .shade import SHADE
+from .update_class import step_fevals
 from .utils import normalize_key
 
 # =============================================================================
@@ -147,6 +148,16 @@ class SubOpt(eqx.Module):
         trace time by the strategy wrappers, so a ``'continue'``
         sub-optimizer's reset branch is never traced. See
         ``docs/adr/0009-shared-handshake-policy-table.md``.
+    fevals_fn : Callable | None
+        ``fevals_fn(sub_state_before, sub_state_after) -> Array`` — the
+        function evaluations one step of this sub-optimizer actually
+        spent. ``None`` (the default, and the case for every
+        population-based adapter) means the step costs exactly
+        :attr:`popsize`. :func:`grad_sub_optimizer` wires
+        :func:`~l2co._src.optimizers.update_class.step_fevals` in here,
+        which is what makes a *line-search* transform bill its true
+        trial count instead of a flat ``1``. Read it through
+        :meth:`bill_fevals`.
     """
 
     is_pop: bool = eqx.field(static=True)
@@ -156,6 +167,44 @@ class SubOpt(eqx.Module):
     step_fn: Callable = eqx.field(static=True)
     tell_fn: Callable | None = eqx.field(static=True)
     opt_state_handshake: str = eqx.field(static=True, default="continue")
+    fevals_fn: Callable | None = eqx.field(static=True, default=None)
+
+    def bill_fevals(
+        self, sub_state_before: PyTree, sub_state_after: PyTree
+    ) -> Array:
+        """Function evaluations one step of this sub-optimizer spent.
+
+        Consumers that record ``OptHistory.fevals`` /
+        ``HistoryState.fevals`` from an ask/tell wrapper must bill
+        through here rather than assuming :attr:`popsize`. The two
+        differ for line-search optimizers: ``lbfgs`` has a population
+        of one but evaluates the objective once per line-search trial,
+        up to ``max_linesearch_steps + 1`` in a single step (see
+        ``docs/adr/0010-lbfgs-bills-one-feval-per-linesearch-trial.md``).
+        Billing ``popsize`` there under-reports its cost by up to 21x
+        and makes a wrapper-driven run non-comparable with the
+        registry-driven runs it is measured against.
+
+        Because the count is only known *after* the step, a caller that
+        records history before dispatching the step has to reorder.
+
+        Parameters
+        ----------
+        sub_state_before : PyTree
+            This sub-optimizer's internal state before the step.
+        sub_state_after : PyTree
+            Its state after the step, holding the line-search info.
+
+        Returns
+        -------
+        Array
+            Scalar integer feval count for this step.
+        """
+        if self.fevals_fn is None:
+            return jnp.asarray(self.popsize, dtype=int)
+        return jnp.asarray(
+            self.fevals_fn(sub_state_before, sub_state_after), dtype=int
+        )
 
 
 def grad_sub_optimizer(
@@ -256,6 +305,12 @@ def grad_sub_optimizer(
         step_fn=step_fn,
         tell_fn=None,
         opt_state_handshake=opt_state_handshake,
+        # A plain transform bills 1 (== popsize) and a line-search
+        # transform its true trial count, from the same helper the
+        # registry path uses -- so an ask/tell wrapper's fevals are
+        # comparable with a registry-driven run's. See
+        # ``SubOpt.bill_fevals``.
+        fevals_fn=step_fevals,
     )
 
 
