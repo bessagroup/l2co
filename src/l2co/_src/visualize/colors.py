@@ -71,18 +71,60 @@ BASE_OPT_STYLES.update(
 )
 
 
+#: Display labels for schedules, resolved by :func:`display_name`.
+#:
+#: Prefer a **bare optimizer name** (``"adam"``): ``display_name`` falls
+#: back to it for every hyperparameter variant, so one entry covers
+#: ``adam_learning_rate=0.01`` and any future learning rate. Add a
+#: suffixed key only to give one specific variant its own label.
 LABEL_MAP = {
     "sepcmaes": "Sep-CMA-ES",
     "randomsearch": "Random search",
     # "l2co": r"\textbf{L2CO (Ours)}",  # You can even use LaTeX bold here
     "lbfgs": "L-BFGS",
     "pso": "PSO",
-    "adam_learning_rate=0.01": "Adam",
-    "adam_learning_rate=0.3": "Adam",
+    "adam": "Adam",
+    # The headroom-balanced quartet (l2co_experiments optimizers=headroom4);
+    # evosax spells the last two CR_FM_NES and MR15_GA.
+    "rprop": "Rprop",
+    "crfmnes": "CR-FM-NES",
+    "mr15ga": "MR15-GA",
     "stage0": r"L2CO ($g_\text{first}$)",
     "l2co": r"L2CO ($g_\text{first} \rightarrow g_\text{second}$)",
     "rl2co": "RL2CO",
 }
+
+
+def display_name(schedule_name: str) -> str:
+    """Human-readable label for a schedule, falling back when unlisted.
+
+    ``LABEL_MAP`` is hand-maintained and only covers the optimizers that
+    have needed a prettier label so far, hyperparameter suffix included
+    (``adam_learning_rate=0.01``). Treating a miss as an error would make
+    that table a hard dependency of every optimizer portfolio -- swapping
+    in an optimizer nobody has labelled yet would crash the figure rather
+    than draw it with a plain name. So resolution degrades instead:
+
+    1. the full schedule name, suffix and all;
+    2. the base optimizer name -- the same ``split("_")[0]`` rule
+       :func:`get_schedule_styles` uses to find a colour, so a labelled
+       optimizer keeps its label across hyperparameter variants;
+    3. the raw name, which is always readable if not pretty.
+
+    Parameters
+    ----------
+    schedule_name : str
+        Schedule/optimizer name, e.g. ``"lbfgs"`` or
+        ``"rprop_learning_rate=0.001"``.
+
+    Returns
+    -------
+    str
+        Label to show in a legend or axis.
+    """
+    if schedule_name in LABEL_MAP:
+        return LABEL_MAP[schedule_name]
+    return LABEL_MAP.get(schedule_name.split("_")[0], schedule_name)
 
 
 def get_schedule_styles(schedule_names: Iterable[str]) -> dict[str, OptStyle]:
