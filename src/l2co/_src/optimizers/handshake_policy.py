@@ -7,27 +7,49 @@ needs is a property of the **optimizer** -- can its accumulated internal
 state survive an iterate jump? -- not of the loop doing the switching.
 This module holds that table, and only that table.
 
-The concrete transfer functions are *not* here, deliberately. They come
-in two incompatible data models: the rl2co environment's operate on
-``RunState`` / ``UpdateClass``, the deployment wrappers' on
-:class:`~l2co._src.optimizers.sub_optimizer.SubOpt` and their own
-strategy ``State``, and the two population halves have divergent slot
-layouts. Only the *decision* is shared, so the two implementations
-cannot disagree about which optimizer needs what. See
-``docs/adr/0009-shared-handshake-policy-table.md``.
+The **population** half's transfer functions live here too, and are the
+single canonical implementation. They used to be duplicated per consumer
+with divergent slot layouts -- one placing the best point in the last
+slot and drawing ``popsize`` samples, the other in slot 0 drawing
+``popsize - 1``. That is not cosmetic: mirrored-sampling algorithms such
+as CR-FM-NES read a population as antithetic pairs at ``(2i, 2i + 1)``,
+so moving the best point re-partitions those pairs and the two layouts
+produce *different* updates from the same handshake. A policy trained
+against one layout and deployed against the other therefore diverges at
+every switch. The canonical layout is the environment's (best point
+last), chosen because it is what existing trained checkpoints and stored
+trajectories were produced with. This amends
+``docs/adr/0009-shared-handshake-policy-table.md``, which recorded the
+divergence as accepted.
+
+The **opt_state** half's transfer functions are still per-consumer,
+because they genuinely operate on incompatible data models: the rl2co
+environment's on ``RunState`` / ``UpdateClass``, the deployment
+wrappers' on :class:`~l2co._src.optimizers.sub_optimizer.SubOpt` and
+their own strategy ``State``. Only the *decision* is shared there.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import equinox as eqx
+import jax
+import jax.numpy as jnp
+from jaxtyping import PRNGKeyArray, PyTree
 
 from ..optimizer_schedule import OptimizationStep
+from ..typing import SamplerFunction
 
 # =============================================================================
 
 __all__ = [
     "DEFAULT_HANDSHAKE_POLICY",
     "HANDSHAKE_POLICY",
+    "POPULATION_HANDSHAKES",
+    "population_best",
+    "population_best_one",
+    "population_handshake_for",
     "OPT_STATE_VARIANTS",
     "POPULATION_VARIANTS",
     "HandshakePolicy",
@@ -124,3 +146,120 @@ def handshake_policy_for(
 
 
 # =============================================================================
+
+
+#                                          Population handshake implementations
+# =============================================================================
+
+
+def population_best(
+    best_params: PyTree,
+    popsize: int,
+    sampler: SamplerFunction,
+    key: PRNGKeyArray,
+) -> PyTree:
+    """Hand the incoming optimizer the best parameters in every slot.
+
+    The ``"best"`` variant. For the unit populations this variant is
+    tabulated for (``adam``, ``sgd``, ``lbfgs``) that is a single row,
+    identical to what a ``"best_one"`` handshake would produce -- the two
+    only diverge above ``popsize == 1``.
+
+    Parameters
+    ----------
+    best_params : PyTree
+        Best parameters seen so far, shaped as one solution (no leading
+        population axis).
+    popsize : int
+        Population size of the incoming optimizer.
+    sampler : SamplerFunction
+        Unused; accepted so both variants share one signature.
+    key : PRNGKeyArray
+        Unused; accepted so both variants share one signature.
+
+    Returns
+    -------
+    PyTree
+        ``best_params`` with a leading axis of ``popsize``.
+    """
+    del sampler, key
+    return jax.tree.map(
+        lambda b: jnp.broadcast_to(b, (popsize, *jnp.shape(b))), best_params
+    )
+
+
+def population_best_one(
+    best_params: PyTree,
+    popsize: int,
+    sampler: SamplerFunction,
+    key: PRNGKeyArray,
+) -> PyTree:
+    """Hand over a fresh population with the best parameters injected.
+
+    The ``"best_one"`` variant: ``popsize`` draws from ``sampler`` around
+    ``best_params``, with ``best_params`` written into the **last** slot.
+
+    That slot is load-bearing, which is why this implementation is shared
+    rather than reproduced per consumer. Mirrored-sampling algorithms
+    (CR-FM-NES and the other even-population strategies) read a
+    population as antithetic pairs at ``(2i, 2i + 1)``, so placing the
+    best point elsewhere re-partitions those pairs and yields a different
+    update from the same handshake. Last is canonical because it is what
+    existing trained checkpoints and stored trajectories were produced
+    with.
+
+    Parameters
+    ----------
+    best_params : PyTree
+        Best parameters seen so far, shaped as one solution (no leading
+        population axis).
+    popsize : int
+        Population size of the incoming optimizer; also the number of
+        draws requested, one of which the injected best point replaces.
+    sampler : SamplerFunction
+        ``l2co.sampling`` function, called as
+        ``sampler(key, best_params, popsize)``.
+    key : PRNGKeyArray
+        Key for the draws.
+
+    Returns
+    -------
+    PyTree
+        Population with a leading axis of ``popsize``.
+    """
+    samples = sampler(key, best_params, popsize)
+    return jax.tree.map(lambda s, b: s.at[-1].set(b), samples, best_params)
+
+
+POPULATION_HANDSHAKES: dict[str, Callable[..., PyTree]] = {
+    "best": population_best,
+    "best_one": population_best_one,
+}
+"""The ``population`` half's implementations, keyed as in the table.
+
+Keys match :data:`POPULATION_VARIANTS`. All share the signature
+``(best_params, popsize, sampler, key) -> PyTree``, returning a
+population with a leading axis of ``popsize``. A consumer whose
+generation width exceeds ``popsize`` (the strategy wrappers, which
+allocate ``max(popsize)`` across the menu) pads the result itself --
+padding is the caller's layout concern, not the handshake's.
+"""
+
+
+def population_handshake_for(
+    optimizer: OptimizationStep | str,
+) -> Callable[..., PyTree]:
+    """Resolve the population-handshake implementation for an optimizer.
+
+    Parameters
+    ----------
+    optimizer : OptimizationStep | str
+        Optimizer spec, or its registry name directly.
+
+    Returns
+    -------
+    Callable[..., PyTree]
+        The tabulated variant's implementation, or the default's for
+        names absent from :data:`HANDSHAKE_POLICY`.
+    """
+    return POPULATION_HANDSHAKES[handshake_policy_for(optimizer).population]

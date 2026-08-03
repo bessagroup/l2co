@@ -42,7 +42,10 @@ from l2co_tasks import Task
 
 from ..optimizer_schedule import OptimizationStep
 from .evosax_implementations import normalized_evosax
-from .handshake_policy import handshake_policy_for
+from .handshake_policy import (
+    POPULATION_HANDSHAKES,
+    handshake_policy_for,
+)
 from .lbfgs import stock_lbfgs
 from .mapping import optimizer_mapping
 from .optax_implementations import (
@@ -148,6 +151,13 @@ class SubOpt(eqx.Module):
         trace time by the strategy wrappers, so a ``'continue'``
         sub-optimizer's reset branch is never traced. See
         ``docs/adr/0009-shared-handshake-policy-table.md``.
+    population_handshake : str
+        ``"best_one"`` (default) or ``"best"`` -- which population the
+        incoming optimizer sees. Resolved from the same shared table as
+        :attr:`opt_state_handshake` by :func:`optstep_to_subopt`. Apply it
+        through :meth:`handshake_population`, never by reimplementing the
+        layout: the slot the best point lands in changes the update a
+        mirrored-sampling algorithm computes.
     fevals_fn : Callable | None
         ``fevals_fn(sub_state_before, sub_state_after) -> Array`` — the
         function evaluations one step of this sub-optimizer actually
@@ -168,6 +178,42 @@ class SubOpt(eqx.Module):
     tell_fn: Callable | None = eqx.field(static=True)
     opt_state_handshake: str = eqx.field(static=True, default="continue")
     fevals_fn: Callable | None = eqx.field(static=True, default=None)
+    population_handshake: str = eqx.field(static=True, default="best_one")
+
+    def handshake_population(
+        self,
+        best_params: PyTree,
+        sampler: Callable,
+        key: PRNGKeyArray,
+    ) -> PyTree:
+        """Build the population this sub-optimizer receives on a switch.
+
+        Dispatches on :attr:`population_handshake` into
+        :data:`~l2co._src.optimizers.handshake_policy.
+        POPULATION_HANDSHAKES`, the single canonical implementation the
+        rl2co environment also uses -- so a deployed policy sees the same
+        post-switch population it was trained against. The returned
+        leading axis is :attr:`popsize`; a caller whose generation width
+        is wider pads it.
+
+        Parameters
+        ----------
+        best_params : PyTree
+            Best parameters seen so far, as one solution.
+        sampler : Callable
+            ``l2co.sampling`` function, called as
+            ``sampler(key, best_params, popsize)``.
+        key : PRNGKeyArray
+            Key for the draws.
+
+        Returns
+        -------
+        PyTree
+            Population with a leading axis of :attr:`popsize`.
+        """
+        return POPULATION_HANDSHAKES[self.population_handshake](
+            best_params, self.popsize, sampler, key
+        )
 
     def bill_fevals(
         self, sub_state_before: PyTree, sub_state_after: PyTree
@@ -211,6 +257,7 @@ def grad_sub_optimizer(
     transform: optax.GradientTransformation,
     name_hash: int,
     opt_state_handshake: str = "continue",
+    population_handshake: str = "best_one",
 ) -> SubOpt:
     """Wrap an optax gradient transformation as a ``SubOpt``.
 
@@ -305,6 +352,7 @@ def grad_sub_optimizer(
         step_fn=step_fn,
         tell_fn=None,
         opt_state_handshake=opt_state_handshake,
+        population_handshake=population_handshake,
         # A plain transform bills 1 (== popsize) and a line-search
         # transform its true trial count, from the same helper the
         # registry path uses -- so an ask/tell wrapper's fevals are
@@ -321,6 +369,7 @@ def pop_sub_optimizer(
     popsize: int,
     name_hash: int,
     opt_state_handshake: str = "continue",
+    population_handshake: str = "best_one",
 ) -> SubOpt:
     """Wrap an evosax-style ``(init, ask, tell)`` triple as a ``SubOpt``.
 
@@ -357,6 +406,7 @@ def pop_sub_optimizer(
         step_fn=ask_fn,
         tell_fn=tell_fn,
         opt_state_handshake=opt_state_handshake,
+        population_handshake=population_handshake,
     )
 
 
@@ -489,6 +539,7 @@ def optstep_to_subopt(
             transform,
             name_hash=opt_step.hash,
             opt_state_handshake=handshake_policy_for(opt_step).opt_state,
+            population_handshake=handshake_policy_for(opt_step).population,
         )
 
     # --- Evosax / population-based -------------------------------------
@@ -638,6 +689,7 @@ def optstep_to_subopt(
             popsize=popsize,
             name_hash=opt_step.hash,
             opt_state_handshake=handshake_policy_for(opt_step).opt_state,
+            population_handshake=handshake_policy_for(opt_step).population,
         )
 
     raise ValueError(

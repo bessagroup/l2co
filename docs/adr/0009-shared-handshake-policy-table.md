@@ -35,13 +35,49 @@ incompatible data models: the env's operate on `RunState` /
 the two population halves have genuinely divergent layouts (the env's
 `best_one` puts the best candidate in the *last* slot and emits
 exactly `popsize` entries; both wrappers put it in slot 0 and NaN-pad
-to the static `population_size`). `HANDSHAKE_MAPPING` becomes a
+to the static `population_size`) — **see the amendment below, which
+reverses this half of the decision**. `HANDSHAKE_MAPPING` becomes a
 derivation over the l2co table rather than a second literal, so the
 two cannot drift. Rejected: moving `HandshakeClass` itself to l2co
 (the wrappers have no `RunState` to hand it, and it would force the
 population-layout divergence to be resolved as a precondition);
 keeping a duplicated table in each repo (guaranteed drift, the same
 argument that settled ADR `0003`).
+
+## Amendment: the population half is now shared too
+
+The paragraph above treated the population-layout divergence as accepted.
+It was not survivable, and this ADR is amended rather than left standing.
+
+Mirrored-sampling algorithms — CR-FM-NES and the other strategies that
+`assert population_size % 2 == 0` — read a population as antithetic pairs
+at `(2i, 2i + 1)`. Moving the best candidate between the last slot and
+slot 0 therefore re-partitions those pairs, and the two layouts compute
+*different updates from the same handshake*. A policy trained against the
+env's layout and deployed through a wrapper diverged from itself at every
+switch into such an optimizer — silently, since both runs are individually
+well-formed.
+
+The population half's implementations (`population_best`,
+`population_best_one`, `POPULATION_HANDSHAKES`, `population_handshake_for`)
+therefore now live in `handshake_policy.py` beside the table, with the
+signature `(best_params, popsize, sampler, key) -> PyTree` and a leading
+axis of exactly `popsize`. `SubOpt` gained a `population_handshake` field
+resolved from the table alongside `opt_state_handshake`, applied through
+`SubOpt.handshake_population`. Padding to a wider generation width stays
+the caller's concern — that part genuinely is a wrapper layout detail.
+
+The env's layout (best candidate last, `popsize` draws) is canonical,
+because it is what existing trained checkpoints and stored trajectories
+were produced with; making the wrapper conform leaves training untouched
+and needs no retraining. `population_best` also now fills every slot of a
+wider population instead of emitting a single row, which was latent only
+because every optimizer tabulated `"best"` happens to have a population of
+one.
+
+The opt_state half is unchanged and still per-consumer: those functions do
+operate on genuinely incompatible data models, and only the decision is
+shared there.
 
 **`strategy_wrapper`'s unconditional reset is gated, not fixed.**
 `_reset_active_substate` reproduces the published `reset_from_stage0`
