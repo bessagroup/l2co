@@ -665,8 +665,7 @@ def plot_ertd(
     for schedule in ertd[SCHEDULE].values:
         color = style[schedule].color
         linestyle = style[schedule].linestyle
-        # marker = style[schedule].marker
-        marker = None
+        marker = style[schedule].marker
         pretty_label = display_name(schedule)
         y = ertd.sel({SCHEDULE: schedule})
 

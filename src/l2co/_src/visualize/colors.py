@@ -67,6 +67,10 @@ BASE_OPT_STYLES.update(
         "l2co": OptStyle(color="#000000", marker=None, linestyle="-"),
         "rl2co": OptStyle(color="#FF0000", marker=None, linestyle="-"),
         "randomsearch": OptStyle(color="#888888", marker=None, linestyle=":"),
+        # Best-solver envelope (added by ertd_profile(include_best=True)):
+        # a dashed line so it reads as an oracle reference, not one of the
+        # portfolio's own solid optimizer curves.
+        "sbs": OptStyle(color="#000000", marker=None, linestyle="--"),
     }
 )
 
