@@ -80,6 +80,7 @@ from ._src.optimizers.random_search import random_search_update
 # Sub-optimizer primitives shared by the strategy wrappers
 from ._src.optimizers.sub_optimizer import (
     CONSTRUCTOR_HYPERPARAMETERS,
+    LINESEARCH_FEVAL_BOUND,
     SubOpt,
     grad_sub_optimizer,
     l2co_native_evosax,
@@ -110,6 +111,7 @@ from ._src.typing import (
 
 __all__ = [
     "CONSTRUCTOR_HYPERPARAMETERS",
+    "LINESEARCH_FEVAL_BOUND",
     "DEFAULT_HANDSHAKE_POLICY",
     "GRAD_EVALUATION_WIDTH",
     "HANDSHAKE_POLICY",
