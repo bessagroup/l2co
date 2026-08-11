@@ -29,6 +29,13 @@ colors = [
 marker = [".", "v", "s", "*", "d", "x", "X"]
 line_styles = ["-", "--", "-.", ":"]
 
+#: Marker rotation for the second and later variants of one optimizer
+#: (see :func:`get_schedule_styles`). Ordered for visual distinctness at
+#: figure scale, and deliberately separate from :data:`marker`, whose
+#: order pins the per-optimizer assignments baked into
+#: :data:`BASE_OPT_STYLES` and must not be reshuffled.
+variant_markers = ["o", "s", "^", "d", "v", "X", "*", "."]
+
 
 @dataclass
 class OptStyle:
@@ -65,12 +72,19 @@ BASE_OPT_STYLES.update(
         "sepcmaes": OptStyle(color="#EE6677", marker="x"),
         "stage0": OptStyle(color="#BBBBBB", marker=None, linestyle="--"),
         "l2co": OptStyle(color="#000000", marker=None, linestyle="-"),
-        "rl2co": OptStyle(color="#FF0000", marker=None, linestyle="-"),
+        "rl2co": OptStyle(color="#FF0000", marker="o", linestyle="-"),
         "randomsearch": OptStyle(color="#888888", marker=None, linestyle=":"),
         # Best-solver envelope (added by ertd_profile(include_best=True)):
         # a dashed line so it reads as an oracle reference, not one of the
         # portfolio's own solid optimizer curves.
         "sbs": OptStyle(color="#000000", marker=None, linestyle="--"),
+        # Variant pin (a key with an underscore suffix, resolved ahead of
+        # the base optimizer -- see get_schedule_styles). Every rl2co
+        # schedule otherwise collapses onto base "rl2co" and so onto one
+        # red solid line, which puts the uniform-random baseline in the
+        # trained policy's colour. Giving it its own colour and marker
+        # separates the two on colour, dash pattern, and shape at once.
+        "rl2co_random": OptStyle(color="#EE7733", marker="s", linestyle="--"),
     }
 )
 
@@ -150,18 +164,55 @@ def get_schedule_styles(schedule_names: Iterable[str]) -> dict[str, OptStyle]:
     -----
     Base optimizer names (e.g., 'adam') determine color and marker
     from BASE_OPT_STYLES. Variants of the same optimizer
-    (e.g., 'adam_lr=0.01', 'adam_lr=0.3') cycle through linestyles
-    to maintain visual distinction.
-    """
-    schedule_styles = {}
-    # Track how many variants of each base name we have encountered
-    variant_tracker = {}
+    (e.g., 'adam_lr=0.01', 'adam_lr=0.3') step through linestyles
+    *and* markers to maintain visual distinction: the first variant
+    keeps the base marker, later ones take distinct shapes from
+    :data:`variant_markers`. A base style with no marker stays
+    unmarked, so the deliberately plain baselines (``randomsearch``,
+    ``l2co``, ``stage0``) do not sprout shapes.
 
-    for full_name in schedule_names:
+    A full schedule name present in ``BASE_OPT_STYLES`` (a *variant
+    pin*, e.g. ``rl2co_random``) is honoured verbatim and takes
+    precedence over its base optimizer's style. Its linestyle and
+    marker are then withheld from the cycle, so a pinned variant never
+    collides with a cycled sibling regardless of portfolio order.
+    """
+    names = list(schedule_names)
+
+    def _is_pin(full_name: str) -> bool:
+        """Whether this name has its own entry, not just its base's."""
+        return (
+            full_name != full_name.split("_")[0]
+            and full_name in BASE_OPT_STYLES
+        )
+
+    schedule_styles = {}
+    # Per base name, the linestyles / markers already handed out. Every
+    # pin in the selection is registered up front, so the cycle skips
+    # them no matter where they sit in the portfolio order.
+    used_linestyles: dict[str, set[str]] = {}
+    used_markers: dict[str, set[str]] = {}
+    for full_name in names:
+        if not _is_pin(full_name):
+            continue
+        base_name = full_name.split("_")[0]
+        pinned = BASE_OPT_STYLES[full_name]
+        used_linestyles.setdefault(base_name, set()).add(pinned.linestyle)
+        if pinned.marker is not None:
+            used_markers.setdefault(base_name, set()).add(pinned.marker)
+
+    for full_name in names:
         # 1. Identify the base name (split at the first underscore)
         base_name = full_name.split("_")[0]
+        taken_ls = used_linestyles.setdefault(base_name, set())
+        taken_mk = used_markers.setdefault(base_name, set())
 
-        # 2. Retrieve base color/marker from the global registry
+        # 2. A variant pin wins outright; it was registered above.
+        if _is_pin(full_name):
+            schedule_styles[full_name] = BASE_OPT_STYLES[full_name]
+            continue
+
+        # 3. Retrieve base color/marker from the global registry
         # Fallback to a default if the optimizer is not in the imported list
         base_style = BASE_OPT_STYLES.get(base_name, OptStyle())
 
@@ -170,15 +221,29 @@ def get_schedule_styles(schedule_names: Iterable[str]) -> dict[str, OptStyle]:
             schedule_styles[full_name] = base_style
             continue
 
-        # 3. Handle Linestyle cycling for variants
-        idx = variant_tracker.get(base_name, 0)
-        chosen_linestyle = line_styles[idx % len(line_styles)]
-        variant_tracker[base_name] = idx + 1
+        # 4. Take the first linestyle this base has not used yet, falling
+        # back to reuse once all four are spoken for.
+        chosen_linestyle = next(
+            (ls for ls in line_styles if ls not in taken_ls),
+            line_styles[len(taken_ls) % len(line_styles)],
+        )
+        taken_ls.add(chosen_linestyle)
 
-        # 4. Create the final OptStyle for this specific schedule
+        # 5. Same for the marker, preferring the base optimizer's own
+        # shape so a single-variant portfolio looks exactly as before.
+        chosen_marker = base_style.marker
+        if chosen_marker is not None and chosen_marker in taken_mk:
+            chosen_marker = next(
+                (m for m in variant_markers if m not in taken_mk),
+                chosen_marker,
+            )
+        if chosen_marker is not None:
+            taken_mk.add(chosen_marker)
+
+        # 6. Create the final OptStyle for this specific schedule
         schedule_styles[full_name] = OptStyle(
             color=base_style.color,
-            marker=base_style.marker,
+            marker=chosen_marker,
             linestyle=chosen_linestyle,
         )
 

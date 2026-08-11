@@ -42,6 +42,7 @@ from l2co._src.databank.records import _build_task_records, loss_preprocess
 from l2co._src.databank.tasksets import load_taskset, save_taskset
 from l2co._src.databank.verify import verify_databank
 from l2co._src.databank.writer import (
+    MISSING_FEATURE,
     _dump_task_runs,
     _dump_template_runs,
     _interp_loss,
@@ -524,8 +525,12 @@ def test_recipes_of_differing_lengths_not_truncated(tmp_path, tasks):
     assert str(zl[SCHEDULE].values[0]) == long.name
 
 
-def test_inconsistent_feature_axis_raises(tmp_path, steps):
-    # two tasks with different tag keys -> different feature axis
+def test_mismatched_feature_axis_reconciled(tmp_path, steps):
+    # Two tasks with different tag keys -- e.g. a plain bbob task
+    # alongside a bbob_embedded task in one composite task suite (see
+    # l2co_tasks' bbob_headroom_train.yaml) -- must not abort the dump;
+    # the union of both tasks' feature columns is stored, with the
+    # column a task doesn't have filled with MISSING_FEATURE.
     t0 = FakeTask("aaa", "sphere", 10)
 
     @dataclass
@@ -538,8 +543,69 @@ def test_inconsistent_feature_axis_raises(tmp_path, steps):
             return {"different_key": "x"}
 
     runs = _write_raw_runs(tmp_path / "runs", [(t0, 7), (OddTask(), 7)], steps)
-    with pytest.raises(ValueError, match="feature"):
-        _create_zarr(tmp_path, runs)
+    _create_zarr(tmp_path, runs)
+
+    zd = load_databank_dataset("bbob", steps, tmp_path).load()
+    labels = zd[TASK_LABELS]
+    assert set(labels[FEATURE].values.tolist()) >= {
+        "fn_name",
+        "dimensionality",
+        "different_key",
+        "global_min",
+    }
+    fn_name_row = labels.sel({TASK_ID: "bbb", FEATURE: "fn_name"}).item()
+    assert fn_name_row == MISSING_FEATURE
+    different_key_row = labels.sel(
+        {TASK_ID: "aaa", FEATURE: "different_key"}
+    ).item()
+    assert different_key_row == MISSING_FEATURE
+    assert labels.sel({TASK_ID: "bbb", FEATURE: "different_key"}).item() == "x"
+
+
+def test_append_widens_feature_axis(tmp_path, steps):
+    # A store created from one task family, then appended with a task
+    # from a family whose tag carries a longer feature name than the
+    # store has ever seen (mirrors bbob -> bbob_embedded, whose
+    # "intrinsic_dimensionality" key is wider than anything in a plain
+    # bbob tag). The on-disk 'feature' coordinate's fixed-width dtype
+    # must not block the append the way it briefly did (widening the
+    # feature *set* alone, tested above, doesn't exercise this -- both
+    # tasks there landed in the same dump, so the store never had a
+    # narrower on-disk 'feature' dtype to begin with).
+    t0 = FakeTask("aaa", "sphere", 10)
+    runs0 = _write_raw_runs(tmp_path / "r0", [(t0, 7)], steps)
+    root = tmp_path / "root"
+    _create_zarr(root, runs0)
+
+    @dataclass
+    class EmbeddedLikeTask:
+        hash: str = "bbb"
+        global_min: float = 0.0
+
+        @property
+        def tag(self):
+            return {"fn_name": "rastrigin", "intrinsic_dimensionality": 3}
+
+    runs1 = _write_raw_runs(tmp_path / "r1", [(EmbeddedLikeTask(), 7)], steps)
+    _append_zarr(root, runs1)
+
+    zd = load_databank_dataset("bbob", steps, root).load()
+    labels = zd[TASK_LABELS]
+    assert "intrinsic_dimensionality" in labels[FEATURE].values.tolist()
+    assert (
+        labels.sel(
+            {TASK_ID: "bbb", FEATURE: "intrinsic_dimensionality"}
+        ).item()
+        == "3"
+    )
+    assert (
+        labels.sel(
+            {TASK_ID: "aaa", FEATURE: "intrinsic_dimensionality"}
+        ).item()
+        == MISSING_FEATURE
+    )
+    # the original task's own features survive the append untouched
+    assert labels.sel({TASK_ID: "aaa", FEATURE: "fn_name"}).item() == "sphere"
 
 
 #                                                                  Raw history

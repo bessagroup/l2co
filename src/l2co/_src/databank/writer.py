@@ -122,6 +122,14 @@ __status__ = "Stable"
 
 logger = logging.getLogger(__name__)
 
+# task_labels fill-in for a feature column a given task's tag doesn't carry
+# (e.g. bbob_embedded's "intrinsic_dimensionality" on a plain bbob task in
+# the same dump). Chosen to parse cleanly via float("nan") -- the same
+# "present and finite" convention l2co._src.data.report_helpers already
+# uses for an absent-per-task global_min -- rather than a marker only a
+# human reader would recognize.
+MISSING_FEATURE = "nan"
+
 
 @contextmanager
 def silence_zarr_warnings():
@@ -312,10 +320,46 @@ def _finalize_small(
     ``optimizationstep`` JSON recipe would be cut mid-string and fail to
     parse on read. Each contributor is cast to ``object`` *before* the
     concat so the full string is preserved.
+
+    Per-task ``feature`` columns need not match: ``task_labels`` is
+    concatenated with an explicit outer join, so a task missing a
+    feature some other task in the same dump carries (mixed-family
+    composite task sets -- see :func:`_accumulate_task`) gets
+    :data:`MISSING_FEATURE` in that column rather than aborting the
+    dump. ``join`` is passed explicitly because xarray's own default
+    for ``concat`` is changing from ``"outer"`` to ``"exact"``.
+
+    An appended dump can also widen the ``feature`` axis itself (a new
+    task family contributing a longer feature name than the store has
+    ever stored, e.g. ``intrinsic_dimensionality``). ``feature`` is a
+    coordinate, so it is cast to ``object`` too, but unlike
+    ``task_labels``' values, xarray still checks an *existing*
+    on-disk coordinate's fixed-width dtype against the incoming one
+    on ``to_zarr(mode="a")`` and refuses a mismatch outright -- there
+    is no outer-join escape hatch for a coordinate the way there is
+    for the values. ``task_labels`` and ``feature`` are therefore
+    dropped from the store first when present, the same "delete and
+    rewrite fresh at the union values" treatment
+    :func:`_grow_store_for_append` already gives ``taskID`` /
+    ``schedule`` for the identical reason; the rewrite lands the full
+    union either way, so this is a no-op for a variable that was
+    already going to be fully overwritten and simply lets a first-ever
+    dump skip it (nothing to drop yet).
     """
     labels_da = xr.concat(
-        [labels[t].astype(object) for t in taskids], dim=TASK_ID
+        [labels[t].astype(object) for t in taskids],
+        dim=TASK_ID,
+        join="outer",
+        fill_value=MISSING_FEATURE,
     )
+    labels_da = labels_da.assign_coords(
+        {FEATURE: labels_da[FEATURE].astype(object)}
+    )
+    with silence_zarr_warnings():
+        for name in (TASK_LABELS, FEATURE):
+            path = store / name
+            if path.exists():
+                shutil.rmtree(path)
     recipes_da = xr.concat(
         [recipes[s].astype(object) for s in schedules], dim=SCHEDULE
     )
@@ -344,20 +388,21 @@ def _accumulate_task(
     labels: dict[str, xr.DataArray],
     targets: dict[str, xr.DataArray],
 ) -> None:
-    """Record one task's labels / target_value, asserting feature order.
+    """Record one task's labels / target_value.
 
-    The consolidated ``task_labels`` is a single ``(taskID, feature)``
-    array, so every task must expose the same ``feature`` ordering.
+    Tasks are not required to share a ``feature`` ordering, or even the
+    same *set* of features: a composite task suite that row-concatenates
+    multiple task families in one dump (e.g. ``bbob_headroom_train``,
+    which mixes plain ``bbob`` with ``bbob_embedded`` and
+    ``bbob_noisy`` tasks -- see the ``parts:`` config in
+    ``l2co_tasks``) legitimately produces per-task tags of different
+    widths, since only ``bbob_embedded`` tags carry ``embedded`` /
+    ``intrinsic_dimensionality`` / ``bulk_scale``
+    (``l2co_tasks.create_embedded_bbob_task``). :func:`_finalize_small`
+    reconciles the per-task rows collected here into one ``(taskID,
+    feature)`` array by unioning every feature column and filling the
+    ones a task doesn't have with :data:`MISSING_FEATURE`.
     """
-    feats = list(task_ds[FEATURE].values)
-    if labels:
-        first = next(iter(labels.values()))
-        if list(first[FEATURE].values) != feats:
-            raise ValueError(
-                "Inconsistent task 'feature' axis across tasks: "
-                f"{feats} != {list(first[FEATURE].values)}. The "
-                "consolidated store requires one shared feature ordering."
-            )
     labels[task_hash] = task_ds[TASK_LABELS]
     targets[task_hash] = task_ds[TARGET_VALUE]
 
@@ -438,8 +483,7 @@ def dump_databank(
     FileExistsError
         The store exists and ``mode="error"``.
     ValueError
-        No runs are present, a task's ``feature`` axis is inconsistent
-        with the others, or (``mode="append"``) the incoming runs'
+        No runs are present, or (``mode="append"``) the incoming runs'
         schema does not match the existing store's.
     """
     runs = [
@@ -1384,9 +1428,11 @@ def dump_databank_finalize(
 
     Otherwise reassembles ``task_labels`` / ``target_value`` /
     ``optimizationstep`` / ``provenance`` from the per-task payloads
-    (:func:`_accumulate_task` asserting every task shares the same
-    ``feature`` ordering; dedup schedules, first-contributor-wins with
-    the same alias-consistency guard as the serial path), fills
+    (:func:`_accumulate_task` collects each task's row as-is; mismatched
+    ``feature`` sets across tasks are reconciled -- not asserted equal
+    -- by :func:`_finalize_small`'s outer-join concat; dedup schedules,
+    first-contributor-wins with the same alias-consistency guard as the
+    serial path), fills
     old-store fallbacks for append (using :attr:`DumpPlan.old_schedules`
     for the alias check -- the store's own ``schedule`` coordinate is
     already the union by this point, so it can't tell old from new),
