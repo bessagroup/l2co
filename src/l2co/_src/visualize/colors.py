@@ -68,7 +68,13 @@ BASE_OPT_STYLES.update(
     {
         "adam": OptStyle(color="#4477AA", marker="o"),
         "pso": OptStyle(color="#CCBB44", marker="s"),
-        "lbfgs": OptStyle(color="#228833", marker="^"),
+        # Blue, not green: the old #228833 sat a hair away from
+        # crfmnes (#117733), and the headroom-balanced quartet
+        # (l2co_experiments optimizers=headroom4) draws both, so the
+        # two curves read as one colour at figure scale. Kept darker
+        # and more saturated than adam (#4477AA) so the 52-schedule
+        # `all` field, which holds both, still separates them.
+        "lbfgs": OptStyle(color="#0077BB", marker="^"),
         "sepcmaes": OptStyle(color="#EE6677", marker="x"),
         "stage0": OptStyle(color="#BBBBBB", marker=None, linestyle="--"),
         "l2co": OptStyle(color="#000000", marker=None, linestyle="-"),
