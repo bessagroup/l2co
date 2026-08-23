@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -101,6 +102,49 @@ DERIVED_FEATURES: dict[str, Callable[[dict[str, Any]], Any]] = {
 # free to route on it and thereby look like it generalizes while really having
 # learned "which benchmark is this". Read any cross-suite result against that.
 
+# =============================================================================
+#                                                        Missing-feature impute
+# =============================================================================
+# The other way to survive a missing feature, and the one that keeps an
+# ALREADY-TRAINED model usable. `tolerate_missing=True` above widens the
+# encoding -- an extra vocabulary entry per categorical, a companion per
+# continuous -- which changes both the per-feature embedding size and the
+# feature count, and therefore the shapes `MixedEmbedding` builds. A
+# checkpoint trained before the widening cannot load into it. That is the
+# right trade when training a new policy on a union schema; it is no use at
+# all when the question is "can the bbob-trained policy run on quadratic".
+#
+# Imputation answers that one instead. The processor keeps exactly the vocabs
+# it was built with, and a feature the task tag does not carry is filled with
+# a value the model already saw during training -- so every shape is
+# unchanged and the checkpoint loads as-is.
+#
+# WHY NOT A SPARE INDEX. Because it fails silently. `eqx.nn.Embedding` is a
+# gather, and JAX clamps out-of-bounds gathers rather than raising: index 2
+# into a two-row table returns row 1. Encoding "missing" as an unused index
+# would quietly tell the model `separable=true` for every task that omits it.
+# An imputed value therefore has to be a real vocabulary entry, which
+# `_validate_impute` checks at construction time rather than leaving to a
+# lookup deep inside a jitted rollout.
+#
+# WHAT THIS DOES NOT BUY -- and it is a bigger caveat than the one above.
+# The model is told the feature has a specific value. It has no way to
+# express doubt about it, and nothing downstream records that the value was
+# invented. Choose the fill so the assertion is defensible for the task
+# family it will be applied to -- ideally its true value, otherwise the
+# training-set marginal -- and report which features were imputed alongside
+# any result, because a reader cannot recover that from the encoded vector.
+#
+# THE OTHER HALF OF THE CROSS-SUITE PROBLEM, which imputation does not touch.
+# A tag can disagree with the training schema by being silent about a feature
+# -- that is this section -- or by giving one a value the vocabulary has never
+# seen. The second is not absence, so no fill fires; `transform` raises
+# instead. It is not an oversight: filling a silent feature asserts a value
+# nobody stated, while remapping `helmholtz` onto `euler` would assert one the
+# tag explicitly contradicts. A processor whose vocabulary spans both task
+# sets -- or a schema that leaves the feature out -- is the honest answer, and
+# the raised message says so.
+
 #: Vocabulary entry standing for "this feature is absent from the task tag".
 ABSENT = "__absent__"
 
@@ -111,6 +155,154 @@ PRESENCE_SUFFIX = "__present"
 #: the tag nor derivable. Distinct from a tag that carries an explicit
 #: null-ish value, which is absent in a different way (see :func:`_is_absent`).
 _MISSING = object()
+
+
+def _normalize_categorical(val: Any) -> Any:
+    """Put a value in the form vocabularies are keyed by.
+
+    Booleans are stored as the strings ``"false"`` / ``"true"``, so a
+    Python ``bool`` has to be folded to that form before any vocabulary
+    lookup.
+
+    Deliberately does not touch strings. A categorical schema is free
+    to declare ``"True"`` as a literal category, and case-folding every
+    string would make that entry unreachable.
+
+    Parameters
+    ----------
+    val : Any
+        Raw value.
+
+    Returns
+    -------
+    Any
+        ``val`` unchanged, or its lowercased string form when it is a
+        ``bool``.
+    """
+    if isinstance(val, bool):
+        return str(val).lower()
+    return val
+
+
+def _coerce_fill(val: Any) -> Any:
+    """Put a fill value in plain-Python form.
+
+    A fill that arrives as a NumPy scalar or a zero-dimensional JAX
+    array is numerically what the caller meant, but storing it as-is
+    puts an array inside a static field -- which Equinox warns about,
+    and which stops comparing and serializing the way a plain number
+    does. Scalars are unwrapped; anything else, a multi-element array
+    included, is left for :func:`_validate_impute` to reject.
+
+    Parameters
+    ----------
+    val : Any
+        Raw fill value.
+
+    Returns
+    -------
+    Any
+        The Python scalar the value wraps, or ``val`` unchanged.
+    """
+    if getattr(val, "ndim", None) == 0 and hasattr(val, "item"):
+        return val.item()
+    return val
+
+
+def _presence_base(
+    vocabs: dict[str, dict[object, int] | None], name: str
+) -> str | None:
+    """The continuous feature ``name`` is the presence flag of.
+
+    Parameters
+    ----------
+    vocabs : dict[str, dict[object, int] | None]
+        The processor's vocabularies.
+    name : str
+        A key of ``vocabs``.
+
+    Returns
+    -------
+    str | None
+        The shadowed feature name, or ``None`` when ``name`` is an
+        ordinary feature. A schema feature that genuinely ends in
+        ``__present`` is only treated as a companion when the name it
+        would shadow is itself a continuous feature here, so a real
+        tag of that name is not hijacked.
+    """
+    if not name.endswith(PRESENCE_SUFFIX):
+        return None
+    base = name[: -len(PRESENCE_SUFFIX)]
+    if vocabs.get(base, "missing") is None:
+        return base
+    return None
+
+
+def _validate_impute(
+    vocabs: dict[str, dict[object, int] | None], impute: dict[str, Any]
+) -> None:
+    """Reject fill values that would not survive :meth:`transform`.
+
+    Checked when the processor is built, not when it encodes, because
+    the failure it prevents is invisible at encode time: an index
+    outside a vocabulary's range does not raise inside
+    :class:`MixedEmbedding`, it silently clamps to the last row (see
+    the module note above).
+
+    Parameters
+    ----------
+    vocabs : dict[str, dict[object, int] | None]
+        The processor's vocabularies.
+    impute : dict[str, Any]
+        Feature name to fill value.
+
+    Raises
+    ------
+    KeyError
+        If a fill value names a feature the processor does not encode.
+    ValueError
+        If a categorical or boolean fill value is not in that feature's
+        vocabulary, a continuous one is not a finite number, or the
+        named feature is a ``<name>__present`` companion, which
+        :meth:`FeatureProcessor.transform` reads off the tag and never
+        from here.
+    """
+    for name, val in impute.items():
+        if name not in vocabs:
+            raise KeyError(
+                f"Cannot impute {name!r}: the processor does not encode "
+                f"it (features: {sorted(vocabs)})."
+            )
+        base = _presence_base(vocabs, name)
+        if base is not None:
+            raise ValueError(
+                f"Cannot impute {name!r}: it is the presence companion "
+                f"of {base!r} and always reports whether the *tag* "
+                f"carried a value, so a fill here would be dropped "
+                f"without a word. Impute {base!r} instead -- the "
+                f"companion then reads false beside the filled value, "
+                f"which is the honest encoding."
+            )
+        vocab = vocabs[name]
+        if vocab is None:
+            if isinstance(val, bool) or not isinstance(val, int | float):
+                raise ValueError(
+                    f"Fill value for continuous feature {name!r} must be "
+                    f"a number, got {val!r}."
+                )
+            if not math.isfinite(val):
+                raise ValueError(
+                    f"Fill value for continuous feature {name!r} must be "
+                    f"finite, got {val!r}."
+                )
+            continue
+        if _normalize_categorical(val) not in vocab:
+            raise ValueError(
+                f"Fill value {val!r} for feature {name!r} is not in its "
+                f"vocabulary {sorted(map(str, vocab))}. An out-of-vocabulary "
+                f"index does not raise downstream -- it clamps to the last "
+                f"embedding row -- so it is rejected here instead."
+            )
 
 
 def _is_absent(val: Any) -> bool:
@@ -169,10 +361,27 @@ class FeatureProcessor(eqx.Module):
     """
 
     vocabs: dict[str, dict[object, int] | None] = eqx.field(static=True)
+    impute: dict[str, Any] = eqx.field(static=True, default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Coerced before validation so a fill that arrived as a NumPy
+        # or JAX scalar is judged -- and stored -- as the plain number
+        # it stands for. Equinox's own field converter runs after this
+        # hook, too late to keep an array out of a static field.
+        object.__setattr__(
+            self,
+            "impute",
+            {name: _coerce_fill(v) for name, v in self.impute.items()},
+        )
+        _validate_impute(self.vocabs, self.impute)
 
     @classmethod
     def init(
-        cls, schema: Schema, *, tolerate_missing: bool = False
+        cls,
+        schema: Schema,
+        *,
+        tolerate_missing: bool = False,
+        impute: dict[str, Any] | None = None,
     ) -> FeatureProcessor:
         """Build a FeatureProcessor from a schema.
 
@@ -195,6 +404,17 @@ class FeatureProcessor(eqx.Module):
             that tag different things -- and see the module-level note
             on why the resulting missingness pattern is close to a
             suite identifier.
+        impute : dict[str, Any] | None, optional
+            Fill values for features a task tag may not carry, as
+            ``{feature: value}``. Unlike ``tolerate_missing`` this
+            leaves every vocabulary and the feature count untouched, so
+            a model trained against this schema still loads --- the
+            absent feature is simply encoded as ``value``. Each value
+            must already be in its feature's vocabulary (or be a finite
+            number, for a continuous feature), and no entry may name a
+            ``<name>__present`` companion -- ``transform`` reads those
+            off the tag, so a fill there would go nowhere. Anything
+            else is rejected here. Default ``None``.
 
         Returns
         -------
@@ -224,7 +444,7 @@ class FeatureProcessor(eqx.Module):
             if tolerate_missing and vocabs[name] is not None:
                 vocabs[name][ABSENT] = len(vocabs[name])
 
-        return cls(vocabs=vocabs)
+        return cls(vocabs=vocabs, impute=dict(impute or {}))
 
     def transform(self, x: dict[str, Any]) -> jax.Array:
         """Encode a feature dict to a default-precision JAX array.
@@ -233,8 +453,11 @@ class FeatureProcessor(eqx.Module):
         ----------
         x : dict[str, Any]
             Raw feature dict. Every key in ``vocabs`` must either be
-            present or name an entry of :data:`DERIVED_FEATURES`, which
-            is computed from ``x`` when the key is absent.
+            present, name an entry of :data:`DERIVED_FEATURES` (which
+            is computed from ``x`` when the key is absent), or be
+            covered by :attr:`impute` / ``tolerate_missing``. Keys of
+            ``x`` the processor does not encode are ignored, so a tag
+            richer than the schema passes through unchanged.
 
         Returns
         -------
@@ -247,49 +470,89 @@ class FeatureProcessor(eqx.Module):
         ------
         KeyError
             If a feature is neither present in ``x``, nor derivable,
-            nor encodable as absent (see
-            :meth:`init`'s ``tolerate_missing``).
+            nor encodable as absent (see :meth:`init`'s ``impute`` and
+            ``tolerate_missing``); or if a categorical feature carries
+            a value outside its vocabulary, which no fill covers (see
+            the note below).
+
+        Notes
+        -----
+        When a processor carries both an :attr:`impute` entry and an
+        ``ABSENT`` vocabulary entry for the same feature, the fill wins
+        --- it is the more specific of the two. A ``<name>__present``
+        companion still reports whether the *tag* carried a value, so
+        it reads ``false`` even where the value slot was filled.
+
+        A tag can disagree with the schema a second way, which neither
+        mechanism covers: it can carry a categorical feature with a
+        value the vocabulary has never seen. That is not absence, so
+        no fill fires, and the encoding stops with a ``KeyError``
+        naming the feature and its vocabulary. See the module note on
+        imputation for why remapping the value instead would be worse
+        than the gap it closes.
         """
         feats = []
         for name, vocab in self.vocabs.items():
-            base = self._presence_base(name)
+            base = _presence_base(self.vocabs, name)
             if base is not None:
                 # Companion flag: does the continuous feature it shadows
                 # actually carry a value for this task?
                 resolved = self._resolve(x, base)
-                feats.append(vocab["false" if _is_absent(resolved) else "true"])
+                feats.append(
+                    vocab["false" if _is_absent(resolved) else "true"]
+                )
                 continue
 
             val = self._resolve(x, name)
 
             if _is_absent(val):
-                if vocab is not None and ABSENT in vocab:
+                if name in self.impute:
+                    # Fill, then fall through to the ordinary encoding
+                    # path below. Checked first so that a processor
+                    # carrying both mechanisms answers with the specific
+                    # value rather than the generic "unknown" -- the
+                    # caller asked for this feature by name.
+                    val = self.impute[name]
+                elif vocab is not None and ABSENT in vocab:
                     feats.append(vocab[ABSENT])
                     continue
-                if vocab is None and name + PRESENCE_SUFFIX in self.vocabs:
+                elif vocab is None and name + PRESENCE_SUFFIX in self.vocabs:
                     # The companion flag carries the information; the
                     # value slot only has to be finite and constant.
                     feats.append(0.0)
                     continue
-                if val is _MISSING:
+                elif val is _MISSING:
                     raise KeyError(
                         f"Feature {name!r} is absent from the task tag "
                         f"and is not derivable (derived features: "
-                        f"{sorted(DERIVED_FEATURES)}). Build the "
-                        f"processor with tolerate_missing=True to "
-                        f"encode it as absent."
+                        f"{sorted(DERIVED_FEATURES)}). Pass "
+                        f"impute={{{name!r}: ...}} to fill it with a "
+                        f"fixed value, or build the processor with "
+                        f"tolerate_missing=True to encode it as absent."
                     )
-                # A processor built without tolerate_missing keeps its
-                # old behaviour for an explicit null-ish value: pass it
+                # A processor with neither mechanism keeps its old
+                # behaviour for an explicit null-ish value: pass it
                 # through untouched rather than change what existing
                 # checkpoints encode.
 
             if vocab is None:
                 feats.append(val)
             else:
-                if isinstance(val, bool):
-                    val = str(val).lower()
-                feats.append(vocab[val])
+                key = _normalize_categorical(val)
+                if key not in vocab:
+                    raise KeyError(
+                        f"Feature {name!r} is tagged {val!r}, which is "
+                        f"not in the vocabulary this processor was "
+                        f"built with ({sorted(map(str, vocab))}). The "
+                        f"tag is not silent about this feature, so no "
+                        f"fill applies -- imputation covers a feature "
+                        f"the tag omits, not one it gives an unseen "
+                        f"value. Encoding it takes a processor whose "
+                        f"{name!r} vocabulary lists {val!r}: train "
+                        f"against a schema that spans both task sets, "
+                        f"or leave the feature out of the schema."
+                    )
+                feats.append(vocab[key])
         return jnp.array(feats, dtype=float)
 
     def _resolve(self, x: dict[str, Any], name: str) -> Any:
@@ -313,30 +576,6 @@ class FeatureProcessor(eqx.Module):
         if name in DERIVED_FEATURES:
             return DERIVED_FEATURES[name](x)
         return _MISSING
-
-    def _presence_base(self, name: str) -> str | None:
-        """The continuous feature ``name`` is the presence flag of.
-
-        Parameters
-        ----------
-        name : str
-            A key of :attr:`vocabs`.
-
-        Returns
-        -------
-        str | None
-            The shadowed feature name, or ``None`` when ``name`` is an
-            ordinary feature. A schema feature that genuinely ends in
-            ``__present`` is only treated as a companion when the name
-            it would shadow is itself a continuous feature here, so a
-            real tag of that name is not hijacked.
-        """
-        if not name.endswith(PRESENCE_SUFFIX):
-            return None
-        base = name[: -len(PRESENCE_SUFFIX)]
-        if self.vocabs.get(base, "missing") is None:
-            return base
-        return None
 
     def __call__(self, x: dict[str, Any]) -> jax.Array:
         return self.transform(x)
@@ -365,18 +604,63 @@ class FeatureProcessor(eqx.Module):
             name_mapping.get(name, name): vocab
             for name, vocab in self.vocabs.items()
         }
-        return FeatureProcessor(vocabs=new_vocabs)
+        new_impute = {
+            name_mapping.get(name, name): val
+            for name, val in self.impute.items()
+        }
+        return FeatureProcessor(vocabs=new_vocabs, impute=new_impute)
+
+    def with_imputation(self, impute: dict[str, Any]) -> FeatureProcessor:
+        """Copy of this processor that fills the named absent features.
+
+        The intended entry point for reusing a stored processor on a
+        task set it was not built for: vocabularies and feature order
+        are untouched, so a model trained against this processor still
+        loads, and only the handling of an absent feature changes.
+
+        Parameters
+        ----------
+        impute : dict[str, Any]
+            Feature name to fill value, replacing any existing
+            :attr:`impute` map. Validated as in :meth:`init`.
+
+        Returns
+        -------
+        FeatureProcessor
+            New instance; ``self`` is unchanged.
+
+        Examples
+        --------
+        Run a processor built for bbob over a task set that tags
+        neither ``separable`` nor ``unimodal``::
+
+            fp = FeatureProcessor.load(path).with_imputation(
+                {"separable": False, "unimodal": True}
+            )
+        """
+        return FeatureProcessor(vocabs=self.vocabs, impute=dict(impute))
 
     # ------------------------------------------------------------------
     # Serialization
     # ------------------------------------------------------------------
 
     def to_dict(self) -> dict:
-        return {"vocabs": self.vocabs}
+        # ``impute`` is omitted when empty so that a processor built the
+        # ordinary way serializes to exactly the bytes it always did --
+        # the stored artifacts under models/ are compared and re-read by
+        # older code paths.
+        out: dict = {"vocabs": self.vocabs}
+        if self.impute:
+            out["impute"] = self.impute
+        return out
 
     @classmethod
-    def reconstruct(cls, vocabs: dict) -> FeatureProcessor:
-        return cls(vocabs=vocabs)
+    def reconstruct(
+        cls, vocabs: dict, impute: dict | None = None
+    ) -> FeatureProcessor:
+        # ``impute`` defaults so that artifacts written before it existed
+        # still load.
+        return cls(vocabs=vocabs, impute=dict(impute or {}))
 
     def store(self, path: str) -> str:
         _path = Path(path)
