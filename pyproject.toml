@@ -18,7 +18,7 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Mathematics"
 ]
 dependencies = [
-  "bbob-jax>=1.6.5",
+  "bbob-jax>=2.1.0",
   "bessaplots>=0.4.0",
   "cloudpickle>=3.1.1",
   "dask>=2025.7.0",

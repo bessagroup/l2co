@@ -73,16 +73,16 @@ wheels = [
 
 [[package]]
 name = "bbob-jax"
-version = "2.0.0"
+version = "2.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jax" },
     { name = "jaxtyping" },
     { name = "softjax" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a6/e8/18e4b57cb5d50707da07e8d12ef13bb8abfa9632491bcb699cbd6e403fa1/bbob_jax-2.0.0.tar.gz", hash = "sha256:12a6d85700f0e2638323a21517dfc53a4aa8b27eb73feb3ef5acdec7d07f741e", size = 73708, upload-time = "2026-07-15T13:07:27.624Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fa/04/ec72e4867449a402d9b899d120f5a40a78c70478d1d358dc94f08c2d5399/bbob_jax-2.1.0.tar.gz", hash = "sha256:54c2cbade81e0503d5f5ddf5a8b2c58969adc1e8702b0869dfa31d66b4838fdf", size = 1246391, upload-time = "2026-08-21T10:35:07.371Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/76/ae/0c1717a0e97ebbc9c3fd7afad4c98a661a4ae80b99045b4c908a71ae0126/bbob_jax-2.0.0-py3-none-any.whl", hash = "sha256:940d5464acd25a3c1e7684b9a5f760ed6f441051d135bfeb3933412ff142cb80", size = 63735, upload-time = "2026-07-15T13:07:26.658Z" },
+    { url = "https://files.pythonhosted.org/packages/21/d9/d3925b4cdcc709d4178ffcd1a2fbd500fd595c8d58a94ba91b0e2b93ff1d/bbob_jax-2.1.0-py3-none-any.whl", hash = "sha256:35b787afa3a44e1987e0fa8321ec3cabfe43b33e516d6708f0c931886939e274", size = 1231463, upload-time = "2026-08-21T10:35:05.869Z" },
 ]
 
 [[package]]
@@ -1250,7 +1250,7 @@ tests = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bbob-jax", specifier = ">=1.6.5" },
+    { name = "bbob-jax", specifier = ">=2.1.0" },
     { name = "bessaplots", editable = "../bessaplots" },
     { name = "bottleneck", specifier = ">=1.6.0" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.3.0" },
@@ -1308,7 +1308,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bbob-jax", specifier = ">=2.0.0" },
+    { name = "bbob-jax", specifier = ">=2.1.0" },
     { name = "build", marker = "extra == 'dev'" },
     { name = "cloudpickle", specifier = ">=3.1.1" },
     { name = "equinox", specifier = ">=0.13.0" },

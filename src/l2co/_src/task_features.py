@@ -75,6 +75,76 @@ DERIVED_FEATURES: dict[str, Callable[[dict[str, Any]], Any]] = {
 
 
 # =============================================================================
+#                                                     Missing-feature encoding
+# =============================================================================
+# A schema spanning several benchmark suites asks for features that only some
+# of them tag: cec2005 has no `separable`, cec2013lsgo no `unimodal`,
+# quadratic neither. `FeatureProcessor.init(..., tolerate_missing=True)` makes
+# that expressible by encoding absence explicitly instead of raising:
+#
+#   categorical / boolean -> one extra vocabulary entry, ABSENT, so "the suite
+#       does not tag this" is its own embedding row rather than a value the
+#       model confuses with `false`.
+#   continuous            -> a companion boolean feature `<name>__present`;
+#       the value slot carries 0.0 when absent and the companion says so.
+#
+# Both fall out of `vocabs`, which is the single source of truth for
+# `MixedEmbedding.from_feature_processor` (vocabulary size per embedding,
+# feature count for the projection) -- so nothing downstream changes.
+#
+# Off by default, and a processor built without it keeps raising KeyError on a
+# missing feature. Existing stored processors deserialize their vocabs
+# verbatim and are therefore unaffected.
+#
+# WHAT THIS DOES NOT BUY. Absence is a property of the *suite*, not of the
+# task, so the missingness pattern is close to a suite identifier. A gate is
+# free to route on it and thereby look like it generalizes while really having
+# learned "which benchmark is this". Read any cross-suite result against that.
+
+#: Vocabulary entry standing for "this feature is absent from the task tag".
+ABSENT = "__absent__"
+
+#: Suffix of the companion boolean generated for each continuous feature.
+PRESENCE_SUFFIX = "__present"
+
+#: Returned by :meth:`FeatureProcessor._resolve` when a feature is neither in
+#: the tag nor derivable. Distinct from a tag that carries an explicit
+#: null-ish value, which is absent in a different way (see :func:`_is_absent`).
+_MISSING = object()
+
+
+def _is_absent(val: Any) -> bool:
+    """Whether a resolved feature value carries no information.
+
+    Covers the two ways a feature goes missing. A tag may simply not
+    have the key (``_MISSING``). Or it may carry a null-ish value: a
+    databank store keeps one dense ``(task, feature)`` label matrix, so
+    a feature only some tasks tag round-trips as ``nan`` for the rest,
+    and feeding that to a continuous feature's ``Linear`` would put NaN
+    through the whole network rather than fail.
+
+    Parameters
+    ----------
+    val : Any
+        Resolved value, or ``_MISSING``.
+
+    Returns
+    -------
+    bool
+    """
+    if val is _MISSING or val is None:
+        return True
+    if isinstance(val, str):
+        return val.strip().lower() in ("nan", "none", "")
+    if isinstance(val, bool):
+        return False
+    try:
+        return bool(jnp.isnan(jnp.asarray(val, dtype=float)))
+    except (TypeError, ValueError):
+        return False
+
+
+# =============================================================================
 
 
 class FeatureProcessor(eqx.Module):
@@ -101,7 +171,9 @@ class FeatureProcessor(eqx.Module):
     vocabs: dict[str, dict[object, int] | None] = eqx.field(static=True)
 
     @classmethod
-    def init(cls, schema: Schema) -> FeatureProcessor:
+    def init(
+        cls, schema: Schema, *, tolerate_missing: bool = False
+    ) -> FeatureProcessor:
         """Build a FeatureProcessor from a schema.
 
         Parameters
@@ -112,6 +184,17 @@ class FeatureProcessor(eqx.Module):
               - ``'boolean'``    : bool, mapped to 0 or 1
               - iterable         : categorical, gives the full
                 vocabulary in the desired index order
+        tolerate_missing : bool, optional
+            Encode a feature the task tag does not carry instead of
+            raising. Adds an :data:`ABSENT` entry to every categorical
+            and boolean vocabulary, and a companion
+            ``<name>__present`` boolean beside every continuous
+            feature. Default ``False``, which keeps
+            :meth:`transform` raising ``KeyError`` on a missing
+            feature. Turn it on for a schema spanning benchmark suites
+            that tag different things -- and see the module-level note
+            on why the resulting missingness pattern is close to a
+            suite identifier.
 
         Returns
         -------
@@ -122,6 +205,10 @@ class FeatureProcessor(eqx.Module):
         for name, spec in schema.items():
             if spec == "continuous":
                 vocabs[name] = None
+                if tolerate_missing:
+                    # Directly after its own feature, so the encoded
+                    # vector stays readable in schema order.
+                    vocabs[name + PRESENCE_SUFFIX] = {"false": 0, "true": 1}
             elif spec == "boolean":
                 vocabs[name] = {"false": 0, "true": 1}
             elif hasattr(spec, "__iter__"):
@@ -133,6 +220,9 @@ class FeatureProcessor(eqx.Module):
                     f"Expected 'continuous', 'boolean', or an iterable "
                     f"of categories."
                 )
+
+            if tolerate_missing and vocabs[name] is not None:
+                vocabs[name][ABSENT] = len(vocabs[name])
 
         return cls(vocabs=vocabs)
 
@@ -156,20 +246,44 @@ class FeatureProcessor(eqx.Module):
         Raises
         ------
         KeyError
-            If a feature is neither present in ``x`` nor derivable.
+            If a feature is neither present in ``x``, nor derivable,
+            nor encodable as absent (see
+            :meth:`init`'s ``tolerate_missing``).
         """
         feats = []
         for name, vocab in self.vocabs.items():
-            if name in x:
-                val = x[name]
-            elif name in DERIVED_FEATURES:
-                val = DERIVED_FEATURES[name](x)
-            else:
-                raise KeyError(
-                    f"Feature {name!r} is absent from the task tag and "
-                    f"is not derivable (derived features: "
-                    f"{sorted(DERIVED_FEATURES)})."
-                )
+            base = self._presence_base(name)
+            if base is not None:
+                # Companion flag: does the continuous feature it shadows
+                # actually carry a value for this task?
+                resolved = self._resolve(x, base)
+                feats.append(vocab["false" if _is_absent(resolved) else "true"])
+                continue
+
+            val = self._resolve(x, name)
+
+            if _is_absent(val):
+                if vocab is not None and ABSENT in vocab:
+                    feats.append(vocab[ABSENT])
+                    continue
+                if vocab is None and name + PRESENCE_SUFFIX in self.vocabs:
+                    # The companion flag carries the information; the
+                    # value slot only has to be finite and constant.
+                    feats.append(0.0)
+                    continue
+                if val is _MISSING:
+                    raise KeyError(
+                        f"Feature {name!r} is absent from the task tag "
+                        f"and is not derivable (derived features: "
+                        f"{sorted(DERIVED_FEATURES)}). Build the "
+                        f"processor with tolerate_missing=True to "
+                        f"encode it as absent."
+                    )
+                # A processor built without tolerate_missing keeps its
+                # old behaviour for an explicit null-ish value: pass it
+                # through untouched rather than change what existing
+                # checkpoints encode.
+
             if vocab is None:
                 feats.append(val)
             else:
@@ -177,6 +291,52 @@ class FeatureProcessor(eqx.Module):
                     val = str(val).lower()
                 feats.append(vocab[val])
         return jnp.array(feats, dtype=float)
+
+    def _resolve(self, x: dict[str, Any], name: str) -> Any:
+        """Look ``name`` up in the tag, falling back to its derivation.
+
+        Parameters
+        ----------
+        x : dict[str, Any]
+            Raw feature dict.
+        name : str
+            Feature to resolve.
+
+        Returns
+        -------
+        Any
+            The value, or :data:`_MISSING` when the tag has no such key
+            and the feature is not derivable.
+        """
+        if name in x:
+            return x[name]
+        if name in DERIVED_FEATURES:
+            return DERIVED_FEATURES[name](x)
+        return _MISSING
+
+    def _presence_base(self, name: str) -> str | None:
+        """The continuous feature ``name`` is the presence flag of.
+
+        Parameters
+        ----------
+        name : str
+            A key of :attr:`vocabs`.
+
+        Returns
+        -------
+        str | None
+            The shadowed feature name, or ``None`` when ``name`` is an
+            ordinary feature. A schema feature that genuinely ends in
+            ``__present`` is only treated as a companion when the name
+            it would shadow is itself a continuous feature here, so a
+            real tag of that name is not hijacked.
+        """
+        if not name.endswith(PRESENCE_SUFFIX):
+            return None
+        base = name[: -len(PRESENCE_SUFFIX)]
+        if self.vocabs.get(base, "missing") is None:
+            return base
+        return None
 
     def __call__(self, x: dict[str, Any]) -> jax.Array:
         return self.transform(x)
