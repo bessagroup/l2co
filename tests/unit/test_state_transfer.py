@@ -53,6 +53,7 @@ from l2co.optimizers import (
     FAMILY_DISTRIBUTION,
     FAMILY_GRADIENT,
     FAMILY_POPULATION,
+    TRANSFER_OVERRIDES,
     TransferBundle,
     build_transfer_fns,
     transfer_spec_for,
@@ -439,6 +440,101 @@ class TestRegistryGuards:
                 assert update_class.ask_fn is not None, name
             else:
                 assert update_class.ask_fn is None, name
+
+    def test_registry_binds_the_resolved_spec(self, task):
+        """A factory that forgets ``name=`` must fail here, loudly.
+
+        ``build_transfer_fns`` keys the ``TRANSFER_OVERRIDES`` lookup on
+        the registry name, and every generic classmethod defaults
+        ``name`` to ``""``. A factory that calls one of them without
+        passing its own name therefore resolves to the *family default*
+        instead of its override -- and that degrades silently in the
+        worst way: the family reader finds no field it recognises and
+        returns ``CONF_ABSENT``, so the optimizer simply stops carrying a
+        scale. Nothing raises, no population is malformed, and the only
+        symptom is a switch that quietly transfers nothing.
+
+        This is not hypothetical. ``lbfgs_update`` delegates to
+        ``UpdateClass.optax_update_extra_kwargs`` on deterministic tasks
+        (``not task.pass_rng``, which is most of them) and shipped
+        without ``name="lbfgs"``, so L-BFGS reported no scale on every
+        switch out of it. The tests then in place all passed: the
+        provider assertions are gated on the bundle carrying something,
+        and the "``lbfgs`` receives nothing" assertion held because the
+        wrongly-bound *gradient* writer also happened to no-op on a state
+        with no second-moment field. Identity of the bound function is
+        the only check that catches it.
+        """
+        for i, name in enumerate(TRANSFER_OVERRIDES):
+            if name not in REGISTRY:
+                continue
+            update_class = REGISTRY[name](
+                task=task,
+                opt_hash=i,
+                bounded=(None, None),
+                stop_fn=None,
+                **MENU.get(name, {}),
+            )
+            spec = transfer_spec_for(name, update_class.family)
+            expected_read, expected_write = build_transfer_fns(
+                name,
+                update_class.family,
+                MENU.get(name, {}),
+                ravel_fn=None,
+            )
+            assert update_class.family == spec.family, name
+            # Compare by ``__name__``: the builders return closures for
+            # the parameterised cases, so identity holds only for the
+            # module-level readers/writers. ``None`` is a legitimate
+            # binding -- ``randomsearch`` holds no state, and both
+            # consumers treat ``None`` as "no information" -- but only
+            # where the spec says so, never as the result of a forgotten
+            # ``name=``, which binds a real family-default function.
+            if update_class.transfer_read_fn is None:
+                assert spec.reader == "none", (
+                    f"{name}: no reader bound, spec says {spec.reader}"
+                )
+            else:
+                assert (
+                    update_class.transfer_read_fn.__name__
+                    == expected_read.__name__
+                ), f"{name}: bound the wrong reader ({spec.reader} expected)"
+            if update_class.transfer_write_fn is None:
+                assert spec.writer == "none", (
+                    f"{name}: no writer bound, spec says {spec.writer}"
+                )
+            else:
+                assert (
+                    update_class.transfer_write_fn.__name__
+                    == expected_write.__name__
+                ), f"{name}: bound the wrong writer ({spec.writer} expected)"
+
+    def test_lbfgs_reports_a_scale_on_a_deterministic_task(self, task):
+        """The regression above, pinned end to end.
+
+        ``task.pass_rng`` is false here, which is the path that was
+        broken. After a few steps L-BFGS has accepted steps in
+        ``diff_params_memory``, so its reader must report one --
+        ``CONF_ABSENT`` here means the override is not bound.
+        """
+        assert not task.pass_rng
+        update_class = REGISTRY["lbfgs"](
+            task=task, opt_hash=0, bounded=(None, None), stop_fn=None
+        )
+        params = jnp.zeros((update_class.popsize, DIM))
+        opt_state = update_class.init_fn(params, jr.key(0))
+
+        # Before any accepted step the memory is zeros: correctly absent.
+        _, conf_at_init = update_class.transfer_read_fn(opt_state)
+        assert float(conf_at_init) == CONF_ABSENT
+
+        carry = (params, opt_state, jr.key(0))
+        for _ in range(3):
+            carry, _ = update_class.step_fn(carry, {})
+        sigma, conf = update_class.transfer_read_fn(carry[1])
+        assert float(conf) == CONF_EXACT
+        assert float(sigma) > 0.0
+        assert jnp.isfinite(sigma)
 
     def test_ask_fn_emits_a_full_population(self, task):
         update_class = REGISTRY["crfmnes"](

@@ -446,6 +446,13 @@ def lbfgs_update(
     )
 
     if not task.pass_rng:
+        # ``name`` is load-bearing, not decorative: it is what resolves
+        # the ``"lbfgs"`` entry in ``TRANSFER_OVERRIDES``. Omitting it
+        # falls back to the ``gradient`` family default, whose reader
+        # looks for a momentum field L-BFGS does not have and therefore
+        # reports ``CONF_ABSENT`` -- so this path would silently carry no
+        # scale at all on every deterministic task, which is most of
+        # them.
         return UpdateClass.optax_update_extra_kwargs(
             task=task,
             optimizer=stock_lbfgs,
@@ -454,6 +461,7 @@ def lbfgs_update(
             bounded=bounded,
             stop_fn=stop_fn,
             max_fevals_per_step=max_fevals_per_step,
+            name="lbfgs",
             **hyperparameters,
         )
 

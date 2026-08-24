@@ -437,10 +437,21 @@ def read_sigma_lbfgs(opt_state: PyTree) -> tuple[Array, Array]:
     """Read the scale off L-BFGS's most recent accepted step.
 
     ``diff_params_memory`` holds the last ``memory_size`` parameter
-    differences, so the previous step is literally in the state. The
-    ring-buffer index is ``(count - 1) % memory_size``, matching
-    ``optax``'s own ``prev_memory_idx`` (``transform.py:1731``); before
-    the first update there is no step and the memory is zeros.
+    differences, so the previous step is literally in the state.
+
+    The ring index is ``(count - 2) % memory_size``, which is **not**
+    optax's own expression even though it names the same slot. Optax
+    writes to ``prev_memory_idx = (state.count - 1) % memory_size``
+    (``transform.py:1734``) and *then* returns ``count + 1``
+    (``:1798``), so its ``state.count`` is the pre-increment value while
+    a reader holding the returned state sees the post-increment one --
+    one further along. Copying the expression across that frame shift
+    reads the next, not-yet-written slot: zeros until the ring fills, and
+    a step one generation stale afterwards. Verified empirically -- after
+    ``n`` steps ``count == n`` and rows ``0 .. n-2`` are populated.
+
+    Two steps are needed before there is any difference to read at all,
+    hence the ``count > 1`` gate rather than ``count > 0``.
 
     Parameters
     ----------
@@ -459,11 +470,11 @@ def read_sigma_lbfgs(opt_state: PyTree) -> tuple[Array, Array]:
 
     memory = jnp.asarray(memory, dtype=float)
     memory_size = memory.shape[0]
-    prev = (jnp.asarray(count) - 1) % memory_size
+    prev = (jnp.asarray(count) - 2) % memory_size
     last_step = jnp.take(memory, prev, axis=0)
 
     sigma, conf = _finite_or_absent(_rms(last_step), CONF_EXACT)
-    conf = jnp.where(jnp.asarray(count) > 0, conf, CONF_ABSENT)
+    conf = jnp.where(jnp.asarray(count) > 1, conf, CONF_ABSENT)
     return sigma, conf
 
 
