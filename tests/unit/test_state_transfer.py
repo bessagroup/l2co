@@ -404,6 +404,142 @@ class TestMR15BaselineRepair:
 # ------------------------------------------------------ structural guards
 
 
+class TestNonFiniteBundleIsRefused:
+    """A poisoned bundle must not poison the receiver.
+
+    ``sigma`` is already protected at the reader: every one routes
+    through ``_finite_or_absent``, which downgrades a non-finite or
+    non-positive scale to ``CONF_ABSENT``. ``x`` and ``f`` had no such
+    guard, and the writes that consume them were ungated -- so this
+    class covers the whole bundle, and asserts the *fallback*, not just
+    the absence of NaN: the receiver keeps what it already had.
+    """
+
+    @pytest.fixture(scope="class")
+    def task(self):
+        return create_bbob_task(fn_name="sphere", seed=0, dimensionality=DIM)
+
+    @staticmethod
+    def _built(task, name, hp):
+        update_class = REGISTRY[name](
+            task=task, opt_hash=0, bounded=(None, None), stop_fn=None, **hp
+        )
+        params = jnp.zeros((update_class.popsize, DIM))
+        return update_class, update_class.init_fn(params, jr.key(0))
+
+    @staticmethod
+    def _newly_non_finite(before, after):
+        """Leaves finite before the write and non-finite after it.
+
+        Compared per leaf rather than globally because several states
+        carry legitimate sentinels at ``init`` -- L-BFGS's
+        ``value = inf``, the evosax algorithms' ``best_solution = NaN``
+        -- which a whole-tree finiteness check would flag as damage.
+        """
+        flat = jax.tree_util.tree_flatten_with_path
+        pb = {jax.tree_util.keystr(k): v for k, v in flat(before)[0]}
+        pa = {jax.tree_util.keystr(k): v for k, v in flat(after)[0]}
+        bad = []
+        for key, value in pb.items():
+            arr = jnp.asarray(value)
+            if not jnp.issubdtype(arr.dtype, jnp.inexact):
+                continue
+            was = bool(jnp.all(jnp.isfinite(arr.astype(float))))
+            now = bool(jnp.all(jnp.isfinite(jnp.asarray(pa[key], float))))
+            if was and not now:
+                bad.append(key)
+        return bad
+
+    POISON = [
+        ("sigma_nan", jnp.zeros((1, DIM)), 0.0, jnp.nan),
+        ("sigma_inf", jnp.zeros((1, DIM)), 0.0, jnp.inf),
+        ("x_nan", jnp.full((1, DIM), jnp.nan), 0.0, 0.05),
+        ("x_inf", jnp.full((1, DIM), jnp.inf), 0.0, 0.05),
+        ("f_nan", jnp.zeros((1, DIM)), jnp.nan, 0.05),
+        ("f_inf", jnp.zeros((1, DIM)), jnp.inf, 0.05),
+    ]
+
+    @pytest.mark.parametrize(
+        ("label", "x", "f", "sigma"), POISON, ids=[c[0] for c in POISON]
+    )
+    @pytest.mark.parametrize("name", list(MENU))
+    def test_no_leaf_is_poisoned(self, task, name, label, x, f, sigma):
+        update_class, opt_state = self._built(task, name, MENU[name])
+        if update_class.transfer_write_fn is None:
+            pytest.skip(f"{name} has no writer")
+        # ``conf_sigma`` is deliberately confident: the point is that a
+        # writer must not take a caller's word for it.
+        bundle = TransferBundle(
+            x=x,
+            f=jnp.asarray(f, dtype=float),
+            sigma=jnp.asarray(sigma, dtype=float),
+            conf_sigma=jnp.asarray(CONF_EXACT, dtype=float),
+        )
+        after = update_class.transfer_write_fn(bundle, opt_state)
+        assert not self._newly_non_finite(opt_state, after), (
+            f"{name} poisoned by {label}"
+        )
+
+    def test_distribution_keeps_its_own_mean(self, task):
+        """The fallback, stated positively.
+
+        A NaN ``mean`` is unrecoverable -- every ``ask`` returns NaN,
+        every loss is NaN, and no ``tell`` can undo it, so the optimizer
+        is dead for the rest of the episode. Keeping its own mean lets it
+        carry on from where it was.
+        """
+        update_class, opt_state = self._built(task, "crfmnes", {})
+        bundle = TransferBundle(
+            x=jnp.full((1, DIM), jnp.nan),
+            f=jnp.asarray(0.0),
+            sigma=jnp.asarray(0.05),
+            conf_sigma=jnp.asarray(CONF_EXACT),
+        )
+        after = update_class.transfer_write_fn(bundle, opt_state)
+        assert jnp.array_equal(after.mean, opt_state.mean)
+        # The usable half still lands -- one bad field does not veto the
+        # other.
+        assert float(after.std) != float(opt_state.std)
+        population, _ = update_class.ask_fn(after, jr.key(1))
+        leaves = jax.tree.leaves(population)
+        assert all(bool(jnp.all(jnp.isfinite(leaf))) for leaf in leaves)
+
+    def test_mr15ga_keeps_its_elite_when_f_is_infinite(self, task):
+        """``+inf`` is the reachable case, and it inverts the 1/5 rule.
+
+        ``best_loss`` starts at ``+inf`` and stays there while nothing
+        has improved -- an entirely-NaN first generation, which this
+        ecosystem sees at high ambient dimension. Rebasing the stored
+        elite onto ``+inf`` makes every candidate beat it, so the 1/5
+        rule reads a 100% success rate and doubles the width right after
+        the scale write set it.
+        """
+        update_class, opt_state = self._built(task, "mr15ga", {})
+        opt_state = opt_state.replace(
+            fitness=jnp.full_like(jnp.asarray(opt_state.fitness), 100.0)
+        )
+        bundle = TransferBundle(
+            x=jnp.zeros((1, DIM)),
+            f=jnp.asarray(jnp.inf),
+            sigma=jnp.asarray(0.05),
+            conf_sigma=jnp.asarray(CONF_EXACT),
+        )
+        after = update_class.transfer_write_fn(bundle, opt_state)
+        assert jnp.array_equal(after.fitness, opt_state.fitness)
+        assert jnp.array_equal(after.population, opt_state.population)
+        # And a finite ``f`` still rebases, so the gate is not blanket.
+        ok = update_class.transfer_write_fn(
+            TransferBundle(
+                x=jnp.zeros((1, DIM)),
+                f=jnp.asarray(1.0),
+                sigma=jnp.asarray(0.05),
+                conf_sigma=jnp.asarray(CONF_EXACT),
+            ),
+            opt_state,
+        )
+        assert jnp.allclose(ok.fitness, 1.0)
+
+
 class TestRegistryGuards:
     """Guards over the whole registry, not one optimizer at a time."""
 

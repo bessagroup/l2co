@@ -523,6 +523,59 @@ def _finite_or_absent(sigma, conf) -> tuple[Array, Array]:
     )
 
 
+def _all_finite(tree: PyTree) -> Array:
+    """Whether every float leaf of ``tree`` is finite.
+
+    Parameters
+    ----------
+    tree : PyTree
+        Tree to check; non-float leaves are ignored.
+
+    Returns
+    -------
+    Array
+        Scalar boolean. A tree with no float leaves reports ``False`` --
+        nothing usable is present.
+    """
+    leaves = [
+        jnp.asarray(leaf)
+        for leaf in jax.tree.leaves(tree)
+        if jnp.issubdtype(jnp.asarray(leaf).dtype, jnp.inexact)
+    ]
+    if not leaves:
+        return jnp.asarray(False)
+    return jnp.all(
+        jnp.stack([jnp.all(jnp.isfinite(x.astype(float))) for x in leaves])
+    )
+
+
+def _usable_sigma(bundle: TransferBundle) -> Array:
+    """Whether ``bundle.sigma`` may be written.
+
+    Re-checks finiteness rather than trusting ``conf_sigma`` alone. Every
+    reader here routes through :func:`_finite_or_absent`, so a
+    non-finite ``sigma`` paired with a confident ``conf_sigma`` cannot
+    arise from this module -- but a hand-built bundle or a future reader
+    that forgets the helper would poison the receiver silently, and the
+    check costs one comparison.
+
+    Parameters
+    ----------
+    bundle : TransferBundle
+        The bundle being written.
+
+    Returns
+    -------
+    Array
+        Scalar boolean gate.
+    """
+    return (
+        (bundle.conf_sigma > CONF_ABSENT)
+        & jnp.isfinite(bundle.sigma)
+        & (bundle.sigma > 0.0)
+    )
+
+
 #                                                              State writers
 # =============================================================================
 
@@ -594,11 +647,24 @@ def make_write_distribution(ravel_fn: Callable) -> Callable:
     def write(bundle: TransferBundle, opt_state: PyTree) -> PyTree:
         updates: dict[str, Array] = {}
 
+        # A non-finite location is the one input that cannot be
+        # rescaled, clipped or downgraded into something usable: it
+        # would set ``mean`` to NaN, every ``ask`` from that
+        # distribution returns NaN, every loss is NaN, and no later
+        # ``tell`` can recover it -- the optimizer is dead for the rest
+        # of the episode, including after switching away and back, since
+        # the ``RunState`` persists. So the fallback is to keep the
+        # optimizer's own mean and let it carry on from where it was.
+        use_x = _all_finite(bundle.x)
         mean = getattr(opt_state, "mean", None)
         if mean is not None:
-            updates["mean"] = jnp.asarray(ravel_fn(bundle.x), dtype=float)
+            updates["mean"] = _blend(
+                use_x,
+                jnp.asarray(ravel_fn(bundle.x), dtype=float),
+                jnp.asarray(mean, dtype=float),
+            )
 
-        use = bundle.conf_sigma > CONF_ABSENT
+        use = _usable_sigma(bundle)
         std = getattr(opt_state, "std", None)
         if std is not None:
             std = jnp.asarray(std)
@@ -661,7 +727,7 @@ def make_write_population(repair_baseline: bool) -> Callable:
 
     def write(bundle: TransferBundle, opt_state: PyTree) -> PyTree:
         updates: dict[str, Array] = {}
-        use = bundle.conf_sigma > CONF_ABSENT
+        use = _usable_sigma(bundle)
 
         std = getattr(opt_state, "std", None)
         if std is not None:
@@ -679,17 +745,39 @@ def make_write_population(repair_baseline: bool) -> Callable:
             population = getattr(opt_state, "population", None)
             fitness = getattr(opt_state, "fitness", None)
             if population is not None and fitness is not None:
+                # Both halves move together or neither does: rebasing
+                # the points while keeping the old losses (or the
+                # reverse) leaves the ``(mu + lambda)`` selection
+                # incoherent, rows claiming a fitness they did not earn.
+                #
+                # ``f`` is gated as tightly as ``x``, and ``+inf`` is
+                # the case that matters rather than NaN. ``best_loss``
+                # starts at ``+inf`` and stays there while nothing has
+                # improved -- a first generation that is entirely NaN,
+                # which this ecosystem sees at high ambient dimension.
+                # Writing that in makes *every* candidate beat the
+                # stored elite, so the 1/5 rule reads a 100% success
+                # rate and **doubles** the width immediately after the
+                # scale write set it: measured success 1.00 against 0.00
+                # for a finite baseline. That is precisely the failure
+                # this repair exists to prevent, so an unusable ``f``
+                # must leave the optimizer's own elite alone.
+                repair_ok = _all_finite(bundle.x) & jnp.isfinite(bundle.f)
                 flat = jnp.concatenate(
                     [
                         jnp.ravel(jnp.asarray(leaf, dtype=float))
                         for leaf in jax.tree.leaves(bundle.x)
                     ]
                 )
-                updates["population"] = jnp.broadcast_to(
-                    flat, jnp.shape(population)
-                ).astype(jnp.asarray(population).dtype)
-                updates["fitness"] = jnp.full_like(
-                    jnp.asarray(fitness), bundle.f
+                updates["population"] = _blend(
+                    repair_ok,
+                    jnp.broadcast_to(flat, jnp.shape(population)),
+                    jnp.asarray(population),
+                )
+                updates["fitness"] = _blend(
+                    repair_ok,
+                    jnp.full_like(jnp.asarray(fitness), bundle.f),
+                    jnp.asarray(fitness),
                 )
 
         return opt_state.replace(**updates) if updates else opt_state
@@ -741,7 +829,7 @@ def make_write_gradient(learning_rate: float) -> Callable:
             step = 1.0 / (jnp.sqrt(second) + 1e-8)
         rms_own = float(learning_rate) * _rms(step)
 
-        use = bundle.conf_sigma > CONF_ABSENT
+        use = _usable_sigma(bundle)
         use = use & jnp.isfinite(rms_own) & (rms_own > 0.0)
         count, _ = _get_first(opt_state, _COUNT_NAMES)
         if count is not None:
@@ -805,7 +893,7 @@ def make_write_rprop(min_step_size: float, max_step_size: float) -> Callable:
         if step_sizes is None:
             return opt_state
 
-        use = bundle.conf_sigma > CONF_ABSENT
+        use = _usable_sigma(bundle)
         rescaled = _rescale_to(step_sizes, bundle.sigma, use)
         rescaled = jnp.clip(rescaled, min_step_size, max_step_size)
 
