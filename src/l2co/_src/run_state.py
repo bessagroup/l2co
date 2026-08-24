@@ -27,6 +27,7 @@ from .typing import InputParameters, SamplerFunction
 from .update_class import (
     batch_run_,
     batch_run_randomsearch,
+    batch_run_sequential_,
     init_,
     run_,
     run_randomsearch,
@@ -375,11 +376,43 @@ def batch_run(
     key: PRNGKeyArray,
     verbose: bool,
 ) -> tuple[RunState, BatchState, HistoryState]:
-    run_fn = (
-        batch_run_randomsearch
-        if isinstance(run_state.update_class, RandomSearchUpdateClass)
-        else batch_run_
-    )
+    """Run ``n_realizations`` trajectories, on whichever driver fits.
+
+    Three drivers, same signature and same output contract; the
+    optimizer decides which one it needs.
+
+    :func:`~l2co._src.update_class.batch_run_` is the default and the
+    fastest: all realizations advance together in one fused scan.
+
+    :func:`~l2co._src.update_class.batch_run_randomsearch` is for random
+    search, which would otherwise hold every realization's candidate set
+    in memory at once.
+
+    :func:`~l2co._src.update_class.batch_run_sequential_` runs one
+    realization at a time, for an optimizer whose step branches on a
+    choice that differs per realization -- the meta-optimizers, which
+    pick a sub-optimizer from a menu each generation. Vectorizing those
+    realizations together would force every menu entry's evaluation on
+    every generation and discard all but one, because ``vmap`` cannot
+    take a different branch per lane. That waste is per generation and
+    it scales with the task's loss, so it bites hardest where it can
+    least be afforded: on the 2241-dimensional ``convection`` PINN at 25
+    realizations, the two drivers measure 496 ms against 57 ms per
+    iteration -- 5.7 h against 0.65 h over a 41000-iteration budget,
+    against a 2.5 h SLURM wall limit on the run step.
+
+    :attr:`UpdateClass.sequential_realizations` is what marks such an
+    optimizer. Read that driver's docstring before trusting a recomputed
+    cell to match a stored one: the two agree on every discrete choice
+    but not on the resulting numbers, and it also records where the
+    sequential/fused crossover sits.
+    """
+    if isinstance(run_state.update_class, RandomSearchUpdateClass):
+        run_fn = batch_run_randomsearch
+    elif run_state.update_class.sequential_realizations:
+        run_fn = batch_run_sequential_
+    else:
+        run_fn = batch_run_
     (params, best_params, best_loss, opt_state, batch_state, history_state) = (
         run_fn(
             update_class=run_state.update_class,

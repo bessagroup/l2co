@@ -134,7 +134,9 @@ def _iter_task_runs(
         na_action="ignore",
     )
 
-    tasks = [es.output_data["task"] for _, es in tasks_experiment_data]
+    tasks = [
+        es.output_data.get("task") for _, es in tasks_experiment_data
+    ]
     schedules = [
         es.input_data["optimizer"] for _, es in schedules_experiment_data
     ]

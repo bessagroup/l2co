@@ -65,6 +65,13 @@ class L2COUpdateClass(UpdateClass):
     them in a :class:`l2co.RunState` directly).
     """
 
+    # The two-stage strategy picks a sub-optimizer from its menu and
+    # dispatches on that index (``jax.lax.switch`` in
+    # :mod:`l2co._src.strategy_wrapper`), and the pick differs per
+    # realization -- so realizations must not be vectorized together.
+    # See :func:`l2co._src.run_state.batch_run`.
+    sequential_realizations = True
+
     @classmethod
     def l2co_population_update(
         cls,

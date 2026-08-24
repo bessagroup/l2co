@@ -33,6 +33,7 @@ __all__ = [
     "UpdateClass",
     "batch_run_",
     "batch_run_randomsearch",
+    "batch_run_sequential_",
     "batch_step_",
     "evaluate",
     "init_",
@@ -497,6 +498,171 @@ def batch_run_(
         batch_state,
         new_history_state,
     )
+
+
+# =============================================================================
+
+
+def batch_run_sequential_(
+    update_class: UpdateClass,
+    opt_state: PyTree,
+    params: InputParameters,
+    batch_state: BatchState,
+    dataset: dict[str, jax.Array],
+    key: PRNGKeyArray,
+    n_iterations: int,
+    verbose: bool,
+) -> tuple[
+    InputParameters,
+    InputParameters,
+    Array[Float, ""],
+    PyTree,
+    BatchState,
+    HistoryState,
+]:
+    """Run ``n_realizations`` trajectories one at a time.
+
+    Same inputs, same outputs and same per-realization arithmetic as
+    :func:`batch_run_` -- it maps :func:`run_` over the realization axis
+    with :func:`jax.lax.map` (sequentially) instead of vmapping
+    :func:`step` inside one fused scan. The role this plays for the
+    meta-optimizers mirrors what :func:`batch_run_randomsearch` does for
+    random search, and the output shape contract matches both.
+
+    Why a sequential map is ever worth having
+    -----------------------------------------
+    A meta-optimizer's step chooses a sub-optimizer and runs only that
+    one, expressed as a :func:`jax.lax.switch` on the chosen index.
+    ``vmap`` cannot do per-lane control flow: with a batched index the
+    switch has to evaluate **every** branch and select from the results.
+    So under :func:`batch_run_` a menu of ``(lbfgs, rprop, crfmnes,
+    mr15ga)`` pays, on every single generation, a width-1 gradient
+    evaluation *and* a width-28 population evaluation *and* a width-27
+    one *and* L-BFGS's line search -- then throws all but one away. The
+    waste is per-generation and it scales with how expensive the task's
+    loss is, so it hurts most exactly where it can least be afforded.
+    One realization at a time keeps the index a scalar, so only the
+    chosen branch runs.
+
+    The trade is the SIMD width across realizations, and it is a real
+    trade rather than a free win. The saving grows with what a branch
+    costs -- so with the task's loss and with the menu's population sizes
+    -- while the lost vectorization is roughly fixed. Below the crossover
+    a menu-based optimizer is genuinely better off vectorized.
+    Measured on ``bbob`` ``sphere`` at 25 realizations with the
+    four-entry ``(lbfgs, rprop, crfmnes, mr15ga)`` menu, sequential
+    against fused:
+
+    ==========  =============
+    ``d``       speedup
+    ==========  =============
+    2           0.72x
+    10          0.64x
+    40          1.03x
+    64          1.02x
+    256         1.83x
+    1024        2.89x
+    ==========  =============
+
+    and 8.7x on the 2241-dimensional ``convection`` PINN. So this driver
+    is taken unconditionally for a menu-based optimizer: it gives back
+    about 1.5x on the small-``d`` cells, which are seconds of work, and
+    it is break-even to 8.7x everywhere the runtime actually is
+    (``conf/budgets/based_on_dim.yaml`` records that ``d >= 64`` is 96.6%
+    of BBOB runtime). A plain optimizer has no switch to collapse and
+    stays on :func:`batch_run_`, which is strictly faster for it.
+    :func:`l2co._src.run_state.batch_run` picks between them on
+    :attr:`UpdateClass.sequential_realizations`.
+
+    Equivalence to :func:`batch_run_`
+    ---------------------------------
+    Each realization sees the same ``opt_state`` / ``params`` /
+    ``batch_state`` / ``key`` slice it would as a ``vmap`` lane, and
+    :func:`run_` applies the same per-lane initialisation and reductions
+    :func:`batch_run_` applies through its vmaps. Same inputs, same
+    arithmetic, same output contract -- but not the same bits, and over
+    a long run not even the same third significant figure.
+
+    What holds exactly is the sequence of choices: ``update_step``
+    agrees generation for generation, so both drivers run the same
+    sub-optimizer at the same time on the same realization.
+
+    What drifts is everything continuous, and it drifts because an
+    optimizer trajectory amplifies. ``vmap``-of-``switch`` compiles a
+    different (all-branches-then-select) program than a single-branch
+    scan, so XLA does not pin reduction order across the two, and the
+    starting disagreement is a few ulp. A line-search sub-optimizer then
+    turns that into a discrete difference -- how many trials L-BFGS bills
+    depends on a continuous comparison, so ``fevals`` can differ by one
+    -- and the slightly different step feeds the next generation.
+    Measured on the ``convection`` PINN over 120 generations: median
+    relative difference in ``output_min`` 2e-15, but 3e-2 at the worst
+    entry, and the divergence appears only in the realizations that got
+    far enough to be in a sensitive region (the ones still far from a
+    minimum agree to round-off throughout).
+
+    So: a cell recomputed on this driver is the same experiment, not the
+    same numbers as one stored from :func:`batch_run_`. rl2co's
+    ``rl2co._src.rollout.unroll.map_unroll`` documents the same trade for
+    the same reason on the training side.
+
+    Parameters
+    ----------
+    update_class : UpdateClass
+        Optimizer configuration (static across realizations).
+    opt_state : PyTree
+        Per-realization optimizer state with shape
+        ``(n_realizations, ...)`` on every array leaf.
+    params : InputParameters
+        Per-realization input parameters with shape
+        ``(n_realizations, popsize, ...)``.
+    batch_state : BatchState
+        Single (un-batched) batch state; broadcast across realizations
+        internally so each realization advances its own copy.
+    dataset : dict[str, jax.Array]
+        Dataset for evaluation (shared across realizations).
+    key : PRNGKeyArray
+        Per-realization PRNG keys, shape ``(n_realizations,)`` --
+        already split by the caller (see
+        :meth:`l2co.RolloutWrapper.batch_evaluate`).
+    n_iterations : int
+        Number of iterations to perform.
+    verbose : bool
+        Ignored. A per-realization :func:`jax_tqdm.scan_tqdm` bar would
+        emit ``n_realizations`` interleaved progress bars from inside
+        the map, which is worse than none; :func:`batch_run_randomsearch`
+        drops it for the same reason.
+
+    Returns
+    -------
+    tuple[InputParameters, InputParameters, Array[Float, ""], PyTree,
+    BatchState, HistoryState]
+        ``(params, best_params, best_loss, opt_state, batch_state,
+        history_state)`` -- each output carries a leading
+        ``n_realizations`` axis, matching :func:`batch_run_`.
+    """
+    del verbose
+    n_realizations = jax.tree.leaves(params)[0].shape[0]
+
+    batch_state = jax.tree.map(
+        lambda x: jnp.broadcast_to(x, (n_realizations, *x.shape)),
+        batch_state,
+    )
+
+    def _single(slices):
+        opt_state, params, batch_state, key = slices
+        return run_(
+            update_class=update_class,
+            opt_state=opt_state,
+            params=params,
+            batch_state=batch_state,
+            dataset=dataset,
+            key=key,
+            n_iterations=n_iterations,
+            verbose=False,
+        )
+
+    return jax.lax.map(_single, (opt_state, params, batch_state, key))
 
 
 # =============================================================================

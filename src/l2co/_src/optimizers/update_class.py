@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import partial
+from typing import ClassVar
 
 # Third-party
 import equinox as eqx
@@ -786,7 +787,22 @@ class UpdateClass(eqx.Module):
         ``popsize`` -- notably rl2co's ``AUCEnv``, whose reward
         normalization assumes no optimizer bills more than
         ``max_iterations * max(popsize)``.
+    sequential_realizations : bool
+        Class-level marker (not a field): whether a multi-realization
+        run must execute one realization at a time rather than with all
+        realizations vectorized together. ``False`` for every plain
+        optimizer, which is the fast choice. A subclass sets it to
+        ``True`` when its ``step_fn`` branches on a value that differs
+        per realization -- the meta-optimizers, whose step picks a
+        sub-optimizer from a menu. Read by
+        :func:`l2co._src.run_state.batch_run`, which is where the
+        consequences are spelled out.
     """
+
+    #: See the class docstring. A ``ClassVar`` annotation keeps this out
+    #: of the dataclass fields, so subclasses override it with a plain
+    #: assignment and no constructor signature changes.
+    sequential_realizations: ClassVar[bool] = False
 
     init_fn: InitFunction = eqx.field(static=True)
     step_fn: StepFunction = eqx.field(static=True)
