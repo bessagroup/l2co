@@ -11,12 +11,23 @@ The **population** half's transfer functions live here too, and are the
 single canonical implementation. They used to be duplicated per consumer
 with divergent slot layouts -- one placing the best point in the last
 slot and drawing ``popsize`` samples, the other in slot 0 drawing
-``popsize - 1``. That is not cosmetic: mirrored-sampling algorithms such
-as CR-FM-NES read a population as antithetic pairs at ``(2i, 2i + 1)``,
-so moving the best point re-partitions those pairs and the two layouts
-produce *different* updates from the same handshake. A policy trained
-against one layout and deployed against the other therefore diverges at
-every switch. The canonical layout is the environment's (best point
+``popsize - 1``. That is not cosmetic. CR-FM-NES draws
+``concat([z, -z])`` (``cr_fm_nes.py:176-177``), so its antithetic
+partners sit at ``(i, i + popsize / 2)``, and -- more to the point -- it
+*caches* those draws in state and consumes them on the next ``tell``,
+pairing ``fitness`` with ``state.z`` index for index (``:201``,
+``:207``, ``:235``). Which slot the best point occupies therefore
+decides which cached search direction its fitness is credited to, and
+the two layouts produce *different* updates from the same handshake. A
+policy trained against one layout and deployed against the other
+diverges at every switch. (An earlier version of this note attributed
+the divergence to adjacent pairs at ``(2i, 2i + 1)`` and to population
+geometry; the conclusion held but the mechanism did not.) The deeper
+problem -- that substituting *any* foreign population invalidates those
+cached draws -- is what ``docs/adr/0012`` addresses, by regenerating the
+population through the incoming optimizer's own ``ask`` instead.
+
+The canonical layout is the environment's (best point
 last), chosen because it is what existing trained checkpoints and stored
 trajectories were produced with. This amends
 ``docs/adr/0009-shared-handshake-policy-table.md``, which recorded the
@@ -73,9 +84,17 @@ class HandshakePolicy(eqx.Module):
     opt_state : str
         ``"continue"`` -- the optimizer's internal state carries over,
         so switching back resumes its own adaptation. ``"reset"`` -- the
-        internal state is re-initialised around the best parameters,
-        for optimizers whose accumulated state cannot survive an
-        iterate jump.
+        internal state is re-initialised, for optimizers whose
+        accumulated state cannot survive an iterate jump. "Re-initialised
+        *around the best parameters*" would overstate it: L-BFGS, the one
+        tabulated ``"reset"``, has an ``init`` that reads its argument's
+        shape and dtype only (``optax`` ``transform.py:1719`` stores
+        ``zeros_like(params)``), so the values passed do not reach the
+        state. An optimizer whose ``init`` *does* read them -- any evosax
+        distribution-based algorithm, which takes its ``mean`` from the
+        argument -- would make the point handed in load-bearing, and the
+        caller must then pass the best parameters rather than whatever
+        population it happens to hold.
     """
 
     population: str = eqx.field(static=True)
@@ -196,17 +215,21 @@ def population_best_one(
 ) -> PyTree:
     """Hand over a fresh population with the best parameters injected.
 
-    The ``"best_one"`` variant: ``popsize`` draws from ``sampler`` around
-    ``best_params``, with ``best_params`` written into the **last** slot.
+    The ``"best_one"`` variant: ``popsize`` draws from ``sampler``, with
+    ``best_params`` written into the **last** slot. Note the draws are
+    *not* centred on ``best_params`` -- every sampler in
+    :mod:`l2co._src.sampler` uses ``params`` for shape and dtype only
+    (``_sample``), so this is a fresh draw from the sampler's own
+    distribution with the best point injected, not a local perturbation
+    of it.
 
     That slot is load-bearing, which is why this implementation is shared
-    rather than reproduced per consumer. Mirrored-sampling algorithms
-    (CR-FM-NES and the other even-population strategies) read a
-    population as antithetic pairs at ``(2i, 2i + 1)``, so placing the
-    best point elsewhere re-partitions those pairs and yields a different
-    update from the same handshake. Last is canonical because it is what
-    existing trained checkpoints and stored trajectories were produced
-    with.
+    rather than reproduced per consumer: CR-FM-NES caches its own draws
+    in state and credits each candidate's fitness to the cached
+    direction at the same index, so moving the best point yields a
+    different update from the same handshake. Last is canonical because
+    it is what existing trained checkpoints and stored trajectories were
+    produced with.
 
     Parameters
     ----------

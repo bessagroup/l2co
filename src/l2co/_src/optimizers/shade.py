@@ -60,6 +60,10 @@ from jax.tree_util import Partial
 from l2co_tasks import Task
 
 # Local
+from l2co._src.optimizers.state_transfer import (
+    FAMILY_POPULATION,
+    build_transfer_fns,
+)
 from l2co._src.optimizers.update_class import (
     UpdateClass,
     evosax_population_based_fn,
@@ -636,12 +640,23 @@ def shade_update(
         pass_rng=task.pass_rng,
     )
 
+    # SHADE keeps its population, external archive and success-history
+    # memories. Only scale crosses a switch: the memories are
+    # self-adaptation of SHADE's own mutation operator and mean nothing
+    # to another algorithm.
+    read_fn, write_fn = build_transfer_fns(
+        "shade", FAMILY_POPULATION, hyperparameters
+    )
+
     return UpdateClass(
         init_fn=init_fn,
         step_fn=step_fn,
         popsize=popsize,
         hash=opt_hash,
         stop_fn=stop_fn,
+        family=FAMILY_POPULATION,
+        transfer_read_fn=read_fn,
+        transfer_write_fn=write_fn,
     )
 
 
