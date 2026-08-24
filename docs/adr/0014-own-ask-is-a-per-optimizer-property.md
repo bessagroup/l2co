@@ -68,6 +68,20 @@ claim is skipped.
 This is not a corner case for this project. 25 of the 100 tasks in
 `bbob_headroom_train` are `bbob_noisy`, which sets `pass_rng=True`.
 
+**What this does not fix, and an earlier draft implied it did.** MR15-GA
+collapses its mutation scale under noise *whatever the handshake does*,
+because the 1/5 rule scores each generation against its own `(µ+λ)`
+selected fitness — a running minimum over the pair, so biased optimistic
+in exactly the way `best_loss` is. Measured on a `noise=0.1` BBOB task:
+six generations from a reset with **no switch at all** run `std` from
+`1 → 0.0039`; after a switch they run `0.0048 → 4.7e-06`, the same rate
+from the transferred scale. The same switch on the deterministic task
+gives `0.0048 → 0.0192`, no collapse. So the collapse is the algorithm's
+under noise, pre-existing and unrelated to state transfer. Gating the
+claim stops the handshake *adding* an unbeatable baseline on top of it;
+it does not, and cannot, stop that. Whether MR15-GA belongs on noisy
+tasks at all is a menu question, not a handshake one.
+
 **Decision.** `build_transfer_fns` takes `deterministic` (the negation
 of `task.pass_rng`) and the repairing writer skips the rebase entirely
 where it is false, leaving the optimizer its own measured baseline. The
