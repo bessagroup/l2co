@@ -21,9 +21,16 @@ things that can quietly go wrong with that:
 
 Plus the two structural guards: every registered optimizer's reader must
 be usable in one ``lax.switch`` (they all have to agree on output
-layout), and every ``distribution``-family optimizer must expose an
-``ask_fn``, since a missing one silently degrades to the old
+layout), and every optimizer whose ``TransferSpec.own_ask`` is set must
+expose an ``ask_fn``, since a missing one silently degrades to the old
 population-substitution path rather than raising.
+
+Two more things are pinned here because they are decisions rather than
+mechanics: *which* optimizers draw their own post-switch population
+(a per-optimizer property, not a family one), and that the repaired
+``state.fitness`` baseline claims a measurement -- valid on a
+deterministic loss, false on a stochastic one, where claiming it
+collapses the mutation scale. See ``docs/adr/0014``.
 """
 
 from __future__ import annotations
@@ -43,6 +50,7 @@ from evosax.algorithms.population_based import (
     MR15_GA,
     PSO,
     DifferentialEvolution,
+    SimpleGA,
 )
 from l2co_tasks import create_bbob_task
 
@@ -64,8 +72,11 @@ DIM = 10
 POPSIZE = 10
 TARGET = 0.25
 
-#: The seven-member transfer-validation menu, with the hyperparameters
-#: the configs use.
+#: The nine-member transfer-validation menu, with the hyperparameters
+#: the configs use. Covers every provider class -- line-search,
+#: sign-based, diag+rank-1 ES, diagonal ES, gradient second-moment,
+#: population/archive -- and all three mutation GAs that draw their own
+#: post-switch population (``docs/adr/0014``).
 MENU: dict[str, dict] = {
     "lbfgs": {},
     "rprop": {"learning_rate": 1e-3},
@@ -74,6 +85,8 @@ MENU: dict[str, dict] = {
     "adan": {"learning_rate": 1e-2},
     "pso": {},
     "mr15ga": {},
+    "samrga": {},
+    "gesmrga": {},
 }
 
 
@@ -560,10 +573,18 @@ class TestRegistryGuards:
             assert callable(update_class.transfer_read_fn), name
             assert callable(update_class.transfer_write_fn), name
 
-    def test_distribution_family_always_exposes_ask(self, task):
+    def test_own_ask_optimizers_expose_ask(self, task):
         # A missing ``ask_fn`` does not raise -- it silently degrades to
         # the old population-substitution path, which is exactly the bug
         # this work exists to remove. So it gets its own guard.
+        #
+        # The condition is ``TransferSpec.own_ask``, not the family:
+        # every ``distribution`` algorithm needs its own ask, and so do
+        # the mutation GAs, whose next generation is scored against the
+        # baseline the writer just repaired (``docs/adr/0014``). A spec
+        # that claims ``own_ask`` while its factory forgets ``ask_fn``
+        # is the silent-degradation case, and vice versa is an ask the
+        # caller will never reach.
         for i, (name, hp) in enumerate(MENU.items()):
             update_class = REGISTRY[name](
                 task=task,
@@ -572,7 +593,10 @@ class TestRegistryGuards:
                 stop_fn=None,
                 **hp,
             )
+            spec = transfer_spec_for(name, update_class.family)
             if update_class.family == FAMILY_DISTRIBUTION:
+                assert spec.own_ask, name
+            if spec.own_ask:
                 assert update_class.ask_fn is not None, name
             else:
                 assert update_class.ask_fn is None, name
@@ -720,6 +744,188 @@ class TestRegistryGuards:
             assert jnp.shape(sigma) == ()
             assert jnp.shape(conf) == ()
             assert sigma.dtype == conf.dtype
+
+    def test_lbfgs_reports_its_very_first_step(self, task):
+        """One iteration is a visit length the policy actually picks.
+
+        ``lbfgs`` is the one optimizer tabulated ``reset``, so its
+        ``count`` restarts on every switch into it, and "run lbfgs for 1
+        iteration" is one of the four budget choices. The memory holds
+        no *difference* yet at that point, but the step itself is
+        reconstructible -- and the reconstruction has to match the step
+        that was actually taken, not merely be finite.
+        """
+        update_class = REGISTRY["lbfgs"](
+            task=task, opt_hash=0, bounded=(None, None), stop_fn=None
+        )
+        before = jnp.zeros((update_class.popsize, DIM))
+        carry = (before, update_class.init_fn(before, jr.key(0)), jr.key(0))
+
+        carry, _ = update_class.step_fn(carry, {})
+        after, opt_state, _ = carry
+
+        sigma, conf = update_class.transfer_read_fn(opt_state)
+        assert float(conf) == CONF_EXACT
+        taken = jnp.sqrt(jnp.mean(jnp.square(after[0] - before[0])))
+        assert float(taken) > 0.0
+        assert jnp.isclose(sigma, taken, rtol=1e-4)
+
+
+class TestOwnAsk:
+    """Which optimizers draw their own post-switch population.
+
+    A per-optimizer property, not a family one (``docs/adr/0014``). The
+    cost of getting it wrong runs both ways: an optimizer that needs its
+    own ask and does not get one is scored against a baseline it was not
+    drawn from, and one that gets an ask it cannot use degenerates.
+    """
+
+    @pytest.mark.parametrize(
+        "name", ["crfmnes", "sepcmaes", "cmaes", "snes", "mr15ga"]
+    )
+    def test_ask_coupled_and_mutation_gas_opt_in(self, name):
+        family = FAMILY_POPULATION if name == "mr15ga" else FAMILY_DISTRIBUTION
+        assert transfer_spec_for(name, family).own_ask
+
+    @pytest.mark.parametrize("name", ["samrga", "gesmrga"])
+    def test_the_other_mutation_gas_opt_in(self, name):
+        spec = transfer_spec_for(name, FAMILY_POPULATION)
+        assert spec.own_ask
+        # The repairing writer and the own ask travel together: the ask
+        # is only meaningful against a repaired baseline, and a repaired
+        # baseline is only honest if the population is drawn from it.
+        assert spec.writer == "population_repair"
+
+    @pytest.mark.parametrize(
+        "name", ["differentialevolution", "shade", "pso", "randomsearch"]
+    )
+    def test_difference_and_velocity_methods_stay_out(self, name):
+        # DE and SHADE build mutants from difference vectors of the
+        # stored population; the repair makes every row identical, and
+        # identical rows have no differences. PSO's ask reads
+        # ``population_best`` / ``fitness_best``, which no writer
+        # repairs. Randomsearch holds nothing at all.
+        assert not transfer_spec_for(name, FAMILY_POPULATION).own_ask
+
+    def test_simple_ga_is_excluded_because_its_std_expires(self):
+        """A deliberate exclusion, pinned so a "fix" has to argue.
+
+        ``SimpleGA`` is a mutation GA of the same shape as the three
+        that opt in, but its ``_tell`` overwrites ``std`` from a fixed
+        schedule, so a transferred scale does not survive one
+        generation. Giving it the repairing writer would create a write
+        whose effect silently expires.
+        """
+        spec = transfer_spec_for("simplega", FAMILY_POPULATION)
+        assert not spec.own_ask
+        assert spec.writer == "population"
+
+        algo, state, _, write = _evosax_pop(SimpleGA, "simplega")
+        written = write(_bundle(), state)
+        assert jnp.isclose(written.std, TARGET, rtol=1e-5)
+
+        key = jr.key(0)
+        population, asked = algo.ask(key, written, algo.default_params)
+        told, _ = algo.tell(
+            key,
+            population,
+            jnp.arange(POPSIZE, dtype=float),
+            asked,
+            algo.default_params,
+        )
+        # One generation later the schedule has taken it back.
+        assert not jnp.isclose(told.std, TARGET, rtol=1e-5)
+
+
+class TestClaimedBaseline:
+    """``fitness <- bundle.f`` claims a measurement. Sometimes it can't.
+
+    On a deterministic loss, writing ``best_f`` into every slot asserts
+    something true: re-evaluating ``bundle.x`` would return it. On a
+    stochastic one it does not -- ``best_loss`` is a running *minimum*
+    over every evaluation made, so it is the luckiest draw rather than
+    what the point returns now, and claimed into every slot it becomes
+    an unbeatable baseline.
+    """
+
+    def _mr15ga(self, deterministic: bool):
+        algo = MR15_GA(population_size=POPSIZE, solution=jnp.zeros((DIM,)))
+        state = algo.init(
+            jr.key(0),
+            jr.normal(jr.key(0), (POPSIZE, DIM)),
+            jnp.arange(POPSIZE, dtype=float),
+            algo.default_params,
+        )
+        _, write = build_transfer_fns(
+            "mr15ga",
+            FAMILY_POPULATION,
+            {},
+            deterministic=deterministic,
+        )
+        return algo, state, write
+
+    def test_deterministic_task_rebases_the_elite(self):
+        algo, state, write = self._mr15ga(deterministic=True)
+        written = write(_bundle(), state)
+        assert jnp.allclose(written.population, 0.5)
+        assert jnp.allclose(written.fitness, -1.0)
+        # The scale still lands either way -- only the claim is gated.
+        assert jnp.isclose(written.std, TARGET, rtol=1e-5)
+        del algo
+
+    def test_stochastic_task_leaves_the_elite_alone(self):
+        algo, state, write = self._mr15ga(deterministic=False)
+        written = write(_bundle(), state)
+        assert jnp.array_equal(written.population, state.population)
+        assert jnp.array_equal(written.fitness, state.fitness)
+        assert jnp.isclose(written.std, TARGET, rtol=1e-5)
+        del algo
+
+    def test_an_unbeatable_claim_collapses_the_mutation_scale(self):
+        """The failure the gate exists to prevent, measured.
+
+        A lucky ``best_loss`` claimed into every slot means nothing ever
+        satisfies ``fitness < state.fitness``, so MR15-GA's 1/5 rule
+        reads a 0% success rate on every generation and halves ``std``
+        geometrically -- until it underflows and the optimizer stops
+        moving, at which point its reader reports ``CONF_ABSENT`` and it
+        stops providing a scale too. Skipping the claim keeps the
+        optimizer's own measured baseline, and the rule stays live.
+        """
+
+        def evolve(write, generations: int = 6):
+            algo, state, _ = self._mr15ga(deterministic=True)
+            # An unbeatably low ``f``: the extreme-value case a noisy
+            # task's running minimum produces.
+            lucky = TransferBundle(
+                x=jnp.full((DIM,), 0.5),
+                f=jnp.asarray(-1e6),
+                sigma=jnp.asarray(TARGET),
+                conf_sigma=jnp.asarray(CONF_EXACT),
+            )
+            state = write(lucky, state)
+            key = jr.key(0)
+            for _ in range(generations):
+                key, sub = jr.split(key)
+                population, state = algo.ask(sub, state, algo.default_params)
+                state, _ = algo.tell(
+                    sub,
+                    population,
+                    jnp.sum(jnp.square(population), axis=-1),
+                    state,
+                    algo.default_params,
+                )
+            return float(state.std)
+
+        _, _, claiming = self._mr15ga(deterministic=True)
+        _, _, skipping = self._mr15ga(deterministic=False)
+
+        collapsed = evolve(claiming)
+        survived = evolve(skipping)
+
+        # Six generations of a 0% success rate is 2^-6.
+        assert collapsed <= TARGET * 2.0**-6 + 1e-12
+        assert survived > collapsed
 
 
 class TestTransferSpec:

@@ -45,20 +45,26 @@ destroy exactly the per-coordinate ratchet that makes ``rprop`` work.
 Who calls this
 --------------
 The population half of a switch stays with the caller, keyed on
-:class:`TransferSpec.family`:
+:attr:`TransferSpec.own_ask` -- a per-optimizer property, not a family
+one (``docs/adr/0014``):
 
-* ``distribution`` -- the caller writes location and scale through
+* ``own_ask`` -- the caller writes location and scale through
   :func:`build_transfer_fns`'s writer, then asks the incoming optimizer
-  for its **own** population. That is what keeps the ask/tell-coupled
-  algorithms correct: CR-FM-NES and seven relatives cache their draws in
-  state and consume them on the next ``tell``, so substituting a foreign
-  population silently credits each candidate's fitness to a direction
-  that produced a different point (see ``docs/adr/0012``). Regenerating
-  the population through the optimizer's own ``ask`` makes the cached
-  draws consistent by construction.
-* ``population`` -- the stored population *is* the state; the caller
-  keeps the existing ``best_one`` layout.
-* ``gradient`` -- unit population; the caller keeps ``best``.
+  for its **own** population. Two things need this, for one reason.
+  CR-FM-NES and seven relatives cache their draws in state and consume
+  them on the next ``tell``, so substituting a foreign population
+  silently credits each candidate's fitness to a direction that produced
+  a different point (``docs/adr/0012``). The mutation GAs cache no
+  draws, but their next generation is *scored against a baseline this
+  handshake just wrote* -- MR15-GA's 1/5 rule, GESMR-GA's per-group
+  delta, SAMR-GA's elite sort -- so a foreign population is measured
+  against a baseline it was not drawn from. Both are the same hazard:
+  the optimizer's next update reads state the handshake touched.
+  Regenerating through its own ``ask`` makes the two consistent by
+  construction.
+* otherwise -- the caller keeps the existing layout: ``best_one`` for a
+  population-based algorithm whose stored population *is* the state, and
+  ``best`` for the unit-population gradient family.
 
 Reader and writer are built at optimizer-construction time rather than
 looked up per call, because both need hyperparameters that are not
@@ -433,49 +439,129 @@ def read_sigma_rprop(opt_state: PyTree) -> tuple[Array, Array]:
     return _finite_or_absent(_rms(step_sizes), CONF_EXACT)
 
 
-def read_sigma_lbfgs(opt_state: PyTree) -> tuple[Array, Array]:
-    """Read the scale off L-BFGS's most recent accepted step.
+def make_read_sigma_lbfgs(
+    scale_init_precond: bool = True,
+    learning_rate: float | None = None,
+) -> Callable:
+    """Build the reader for L-BFGS.
 
-    ``diff_params_memory`` holds the last ``memory_size`` parameter
-    differences, so the previous step is literally in the state.
+    Two sources, because the obvious one is blind for exactly the visit
+    length a switching policy asks for most often.
 
-    The ring index is ``(count - 2) % memory_size``, which is **not**
-    optax's own expression even though it names the same slot. Optax
-    writes to ``prev_memory_idx = (state.count - 1) % memory_size``
-    (``transform.py:1734``) and *then* returns ``count + 1``
-    (``:1798``), so its ``state.count`` is the pre-increment value while
-    a reader holding the returned state sees the post-increment one --
-    one further along. Copying the expression across that frame shift
-    reads the next, not-yet-written slot: zeros until the ring fills, and
-    a step one generation stale afterwards. Verified empirically -- after
-    ``n`` steps ``count == n`` and rows ``0 .. n-2`` are populated.
+    **After two or more steps** the scale is the RMS of the most recent
+    accepted step, which ``diff_params_memory`` holds directly. The ring
+    index is ``(count - 2) % memory_size``, which is **not** optax's own
+    expression even though it names the same slot. Optax writes to
+    ``prev_memory_idx = (state.count - 1) % memory_size``
+    (``transform.py:1734``) and *then* returns ``count + 1`` (``:1798``),
+    so its ``state.count`` is the pre-increment value while a reader
+    holding the returned state sees the post-increment one -- one further
+    along. Copying the expression across that frame shift reads the next,
+    not-yet-written slot: zeros until the ring fills, and a step one
+    generation stale afterwards. Verified empirically -- after ``n``
+    steps ``count == n`` and rows ``0 .. n-2`` are populated.
 
-    Two steps are needed before there is any difference to read at all,
-    hence the ``count > 1`` gate rather than ``count > 0``.
+    **After exactly one step** there is no difference to read, and the
+    old reader reported ``CONF_ABSENT``. That is not a rare corner:
+    ``lbfgs`` is the one optimizer tabulated ``reset``, so its ``count``
+    restarts on every switch *into* it, and "run lbfgs for 1 iteration"
+    is one of the budget choices an rl2co policy has. The step it took
+    is still recoverable, because every factor is in the state or closed
+    over here: ``ScaleByLBFGSState.updates`` is the raw gradient
+    ``g(x_0)`` (``transform.py:1799`` stores the argument, not the
+    preconditioned direction), the memory was empty so the
+    preconditioner was the capped reciprocal ``min(1, 1/||g||)``
+    (``:1777-1783``), the chain's fixed multiplier is ``1`` for
+    ``learning_rate=None`` and ``lr`` otherwise (``alias.py:2756-2759``),
+    and the linesearch state's ``learning_rate`` is the stepsize it
+    accepted. So ``sigma = alpha * lr * gamma * rms(g)``, exactly. A
+    failed linesearch writes ``learning_rate = 0``, which
+    :func:`_finite_or_absent` already downgrades to absence.
+
+    The one configuration this cannot reconstruct is a *schedule* passed
+    as ``learning_rate``: the multiplier then depends on a step count
+    this reader cannot resolve to a number. There the first-step path is
+    disabled rather than guessed -- reporting a scale that is wrong by an
+    unknown factor is worse than reporting none -- and the memory path is
+    unaffected.
 
     Parameters
     ----------
-    opt_state : PyTree
-        L-BFGS's optax state.
+    scale_init_precond : bool, optional
+        Whether the optimizer was built with the capped-reciprocal
+        identity preconditioner. Defaults to True, as ``optax.lbfgs``
+        does.
+    learning_rate : float or None, optional
+        The fixed multiplier the optimizer was built with. ``None``
+        (the default) means the chain uses ``scale(-1.0)``.
 
     Returns
     -------
-    tuple[Array, Array]
-        ``(sigma, conf_sigma)``.
+    Callable
+        ``reader(opt_state) -> (sigma, conf_sigma)``.
     """
-    memory = optax.tree.get(opt_state, "diff_params_memory")
-    count = optax.tree.get(opt_state, "count")
-    if memory is None or count is None:
-        return jnp.asarray(0.0), jnp.asarray(CONF_ABSENT)
+    if learning_rate is None:
+        lr_mult, first_step_readable = 1.0, True
+    elif isinstance(learning_rate, (int, float)):
+        lr_mult, first_step_readable = abs(float(learning_rate)), True
+    else:
+        # A schedule. Its value at step 0 is not resolvable here.
+        lr_mult, first_step_readable = 1.0, False
 
-    memory = jnp.asarray(memory, dtype=float)
-    memory_size = memory.shape[0]
-    prev = (jnp.asarray(count) - 2) % memory_size
-    last_step = jnp.take(memory, prev, axis=0)
+    def _first_step(opt_state: PyTree) -> tuple[Array, Array]:
+        """Reconstruct the very first step's RMS length."""
+        updates = optax.tree.get(opt_state, "updates")
+        alpha = optax.tree.get(opt_state, "learning_rate")
+        if updates is None or alpha is None:
+            return jnp.asarray(0.0), jnp.asarray(CONF_ABSENT)
 
-    sigma, conf = _finite_or_absent(_rms(last_step), CONF_EXACT)
-    conf = jnp.where(jnp.asarray(count) > 1, conf, CONF_ABSENT)
-    return sigma, conf
+        flat = jnp.concatenate(
+            [
+                jnp.ravel(jnp.asarray(leaf, dtype=float))
+                for leaf in jax.tree.leaves(updates)
+            ]
+        )
+        gamma = (
+            jnp.minimum(1.0, 1.0 / optax.tree.norm(updates))
+            if scale_init_precond
+            else jnp.asarray(1.0)
+        )
+        sigma = jnp.abs(jnp.asarray(alpha, dtype=float)) * lr_mult
+        return _finite_or_absent(sigma * gamma * _rms(flat), CONF_EXACT)
+
+    def read(opt_state: PyTree) -> tuple[Array, Array]:
+        """Read the scale off L-BFGS's most recent accepted step."""
+        memory = optax.tree.get(opt_state, "diff_params_memory")
+        count = optax.tree.get(opt_state, "count")
+        if memory is None or count is None:
+            return jnp.asarray(0.0), jnp.asarray(CONF_ABSENT)
+
+        memory = jnp.asarray(memory, dtype=float)
+        memory_size = memory.shape[0]
+        count = jnp.asarray(count)
+        prev = (count - 2) % memory_size
+        last_step = jnp.take(memory, prev, axis=0)
+
+        sigma, conf = _finite_or_absent(_rms(last_step), CONF_EXACT)
+        if not first_step_readable:
+            return sigma, jnp.where(count > 1, conf, CONF_ABSENT)
+
+        first_sigma, first_conf = _first_step(opt_state)
+        settled = count > 1
+        return (
+            jnp.where(settled, sigma, first_sigma),
+            jnp.where(
+                settled,
+                conf,
+                jnp.where(count == 1, first_conf, CONF_ABSENT),
+            ),
+        )
+
+    return read
+
+
+read_sigma_lbfgs = make_read_sigma_lbfgs()
+"""The L-BFGS reader for ``optax.lbfgs``'s own defaults."""
 
 
 def read_sigma_absent(opt_state: PyTree) -> tuple[Array, Array]:
@@ -692,18 +778,21 @@ def make_write_distribution(ravel_fn: Callable) -> Callable:
     return write
 
 
-def make_write_population(repair_baseline: bool) -> Callable:
+def make_write_population(
+    repair_baseline: bool, claim_baseline: bool = True
+) -> Callable:
     """Build the writer for a population-based algorithm.
 
     Scale lands in whichever field carries it: an explicit mutation
     ``std`` (GA family) or the ``velocity`` (PSO, rescaled so its RMS
     matches while each particle's direction survives). The stored
-    population is left to the caller's ``best_one`` handshake.
+    population is left to the caller's ``best_one`` handshake, or to the
+    optimizer's own ``ask`` where :attr:`TransferSpec.own_ask` is set.
 
     ``repair_baseline`` additionally overwrites the stored
     ``population`` / ``fitness`` with the handed-over best. That is
-    needed where the algorithm adapts its scale by comparing the incoming
-    generation against its *own stored* elite: MR15-GA's 1/5 rule is
+    needed where the algorithm adapts against its *own stored* baseline
+    on the next generation: MR15-GA's 1/5 rule is
     ``mean(fitness < state.fitness)`` (``mr15_ga.py:96``), so a stale
     elite from an early generation makes a population drawn around a much
     better point look like a near-total success and **doubles** the
@@ -714,10 +803,34 @@ def make_write_population(repair_baseline: bool) -> Callable:
     overwriting ``fitness`` alone would not: stale rows would keep their
     positions while claiming the new fitness.
 
+    ``claim_baseline`` is what makes that rebase legitimate. Writing
+    ``fitness = bundle.f`` **claims a measurement**: it asserts that a
+    re-evaluation of ``bundle.x`` would return ``bundle.f``. On a
+    deterministic loss that is true. On a stochastic one it is not:
+    ``best_loss`` is a running *minimum* over every evaluation made, so
+    it is an extreme-value statistic -- the luckiest draw, not the value
+    the point would return now. Claimed into every slot it becomes an
+    unbeatable baseline: nothing ever satisfies ``fitness <
+    state.fitness``, the 1/5 rule reads a 0% success rate forever, and
+    ``std`` halves geometrically until it underflows and the optimizer
+    stops moving (at which point ``read_sigma_population`` reports
+    ``CONF_ABSENT``, so it stops providing a scale too). Where the claim
+    cannot be made the repair is **skipped entirely** rather than
+    softened -- the optimizer keeps its own measured baseline, which is
+    the only honest one available. Writing ``+inf`` instead is the
+    opposite failure and is measured: every candidate beats it, the rule
+    reads 100% and doubles the width immediately after the scale write
+    set it.
+
     Parameters
     ----------
     repair_baseline : bool
-        Whether to rebase ``population`` / ``fitness`` on the bundle.
+        Whether this optimizer needs ``population`` / ``fitness``
+        rebased on the bundle at all.
+    claim_baseline : bool, optional
+        Whether ``bundle.f`` may be claimed as a measurement of
+        ``bundle.x``. False on a stochastic loss (``task.pass_rng``),
+        which skips the rebase. Defaults to True.
 
     Returns
     -------
@@ -741,7 +854,7 @@ def make_write_population(repair_baseline: bool) -> Callable:
         if velocity is not None:
             updates["velocity"] = _rescale_to(velocity, bundle.sigma, use)
 
-        if repair_baseline:
+        if repair_baseline and claim_baseline:
             population = getattr(opt_state, "population", None)
             fitness = getattr(opt_state, "fitness", None)
             if population is not None and fitness is not None:
@@ -873,7 +986,22 @@ def make_write_rprop(min_step_size: float, max_step_size: float) -> Callable:
     fires a spurious increase or decrease on every coordinate whose
     gradient sign happened to flip. With ``prev_updates`` zero the
     product is zero, which is the branch that leaves ``step_sizes``
-    untouched and takes one clean step (``transform.py:928-940``).
+    untouched (``transform.py:928-940``).
+
+    What that costs is **one zero step, then a clean one** -- not one
+    clean step, as this said before. Optax emits the *previous* buffer
+    rather than the step it just computed: ``updates = where(sign < 0,
+    0, state.prev_updates)`` (``transform.py:949-953``, optax 0.2.8), so
+    Rprop lags a generation always and its own first iteration moves
+    nothing. Zeroing the buffer therefore spends one iteration -- and
+    the feval that goes with it -- re-measuring the handed-over point
+    without moving off it, before the ratchet's step lands on the next.
+    The alternative is worse: any nonzero buffer we could invent is a
+    step in a direction computed somewhere else, and it fires the
+    ratchet on arrival. Fixing the lag itself belongs upstream; doing it
+    locally would change Rprop's *static* trajectory, and with it the
+    databank rows and the ERTD level that ``headroom4`` and
+    ``bbob_headroom_{train,test}`` were jointly selected on.
 
     Parameters
     ----------
@@ -945,22 +1073,30 @@ class TransferSpec(eqx.Module):
     Attributes
     ----------
     family : str
-        One of :data:`FAMILIES`. Read by the *caller* to decide the
-        population half of a switch -- see the module docstring.
+        One of :data:`FAMILIES`. Says what kind of search state the
+        optimizer holds, and nothing more -- the population half of a
+        switch is decided by :attr:`own_ask`, not by this.
     reader : str
         Key into the reader implementations.
     writer : str
         Key into the writer implementations.
+    own_ask : bool
+        Whether the incoming optimizer regenerates its own post-switch
+        population through its ``ask``, instead of being handed a
+        layout. True for every ``distribution`` algorithm and for the
+        mutation GAs whose next ``ask`` or ``tell`` reads a baseline
+        this handshake just wrote; see ``docs/adr/0014``.
     """
 
     family: str = eqx.field(static=True)
     reader: str = eqx.field(static=True)
     writer: str = eqx.field(static=True)
+    own_ask: bool = eqx.field(static=True, default=False)
 
 
 _FAMILY_DEFAULTS: dict[str, TransferSpec] = {
     FAMILY_DISTRIBUTION: TransferSpec(
-        FAMILY_DISTRIBUTION, "distribution", "distribution"
+        FAMILY_DISTRIBUTION, "distribution", "distribution", own_ask=True
     ),
     FAMILY_POPULATION: TransferSpec(
         FAMILY_POPULATION, "population", "population"
@@ -974,9 +1110,22 @@ TRANSFER_OVERRIDES: dict[str, TransferSpec] = {
     "rprop": TransferSpec(FAMILY_GRADIENT, "rprop", "rprop"),
     # Its last accepted step is in the state; nothing survives a write.
     "lbfgs": TransferSpec(FAMILY_GRADIENT, "lbfgs", "none"),
-    # Adapts scale against its own stored elite -- see
-    # ``make_write_population``.
-    "mr15ga": TransferSpec(FAMILY_POPULATION, "population", "mr15ga"),
+    # The mutation GAs. Each adapts against its *own stored* baseline on
+    # the next generation -- MR15-GA's 1/5 rule reads ``state.fitness``
+    # (``mr15_ga.py:96``), GESMR-GA ranks its std groups by
+    # ``fitness - state.fitness`` (``gesmr_ga.py`` ``_tell``, Eq. 5), and
+    # SAMR-GA inherits per-member stds through ``argsort(state.fitness)``
+    # -- so they need the repairing writer, and they draw their own
+    # post-switch population from it. See ``docs/adr/0014``.
+    "mr15ga": TransferSpec(
+        FAMILY_POPULATION, "population", "population_repair", own_ask=True
+    ),
+    "samrga": TransferSpec(
+        FAMILY_POPULATION, "population", "population_repair", own_ask=True
+    ),
+    "gesmrga": TransferSpec(
+        FAMILY_POPULATION, "population", "population_repair", own_ask=True
+    ),
     # Holds no persistent search state at all.
     "randomsearch": TransferSpec(FAMILY_POPULATION, "none", "none"),
 }
@@ -985,6 +1134,13 @@ TRANSFER_OVERRIDES: dict[str, TransferSpec] = {
 Deliberately short. The family default is right for the large majority,
 and every entry here exists because a specific field was read and found
 to behave differently -- not because the optimizer is unusual in general.
+
+``simple_ga`` is deliberately **absent** even though it is a mutation GA
+of the same shape: its ``_tell`` overwrites ``std`` from a fixed
+schedule (``simple_ga.py`` ``_tell``), so a transferred scale expires on
+the next generation, and its ``_tell`` replaces the population wholesale
+rather than selecting ``(mu + lambda)``, so there is no stored baseline
+to repair. It stays a scale *provider* on the family default.
 """
 
 
@@ -1022,14 +1178,15 @@ def build_transfer_fns(
     family: str,
     hyperparameters: dict | None = None,
     ravel_fn: Callable | None = None,
+    deterministic: bool = True,
 ) -> tuple[Callable, Callable]:
     """Bind one optimizer's reader and writer at construction time.
 
     Both halves need values that are not recoverable from the state, so
     they are closed over here rather than looked up per call: the
     learning rate (``scale_by_learning_rate`` holds an ``EmptyState``),
-    Rprop's clip bounds, and the ravel function evosax uses to flatten a
-    solution pytree.
+    Rprop's clip bounds, the ravel function evosax uses to flatten a
+    solution pytree, and whether the task's loss is deterministic.
 
     Parameters
     ----------
@@ -1043,6 +1200,14 @@ def build_transfer_fns(
     ravel_fn : Callable or None, optional
         The algorithm's ``_ravel_solution``. Required for
         ``distribution`` -- evosax stores ``mean`` raveled.
+    deterministic : bool, optional
+        Whether re-evaluating a point returns the same loss, i.e. the
+        negation of ``task.pass_rng``. Only the repairing population
+        writer reads it, and only to decide whether ``bundle.f`` may be
+        claimed as a measurement -- see :func:`make_write_population`.
+        Defaults to True, which is the conservative choice for a caller
+        that does not know: it keeps the repair, and the repair is what
+        every deterministic task needs.
 
     Returns
     -------
@@ -1065,7 +1230,10 @@ def build_transfer_fns(
         "population": read_sigma_population,
         "gradient": make_read_sigma_gradient(learning_rate),
         "rprop": read_sigma_rprop,
-        "lbfgs": read_sigma_lbfgs,
+        "lbfgs": make_read_sigma_lbfgs(
+            hyperparameters.get("scale_init_precond", True),
+            hyperparameters.get("learning_rate", None),
+        ),
         "none": read_sigma_absent,
     }
 
@@ -1083,7 +1251,9 @@ def build_transfer_fns(
             else write_none
         ),
         "population": make_write_population(repair_baseline=False),
-        "mr15ga": make_write_population(repair_baseline=True),
+        "population_repair": make_write_population(
+            repair_baseline=True, claim_baseline=deterministic
+        ),
         "gradient": make_write_gradient(learning_rate),
         "rprop": make_write_rprop(
             hyperparameters.get("min_step_size", 1e-6),
