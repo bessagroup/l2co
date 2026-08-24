@@ -49,14 +49,53 @@ caller keys on. It is set by the constructing factory, which knows what
 it is building — not inferred from evosax registry membership, which
 `FEEDBACK_evosax.md` already records as friction.
 
+**Where the best point goes, then.** Into the `mean`. It stops being a
+member of the population and becomes the *location* of the search
+distribution, which the writer sets before `ask` runs:
+`mean ← ravel(bundle.x)`, `std ← sigma / sqrt(factor)`. Everything the
+handshake conveys to this family is those two writes — `bundle.f` is not
+read at all (only `mr15ga`'s baseline repair uses it). The population is
+what falls out of them. At `d = 10`, writing a best point and a scale of
+`0.05` into CR-FM-NES and then asking:
+
+    mean == best        : True
+    best IS a member?   : False        <- the centre, not a sample
+    min |row - best|    : 0.1317
+    population centroid : |centroid - best| = 0.0000
+    per-coord RMS spread: 0.0523       (sigma asked for 0.0500)
+
+The centroid landing exactly on the best point is CR-FM-NES's mirrored
+sampling — it draws `concat([z, -z])` (`cr_fm_nes.py:176-177`), so the
+population is symmetric about the mean by construction.
+
+Losing the best point as a *member* costs nothing, which is worth stating
+because it looks like a regression. A distribution-based algorithm keeps
+no members: its memory of a good point **is** the mean, so putting that
+point in the population was never how it remembered it — under `best_one`
+the point sat in a slot the algorithm would discard after one `tell`,
+while the mean it actually searches from came from somewhere else
+entirely. The caller's own best-so-far record is untouched by the
+handshake (the `RunState`'s `best_params` / `best_loss` carry through
+unchanged, and a switching caller holds a cross-optimizer record besides),
+so nothing is forgotten by not re-listing it.
+
+**The population family is deliberately unchanged**, and the split is
+exactly whether an optimizer holds points or holds a distribution over
+points. For `pso`, `mr15ga` and `de` the stored population *is* the
+state, so `best_one` still injects the best point as a member there —
+there is no mean to write it into, and substituting a population is not
+lossy for an algorithm whose state is a population.
+
 Three further problems fall out at the same time. CMA-ES's `_tell`
 reconstructs steps as `y_k = (population - mean) / std`
 (`cma_es.py:222`), which is only meaningful if the population was drawn
 from that distribution — now it is. The wasted generation goes away: the
 `popsize` evaluations the first post-switch generation costs now buy a
 real generation from a warm distribution instead of a draw from the
-global sampler. And the cost model is unchanged, so handshake variants
-stay comparable on feval-billed metrics.
+global sampler, and none is spent re-measuring the handed-over point's
+already-known loss the way the occupied slot was. And the cost model is
+unchanged, so handshake variants stay comparable on feval-billed
+metrics.
 
 **Rejected alternatives.**
 
