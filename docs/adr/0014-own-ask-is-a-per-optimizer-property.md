@@ -105,6 +105,36 @@ scale write is unaffected — only the *claim* is gated.
   says whether that reads better or worse than either. Left for the
   measurement pass.
 
+## A handshake does two things, and only one of them is about the jump
+
+The writers mix two justifications. Refreshing a stale scale is about
+*time* — the incoming optimizer has not run for a while, so its `std` is
+wrong about the current search. Re-centring a `mean`, zeroing a
+cumulation path, rebasing an elite, clearing Rprop's `prev_updates` are
+about *place*: they repair the damage of moving the iterate somewhere
+the optimizer's accumulated state does not describe.
+
+Nothing distinguished them, so a switch back into an optimizer that
+already held the best point paid the full repair bill for a jump of zero
+distance. Its `mean` was reset from wherever its search had drifted to
+back onto its own best; its cumulation paths — the step-size control it
+had spent generations building — were zeroed; MR15-GA's population
+collapsed to `popsize` identical copies. All to protect it from moving
+somewhere it was not moving.
+
+**Decision.** `TransferBundle` grows `moves_iterate`, defaulting to
+`True` (a caller that does not know moves the iterate, which is what
+every write was written for). The place-justified writes gate on it via
+`_jumping`, which also folds in the finiteness check they already
+needed. The scale write does not: an outgoing optimizer that found
+nothing better may still have learned the local scale, and that is worth
+having.
+
+Deciding *when* it is false stays with the caller, because the predicate
+is theirs — rl2co's env compares the bundle's loss against the incoming
+optimizer's own best (its `docs/adr/0009`). This module only says what
+changes when it is.
+
 **Consequence.** Environment dynamics change again, so this wave's
 policies are not comparable to `0012`'s. Accepted on the same terms:
 the artifacts are being retrained. The wave's own gate is a

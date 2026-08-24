@@ -82,7 +82,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
-from jaxtyping import Array, Float, PyTree
+from jaxtyping import Array, Bool, Float, PyTree
 
 # =============================================================================
 
@@ -161,12 +161,35 @@ class TransferBundle(eqx.Module):
     conf_sigma : Float[Array, ""]
         One of :data:`CONF_ABSENT`, :data:`CONF_ESTIMATED`,
         :data:`CONF_EXACT`.
+    moves_iterate : Bool[Array, ""]
+        Whether this handshake is actually *moving* the incoming
+        optimizer, i.e. whether ``x`` is somewhere it did not already
+        know about. ``True`` unless the caller says otherwise, which is
+        the conservative default: a handshake that does not know moves
+        the iterate, and every write below is written for that case.
+
+        The writers use it for the half of their work that is justified
+        by the jump rather than by the scale going stale — re-centring a
+        ``mean``, zeroing a cumulation path, rebasing an elite, clearing
+        Rprop's ``prev_updates``. All of those are *repairs for having
+        moved*. When nothing moved they are not conservative, they are
+        destructive: they discard adaptation the incoming optimizer
+        earned, to protect it from a jump that is not happening. The
+        scale write is unaffected — an outgoing optimizer that found
+        nothing better may still have learned the local scale.
+
+        This is a runtime value rather than a static flag because the
+        caller's predicate is traced (it compares the bundle's loss
+        against the incoming optimizer's own best).
     """
 
     x: PyTree
     f: Float[Array, ""]
     sigma: Float[Array, ""]
     conf_sigma: Float[Array, ""]
+    moves_iterate: Bool[Array, ""] = eqx.field(
+        default_factory=lambda: jnp.asarray(True)
+    )
 
     @classmethod
     def absent(cls, x: PyTree, f: Float[Array, ""]) -> TransferBundle:
@@ -662,6 +685,34 @@ def _usable_sigma(bundle: TransferBundle) -> Array:
     )
 
 
+def _jumping(bundle: TransferBundle) -> Array:
+    """Whether the incoming optimizer is being moved somewhere new.
+
+    Gates the writes that exist to *repair a jump* rather than to
+    refresh a stale scale: re-centring a ``mean``, zeroing a cumulation
+    path, rebasing an elite, clearing Rprop's ``prev_updates``. When
+    nothing moved those are not conservative but destructive -- they
+    discard adaptation the incoming optimizer earned, to protect it from
+    a jump that is not happening.
+
+    Finiteness of ``x`` is folded in for the same reason
+    :func:`_usable_sigma` re-checks ``sigma``: a non-finite point is not
+    a destination, and re-centring on one kills the receiver for the
+    rest of the episode.
+
+    Parameters
+    ----------
+    bundle : TransferBundle
+        The bundle being written.
+
+    Returns
+    -------
+    Array
+        Scalar boolean gate.
+    """
+    return jnp.asarray(bundle.moves_iterate) & _all_finite(bundle.x)
+
+
 #                                                              State writers
 # =============================================================================
 
@@ -741,7 +792,7 @@ def make_write_distribution(ravel_fn: Callable) -> Callable:
         # of the episode, including after switching away and back, since
         # the ``RunState`` persists. So the fallback is to keep the
         # optimizer's own mean and let it carry on from where it was.
-        use_x = _all_finite(bundle.x)
+        use_x = _jumping(bundle)
         mean = getattr(opt_state, "mean", None)
         if mean is not None:
             updates["mean"] = _blend(
@@ -768,10 +819,17 @@ def make_write_distribution(ravel_fn: Callable) -> Callable:
                 # Per-coordinate std (SNES): rescale, never flatten.
                 updates["std"] = _rescale_to(std, target, use)
 
+        # Gated on the jump, not on the scale: a cumulation path is
+        # calibrated against the algorithm's own past steps, so it is
+        # invalid *because the iterate moved*. If it did not, the path
+        # is the optimizer's own hard-won step-size control and zeroing
+        # it throws that away.
         for path in ("p_std", "p_c"):
             value = getattr(opt_state, path, None)
             if value is not None:
-                updates[path] = jnp.zeros_like(value)
+                updates[path] = _blend(
+                    use_x, jnp.zeros_like(value), jnp.asarray(value)
+                )
 
         return opt_state.replace(**updates) if updates else opt_state
 
@@ -875,7 +933,7 @@ def make_write_population(
                 # for a finite baseline. That is precisely the failure
                 # this repair exists to prevent, so an unusable ``f``
                 # must leave the optimizer's own elite alone.
-                repair_ok = _all_finite(bundle.x) & jnp.isfinite(bundle.f)
+                repair_ok = _jumping(bundle) & jnp.isfinite(bundle.f)
                 flat = jnp.concatenate(
                     [
                         jnp.ravel(jnp.asarray(leaf, dtype=float))
@@ -1032,7 +1090,9 @@ def make_write_rprop(min_step_size: float, max_step_size: float) -> Callable:
         if prev is not None:
             opt_state = optax.tree.set(
                 opt_state,
-                prev_updates=_blend(use, jnp.zeros_like(prev), prev),
+                prev_updates=_blend(
+                    _jumping(bundle), jnp.zeros_like(prev), prev
+                ),
             )
         return opt_state
 

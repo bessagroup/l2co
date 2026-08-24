@@ -928,6 +928,101 @@ class TestClaimedBaseline:
         assert survived > collapsed
 
 
+class TestMovesIterate:
+    """The writes that only make sense if the iterate actually moved.
+
+    A handshake does two different things at once. It refreshes a scale
+    that has gone stale, and it repairs the damage of jumping the
+    iterate somewhere else — re-centring a ``mean``, zeroing a
+    cumulation path, rebasing an elite, clearing Rprop's
+    ``prev_updates``. The second half is only justified by the jump. A
+    caller that knows nothing moved (the incoming optimizer already held
+    the best point) says so with ``moves_iterate=False``, and then those
+    writes are not conservative but destructive: they discard adaptation
+    the incoming optimizer earned, to protect it from a jump that is not
+    happening.
+
+    The scale write is deliberately *not* gated: an outgoing optimizer
+    that found nothing better may still have learned the local scale.
+    """
+
+    def _still(self, sigma: float = TARGET):
+        """A bundle that carries a scale but moves nothing."""
+        return TransferBundle(
+            x=jnp.full((DIM,), 0.5),
+            f=jnp.asarray(-1.0),
+            sigma=jnp.asarray(sigma),
+            conf_sigma=jnp.asarray(CONF_EXACT),
+            moves_iterate=jnp.asarray(False),
+        )
+
+    def test_defaults_to_moving(self):
+        # The conservative default: a caller that does not know moves
+        # the iterate, which is what every write is written for.
+        assert bool(_bundle().moves_iterate)
+        assert bool(
+            TransferBundle.absent(jnp.zeros((DIM,)), 1.0).moves_iterate
+        )
+
+    def test_distribution_keeps_its_mean_and_paths(self):
+        _, state, read, write = _evosax_dist(CR_FM_NES)
+        stepped = state.replace(
+            mean=jnp.full((DIM,), -0.25),
+            p_std=jnp.full((DIM,), 0.3),
+            p_c=jnp.full((DIM,), 0.4),
+        )
+        written = write(self._still(), stepped)
+
+        assert jnp.allclose(written.mean, stepped.mean)
+        assert jnp.allclose(written.p_std, stepped.p_std)
+        assert jnp.allclose(written.p_c, stepped.p_c)
+
+        # ...but the scale still lands.
+        sigma, conf = read(written)
+        assert float(conf) > CONF_ABSENT
+        assert jnp.isclose(sigma, TARGET, rtol=1e-5)
+
+    def test_mutation_ga_keeps_its_elite(self):
+        _, state, read, write = _evosax_pop(MR15_GA, "mr15ga")
+        written = write(self._still(), state)
+
+        assert jnp.array_equal(written.population, state.population)
+        assert jnp.array_equal(written.fitness, state.fitness)
+        sigma, _ = read(written)
+        assert jnp.isclose(sigma, TARGET, rtol=1e-5)
+
+    def test_rprop_keeps_its_previous_step(self):
+        read, write = build_transfer_fns(
+            "rprop", FAMILY_GRADIENT, {"learning_rate": 1e-3}
+        )
+        state = _optax_stepped(optax.rprop(1e-3))
+        before = optax.tree.get(state, "prev_updates")
+        assert not jnp.allclose(before, 0.0), "need a non-zero buffer"
+
+        written = write(self._still(), state)
+
+        # Rprop's ratchet keys on ``sign(g * prev_updates)``; those signs
+        # describe a *different neighbourhood* only if the iterate
+        # jumped. Keeping them also spares the dead iteration optax's
+        # one-generation lag would otherwise cost.
+        assert jnp.allclose(optax.tree.get(written, "prev_updates"), before)
+        sigma, _ = read(written)
+        assert jnp.isclose(sigma, TARGET, rtol=1e-3)
+
+    def test_a_non_finite_point_never_moves_the_iterate(self):
+        """The two gates compose, and the finiteness one still wins."""
+        _, state, _, write = _evosax_dist(CR_FM_NES)
+        stepped = state.replace(mean=jnp.full((DIM,), -0.25))
+        poisoned = TransferBundle(
+            x=jnp.full((DIM,), jnp.nan),
+            f=jnp.asarray(-1.0),
+            sigma=jnp.asarray(TARGET),
+            conf_sigma=jnp.asarray(CONF_EXACT),
+            moves_iterate=jnp.asarray(True),
+        )
+        assert jnp.allclose(write(poisoned, stepped).mean, stepped.mean)
+
+
 class TestTransferSpec:
     """The override table, and that it stays small."""
 
