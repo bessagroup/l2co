@@ -53,6 +53,12 @@ from .optax_implementations import (
     normalized_optax_normal,
 )
 from .shade import SHADE
+from .state_transfer import (
+    FAMILY_DISTRIBUTION,
+    FAMILY_GRADIENT,
+    FAMILY_POPULATION,
+    build_transfer_fns,
+)
 from .update_class import step_fevals
 from .utils import normalize_key
 
@@ -173,6 +179,29 @@ class SubOpt(eqx.Module):
         through :meth:`handshake_population`, never by reimplementing the
         layout: the slot the best point lands in changes the update a
         mirrored-sampling algorithm computes.
+    family : str
+        Which optimizer family this is, one of
+        :data:`~l2co._src.optimizers.state_transfer.FAMILIES`. Read at
+        Python trace time by the strategy wrappers to decide the
+        population half of a switch: a ``"distribution"`` sub-optimizer
+        regenerates its own population through :attr:`step_fn` (which is
+        its ``ask``) from the distribution a handshake just wrote,
+        rather than being handed a layout. That is what keeps the
+        ask/tell-coupled evosax algorithms consistent -- they cache
+        their draws in state and consume them on the next ``tell``, so
+        the population and the cached draws must come from the same
+        ``ask``. See ``docs/adr/0012``.
+    transfer_read_fn : Callable | None
+        ``transfer_read_fn(sub_state) -> (sigma, conf)`` -- projects this
+        sub-optimizer's own state onto the scale a switch carries.
+        Resolved from the same
+        :func:`~l2co._src.optimizers.state_transfer.build_transfer_fns`
+        the ``UpdateClass`` path uses, so the environment and both
+        deployment wrappers agree (``docs/adr/0009``'s constraint,
+        applied to ``docs/adr/0013``'s channel).
+    transfer_write_fn : Callable | None
+        ``transfer_write_fn(bundle, sub_state) -> sub_state`` -- folds a
+        carried scale into this sub-optimizer's own state.
     fevals_fn : Callable | None
         ``fevals_fn(sub_state_before, sub_state_after) -> Array`` — the
         function evaluations one step of this sub-optimizer actually
@@ -195,6 +224,9 @@ class SubOpt(eqx.Module):
     fevals_fn: Callable | None = eqx.field(static=True, default=None)
     population_handshake: str = eqx.field(static=True, default="best_one")
     max_fevals_per_step: int | None = eqx.field(static=True, default=None)
+    family: str = eqx.field(static=True, default=FAMILY_GRADIENT)
+    transfer_read_fn: Callable | None = eqx.field(static=True, default=None)
+    transfer_write_fn: Callable | None = eqx.field(static=True, default=None)
 
     @property
     def fevals_bound(self) -> int:
@@ -299,6 +331,9 @@ def grad_sub_optimizer(
     opt_state_handshake: str = "continue",
     population_handshake: str = "best_one",
     max_fevals_per_step: int | None = None,
+    family: str = FAMILY_GRADIENT,
+    transfer_read_fn: Callable | None = None,
+    transfer_write_fn: Callable | None = None,
 ) -> SubOpt:
     """Wrap an optax gradient transformation as a ``SubOpt``.
 
@@ -401,6 +436,9 @@ def grad_sub_optimizer(
         # comparable with a registry-driven run's. See
         # ``SubOpt.bill_fevals``.
         fevals_fn=step_fevals,
+        family=family,
+        transfer_read_fn=transfer_read_fn,
+        transfer_write_fn=transfer_write_fn,
     )
 
 
@@ -413,6 +451,9 @@ def pop_sub_optimizer(
     opt_state_handshake: str = "continue",
     population_handshake: str = "best_one",
     max_fevals_per_step: int | None = None,
+    family: str = FAMILY_GRADIENT,
+    transfer_read_fn: Callable | None = None,
+    transfer_write_fn: Callable | None = None,
 ) -> SubOpt:
     """Wrap an evosax-style ``(init, ask, tell)`` triple as a ``SubOpt``.
 
@@ -451,6 +492,9 @@ def pop_sub_optimizer(
         opt_state_handshake=opt_state_handshake,
         population_handshake=population_handshake,
         max_fevals_per_step=max_fevals_per_step,
+        family=family,
+        transfer_read_fn=transfer_read_fn,
+        transfer_write_fn=transfer_write_fn,
     )
 
 
@@ -580,6 +624,12 @@ def optstep_to_subopt(
             optax_cls = l2co_native_optax[name]
         transform = optax_cls(**hyperparams)
         bound_fn = LINESEARCH_FEVAL_BOUND.get(name)
+        # Same builder the ``UpdateClass`` path calls, from the same
+        # hyperparameters, so a deployed policy reads and writes scale
+        # exactly as the training environment did.
+        read_fn, write_fn = build_transfer_fns(
+            name, FAMILY_GRADIENT, hyperparams
+        )
         return grad_sub_optimizer(
             transform,
             name_hash=opt_step.hash,
@@ -588,6 +638,9 @@ def optstep_to_subopt(
             max_fevals_per_step=(
                 None if bound_fn is None else bound_fn(hyperparams)
             ),
+            family=FAMILY_GRADIENT,
+            transfer_read_fn=read_fn,
+            transfer_write_fn=write_fn,
         )
 
     # --- Evosax / population-based -------------------------------------
@@ -730,6 +783,19 @@ def optstep_to_subopt(
             )
             return new_state
 
+        # ``is_distribution_based`` was already resolved above from the
+        # evosax class hierarchy; reuse it rather than re-deriving the
+        # family from registry membership, which ``FEEDBACK_evosax.md``
+        # records as fragile.
+        family = (
+            FAMILY_DISTRIBUTION if is_distribution_based else FAMILY_POPULATION
+        )
+        read_fn, write_fn = build_transfer_fns(
+            name,
+            family,
+            hyperparams,
+            ravel_fn=(algo._ravel_solution if is_distribution_based else None),
+        )
         return pop_sub_optimizer(
             init_fn=init_fn,
             ask_fn=ask_fn,
@@ -738,6 +804,9 @@ def optstep_to_subopt(
             name_hash=opt_step.hash,
             opt_state_handshake=handshake_policy_for(opt_step).opt_state,
             population_handshake=handshake_policy_for(opt_step).population,
+            family=family,
+            transfer_read_fn=read_fn,
+            transfer_write_fn=write_fn,
         )
 
     raise ValueError(
