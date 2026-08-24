@@ -40,6 +40,12 @@ from optax import OptState as OptaxState
 # Local
 from l2co._src.opt_history import OptHistory
 from l2co._src.optimizers.menu_eval import menu_loss_and_grad
+from l2co._src.optimizers.state_transfer import (
+    FAMILY_DISTRIBUTION,
+    FAMILY_GRADIENT,
+    FAMILY_POPULATION,
+    build_transfer_fns,
+)
 from l2co._src.optimizers.utils import resolve_popsize, variable_popsize
 from l2co._src.sampler import random_sampling
 from l2co._src.tree_utils import (
@@ -325,6 +331,53 @@ def optax_extra_kwargs_fn(
 
 #                                                      EvoSax closure factories
 # =============================================================================
+
+
+def evosax_ask_fn(
+    optimizer: DistributionBasedAlgorithm,
+    es_params: Params,
+    bounded: tuple[float, float],
+) -> Callable:
+    """Expose a distribution-based ES's own sampling step.
+
+    ``step_fn`` bundles evaluate/tell/ask into one call with the evosax
+    algorithm captured in its closure, so a caller holding only an
+    :class:`UpdateClass` cannot ask for a population without also
+    spending a generation. This exposes just the ``ask``, which is what
+    a handshake needs: write location and scale into the state, then let
+    the optimizer draw its own population, so any draws it caches in
+    state (``z``/``y`` for CR-FM-NES, ``pert`` for the persistent-ES
+    family) match the population that gets told back to it.
+
+    Bounds are clipped exactly as ``step_fn`` clips them, so a
+    handshake population obeys the same box as a stepped one.
+
+    Parameters
+    ----------
+    optimizer : DistributionBasedAlgorithm
+        Constructed EvoSax algorithm instance.
+    es_params : Params
+        Its resolved parameters.
+    bounded : tuple[float, float]
+        Box bounds, applied after ``ask``.
+
+    Returns
+    -------
+    Callable
+        ``ask_fn(opt_state, key) -> (params, opt_state)``.
+    """
+
+    def ask_fn(
+        opt_state: EvoSaxState, key: PRNGKeyArray
+    ) -> tuple[PyTree, EvoSaxState]:
+        """Draw one population from the optimizer's own distribution."""
+        params, new_opt_state = optimizer.ask(
+            key=key, state=opt_state, params=es_params
+        )
+        params = jax.tree.map(lambda p: jnp.clip(p, *bounded), params)
+        return params, new_opt_state
+
+    return ask_fn
 
 
 def evosax_distribution_based_fn(
@@ -787,6 +840,44 @@ class UpdateClass(eqx.Module):
         ``popsize`` -- notably rl2co's ``AUCEnv``, whose reward
         normalization assumes no optimizer bills more than
         ``max_iterations * max(popsize)``.
+    family : str
+        Which optimizer family this is, one of
+        :data:`~l2co._src.optimizers.state_transfer.FAMILIES`. Set by
+        the constructing factory, which knows what it is building --
+        *not* inferred from evosax registry membership, which
+        ``FEEDBACK_evosax.md`` records as a source of friction. Read by
+        a switching caller to decide the population half of a handshake:
+        a ``"distribution"`` optimizer regenerates its own population
+        through :attr:`ask_fn`, the others keep the existing
+        ``best_one`` / ``best`` layouts.
+    ask_fn : Callable or None
+        ``ask_fn(opt_state, key) -> (params, opt_state)`` -- the
+        optimizer's own sampling step, bounds-clipped like
+        :attr:`step_fn`. Present only for ``"distribution"``
+        optimizers; ``None`` (default) otherwise. Calling it *after*
+        writing a handshake into the state is what keeps the
+        ask/tell-coupled algorithms consistent: CR-FM-NES and seven
+        relatives cache their draws in state and consume them on the
+        next ``tell``, so the population and those cached draws have to
+        come from the same ``ask`` (``docs/adr/0012``).
+    transfer_read_fn : Callable or None
+        ``transfer_read_fn(opt_state) -> (sigma, conf)`` -- projects
+        this optimizer's own state onto the canonical scale carried
+        across a switch. Always callable when the optimizer was built
+        through a factory: an optimizer holding no scale gets a reader
+        returning ``CONF_ABSENT`` rather than ``None``, so callers need
+        no presence check. ``None`` only for a hand-constructed
+        ``UpdateClass``.
+    transfer_write_fn : Callable or None
+        ``transfer_write_fn(bundle, opt_state) -> opt_state`` -- folds a
+        :class:`~l2co._src.optimizers.state_transfer.TransferBundle`
+        into this optimizer's own state. Same convention: a
+        non-receiver such as L-BFGS gets
+        :func:`~l2co._src.optimizers.state_transfer.write_none`, an
+        identity, rather than ``None``. Both halves are bound at
+        construction because they need hyperparameters the state does
+        not retain -- the learning rate, Rprop's clip bounds, the ravel
+        function evosax uses to flatten a solution.
     sequential_realizations : bool
         Class-level marker (not a field): whether a multi-realization
         run must execute one realization at a time rather than with all
@@ -810,6 +901,10 @@ class UpdateClass(eqx.Module):
     hash: int = eqx.field(static=True)
     stop_fn: StopFunction = eqx.field(static=True, default=_default_stop_fn)
     max_fevals_per_step: int | None = eqx.field(static=True, default=None)
+    family: str = eqx.field(static=True, default=FAMILY_GRADIENT)
+    ask_fn: Callable | None = eqx.field(static=True, default=None)
+    transfer_read_fn: Callable | None = eqx.field(static=True, default=None)
+    transfer_write_fn: Callable | None = eqx.field(static=True, default=None)
 
     @property
     def fevals_bound(self) -> int:
@@ -833,6 +928,7 @@ class UpdateClass(eqx.Module):
         popsize: int = 1,
         bounded: tuple[float, float] | None = None,
         stop_fn: StopFunction | None = None,
+        name: str = "",
         **hyperparameters,
     ) -> UpdateClass:
         """Construct an ``UpdateClass`` for a standard optax optimizer.
@@ -852,6 +948,14 @@ class UpdateClass(eqx.Module):
             Box bounds applied to parameters after each step.
         stop_fn : StopFunction or None, optional
             Stopping function.
+        name : str, optional
+            Registry name, used only to resolve this optimizer's
+            state-transfer overrides
+            (:data:`~l2co._src.optimizers.state_transfer.TRANSFER_OVERRIDES`).
+            Declared explicitly rather than left to
+            ``**hyperparameters`` so it is never forwarded to the
+            underlying constructor. Defaults to ``""``, which resolves
+            to the family default.
         **hyperparameters
             Forwarded to the optimizer constructor.
 
@@ -870,6 +974,9 @@ class UpdateClass(eqx.Module):
             opt_hash=opt_hash,
             pass_rng=task.pass_rng,
         )
+        read_fn, write_fn = build_transfer_fns(
+            name, FAMILY_GRADIENT, hyperparameters
+        )
 
         return cls(
             init_fn=init_fn,
@@ -877,6 +984,9 @@ class UpdateClass(eqx.Module):
             popsize=popsize,
             hash=opt_hash,
             stop_fn=stop_fn,
+            family=FAMILY_GRADIENT,
+            transfer_read_fn=read_fn,
+            transfer_write_fn=write_fn,
         )
 
     @classmethod
@@ -889,6 +999,7 @@ class UpdateClass(eqx.Module):
         bounded: tuple[float, float] | None = None,
         stop_fn: StopFunction | None = None,
         max_fevals_per_step: int | None = None,
+        name: str = "",
         **hyperparameters,
     ) -> UpdateClass:
         """Construct an ``UpdateClass`` for optax optimizers with extra
@@ -909,6 +1020,14 @@ class UpdateClass(eqx.Module):
             Box bounds applied to parameters after each step.
         stop_fn : StopFunction or None, optional
             Stopping function.
+        name : str, optional
+            Registry name, used only to resolve this optimizer's
+            state-transfer overrides
+            (:data:`~l2co._src.optimizers.state_transfer.TRANSFER_OVERRIDES`).
+            Declared explicitly rather than left to
+            ``**hyperparameters`` so it is never forwarded to the
+            underlying constructor. Defaults to ``""``, which resolves
+            to the family default.
         max_fevals_per_step : int or None, optional
             Forwarded to :attr:`UpdateClass.max_fevals_per_step`. Set
             it for linesearch optimizers, whose per-iteration cost is
@@ -932,6 +1051,9 @@ class UpdateClass(eqx.Module):
             opt_hash=opt_hash,
             pass_rng=task.pass_rng,
         )
+        read_fn, write_fn = build_transfer_fns(
+            name, FAMILY_GRADIENT, hyperparameters
+        )
 
         return cls(
             init_fn=init_fn,
@@ -939,6 +1061,9 @@ class UpdateClass(eqx.Module):
             popsize=popsize,
             hash=opt_hash,
             stop_fn=stop_fn,
+            family=FAMILY_GRADIENT,
+            transfer_read_fn=read_fn,
+            transfer_write_fn=write_fn,
             max_fevals_per_step=max_fevals_per_step,
         )
 
@@ -951,6 +1076,7 @@ class UpdateClass(eqx.Module):
         popsize: PopSize = variable_popsize,
         bounded: tuple[float, float] | None = (None, None),
         stop_fn: StopFunction | None = None,
+        name: str = "",
         **hyperparameters,
     ) -> UpdateClass:
         """Construct an ``UpdateClass`` for an EvoSax distribution-based
@@ -972,6 +1098,14 @@ class UpdateClass(eqx.Module):
             Box bounds applied to parameters after each step.
         stop_fn : StopFunction or None, optional
             Stopping function.
+        name : str, optional
+            Registry name, used only to resolve this optimizer's
+            state-transfer overrides
+            (:data:`~l2co._src.optimizers.state_transfer.TRANSFER_OVERRIDES`).
+            Declared explicitly rather than left to
+            ``**hyperparameters`` so it is never forwarded to the
+            underlying constructor. Defaults to ``""``, which resolves
+            to the family default.
         **hyperparameters
             Override fields on ``optimizer.default_params``.
 
@@ -984,6 +1118,7 @@ class UpdateClass(eqx.Module):
         params, static = eqx.partition(task.model, eqx.is_inexact_array)
 
         optimizer = optimizer(population_size=popsize, solution=params)
+        es_params = optimizer.default_params.replace(**hyperparameters)
 
         init_fn, step_fn = evosax_distribution_based_fn(
             static=static,
@@ -991,9 +1126,15 @@ class UpdateClass(eqx.Module):
             loss_fn=task.loss_fn,
             bounded=bounded,
             popsize=popsize,
-            es_params=optimizer.default_params.replace(**hyperparameters),
+            es_params=es_params,
             opt_hash=opt_hash,
             pass_rng=task.pass_rng,
+        )
+        read_fn, write_fn = build_transfer_fns(
+            name,
+            FAMILY_DISTRIBUTION,
+            hyperparameters,
+            ravel_fn=optimizer._ravel_solution,
         )
 
         return cls(
@@ -1002,6 +1143,10 @@ class UpdateClass(eqx.Module):
             popsize=popsize,
             hash=opt_hash,
             stop_fn=stop_fn,
+            family=FAMILY_DISTRIBUTION,
+            ask_fn=evosax_ask_fn(optimizer, es_params, bounded),
+            transfer_read_fn=read_fn,
+            transfer_write_fn=write_fn,
         )
 
     @classmethod
@@ -1013,6 +1158,7 @@ class UpdateClass(eqx.Module):
         popsize: PopSize = variable_popsize,
         bounded: tuple[float, float] | None = (None, None),
         stop_fn: StopFunction | None = None,
+        name: str = "",
         **hyperparameters,
     ) -> UpdateClass:
         """Construct an ``UpdateClass`` for EvoSax's ``RandomSearch``
@@ -1038,6 +1184,14 @@ class UpdateClass(eqx.Module):
             Box bounds applied to parameters after each step.
         stop_fn : StopFunction or None, optional
             Stopping function.
+        name : str, optional
+            Registry name, used only to resolve this optimizer's
+            state-transfer overrides
+            (:data:`~l2co._src.optimizers.state_transfer.TRANSFER_OVERRIDES`).
+            Declared explicitly rather than left to
+            ``**hyperparameters`` so it is never forwarded to the
+            underlying constructor. Defaults to ``""``, which resolves
+            to the family default.
         **hyperparameters
             Override fields on ``optimizer.default_params``.
 
@@ -1071,6 +1225,13 @@ class UpdateClass(eqx.Module):
             opt_hash=opt_hash,
             pass_rng=task.pass_rng,
         )
+        # Random search keeps no search state, so ``name`` resolves to
+        # the none/none override and there is nothing to hand over. The
+        # family is still ``population``: it does not regenerate a
+        # population from a written distribution.
+        read_fn, write_fn = build_transfer_fns(
+            name, FAMILY_POPULATION, hyperparameters
+        )
 
         return cls(
             init_fn=init_fn,
@@ -1078,6 +1239,9 @@ class UpdateClass(eqx.Module):
             popsize=popsize,
             hash=opt_hash,
             stop_fn=stop_fn,
+            family=FAMILY_POPULATION,
+            transfer_read_fn=read_fn,
+            transfer_write_fn=write_fn,
         )
 
     @classmethod
@@ -1089,6 +1253,7 @@ class UpdateClass(eqx.Module):
         popsize: PopSize = variable_popsize,
         bounded: tuple[float, float] | None = (None, None),
         stop_fn: StopFunction | None = None,
+        name: str = "",
         **hyperparameters,
     ) -> UpdateClass:
         """Construct an ``UpdateClass`` for an EvoSax population-based
@@ -1110,6 +1275,14 @@ class UpdateClass(eqx.Module):
             Box bounds applied to parameters after each step.
         stop_fn : StopFunction or None, optional
             Stopping function.
+        name : str, optional
+            Registry name, used only to resolve this optimizer's
+            state-transfer overrides
+            (:data:`~l2co._src.optimizers.state_transfer.TRANSFER_OVERRIDES`).
+            Declared explicitly rather than left to
+            ``**hyperparameters`` so it is never forwarded to the
+            underlying constructor. Defaults to ``""``, which resolves
+            to the family default.
         **hyperparameters
             Override fields on ``optimizer.default_params``.
 
@@ -1133,6 +1306,9 @@ class UpdateClass(eqx.Module):
             opt_hash=opt_hash,
             pass_rng=task.pass_rng,
         )
+        read_fn, write_fn = build_transfer_fns(
+            name, FAMILY_POPULATION, hyperparameters
+        )
 
         return cls(
             init_fn=init_fn,
@@ -1140,4 +1316,7 @@ class UpdateClass(eqx.Module):
             popsize=popsize,
             hash=opt_hash,
             stop_fn=stop_fn,
+            family=FAMILY_POPULATION,
+            transfer_read_fn=read_fn,
+            transfer_write_fn=write_fn,
         )

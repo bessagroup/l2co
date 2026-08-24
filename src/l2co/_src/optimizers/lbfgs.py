@@ -71,6 +71,10 @@ from optax._src.linesearch import zoom_linesearch
 
 # Local
 from l2co._src.opt_history import OptHistory
+from l2co._src.optimizers.state_transfer import (
+    FAMILY_GRADIENT,
+    build_transfer_fns,
+)
 from l2co._src.optimizers.update_class import UpdateClass, step_fevals
 from l2co._src.typing import (
     InitFunction,
@@ -463,6 +467,14 @@ def lbfgs_update(
         opt_hash=opt_hash,
     )
 
+    # L-BFGS's last accepted step is recoverable from
+    # ``diff_params_memory``, but nothing a switch carries survives its
+    # ``init`` -- so it is a scale *provider* and not a receiver. Both
+    # halves come from the ``"lbfgs"`` entry in ``TRANSFER_OVERRIDES``.
+    read_fn, write_fn = build_transfer_fns(
+        "lbfgs", FAMILY_GRADIENT, hyperparameters
+    )
+
     return UpdateClass(
         init_fn=init_fn,
         step_fn=step_fn,
@@ -470,6 +482,9 @@ def lbfgs_update(
         hash=opt_hash,
         stop_fn=stop_fn,
         max_fevals_per_step=max_fevals_per_step,
+        family=FAMILY_GRADIENT,
+        transfer_read_fn=read_fn,
+        transfer_write_fn=write_fn,
     )
 
 

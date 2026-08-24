@@ -1,0 +1,523 @@
+"""Unit tests for the optimizer state-transfer channel.
+
+The channel carries one scalar -- a search *scale* -- from the outgoing
+optimizer to the incoming one at a switch. These tests pin the four
+things that can quietly go wrong with that:
+
+* the **round trip**: a writer must be the inverse of the reader, or a
+  transferred scale silently lands at the wrong magnitude. Two readers
+  fold in a shape factor (an ES's covariance, an optax preconditioner),
+  which is exactly where an inverse is easy to get wrong;
+* the **roles**: not every optimizer both provides and receives. L-BFGS
+  and DE can be read but not written; RMSProp can be written but not
+  read. Pinning the asymmetry stops a future refactor from "fixing" a
+  deliberate no-op;
+* the **gate**: a bundle carrying no scale must leave state untouched,
+  and a degenerate scale (zero, NaN) must be reported as absence rather
+  than written -- writing zero into an ES freezes it;
+* **shape preservation**: a per-coordinate quantity is rescaled, never
+  flattened. Writing a scalar into ``rprop``'s ``step_sizes`` would
+  destroy the ratchet that makes it work.
+
+Plus the two structural guards: every registered optimizer's reader must
+be usable in one ``lax.switch`` (they all have to agree on output
+layout), and every ``distribution``-family optimizer must expose an
+``ask_fn``, since a missing one silently degrades to the old
+population-substitution path rather than raising.
+"""
+
+from __future__ import annotations
+
+import jax
+import jax.numpy as jnp
+import jax.random as jr
+import optax
+import pytest
+from evosax.algorithms.distribution_based import (
+    CMA_ES,
+    CR_FM_NES,
+    SNES,
+    Sep_CMA_ES,
+)
+from evosax.algorithms.population_based import (
+    MR15_GA,
+    PSO,
+    DifferentialEvolution,
+)
+from l2co_tasks import create_bbob_task
+
+from l2co.optimizers import (
+    CONF_ABSENT,
+    CONF_EXACT,
+    FAMILIES,
+    FAMILY_DISTRIBUTION,
+    FAMILY_GRADIENT,
+    FAMILY_POPULATION,
+    TransferBundle,
+    build_transfer_fns,
+    transfer_spec_for,
+)
+from l2co.optimizers import optimizers as REGISTRY
+
+DIM = 10
+POPSIZE = 10
+TARGET = 0.25
+
+#: The seven-member transfer-validation menu, with the hyperparameters
+#: the configs use.
+MENU: dict[str, dict] = {
+    "lbfgs": {},
+    "rprop": {"learning_rate": 1e-3},
+    "crfmnes": {},
+    "sepcmaes": {},
+    "adan": {"learning_rate": 1e-2},
+    "pso": {},
+    "mr15ga": {},
+}
+
+
+# ---------------------------------------------------------------- helpers
+
+
+def _bundle(sigma: float = TARGET, conf: float = CONF_EXACT):
+    """A bundle handing over a known point at a known scale."""
+    return TransferBundle(
+        x=jnp.full((DIM,), 0.5),
+        f=jnp.asarray(-1.0),
+        sigma=jnp.asarray(sigma),
+        conf_sigma=jnp.asarray(conf),
+    )
+
+
+def _evosax_dist(cls, **hp):
+    """Build a distribution-based ES and its reader/writer."""
+    algo = cls(population_size=POPSIZE, solution=jnp.zeros((DIM,)))
+    state = algo.init(jr.key(0), jnp.zeros((DIM,)), algo.default_params)
+    read, write = build_transfer_fns(
+        cls.__name__.lower().replace("_", ""),
+        FAMILY_DISTRIBUTION,
+        hp,
+        ravel_fn=algo._ravel_solution,
+    )
+    return algo, state, read, write
+
+
+def _evosax_pop(cls, name, generations: int = 0):
+    """Build a population-based ES, optionally after real generations.
+
+    PSO's ``velocity`` and DE's population spread only become meaningful
+    once a generation has actually run, so scale is genuinely absent at
+    init -- which some of these tests rely on and others must step past.
+    """
+    key = jr.key(0)
+    algo = cls(population_size=POPSIZE, solution=jnp.zeros((DIM,)))
+    state = algo.init(
+        key,
+        jr.normal(key, (POPSIZE, DIM)),
+        jnp.arange(POPSIZE, dtype=float),
+        algo.default_params,
+    )
+    for _ in range(generations):
+        population, state = algo.ask(key, state, algo.default_params)
+        state, _ = algo.tell(
+            key,
+            population,
+            jnp.arange(POPSIZE, dtype=float),
+            state,
+            algo.default_params,
+        )
+    read, write = build_transfer_fns(name, FAMILY_POPULATION, {})
+    return algo, state, read, write
+
+
+def _optax_stepped(transform, steps: int = 3):
+    """An optax state after real updates, so its moments are non-zero."""
+    params = jnp.ones((1, DIM))
+    state = transform.init(params)
+    for i in range(steps):
+        grads = jnp.full((1, DIM), 0.1 * (i + 1))
+        updates, state = transform.update(grads, state, params)
+        params = optax.apply_updates(params, updates)
+    return state
+
+
+# ------------------------------------------------------------ round trip
+
+
+class TestRoundTrip:
+    """A writer must be the exact inverse of its reader.
+
+    Otherwise a scale handed over as ``sigma`` arrives as something
+    else. The ES cases are the ones that matter: their readers multiply
+    ``std`` by a shape factor drawn from ``C`` / ``D`` / ``v``, and the
+    writer has to divide the *target's own* factor back out -- the
+    target keeps its shape across a switch, so the factor is not the
+    one the reader saw.
+    """
+
+    @pytest.mark.parametrize(
+        "cls", [CR_FM_NES, Sep_CMA_ES, SNES, CMA_ES], ids=lambda c: c.__name__
+    )
+    def test_distribution_round_trip(self, cls):
+        _, state, read, write = _evosax_dist(cls)
+        sigma, conf = read(write(_bundle(), state))
+        assert float(conf) > CONF_ABSENT
+        assert jnp.isclose(sigma, TARGET, rtol=1e-5)
+
+    def test_mr15ga_round_trip(self):
+        _, state, read, write = _evosax_pop(MR15_GA, "mr15ga")
+        sigma, _ = read(write(_bundle(), state))
+        assert jnp.isclose(sigma, TARGET, rtol=1e-5)
+
+    def test_pso_round_trip(self):
+        # One generation, so ``velocity`` is no longer zero.
+        _, state, read, write = _evosax_pop(PSO, "pso", generations=1)
+        sigma, _ = read(write(_bundle(), state))
+        assert jnp.isclose(sigma, TARGET, rtol=1e-5)
+
+    @pytest.mark.parametrize(
+        ("name", "transform", "hp"),
+        [
+            ("adam", optax.adam(1e-2), {"learning_rate": 1e-2}),
+            ("adan", optax.adan(1e-2), {"learning_rate": 1e-2}),
+            ("sgd", optax.sgd(1e-2, momentum=0.9), {"learning_rate": 1e-2}),
+            ("rprop", optax.rprop(1e-3), {"learning_rate": 1e-3}),
+        ],
+    )
+    def test_gradient_round_trip(self, name, transform, hp):
+        read, write = build_transfer_fns(name, FAMILY_GRADIENT, hp)
+        state = _optax_stepped(transform)
+        sigma, conf = read(write(_bundle(), state))
+        assert float(conf) > CONF_ABSENT
+        # Looser than the ES cases: the ``eps`` in ``mu / (sqrt(nu) +
+        # eps)`` does not scale with ``nu``, so the inverse is exact
+        # only up to that term. It is why these readers report
+        # ``CONF_ESTIMATED``.
+        assert jnp.isclose(sigma, TARGET, rtol=1e-3)
+
+
+# ----------------------------------------------------------------- roles
+
+
+class TestRoles:
+    """Not every optimizer both provides and receives a scale.
+
+    These no-ops are deliberate, and each is a place where a plausible
+    "fix" would be wrong.
+    """
+
+    def test_lbfgs_provides_but_does_not_receive(self):
+        read, write = build_transfer_fns("lbfgs", FAMILY_GRADIENT, {})
+        state = _optax_stepped(optax.lbfgs(), steps=0)
+        # Nothing has stepped yet, so there is no step to report.
+        _, conf = read(state)
+        assert float(conf) == CONF_ABSENT
+        # After ``init`` every field is zeroed and the first step length
+        # comes from a capped inverse gradient norm the line search then
+        # overwrites -- there is nowhere for a scale to land.
+        assert jax.tree.all(
+            jax.tree.map(
+                lambda a, b: bool(jnp.array_equal(a, b)),
+                write(_bundle(), state),
+                state,
+            )
+        )
+
+    def test_de_provides_but_does_not_receive(self):
+        # DE holds neither ``std`` nor ``velocity``, so its scale is the
+        # population spread -- readable, but the population is the
+        # caller's ``best_one`` handshake, not the writer's to set.
+        _, state, read, write = _evosax_pop(
+            DifferentialEvolution, "differentialevolution", generations=1
+        )
+        _, conf = read(state)
+        assert float(conf) > CONF_ABSENT
+        assert jax.tree.all(
+            jax.tree.map(
+                lambda a, b: bool(jnp.array_equal(a, b)),
+                write(_bundle(), state),
+                state,
+            )
+        )
+
+    def test_rmsprop_receives_but_does_not_provide(self):
+        read, write = build_transfer_fns(
+            "rmsprop", FAMILY_GRADIENT, {"learning_rate": 1e-2}
+        )
+        state = _optax_stepped(optax.rmsprop(1e-2))
+        # A preconditioner with no stored step cannot report a scale:
+        # the step it would take depends on a gradient magnitude nothing
+        # retained.
+        _, conf = read(state)
+        assert float(conf) == CONF_ABSENT
+        # It can still be rescaled, using the unit-gradient reference.
+        before = optax.tree.get(state, "nu")
+        after = optax.tree.get(write(_bundle(), state), "nu")
+        assert not bool(jnp.allclose(before, after))
+
+    def test_randomsearch_neither(self):
+        spec = transfer_spec_for("randomsearch", FAMILY_POPULATION)
+        assert spec.reader == "none"
+        assert spec.writer == "none"
+
+
+# ------------------------------------------------------------- the gate
+
+
+class TestAbsenceGate:
+    """``CONF_ABSENT`` is the only level that changes behaviour."""
+
+    @pytest.mark.parametrize(
+        "cls", [CR_FM_NES, Sep_CMA_ES], ids=lambda c: c.__name__
+    )
+    def test_absent_bundle_leaves_scale_untouched(self, cls):
+        _, state, _, write = _evosax_dist(cls)
+        written = write(_bundle(conf=CONF_ABSENT), state)
+        assert bool(jnp.allclose(written.std, state.std))
+
+    def test_zero_velocity_reports_absent_not_zero(self):
+        # PSO's velocity is zero until a generation runs. Writing a zero
+        # scale into the next optimizer would freeze it, so absence is
+        # the honest answer.
+        _, state, read, _ = _evosax_pop(PSO, "pso", generations=0)
+        sigma, conf = read(state)
+        assert float(conf) == CONF_ABSENT
+        assert float(sigma) == 0.0
+
+    def test_nan_scale_reports_absent(self):
+        _, state, read, _ = _evosax_dist(CR_FM_NES)
+        poisoned = state.replace(std=jnp.asarray(jnp.nan))
+        _, conf = read(poisoned)
+        assert float(conf) == CONF_ABSENT
+
+
+# -------------------------------------------------- shape preservation
+
+
+class TestShapePreservation:
+    """Scale goes stale; shape does not. A write rescales, never flattens."""
+
+    def test_rprop_preserves_relative_structure(self):
+        _, write = build_transfer_fns(
+            "rprop", FAMILY_GRADIENT, {"learning_rate": 1e-3}
+        )
+        state = optax.rprop(1e-3).init(jnp.ones((1, DIM)))
+        # A deliberately uneven ratchet: the relative pattern is the
+        # information rprop has accumulated.
+        uneven = jnp.linspace(1e-4, 1e-2, DIM).reshape(1, DIM)
+        state = optax.tree.set(state, step_sizes=uneven)
+
+        after = optax.tree.get(write(_bundle(), state), "step_sizes")
+        ratios = after / uneven
+        assert bool(jnp.allclose(ratios, ratios[0, 0], rtol=1e-5))
+        rms = jnp.sqrt(jnp.mean(jnp.square(after)))
+        assert jnp.isclose(rms, TARGET, rtol=1e-5)
+
+    def test_rprop_zeroes_prev_updates(self):
+        # ``sign(g * prev_updates)`` keys the ratchet; across an iterate
+        # jump those signs describe a different neighbourhood. Zeroing
+        # takes the branch that leaves ``step_sizes`` alone for one
+        # clean step.
+        _, write = build_transfer_fns(
+            "rprop", FAMILY_GRADIENT, {"learning_rate": 1e-3}
+        )
+        state = _optax_stepped(optax.rprop(1e-3))
+        assert not bool(
+            jnp.allclose(optax.tree.get(state, "prev_updates"), 0.0)
+        )
+        after = write(_bundle(), state)
+        assert bool(jnp.allclose(optax.tree.get(after, "prev_updates"), 0.0))
+
+    def test_snes_per_coordinate_std_is_rescaled_not_flattened(self):
+        _, state, _, write = _evosax_dist(SNES)
+        uneven = jnp.linspace(0.5, 2.0, DIM)
+        state = state.replace(std=uneven)
+        after = write(_bundle(), state).std
+        ratios = after / uneven
+        assert bool(jnp.allclose(ratios, ratios[0], rtol=1e-5))
+
+    def test_crfmnes_keeps_shape_and_zeroes_paths(self):
+        # The whole reason own-ask beats a reset: ``D`` and ``v`` are the
+        # landscape geometry and survive, while the cumulation paths are
+        # calibrated against the algorithm's own past steps and must not.
+        _, state, _, write = _evosax_dist(CR_FM_NES)
+        state = state.replace(p_std=jnp.ones((DIM,)), p_c=jnp.ones((DIM,)))
+        after = write(_bundle(), state)
+        assert bool(jnp.allclose(after.D, state.D))
+        assert bool(jnp.allclose(after.v, state.v))
+        assert bool(jnp.allclose(after.p_std, 0.0))
+        assert bool(jnp.allclose(after.p_c, 0.0))
+
+    def test_distribution_write_sets_mean_to_handed_point(self):
+        algo, state, _, write = _evosax_dist(Sep_CMA_ES)
+        after = write(_bundle(), state)
+        assert bool(
+            jnp.allclose(after.mean, algo._ravel_solution(_bundle().x))
+        )
+
+
+# ------------------------------------------------- mr15ga's 1/5 rule
+
+
+class TestMR15BaselineRepair:
+    """The scale write must survive MR15-GA's next ``tell``.
+
+    Its 1/5 rule reads ``mean(fitness < state.fitness)`` against the
+    *stored elite*. A stale elite from an early generation makes a
+    population drawn around a much better point look like near-total
+    success, doubling the mutation scale exactly when it should shrink
+    -- undoing the write one generation later. This is the decoder rule
+    most likely to be wrong and least likely to be caught by asserting
+    on the written state alone, because the failure happens afterwards.
+    """
+
+    def test_baseline_is_rebased_on_the_handed_over_best(self):
+        _, state, _, write = _evosax_pop(MR15_GA, "mr15ga")
+        after = write(_bundle(), state)
+        assert bool(jnp.allclose(after.fitness, -1.0))
+        assert bool(jnp.allclose(after.population, 0.5))
+
+    def test_stale_elite_would_have_doubled_the_scale(self):
+        algo, state, _, write = _evosax_pop(MR15_GA, "mr15ga")
+        # A deliberately terrible stored elite, as if MR15-GA last ran
+        # early in the episode.
+        stale = state.replace(fitness=jnp.full((POPSIZE,), 1e6))
+        after = write(_bundle(), stale)
+
+        key = jr.key(1)
+        # Every candidate beats the stale elite but not the handed-over
+        # best, which is the situation the repair exists for.
+        fitness = jnp.full((POPSIZE,), 0.0)
+        params = algo.default_params
+
+        repaired, _ = algo.tell(
+            key, jnp.zeros((POPSIZE, DIM)), fitness, after, params
+        )
+        unrepaired, _ = algo.tell(
+            key, jnp.zeros((POPSIZE, DIM)), fitness, stale, params
+        )
+        assert float(repaired.std) < float(after.std)
+        assert float(unrepaired.std) > float(stale.std)
+
+
+# ------------------------------------------------------ structural guards
+
+
+class TestRegistryGuards:
+    """Guards over the whole registry, not one optimizer at a time."""
+
+    @pytest.fixture(scope="class")
+    def task(self):
+        return create_bbob_task(fn_name="sphere", seed=0, dimensionality=DIM)
+
+    def test_menu_builds_with_transfer_wired(self, task):
+        for i, (name, hp) in enumerate(MENU.items()):
+            update_class = REGISTRY[name](
+                task=task,
+                opt_hash=i,
+                bounded=(None, None),
+                stop_fn=None,
+                **hp,
+            )
+            assert update_class.family in FAMILIES, name
+            assert callable(update_class.transfer_read_fn), name
+            assert callable(update_class.transfer_write_fn), name
+
+    def test_distribution_family_always_exposes_ask(self, task):
+        # A missing ``ask_fn`` does not raise -- it silently degrades to
+        # the old population-substitution path, which is exactly the bug
+        # this work exists to remove. So it gets its own guard.
+        for i, (name, hp) in enumerate(MENU.items()):
+            update_class = REGISTRY[name](
+                task=task,
+                opt_hash=i,
+                bounded=(None, None),
+                stop_fn=None,
+                **hp,
+            )
+            if update_class.family == FAMILY_DISTRIBUTION:
+                assert update_class.ask_fn is not None, name
+            else:
+                assert update_class.ask_fn is None, name
+
+    def test_ask_fn_emits_a_full_population(self, task):
+        update_class = REGISTRY["crfmnes"](
+            task=task, opt_hash=0, bounded=(None, None), stop_fn=None
+        )
+        params = jnp.zeros((update_class.popsize, DIM))
+        opt_state = update_class.init_fn(params, jr.key(0))
+        population, _ = update_class.ask_fn(opt_state, jr.key(1))
+        leaves = jax.tree.leaves(population)
+        assert leaves
+        assert all(leaf.shape[0] == update_class.popsize for leaf in leaves)
+
+    def test_readers_agree_on_output_layout(self, task):
+        """All readers must be usable in one ``lax.switch``.
+
+        The bundle crosses a switch on the outgoing optimizer's index,
+        so every branch has to return the same structure -- two scalar
+        floats. A reader returning a differently shaped or typed value
+        would only fail at trace time, deep inside a rollout.
+        """
+        built = [
+            REGISTRY[name](
+                task=task,
+                opt_hash=i,
+                bounded=(None, None),
+                stop_fn=None,
+                **hp,
+            )
+            for i, (name, hp) in enumerate(MENU.items())
+        ]
+        states = [
+            uc.init_fn(jnp.zeros((uc.popsize, DIM)), jr.key(0)) for uc in built
+        ]
+
+        def dispatch(index):
+            return jax.lax.switch(
+                index,
+                tuple(
+                    (lambda _, uc=uc, st=st: uc.transfer_read_fn(st))
+                    for uc, st in zip(built, states, strict=True)
+                ),
+                0,
+            )
+
+        for index in range(len(built)):
+            sigma, conf = jax.jit(dispatch)(index)
+            assert jnp.shape(sigma) == ()
+            assert jnp.shape(conf) == ()
+            assert sigma.dtype == conf.dtype
+
+
+class TestTransferSpec:
+    """The override table, and that it stays small."""
+
+    def test_family_default_when_not_overridden(self):
+        spec = transfer_spec_for("cmaes", FAMILY_DISTRIBUTION)
+        assert spec.family == FAMILY_DISTRIBUTION
+        assert spec.reader == "distribution"
+
+    @pytest.mark.parametrize(
+        ("name", "family"),
+        [
+            ("rprop", FAMILY_GRADIENT),
+            ("lbfgs", FAMILY_GRADIENT),
+            ("mr15ga", FAMILY_POPULATION),
+            ("randomsearch", FAMILY_POPULATION),
+        ],
+    )
+    def test_overrides_win(self, name, family):
+        assert transfer_spec_for(name, family) is not transfer_spec_for(
+            "cmaes", FAMILY_DISTRIBUTION
+        )
+
+    def test_unknown_family_rejected(self):
+        with pytest.raises(ValueError, match="family must be one of"):
+            transfer_spec_for("cmaes", "not-a-family")
+
+    def test_distribution_writer_requires_ravel_fn(self):
+        # evosax stores ``mean`` raveled, so a pytree ``x`` cannot be
+        # written without the algorithm's own flattening function.
+        with pytest.raises(ValueError, match="ravel_fn"):
+            build_transfer_fns("cmaes", FAMILY_DISTRIBUTION, {})

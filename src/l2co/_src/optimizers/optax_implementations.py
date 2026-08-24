@@ -80,11 +80,15 @@ normalized_optax_from_state = {
 
 optax_mapping = {
     **{
-        name: Partial(UpdateClass.optax_update, optimizer=cls)
+        name: Partial(UpdateClass.optax_update, optimizer=cls, name=name)
         for name, cls in normalized_optax_normal.items()
     },
     **{
-        name: Partial(UpdateClass.optax_update_extra_kwargs, optimizer=cls)
+        name: Partial(
+            UpdateClass.optax_update_extra_kwargs,
+            optimizer=cls,
+            name=name,
+        )
         for name, cls in normalized_optax_from_state.items()
     },
 }
