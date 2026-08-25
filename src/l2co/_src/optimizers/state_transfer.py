@@ -836,9 +836,7 @@ def make_write_distribution(ravel_fn: Callable) -> Callable:
     return write
 
 
-def make_write_population(
-    repair_baseline: bool, claim_baseline: bool = True
-) -> Callable:
+def make_write_population(repair_baseline: bool) -> Callable:
     """Build the writer for a population-based algorithm.
 
     Scale lands in whichever field carries it: an explicit mutation
@@ -861,34 +859,42 @@ def make_write_population(
     overwriting ``fitness`` alone would not: stale rows would keep their
     positions while claiming the new fitness.
 
-    ``claim_baseline`` is what makes that rebase legitimate. Writing
-    ``fitness = bundle.f`` **claims a measurement**: it asserts that a
-    re-evaluation of ``bundle.x`` would return ``bundle.f``. On a
-    deterministic loss that is true. On a stochastic one it is not:
-    ``best_loss`` is a running *minimum* over every evaluation made, so
-    it is an extreme-value statistic -- the luckiest draw, not the value
-    the point would return now. Claimed into every slot it becomes an
-    unbeatable baseline: nothing ever satisfies ``fitness <
-    state.fitness``, the 1/5 rule reads a 0% success rate forever, and
-    ``std`` halves geometrically until it underflows and the optimizer
-    stops moving (at which point ``read_sigma_population`` reports
-    ``CONF_ABSENT``, so it stops providing a scale too). Where the claim
-    cannot be made the repair is **skipped entirely** rather than
-    softened -- the optimizer keeps its own measured baseline, which is
-    the only honest one available. Writing ``+inf`` instead is the
-    opposite failure and is measured: every candidate beats it, the rule
-    reads 100% and doubles the width immediately after the scale write
-    set it.
+    Writing ``fitness = bundle.f`` **claims a measurement**: it asserts
+    that a re-evaluation of ``bundle.x`` would return ``bundle.f``. On a
+    stochastic loss it will not, because ``best_loss`` is a running
+    *minimum* over every evaluation made and so an extreme-value
+    statistic -- the luckiest draw, not the value the point returns now.
+
+    The claim is made anyway, and the reason is worth stating because an
+    earlier version of this gated it on ``task.pass_rng``. **Whether a
+    loss is deterministic is not something a handshake may read.** A
+    real problem does not come labelled, the caller usually cannot say,
+    and an update rule that changes shape depending on how the objective
+    was declared is not one you can reason about. So the behaviour is
+    uniform.
+
+    The cost of being uniform is small, and measured. The optimistic
+    bias the claim introduces is the *same* bias the algorithm already
+    has internally: MR15-GA's ``(µ+λ)`` selection keeps the better of
+    each pair, so its own stored ``fitness`` is a running minimum too.
+    Under noise its mutation scale collapses geometrically with **no
+    switch at all** -- ``1 → 0.0039`` over six generations from a reset
+    (``docs/adr/0014``). Skipping the claim would not fix that and would
+    cost something real: with own-ask the rebase is the only way the
+    handed-over *location* reaches a mutation GA, so refusing it makes
+    the handshake scale-only for them.
+
+    What is still refused is a bundle whose numbers are unusable --
+    a non-finite ``x`` or ``f``. That is a property of the values in
+    hand, not of the problem, and ``+inf`` in particular is the opposite
+    failure: every candidate beats it, so the 1/5 rule reads 100% and
+    doubles the width immediately after the scale write set it.
 
     Parameters
     ----------
     repair_baseline : bool
         Whether this optimizer needs ``population`` / ``fitness``
         rebased on the bundle at all.
-    claim_baseline : bool, optional
-        Whether ``bundle.f`` may be claimed as a measurement of
-        ``bundle.x``. False on a stochastic loss (``task.pass_rng``),
-        which skips the rebase. Defaults to True.
 
     Returns
     -------
@@ -912,7 +918,7 @@ def make_write_population(
         if velocity is not None:
             updates["velocity"] = _rescale_to(velocity, bundle.sigma, use)
 
-        if repair_baseline and claim_baseline:
+        if repair_baseline:
             population = getattr(opt_state, "population", None)
             fitness = getattr(opt_state, "fitness", None)
             if population is not None and fitness is not None:
@@ -1238,15 +1244,14 @@ def build_transfer_fns(
     family: str,
     hyperparameters: dict | None = None,
     ravel_fn: Callable | None = None,
-    deterministic: bool = True,
 ) -> tuple[Callable, Callable]:
     """Bind one optimizer's reader and writer at construction time.
 
     Both halves need values that are not recoverable from the state, so
     they are closed over here rather than looked up per call: the
     learning rate (``scale_by_learning_rate`` holds an ``EmptyState``),
-    Rprop's clip bounds, the ravel function evosax uses to flatten a
-    solution pytree, and whether the task's loss is deterministic.
+    Rprop's clip bounds, and the ravel function evosax uses to flatten a
+    solution pytree.
 
     Parameters
     ----------
@@ -1260,14 +1265,6 @@ def build_transfer_fns(
     ravel_fn : Callable or None, optional
         The algorithm's ``_ravel_solution``. Required for
         ``distribution`` -- evosax stores ``mean`` raveled.
-    deterministic : bool, optional
-        Whether re-evaluating a point returns the same loss, i.e. the
-        negation of ``task.pass_rng``. Only the repairing population
-        writer reads it, and only to decide whether ``bundle.f`` may be
-        claimed as a measurement -- see :func:`make_write_population`.
-        Defaults to True, which is the conservative choice for a caller
-        that does not know: it keeps the repair, and the repair is what
-        every deterministic task needs.
 
     Returns
     -------
@@ -1311,9 +1308,7 @@ def build_transfer_fns(
             else write_none
         ),
         "population": make_write_population(repair_baseline=False),
-        "population_repair": make_write_population(
-            repair_baseline=True, claim_baseline=deterministic
-        ),
+        "population_repair": make_write_population(repair_baseline=True),
         "gradient": make_write_gradient(learning_rate),
         "rprop": make_write_rprop(
             hyperparameters.get("min_step_size", 1e-6),

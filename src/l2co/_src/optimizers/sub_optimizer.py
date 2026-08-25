@@ -644,7 +644,7 @@ def optstep_to_subopt(
         # hyperparameters, so a deployed policy reads and writes scale
         # exactly as the training environment did.
         read_fn, write_fn = build_transfer_fns(
-            name, FAMILY_GRADIENT, hyperparams, deterministic=not task.pass_rng
+            name, FAMILY_GRADIENT, hyperparams
         )
         return grad_sub_optimizer(
             transform,
@@ -812,7 +812,6 @@ def optstep_to_subopt(
             family,
             hyperparams,
             ravel_fn=(algo._ravel_solution if is_distribution_based else None),
-            deterministic=not task.pass_rng,
         )
         return pop_sub_optimizer(
             init_fn=init_fn,

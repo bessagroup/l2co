@@ -1318,10 +1318,7 @@ class UpdateClass(eqx.Module):
         )
         spec = transfer_spec_for(name, FAMILY_POPULATION)
         read_fn, write_fn = build_transfer_fns(
-            name,
-            FAMILY_POPULATION,
-            hyperparameters,
-            deterministic=not task.pass_rng,
+            name, FAMILY_POPULATION, hyperparameters
         )
 
         return cls(

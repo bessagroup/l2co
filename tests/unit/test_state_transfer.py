@@ -837,18 +837,27 @@ class TestOwnAsk:
         assert not jnp.isclose(told.std, TARGET, rtol=1e-5)
 
 
-class TestClaimedBaseline:
-    """``fitness <- bundle.f`` claims a measurement. Sometimes it can't.
+class TestBaselineRepair:
+    """The rebase is unconditional on anything about the problem.
 
-    On a deterministic loss, writing ``best_f`` into every slot asserts
-    something true: re-evaluating ``bundle.x`` would return it. On a
-    stochastic one it does not -- ``best_loss`` is a running *minimum*
-    over every evaluation made, so it is the luckiest draw rather than
-    what the point returns now, and claimed into every slot it becomes
-    an unbeatable baseline.
+    Writing ``fitness = bundle.f`` claims a measurement: that
+    re-evaluating ``bundle.x`` would return it. On a stochastic loss it
+    would not, since ``best_loss`` is a running minimum and so the
+    luckiest draw. The claim is made anyway.
+
+    An earlier version gated this on ``task.pass_rng``. That is not a
+    property a handshake may read: a real problem does not come
+    labelled, the caller usually cannot say, and an update rule whose
+    shape depends on how the objective was declared is not one you can
+    reason about. The bias the claim adds is also the bias MR15-GA
+    already has -- its ``(µ+λ)`` selection keeps the better of each
+    pair, so its own stored fitness is a running minimum too, and its
+    scale collapses under noise with no switch at all. Refusing the
+    claim would not fix that, and with own-ask it is the only way the
+    handed-over *location* reaches a mutation GA at all.
     """
 
-    def _mr15ga(self, deterministic: bool):
+    def _mr15ga(self):
         algo = MR15_GA(population_size=POPSIZE, solution=jnp.zeros((DIM,)))
         state = algo.init(
             jr.key(0),
@@ -856,76 +865,54 @@ class TestClaimedBaseline:
             jnp.arange(POPSIZE, dtype=float),
             algo.default_params,
         )
-        _, write = build_transfer_fns(
-            "mr15ga",
-            FAMILY_POPULATION,
-            {},
-            deterministic=deterministic,
-        )
+        _, write = build_transfer_fns("mr15ga", FAMILY_POPULATION, {})
         return algo, state, write
 
-    def test_deterministic_task_rebases_the_elite(self):
-        algo, state, write = self._mr15ga(deterministic=True)
+    def test_the_elite_is_rebased_on_the_handed_over_best(self):
+        _, state, write = self._mr15ga()
         written = write(_bundle(), state)
         assert jnp.allclose(written.population, 0.5)
         assert jnp.allclose(written.fitness, -1.0)
-        # The scale still lands either way -- only the claim is gated.
         assert jnp.isclose(written.std, TARGET, rtol=1e-5)
-        del algo
 
-    def test_stochastic_task_leaves_the_elite_alone(self):
-        algo, state, write = self._mr15ga(deterministic=False)
-        written = write(_bundle(), state)
-        assert jnp.array_equal(written.population, state.population)
-        assert jnp.array_equal(written.fitness, state.fitness)
-        assert jnp.isclose(written.std, TARGET, rtol=1e-5)
-        del algo
+    def test_the_writer_reads_nothing_about_the_task(self):
+        """The guard against the gate coming back.
 
-    def test_an_unbeatable_claim_collapses_the_mutation_scale(self):
-        """The failure the gate exists to prevent, measured.
-
-        A lucky ``best_loss`` claimed into every slot means nothing ever
-        satisfies ``fitness < state.fitness``, so MR15-GA's 1/5 rule
-        reads a 0% success rate on every generation and halves ``std``
-        geometrically -- until it underflows and the optimizer stops
-        moving, at which point its reader reports ``CONF_ABSENT`` and it
-        stops providing a scale too. Skipping the claim keeps the
-        optimizer's own measured baseline, and the rule stays live.
+        ``build_transfer_fns`` takes the optimizer's name, family and
+        hyperparameters -- nothing that could tell it whether the loss
+        is stochastic. Two writers built the same way must behave
+        identically, whatever the task they end up attached to.
         """
+        _, state, one = self._mr15ga()
+        _, _, two = self._mr15ga()
+        first, second = one(_bundle(), state), two(_bundle(), state)
+        assert jnp.array_equal(first.population, second.population)
+        assert jnp.array_equal(first.fitness, second.fitness)
+        assert jnp.array_equal(first.std, second.std)
 
-        def evolve(write, generations: int = 6):
-            algo, state, _ = self._mr15ga(deterministic=True)
-            # An unbeatably low ``f``: the extreme-value case a noisy
-            # task's running minimum produces.
-            lucky = TransferBundle(
+    def test_an_unusable_f_is_still_refused(self):
+        """A property of the numbers in hand, not of the problem.
+
+        ``+inf`` is the opposite failure to a lucky minimum: every
+        candidate beats it, so the 1/5 rule reads a 100% success rate
+        and doubles the width immediately after the scale write set it.
+        ``best_loss`` is ``+inf`` until something improves, which at
+        high ambient dimension can be a whole first generation of NaN.
+        """
+        _, state, write = self._mr15ga()
+        written = write(
+            TransferBundle(
                 x=jnp.full((DIM,), 0.5),
-                f=jnp.asarray(-1e6),
+                f=jnp.asarray(jnp.inf),
                 sigma=jnp.asarray(TARGET),
                 conf_sigma=jnp.asarray(CONF_EXACT),
-            )
-            state = write(lucky, state)
-            key = jr.key(0)
-            for _ in range(generations):
-                key, sub = jr.split(key)
-                population, state = algo.ask(sub, state, algo.default_params)
-                state, _ = algo.tell(
-                    sub,
-                    population,
-                    jnp.sum(jnp.square(population), axis=-1),
-                    state,
-                    algo.default_params,
-                )
-            return float(state.std)
-
-        _, _, claiming = self._mr15ga(deterministic=True)
-        _, _, skipping = self._mr15ga(deterministic=False)
-
-        collapsed = evolve(claiming)
-        survived = evolve(skipping)
-
-        # Six generations of a 0% success rate is 2^-6.
-        assert collapsed <= TARGET * 2.0**-6 + 1e-12
-        assert survived > collapsed
+            ),
+            state,
+        )
+        assert jnp.array_equal(written.fitness, state.fitness)
+        assert jnp.array_equal(written.population, state.population)
+        # The scale is a separate judgement and still lands.
+        assert jnp.isclose(written.std, TARGET, rtol=1e-5)
 
 
 class TestMovesIterate:

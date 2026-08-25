@@ -49,52 +49,68 @@ family.**
   there is no stored baseline to repair. Opting it in would create a
   write whose effect silently expires. It remains a scale *provider*.
 
-## A repaired baseline is a claim, and on a noisy task it is false
+## A repaired baseline claims a measurement, and claims it anyway
 
 Writing `fitness = bundle.f` into every slot asserts that re-evaluating
 `bundle.x` would return `bundle.f`. On a deterministic loss that is
 true. On a stochastic one it is not: `best_loss` is a running *minimum*
 over every evaluation ever made, so it is an extreme-value statistic —
-the luckiest draw, not what the point returns now.
+the luckiest draw, not what the point returns now. Claimed into every
+slot it is unbeatable: nothing satisfies `fitness < state.fitness`, the
+1/5 rule reads a 0% success rate, and `std` halves geometrically.
 
-Claimed into every slot it becomes unbeatable. Nothing satisfies
-`fitness < state.fitness`, the 1/5 rule reads a 0% success rate on every
-generation, and `std` halves geometrically until it underflows and the
-optimizer stops moving — at which point `read_sigma_population` reports
-`CONF_ABSENT`, so it stops providing a scale too. Measured over six
-generations: `0.25 → 0.0039`, exactly `2⁻⁶`, against `0.0625` when the
-claim is skipped.
+**An earlier version of this ADR gated the claim on `task.pass_rng`.
+That was wrong, and not because of the arithmetic.**
 
-This is not a corner case for this project. 25 of the 100 tasks in
-`bbob_headroom_train` are `bbob_noisy`, which sets `pass_rng=True`.
+*Whether a loss is deterministic is not a property a handshake may
+read.* A real problem does not arrive labelled; the caller usually
+cannot say; and an update rule whose shape depends on how the objective
+was declared is not one anyone can reason about, on paper or in a
+report. The same run, wrapped in a noise term the user forgot to
+declare, would take a different code path. So the behaviour is uniform.
 
-**What this does not fix, and an earlier draft implied it did.** MR15-GA
-collapses its mutation scale under noise *whatever the handshake does*,
-because the 1/5 rule scores each generation against its own `(µ+λ)`
-selected fitness — a running minimum over the pair, so biased optimistic
-in exactly the way `best_loss` is. Measured on a `noise=0.1` BBOB task:
-six generations from a reset with **no switch at all** run `std` from
-`1 → 0.0039`; after a switch they run `0.0048 → 4.7e-06`, the same rate
-from the transferred scale. The same switch on the deterministic task
-gives `0.0048 → 0.0192`, no collapse. So the collapse is the algorithm's
-under noise, pre-existing and unrelated to state transfer. Gating the
-claim stops the handshake *adding* an unbeatable baseline on top of it;
-it does not, and cannot, stop that. Whether MR15-GA belongs on noisy
-tasks at all is a menu question, not a handshake one.
+**Decision.** The repair always rebases `population` / `fitness` on the
+handed-over best. `build_transfer_fns` takes the optimizer's name,
+family and hyperparameters — nothing that could tell it what kind of
+problem it is attached to.
 
-**Decision.** `build_transfer_fns` takes `deterministic` (the negation
-of `task.pass_rng`) and the repairing writer skips the rebase entirely
-where it is false, leaving the optimizer its own measured baseline. The
-scale write is unaffected — only the *claim* is gated.
+The cost of being uniform here is small, and measured. The optimistic
+bias the claim introduces is the *same* bias the algorithm already has:
+MR15-GA's `(µ+λ)` selection keeps the better of each pair, so its own
+stored `fitness` is a running minimum too. Under noise its mutation
+scale collapses geometrically with **no switch at all** — `1 → 0.0039`
+over six generations from a reset on a `noise=0.1` BBOB task; after a
+switch, `0.0048 → 4.7e-06`, the same rate from the transferred scale;
+on the deterministic task the same switch gives `0.0048 → 0.0192`, no
+collapse. Refusing the claim does not fix that. Whether MR15-GA belongs
+on noisy tasks at all is a menu question, not a handshake one.
+
+And refusing it would cost something real. With own-ask, the rebase is
+the only way the handed-over *location* reaches a mutation GA: skip it
+and its next generation is mutated around whatever population it was
+already holding, making the handshake scale-only for exactly the three
+optimizers this ADR just gave a location channel to.
+
+**What is still refused** is a bundle whose numbers are unusable — a
+non-finite `x` or `f`. That is a property of the values in hand, not of
+the problem, so it is a judgement the writer is entitled to make.
+`+inf` is the case that matters and it is the opposite failure: every
+candidate beats it, so the rule reads 100% and *doubles* the width
+immediately after the scale write set it. `best_loss` starts at `+inf`
+and stays there while nothing has improved, which at high ambient
+dimension can be a whole first generation of NaN.
 
 **Rejected alternatives.**
 
-- *Write `+inf` instead of `best_f`.* The opposite failure, and already
-  measured: every candidate beats it, the rule reads 100% and doubles
-  the width immediately after the scale write set it. It is why the
-  existing non-finite guard skips rather than softens.
-- *Re-measure `bundle.x` inside the handshake.* Correct in principle and
-  impossible in practice: `SubOpt` carries no loss function — the
+- *Gate on `task.pass_rng`.* What this section replaces. Buys nothing
+  the algorithm's own bias does not already impose, and pays for it by
+  making the update rule depend on a declaration the caller often
+  cannot make.
+- *Write `+inf` instead of `best_f`.* Measured above: the opposite
+  failure, and it is why the existing non-finite guard skips rather
+  than softens.
+- *Re-measure `bundle.x` inside the handshake.* Correct in principle
+  and impossible in practice: `SubOpt` carries no loss function — the
   deployment wrappers are ask/tell strategies whose *caller* evaluates
   (`sub_optimizer.py`). Adding a loss channel to make the environment
   and the wrapper agree would break the strategy contract, and the two
