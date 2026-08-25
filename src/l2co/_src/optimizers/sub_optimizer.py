@@ -58,6 +58,7 @@ from .state_transfer import (
     FAMILY_GRADIENT,
     FAMILY_POPULATION,
     build_transfer_fns,
+    transfer_spec_for,
 )
 from .update_class import step_fevals
 from .utils import normalize_key
@@ -181,16 +182,24 @@ class SubOpt(eqx.Module):
         mirrored-sampling algorithm computes.
     family : str
         Which optimizer family this is, one of
-        :data:`~l2co._src.optimizers.state_transfer.FAMILIES`. Read at
-        Python trace time by the strategy wrappers to decide the
-        population half of a switch: a ``"distribution"`` sub-optimizer
-        regenerates its own population through :attr:`step_fn` (which is
-        its ``ask``) from the distribution a handshake just wrote,
-        rather than being handed a layout. That is what keeps the
-        ask/tell-coupled evosax algorithms consistent -- they cache
-        their draws in state and consume them on the next ``tell``, so
-        the population and the cached draws must come from the same
-        ``ask``. See ``docs/adr/0012``.
+        :data:`~l2co._src.optimizers.state_transfer.FAMILIES`. Says what
+        kind of search state this sub-optimizer holds, and nothing more
+        -- the population half of a switch is decided by
+        :attr:`own_ask`.
+    own_ask : bool
+        Whether this sub-optimizer regenerates its own post-switch
+        population. Read at Python trace time by the strategy wrappers:
+        where it is set they call :attr:`step_fn` (which *is* the
+        ``ask`` on the population path) against the state a handshake
+        just wrote, rather than handing over a layout. That is what
+        keeps an optimizer's next update consistent with the population
+        it is told about -- the ask/tell-coupled evosax algorithms cache
+        their draws in state (``docs/adr/0012``), and the mutation GAs
+        score the next generation against a baseline the writer just
+        repaired (``docs/adr/0014``). Resolved from the same
+        :func:`~l2co._src.optimizers.state_transfer.transfer_spec_for`
+        table the ``UpdateClass`` path reads, so the environment and
+        both deployment wrappers agree.
     transfer_read_fn : Callable | None
         ``transfer_read_fn(sub_state) -> (sigma, conf)`` -- projects this
         sub-optimizer's own state onto the scale a switch carries.
@@ -227,6 +236,7 @@ class SubOpt(eqx.Module):
     family: str = eqx.field(static=True, default=FAMILY_GRADIENT)
     transfer_read_fn: Callable | None = eqx.field(static=True, default=None)
     transfer_write_fn: Callable | None = eqx.field(static=True, default=None)
+    own_ask: bool = eqx.field(static=True, default=False)
 
     @property
     def fevals_bound(self) -> int:
@@ -454,6 +464,7 @@ def pop_sub_optimizer(
     family: str = FAMILY_GRADIENT,
     transfer_read_fn: Callable | None = None,
     transfer_write_fn: Callable | None = None,
+    own_ask: bool = False,
 ) -> SubOpt:
     """Wrap an evosax-style ``(init, ask, tell)`` triple as a ``SubOpt``.
 
@@ -476,6 +487,10 @@ def pop_sub_optimizer(
         Stable identifier; see :func:`grad_sub_optimizer`.
     opt_state_handshake : str, optional
         ``"continue"`` (default) or ``"reset"``; see :class:`SubOpt`.
+    own_ask : bool, optional
+        Whether a switch should draw this sub-optimizer's post-switch
+        population from ``ask_fn`` instead of handing it a layout; see
+        :class:`SubOpt`. Defaults to False.
 
     Returns
     -------
@@ -495,6 +510,7 @@ def pop_sub_optimizer(
         family=family,
         transfer_read_fn=transfer_read_fn,
         transfer_write_fn=transfer_write_fn,
+        own_ask=own_ask,
     )
 
 
@@ -790,6 +806,7 @@ def optstep_to_subopt(
         family = (
             FAMILY_DISTRIBUTION if is_distribution_based else FAMILY_POPULATION
         )
+        spec = transfer_spec_for(name, family)
         read_fn, write_fn = build_transfer_fns(
             name,
             family,
@@ -807,6 +824,7 @@ def optstep_to_subopt(
             family=family,
             transfer_read_fn=read_fn,
             transfer_write_fn=write_fn,
+            own_ask=spec.own_ask,
         )
 
     raise ValueError(

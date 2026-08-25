@@ -86,6 +86,15 @@ state, so `best_one` still injects the best point as a member there —
 there is no mean to write it into, and substituting a population is not
 lossy for an algorithm whose state is a population.
 
+> **Amended by `docs/adr/0014`.** That paragraph is wrong for the
+> mutation GAs. The criterion is not "does it cache its draws" but "does
+> its next update read state the handshake just wrote", and `mr15ga`,
+> `samrga` and `gesmrga` do — through the `state.fitness` baseline the
+> repairing writer sets, not through a cached draw. They now draw their
+> own post-switch population too, decided by `TransferSpec.own_ask`
+> rather than by family. `pso`, `de` and `shade` do stay on `best_one`,
+> for the reasons `0014` records.
+
 Three further problems fall out at the same time. CMA-ES's `_tell`
 reconstructs steps as `y_k = (population - mean) / std`
 (`cma_es.py:222`), which is only meaningful if the population was drawn
