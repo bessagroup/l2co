@@ -495,6 +495,61 @@ def dump_databank(
         )
         if step_paths
     ]
+    return dump_runs(
+        runs,
+        root,
+        dataset_name,
+        mode=mode,
+        easiest_quantile=easiest_quantile,
+        taskset=taskset,
+        budget_steps=budget_steps,
+    )
+
+
+def dump_runs(
+    runs: list,
+    root: Path,
+    dataset_name: str,
+    *,
+    mode: Literal["error", "replace", "append"] = "error",
+    easiest_quantile: float = DEFAULT_EASIEST_QUANTILE,
+    taskset: str | None = None,
+    budget_steps: int = layout.BUDGET_STEPS,
+) -> Path:
+    """Run all three dump phases over already-resolved runs, serially.
+
+    :func:`dump_databank` is this plus the f3dasm bookkeeping that turns
+    three ``ExperimentData`` tables into the ``runs`` list. Everything
+    below that seam works on runs alone, which is what the parallel
+    SLURM-array driver dispatches on too -- so this is the entry point
+    for a caller that already holds runs and does not want to
+    reconstruct the ``ExperimentData`` triple to get at the writer.
+
+    Parameters
+    ----------
+    runs : list
+        ``(task, step_paths)`` pairs: a task and the netCDF path of each
+        of its schedules' loss histories. Empty ``step_paths`` entries
+        must already be filtered out.
+    root : pathlib.Path
+        The databank base directory.
+    dataset_name : str
+        Name of the dataset.
+    mode : {"error", "replace", "append"}, optional
+        As :func:`dump_databank`.
+    easiest_quantile : float, optional
+        Forwarded to the per-task ERT target computation.
+    taskset : str | None, optional
+        Optional ``tasksets/<name>.txt`` to write.
+    budget_steps : int, optional
+        Budget grid to interpolate onto; ignored for ``"append"``, which
+        reuses the existing store's grid.
+
+    Returns
+    -------
+    pathlib.Path
+        Absolute path to the written zarr store.
+    """
     plan = _dump_template_runs(
         runs,
         root,
@@ -1138,9 +1193,7 @@ def _grow_store_for_append(
             arr = group[name]
             dim_names = arr.metadata.dimension_names
             new_shape = tuple(
-                n_task
-                if d == TASK_ID
-                else (n_sched if d == SCHEDULE else s)
+                n_task if d == TASK_ID else (n_sched if d == SCHEDULE else s)
                 for d, s in zip(dim_names, arr.shape, strict=True)
             )
             if new_shape != arr.shape:
@@ -1276,9 +1329,7 @@ def _template_append(
     run_taskids = [task.hash for task, _ in runs]
     old.close()
 
-    _grow_store_for_append(
-        store, taskids, schedules, [*big_vars, *small_vars]
-    )
+    _grow_store_for_append(store, taskids, schedules, [*big_vars, *small_vars])
 
     return DumpPlan(
         store=str(store),
@@ -1535,9 +1586,9 @@ def dump_databank_finalize(
         )
 
     if plan.mode == "append":
-        layout.append_marker_path(
-            Path(plan.root), plan.dataset_name
-        ).unlink(missing_ok=True)
+        layout.append_marker_path(Path(plan.root), plan.dataset_name).unlink(
+            missing_ok=True
+        )
         rollback = layout.rollback_path(Path(plan.root), plan.dataset_name)
         if rollback.exists():
             shutil.rmtree(rollback)
