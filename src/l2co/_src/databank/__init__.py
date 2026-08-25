@@ -56,6 +56,7 @@ from .writer import (
     dump_databank_finalize,
     dump_databank_task,
     dump_databank_template,
+    dump_runs,
 )
 
 __all__ = [
@@ -71,6 +72,7 @@ __all__ = [
     "dump_databank_finalize",
     "dump_databank_task",
     "dump_databank_template",
+    "dump_runs",
     "dumps_provenance",
     "held_out_task_ids",
     "load_databank",

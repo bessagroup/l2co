@@ -45,8 +45,7 @@ from l2co._src.databank.reader import (
 from l2co._src.databank.verify import verify_databank
 from l2co._src.databank.writer import (
     _archive_policy_artifacts,
-    _dump_append,
-    _dump_create,
+    dump_runs,
 )
 from l2co.naming import (
     BUDGET,
@@ -210,14 +209,17 @@ def _write_runs(
     return runs
 
 
-def _create(root: Path, runs) -> tuple[Path, dict[str, str]]:
-    store = layout.zarr_store_path(root, "bbob")
-    rawroot = layout.raw_root(root, "bbob")
-    rawroot.mkdir(parents=True, exist_ok=True)
-    _, provs = _dump_create(
-        store, rawroot, runs, easiest_quantile=0.75, budget_steps=BS
-    )
-    return store, provs
+def _create(root: Path, runs) -> tuple[Path, dict[str, dict]]:
+    """Write a fresh store from ``runs`` and read its provenances back.
+
+    The provenances come from :func:`load_provenance` rather than from
+    the writer's return value: what matters is what ended up *in the
+    store*, and reading it back asserts the round trip rather than the
+    writer's bookkeeping.
+    """
+    store = dump_runs(runs, root, "bbob", easiest_quantile=0.75,
+                      budget_steps=BS)
+    return store, load_provenance(root, "bbob")
 
 
 #                                                            Manifest lifecycle
@@ -442,9 +444,10 @@ def test_alias_collision_on_append_rejected(tmp_path, tasks):
     # A retrained checkpoint under the SAME alias must be refused.
     other = _make_record(tmp_path / "ckpt2", payload=b"retrained")
     runs2 = _write_runs(tmp_path / "runs2", tasks[1:], [(policy, other)])
-    rawroot = layout.raw_root(tmp_path, "bbob")
     with pytest.raises(ValueError, match="one alias must always mean"):
-        _dump_append(store, rawroot, runs2, easiest_quantile=0.75)
+        dump_runs(
+            runs2, tmp_path, "bbob", mode="append", easiest_quantile=0.75
+        )
 
 
 def test_append_new_task_keeps_provenance(tmp_path, tasks):
@@ -460,9 +463,8 @@ def test_append_new_task_keeps_provenance(tmp_path, tasks):
     runs2 = _write_runs(
         tmp_path / "runs2", tasks[1:], [(static, None), (policy, record)]
     )
-    rawroot = layout.raw_root(tmp_path, "bbob")
-    _, provs = _dump_append(store, rawroot, runs2, easiest_quantile=0.75)
-    assert set(provs) == {policy.name}
+    dump_runs(runs2, tmp_path, "bbob", mode="append", easiest_quantile=0.75)
+    assert set(load_provenance(tmp_path, "bbob")) == {policy.name}
 
     ds = xr.open_zarr(store, consolidated=True)
     it = ds[IN_TRAINING].load()
