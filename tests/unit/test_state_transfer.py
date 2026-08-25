@@ -21,9 +21,16 @@ things that can quietly go wrong with that:
 
 Plus the two structural guards: every registered optimizer's reader must
 be usable in one ``lax.switch`` (they all have to agree on output
-layout), and every ``distribution``-family optimizer must expose an
-``ask_fn``, since a missing one silently degrades to the old
+layout), and every optimizer whose ``TransferSpec.own_ask`` is set must
+expose an ``ask_fn``, since a missing one silently degrades to the old
 population-substitution path rather than raising.
+
+Two more things are pinned here because they are decisions rather than
+mechanics: *which* optimizers draw their own post-switch population
+(a per-optimizer property, not a family one), and that the repaired
+``state.fitness`` baseline claims a measurement -- valid on a
+deterministic loss, false on a stochastic one, where claiming it
+collapses the mutation scale. See ``docs/adr/0014``.
 """
 
 from __future__ import annotations
@@ -43,6 +50,7 @@ from evosax.algorithms.population_based import (
     MR15_GA,
     PSO,
     DifferentialEvolution,
+    SimpleGA,
 )
 from l2co_tasks import create_bbob_task
 
@@ -53,6 +61,7 @@ from l2co.optimizers import (
     FAMILY_DISTRIBUTION,
     FAMILY_GRADIENT,
     FAMILY_POPULATION,
+    TRANSFER_OVERRIDES,
     TransferBundle,
     build_transfer_fns,
     transfer_spec_for,
@@ -63,8 +72,11 @@ DIM = 10
 POPSIZE = 10
 TARGET = 0.25
 
-#: The seven-member transfer-validation menu, with the hyperparameters
-#: the configs use.
+#: The nine-member transfer-validation menu, with the hyperparameters
+#: the configs use. Covers every provider class -- line-search,
+#: sign-based, diag+rank-1 ES, diagonal ES, gradient second-moment,
+#: population/archive -- and all three mutation GAs that draw their own
+#: post-switch population (``docs/adr/0014``).
 MENU: dict[str, dict] = {
     "lbfgs": {},
     "rprop": {"learning_rate": 1e-3},
@@ -73,6 +85,8 @@ MENU: dict[str, dict] = {
     "adan": {"learning_rate": 1e-2},
     "pso": {},
     "mr15ga": {},
+    "samrga": {},
+    "gesmrga": {},
 }
 
 
@@ -403,6 +417,142 @@ class TestMR15BaselineRepair:
 # ------------------------------------------------------ structural guards
 
 
+class TestNonFiniteBundleIsRefused:
+    """A poisoned bundle must not poison the receiver.
+
+    ``sigma`` is already protected at the reader: every one routes
+    through ``_finite_or_absent``, which downgrades a non-finite or
+    non-positive scale to ``CONF_ABSENT``. ``x`` and ``f`` had no such
+    guard, and the writes that consume them were ungated -- so this
+    class covers the whole bundle, and asserts the *fallback*, not just
+    the absence of NaN: the receiver keeps what it already had.
+    """
+
+    @pytest.fixture(scope="class")
+    def task(self):
+        return create_bbob_task(fn_name="sphere", seed=0, dimensionality=DIM)
+
+    @staticmethod
+    def _built(task, name, hp):
+        update_class = REGISTRY[name](
+            task=task, opt_hash=0, bounded=(None, None), stop_fn=None, **hp
+        )
+        params = jnp.zeros((update_class.popsize, DIM))
+        return update_class, update_class.init_fn(params, jr.key(0))
+
+    @staticmethod
+    def _newly_non_finite(before, after):
+        """Leaves finite before the write and non-finite after it.
+
+        Compared per leaf rather than globally because several states
+        carry legitimate sentinels at ``init`` -- L-BFGS's
+        ``value = inf``, the evosax algorithms' ``best_solution = NaN``
+        -- which a whole-tree finiteness check would flag as damage.
+        """
+        flat = jax.tree_util.tree_flatten_with_path
+        pb = {jax.tree_util.keystr(k): v for k, v in flat(before)[0]}
+        pa = {jax.tree_util.keystr(k): v for k, v in flat(after)[0]}
+        bad = []
+        for key, value in pb.items():
+            arr = jnp.asarray(value)
+            if not jnp.issubdtype(arr.dtype, jnp.inexact):
+                continue
+            was = bool(jnp.all(jnp.isfinite(arr.astype(float))))
+            now = bool(jnp.all(jnp.isfinite(jnp.asarray(pa[key], float))))
+            if was and not now:
+                bad.append(key)
+        return bad
+
+    POISON = [
+        ("sigma_nan", jnp.zeros((1, DIM)), 0.0, jnp.nan),
+        ("sigma_inf", jnp.zeros((1, DIM)), 0.0, jnp.inf),
+        ("x_nan", jnp.full((1, DIM), jnp.nan), 0.0, 0.05),
+        ("x_inf", jnp.full((1, DIM), jnp.inf), 0.0, 0.05),
+        ("f_nan", jnp.zeros((1, DIM)), jnp.nan, 0.05),
+        ("f_inf", jnp.zeros((1, DIM)), jnp.inf, 0.05),
+    ]
+
+    @pytest.mark.parametrize(
+        ("label", "x", "f", "sigma"), POISON, ids=[c[0] for c in POISON]
+    )
+    @pytest.mark.parametrize("name", list(MENU))
+    def test_no_leaf_is_poisoned(self, task, name, label, x, f, sigma):
+        update_class, opt_state = self._built(task, name, MENU[name])
+        if update_class.transfer_write_fn is None:
+            pytest.skip(f"{name} has no writer")
+        # ``conf_sigma`` is deliberately confident: the point is that a
+        # writer must not take a caller's word for it.
+        bundle = TransferBundle(
+            x=x,
+            f=jnp.asarray(f, dtype=float),
+            sigma=jnp.asarray(sigma, dtype=float),
+            conf_sigma=jnp.asarray(CONF_EXACT, dtype=float),
+        )
+        after = update_class.transfer_write_fn(bundle, opt_state)
+        assert not self._newly_non_finite(opt_state, after), (
+            f"{name} poisoned by {label}"
+        )
+
+    def test_distribution_keeps_its_own_mean(self, task):
+        """The fallback, stated positively.
+
+        A NaN ``mean`` is unrecoverable -- every ``ask`` returns NaN,
+        every loss is NaN, and no ``tell`` can undo it, so the optimizer
+        is dead for the rest of the episode. Keeping its own mean lets it
+        carry on from where it was.
+        """
+        update_class, opt_state = self._built(task, "crfmnes", {})
+        bundle = TransferBundle(
+            x=jnp.full((1, DIM), jnp.nan),
+            f=jnp.asarray(0.0),
+            sigma=jnp.asarray(0.05),
+            conf_sigma=jnp.asarray(CONF_EXACT),
+        )
+        after = update_class.transfer_write_fn(bundle, opt_state)
+        assert jnp.array_equal(after.mean, opt_state.mean)
+        # The usable half still lands -- one bad field does not veto the
+        # other.
+        assert float(after.std) != float(opt_state.std)
+        population, _ = update_class.ask_fn(after, jr.key(1))
+        leaves = jax.tree.leaves(population)
+        assert all(bool(jnp.all(jnp.isfinite(leaf))) for leaf in leaves)
+
+    def test_mr15ga_keeps_its_elite_when_f_is_infinite(self, task):
+        """``+inf`` is the reachable case, and it inverts the 1/5 rule.
+
+        ``best_loss`` starts at ``+inf`` and stays there while nothing
+        has improved -- an entirely-NaN first generation, which this
+        ecosystem sees at high ambient dimension. Rebasing the stored
+        elite onto ``+inf`` makes every candidate beat it, so the 1/5
+        rule reads a 100% success rate and doubles the width right after
+        the scale write set it.
+        """
+        update_class, opt_state = self._built(task, "mr15ga", {})
+        opt_state = opt_state.replace(
+            fitness=jnp.full_like(jnp.asarray(opt_state.fitness), 100.0)
+        )
+        bundle = TransferBundle(
+            x=jnp.zeros((1, DIM)),
+            f=jnp.asarray(jnp.inf),
+            sigma=jnp.asarray(0.05),
+            conf_sigma=jnp.asarray(CONF_EXACT),
+        )
+        after = update_class.transfer_write_fn(bundle, opt_state)
+        assert jnp.array_equal(after.fitness, opt_state.fitness)
+        assert jnp.array_equal(after.population, opt_state.population)
+        # And a finite ``f`` still rebases, so the gate is not blanket.
+        ok = update_class.transfer_write_fn(
+            TransferBundle(
+                x=jnp.zeros((1, DIM)),
+                f=jnp.asarray(1.0),
+                sigma=jnp.asarray(0.05),
+                conf_sigma=jnp.asarray(CONF_EXACT),
+            ),
+            opt_state,
+        )
+        assert jnp.allclose(ok.fitness, 1.0)
+
+
 class TestRegistryGuards:
     """Guards over the whole registry, not one optimizer at a time."""
 
@@ -423,10 +573,18 @@ class TestRegistryGuards:
             assert callable(update_class.transfer_read_fn), name
             assert callable(update_class.transfer_write_fn), name
 
-    def test_distribution_family_always_exposes_ask(self, task):
+    def test_own_ask_optimizers_expose_ask(self, task):
         # A missing ``ask_fn`` does not raise -- it silently degrades to
         # the old population-substitution path, which is exactly the bug
         # this work exists to remove. So it gets its own guard.
+        #
+        # The condition is ``TransferSpec.own_ask``, not the family:
+        # every ``distribution`` algorithm needs its own ask, and so do
+        # the mutation GAs, whose next generation is scored against the
+        # baseline the writer just repaired (``docs/adr/0014``). A spec
+        # that claims ``own_ask`` while its factory forgets ``ask_fn``
+        # is the silent-degradation case, and vice versa is an ask the
+        # caller will never reach.
         for i, (name, hp) in enumerate(MENU.items()):
             update_class = REGISTRY[name](
                 task=task,
@@ -435,10 +593,108 @@ class TestRegistryGuards:
                 stop_fn=None,
                 **hp,
             )
+            spec = transfer_spec_for(name, update_class.family)
             if update_class.family == FAMILY_DISTRIBUTION:
+                assert spec.own_ask, name
+            if spec.own_ask:
                 assert update_class.ask_fn is not None, name
             else:
                 assert update_class.ask_fn is None, name
+
+    def test_registry_binds_the_resolved_spec(self, task):
+        """A factory that forgets ``name=`` must fail here, loudly.
+
+        ``build_transfer_fns`` keys the ``TRANSFER_OVERRIDES`` lookup on
+        the registry name, and every generic classmethod defaults
+        ``name`` to ``""``. A factory that calls one of them without
+        passing its own name therefore resolves to the *family default*
+        instead of its override -- and that degrades silently in the
+        worst way: the family reader finds no field it recognises and
+        returns ``CONF_ABSENT``, so the optimizer simply stops carrying a
+        scale. Nothing raises, no population is malformed, and the only
+        symptom is a switch that quietly transfers nothing.
+
+        This is not hypothetical. ``lbfgs_update`` delegates to
+        ``UpdateClass.optax_update_extra_kwargs`` on deterministic tasks
+        (``not task.pass_rng``, which is most of them) and shipped
+        without ``name="lbfgs"``, so L-BFGS reported no scale on every
+        switch out of it. The tests then in place all passed: the
+        provider assertions are gated on the bundle carrying something,
+        and the "``lbfgs`` receives nothing" assertion held because the
+        wrongly-bound *gradient* writer also happened to no-op on a state
+        with no second-moment field. Identity of the bound function is
+        the only check that catches it.
+        """
+        for i, name in enumerate(TRANSFER_OVERRIDES):
+            if name not in REGISTRY:
+                continue
+            update_class = REGISTRY[name](
+                task=task,
+                opt_hash=i,
+                bounded=(None, None),
+                stop_fn=None,
+                **MENU.get(name, {}),
+            )
+            spec = transfer_spec_for(name, update_class.family)
+            expected_read, expected_write = build_transfer_fns(
+                name,
+                update_class.family,
+                MENU.get(name, {}),
+                ravel_fn=None,
+            )
+            assert update_class.family == spec.family, name
+            # Compare by ``__name__``: the builders return closures for
+            # the parameterised cases, so identity holds only for the
+            # module-level readers/writers. ``None`` is a legitimate
+            # binding -- ``randomsearch`` holds no state, and both
+            # consumers treat ``None`` as "no information" -- but only
+            # where the spec says so, never as the result of a forgotten
+            # ``name=``, which binds a real family-default function.
+            if update_class.transfer_read_fn is None:
+                assert spec.reader == "none", (
+                    f"{name}: no reader bound, spec says {spec.reader}"
+                )
+            else:
+                assert (
+                    update_class.transfer_read_fn.__name__
+                    == expected_read.__name__
+                ), f"{name}: bound the wrong reader ({spec.reader} expected)"
+            if update_class.transfer_write_fn is None:
+                assert spec.writer == "none", (
+                    f"{name}: no writer bound, spec says {spec.writer}"
+                )
+            else:
+                assert (
+                    update_class.transfer_write_fn.__name__
+                    == expected_write.__name__
+                ), f"{name}: bound the wrong writer ({spec.writer} expected)"
+
+    def test_lbfgs_reports_a_scale_on_a_deterministic_task(self, task):
+        """The regression above, pinned end to end.
+
+        ``task.pass_rng`` is false here, which is the path that was
+        broken. After a few steps L-BFGS has accepted steps in
+        ``diff_params_memory``, so its reader must report one --
+        ``CONF_ABSENT`` here means the override is not bound.
+        """
+        assert not task.pass_rng
+        update_class = REGISTRY["lbfgs"](
+            task=task, opt_hash=0, bounded=(None, None), stop_fn=None
+        )
+        params = jnp.zeros((update_class.popsize, DIM))
+        opt_state = update_class.init_fn(params, jr.key(0))
+
+        # Before any accepted step the memory is zeros: correctly absent.
+        _, conf_at_init = update_class.transfer_read_fn(opt_state)
+        assert float(conf_at_init) == CONF_ABSENT
+
+        carry = (params, opt_state, jr.key(0))
+        for _ in range(3):
+            carry, _ = update_class.step_fn(carry, {})
+        sigma, conf = update_class.transfer_read_fn(carry[1])
+        assert float(conf) == CONF_EXACT
+        assert float(sigma) > 0.0
+        assert jnp.isfinite(sigma)
 
     def test_ask_fn_emits_a_full_population(self, task):
         update_class = REGISTRY["crfmnes"](
@@ -488,6 +744,270 @@ class TestRegistryGuards:
             assert jnp.shape(sigma) == ()
             assert jnp.shape(conf) == ()
             assert sigma.dtype == conf.dtype
+
+    def test_lbfgs_reports_its_very_first_step(self, task):
+        """One iteration is a visit length the policy actually picks.
+
+        ``lbfgs`` is the one optimizer tabulated ``reset``, so its
+        ``count`` restarts on every switch into it, and "run lbfgs for 1
+        iteration" is one of the four budget choices. The memory holds
+        no *difference* yet at that point, but the step itself is
+        reconstructible -- and the reconstruction has to match the step
+        that was actually taken, not merely be finite.
+        """
+        update_class = REGISTRY["lbfgs"](
+            task=task, opt_hash=0, bounded=(None, None), stop_fn=None
+        )
+        before = jnp.zeros((update_class.popsize, DIM))
+        carry = (before, update_class.init_fn(before, jr.key(0)), jr.key(0))
+
+        carry, _ = update_class.step_fn(carry, {})
+        after, opt_state, _ = carry
+
+        sigma, conf = update_class.transfer_read_fn(opt_state)
+        assert float(conf) == CONF_EXACT
+        taken = jnp.sqrt(jnp.mean(jnp.square(after[0] - before[0])))
+        assert float(taken) > 0.0
+        assert jnp.isclose(sigma, taken, rtol=1e-4)
+
+
+class TestOwnAsk:
+    """Which optimizers draw their own post-switch population.
+
+    A per-optimizer property, not a family one (``docs/adr/0014``). The
+    cost of getting it wrong runs both ways: an optimizer that needs its
+    own ask and does not get one is scored against a baseline it was not
+    drawn from, and one that gets an ask it cannot use degenerates.
+    """
+
+    @pytest.mark.parametrize(
+        "name", ["crfmnes", "sepcmaes", "cmaes", "snes", "mr15ga"]
+    )
+    def test_ask_coupled_and_mutation_gas_opt_in(self, name):
+        family = FAMILY_POPULATION if name == "mr15ga" else FAMILY_DISTRIBUTION
+        assert transfer_spec_for(name, family).own_ask
+
+    @pytest.mark.parametrize("name", ["samrga", "gesmrga"])
+    def test_the_other_mutation_gas_opt_in(self, name):
+        spec = transfer_spec_for(name, FAMILY_POPULATION)
+        assert spec.own_ask
+        # The repairing writer and the own ask travel together: the ask
+        # is only meaningful against a repaired baseline, and a repaired
+        # baseline is only honest if the population is drawn from it.
+        assert spec.writer == "population_repair"
+
+    @pytest.mark.parametrize(
+        "name", ["differentialevolution", "shade", "pso", "randomsearch"]
+    )
+    def test_difference_and_velocity_methods_stay_out(self, name):
+        # DE and SHADE build mutants from difference vectors of the
+        # stored population; the repair makes every row identical, and
+        # identical rows have no differences. PSO's ask reads
+        # ``population_best`` / ``fitness_best``, which no writer
+        # repairs. Randomsearch holds nothing at all.
+        assert not transfer_spec_for(name, FAMILY_POPULATION).own_ask
+
+    def test_simple_ga_is_excluded_because_its_std_expires(self):
+        """A deliberate exclusion, pinned so a "fix" has to argue.
+
+        ``SimpleGA`` is a mutation GA of the same shape as the three
+        that opt in, but its ``_tell`` overwrites ``std`` from a fixed
+        schedule, so a transferred scale does not survive one
+        generation. Giving it the repairing writer would create a write
+        whose effect silently expires.
+        """
+        spec = transfer_spec_for("simplega", FAMILY_POPULATION)
+        assert not spec.own_ask
+        assert spec.writer == "population"
+
+        algo, state, _, write = _evosax_pop(SimpleGA, "simplega")
+        written = write(_bundle(), state)
+        assert jnp.isclose(written.std, TARGET, rtol=1e-5)
+
+        key = jr.key(0)
+        population, asked = algo.ask(key, written, algo.default_params)
+        told, _ = algo.tell(
+            key,
+            population,
+            jnp.arange(POPSIZE, dtype=float),
+            asked,
+            algo.default_params,
+        )
+        # One generation later the schedule has taken it back.
+        assert not jnp.isclose(told.std, TARGET, rtol=1e-5)
+
+
+class TestBaselineRepair:
+    """The rebase is unconditional on anything about the problem.
+
+    Writing ``fitness = bundle.f`` claims a measurement: that
+    re-evaluating ``bundle.x`` would return it. On a stochastic loss it
+    would not, since ``best_loss`` is a running minimum and so the
+    luckiest draw. The claim is made anyway.
+
+    An earlier version gated this on ``task.pass_rng``. That is not a
+    property a handshake may read: a real problem does not come
+    labelled, the caller usually cannot say, and an update rule whose
+    shape depends on how the objective was declared is not one you can
+    reason about. The bias the claim adds is also the bias MR15-GA
+    already has -- its ``(µ+λ)`` selection keeps the better of each
+    pair, so its own stored fitness is a running minimum too, and its
+    scale collapses under noise with no switch at all. Refusing the
+    claim would not fix that, and with own-ask it is the only way the
+    handed-over *location* reaches a mutation GA at all.
+    """
+
+    def _mr15ga(self):
+        algo = MR15_GA(population_size=POPSIZE, solution=jnp.zeros((DIM,)))
+        state = algo.init(
+            jr.key(0),
+            jr.normal(jr.key(0), (POPSIZE, DIM)),
+            jnp.arange(POPSIZE, dtype=float),
+            algo.default_params,
+        )
+        _, write = build_transfer_fns("mr15ga", FAMILY_POPULATION, {})
+        return algo, state, write
+
+    def test_the_elite_is_rebased_on_the_handed_over_best(self):
+        _, state, write = self._mr15ga()
+        written = write(_bundle(), state)
+        assert jnp.allclose(written.population, 0.5)
+        assert jnp.allclose(written.fitness, -1.0)
+        assert jnp.isclose(written.std, TARGET, rtol=1e-5)
+
+    def test_the_writer_reads_nothing_about_the_task(self):
+        """The guard against the gate coming back.
+
+        ``build_transfer_fns`` takes the optimizer's name, family and
+        hyperparameters -- nothing that could tell it whether the loss
+        is stochastic. Two writers built the same way must behave
+        identically, whatever the task they end up attached to.
+        """
+        _, state, one = self._mr15ga()
+        _, _, two = self._mr15ga()
+        first, second = one(_bundle(), state), two(_bundle(), state)
+        assert jnp.array_equal(first.population, second.population)
+        assert jnp.array_equal(first.fitness, second.fitness)
+        assert jnp.array_equal(first.std, second.std)
+
+    def test_an_unusable_f_is_still_refused(self):
+        """A property of the numbers in hand, not of the problem.
+
+        ``+inf`` is the opposite failure to a lucky minimum: every
+        candidate beats it, so the 1/5 rule reads a 100% success rate
+        and doubles the width immediately after the scale write set it.
+        ``best_loss`` is ``+inf`` until something improves, which at
+        high ambient dimension can be a whole first generation of NaN.
+        """
+        _, state, write = self._mr15ga()
+        written = write(
+            TransferBundle(
+                x=jnp.full((DIM,), 0.5),
+                f=jnp.asarray(jnp.inf),
+                sigma=jnp.asarray(TARGET),
+                conf_sigma=jnp.asarray(CONF_EXACT),
+            ),
+            state,
+        )
+        assert jnp.array_equal(written.fitness, state.fitness)
+        assert jnp.array_equal(written.population, state.population)
+        # The scale is a separate judgement and still lands.
+        assert jnp.isclose(written.std, TARGET, rtol=1e-5)
+
+
+class TestMovesIterate:
+    """The writes that only make sense if the iterate actually moved.
+
+    A handshake does two different things at once. It refreshes a scale
+    that has gone stale, and it repairs the damage of jumping the
+    iterate somewhere else — re-centring a ``mean``, zeroing a
+    cumulation path, rebasing an elite, clearing Rprop's
+    ``prev_updates``. The second half is only justified by the jump. A
+    caller that knows nothing moved (the incoming optimizer already held
+    the best point) says so with ``moves_iterate=False``, and then those
+    writes are not conservative but destructive: they discard adaptation
+    the incoming optimizer earned, to protect it from a jump that is not
+    happening.
+
+    The scale write is deliberately *not* gated: an outgoing optimizer
+    that found nothing better may still have learned the local scale.
+    """
+
+    def _still(self, sigma: float = TARGET):
+        """A bundle that carries a scale but moves nothing."""
+        return TransferBundle(
+            x=jnp.full((DIM,), 0.5),
+            f=jnp.asarray(-1.0),
+            sigma=jnp.asarray(sigma),
+            conf_sigma=jnp.asarray(CONF_EXACT),
+            moves_iterate=jnp.asarray(False),
+        )
+
+    def test_defaults_to_moving(self):
+        # The conservative default: a caller that does not know moves
+        # the iterate, which is what every write is written for.
+        assert bool(_bundle().moves_iterate)
+        assert bool(
+            TransferBundle.absent(jnp.zeros((DIM,)), 1.0).moves_iterate
+        )
+
+    def test_distribution_keeps_its_mean_and_paths(self):
+        _, state, read, write = _evosax_dist(CR_FM_NES)
+        stepped = state.replace(
+            mean=jnp.full((DIM,), -0.25),
+            p_std=jnp.full((DIM,), 0.3),
+            p_c=jnp.full((DIM,), 0.4),
+        )
+        written = write(self._still(), stepped)
+
+        assert jnp.allclose(written.mean, stepped.mean)
+        assert jnp.allclose(written.p_std, stepped.p_std)
+        assert jnp.allclose(written.p_c, stepped.p_c)
+
+        # ...but the scale still lands.
+        sigma, conf = read(written)
+        assert float(conf) > CONF_ABSENT
+        assert jnp.isclose(sigma, TARGET, rtol=1e-5)
+
+    def test_mutation_ga_keeps_its_elite(self):
+        _, state, read, write = _evosax_pop(MR15_GA, "mr15ga")
+        written = write(self._still(), state)
+
+        assert jnp.array_equal(written.population, state.population)
+        assert jnp.array_equal(written.fitness, state.fitness)
+        sigma, _ = read(written)
+        assert jnp.isclose(sigma, TARGET, rtol=1e-5)
+
+    def test_rprop_keeps_its_previous_step(self):
+        read, write = build_transfer_fns(
+            "rprop", FAMILY_GRADIENT, {"learning_rate": 1e-3}
+        )
+        state = _optax_stepped(optax.rprop(1e-3))
+        before = optax.tree.get(state, "prev_updates")
+        assert not jnp.allclose(before, 0.0), "need a non-zero buffer"
+
+        written = write(self._still(), state)
+
+        # Rprop's ratchet keys on ``sign(g * prev_updates)``; those signs
+        # describe a *different neighbourhood* only if the iterate
+        # jumped. Keeping them also spares the dead iteration optax's
+        # one-generation lag would otherwise cost.
+        assert jnp.allclose(optax.tree.get(written, "prev_updates"), before)
+        sigma, _ = read(written)
+        assert jnp.isclose(sigma, TARGET, rtol=1e-3)
+
+    def test_a_non_finite_point_never_moves_the_iterate(self):
+        """The two gates compose, and the finiteness one still wins."""
+        _, state, _, write = _evosax_dist(CR_FM_NES)
+        stepped = state.replace(mean=jnp.full((DIM,), -0.25))
+        poisoned = TransferBundle(
+            x=jnp.full((DIM,), jnp.nan),
+            f=jnp.asarray(-1.0),
+            sigma=jnp.asarray(TARGET),
+            conf_sigma=jnp.asarray(CONF_EXACT),
+            moves_iterate=jnp.asarray(True),
+        )
+        assert jnp.allclose(write(poisoned, stepped).mean, stepped.mean)
 
 
 class TestTransferSpec:

@@ -94,6 +94,7 @@ class RandomSearchUpdateClass(UpdateClass):
         bounded: tuple[float | None, float | None],
         popsize: int,
         hash: int,
+        family: str = FAMILY_POPULATION,
     ):
         """Initialise the random-search update class.
 
@@ -122,6 +123,13 @@ class RandomSearchUpdateClass(UpdateClass):
             Candidates per logical iteration.
         hash : int
             Optimizer hash stamped into ``OptHistory.update_step``.
+        family : str, optional
+            Which optimizer family this is, by default
+            :data:`~l2co.optimizers.FAMILY_POPULATION`. Declared
+            explicitly because the ``UpdateClass`` default is
+            ``gradient``, which would misdescribe it -- and because this
+            subclass defines its own ``__init__``, the field has to be
+            threaded through by hand rather than inherited.
         """
 
         def _noop_init_fn(
@@ -139,6 +147,7 @@ class RandomSearchUpdateClass(UpdateClass):
             step_fn=_noop_step_fn,
             popsize=popsize,
             hash=hash,
+            family=family,
         )
         self.sampling_fn = sampling_fn
         self.static_model = static_model

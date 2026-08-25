@@ -45,6 +45,7 @@ from l2co._src.optimizers.state_transfer import (
     FAMILY_GRADIENT,
     FAMILY_POPULATION,
     build_transfer_fns,
+    transfer_spec_for,
 )
 from l2co._src.optimizers.utils import resolve_popsize, variable_popsize
 from l2co._src.sampler import random_sampling
@@ -334,27 +335,31 @@ def optax_extra_kwargs_fn(
 
 
 def evosax_ask_fn(
-    optimizer: DistributionBasedAlgorithm,
+    optimizer: DistributionBasedAlgorithm | PopulationBasedAlgorithm,
     es_params: Params,
     bounded: tuple[float, float],
 ) -> Callable:
-    """Expose a distribution-based ES's own sampling step.
+    """Expose an EvoSax algorithm's own sampling step.
 
     ``step_fn`` bundles evaluate/tell/ask into one call with the evosax
     algorithm captured in its closure, so a caller holding only an
     :class:`UpdateClass` cannot ask for a population without also
     spending a generation. This exposes just the ``ask``, which is what
     a handshake needs: write location and scale into the state, then let
-    the optimizer draw its own population, so any draws it caches in
-    state (``z``/``y`` for CR-FM-NES, ``pert`` for the persistent-ES
-    family) match the population that gets told back to it.
+    the optimizer draw its own population, so whatever its next update
+    reads matches the population that gets told back to it. For a
+    distribution-based algorithm that is the draws it caches (``z``/``y``
+    for CR-FM-NES, ``pert`` for the persistent-ES family); for a mutation
+    GA it is the ``state.fitness`` baseline the writer just repaired.
+    ``ask`` is declared on the shared base (``algorithms/base.py:106``),
+    so one closure serves both families.
 
     Bounds are clipped exactly as ``step_fn`` clips them, so a
     handshake population obeys the same box as a stepped one.
 
     Parameters
     ----------
-    optimizer : DistributionBasedAlgorithm
+    optimizer : DistributionBasedAlgorithm or PopulationBasedAlgorithm
         Constructed EvoSax algorithm instance.
     es_params : Params
         Its resolved parameters.
@@ -845,21 +850,25 @@ class UpdateClass(eqx.Module):
         :data:`~l2co._src.optimizers.state_transfer.FAMILIES`. Set by
         the constructing factory, which knows what it is building --
         *not* inferred from evosax registry membership, which
-        ``FEEDBACK_evosax.md`` records as a source of friction. Read by
-        a switching caller to decide the population half of a handshake:
-        a ``"distribution"`` optimizer regenerates its own population
-        through :attr:`ask_fn`, the others keep the existing
-        ``best_one`` / ``best`` layouts.
+        ``FEEDBACK_evosax.md`` records as a source of friction. Says
+        what kind of search state this optimizer holds, and nothing
+        more: the population half of a handshake is decided by
+        :attr:`ask_fn`'s presence, not by this.
     ask_fn : Callable or None
         ``ask_fn(opt_state, key) -> (params, opt_state)`` -- the
         optimizer's own sampling step, bounds-clipped like
-        :attr:`step_fn`. Present only for ``"distribution"``
-        optimizers; ``None`` (default) otherwise. Calling it *after*
-        writing a handshake into the state is what keeps the
-        ask/tell-coupled algorithms consistent: CR-FM-NES and seven
-        relatives cache their draws in state and consume them on the
-        next ``tell``, so the population and those cached draws have to
-        come from the same ``ask`` (``docs/adr/0012``).
+        :attr:`step_fn`. Present when
+        :attr:`~l2co._src.optimizers.state_transfer.TransferSpec.own_ask`
+        is set, which is every ``"distribution"`` optimizer and the
+        mutation GAs; ``None`` (default) otherwise. A switching caller
+        that finds it set must draw the post-switch population from it
+        rather than handing over a layout. Calling it *after* writing
+        the handshake into the state is what keeps the optimizer's next
+        update consistent with the population it is told about:
+        CR-FM-NES and seven relatives cache their draws in state and
+        consume them on the next ``tell`` (``docs/adr/0012``), and the
+        mutation GAs score the next generation against a baseline the
+        writer just repaired (``docs/adr/0014``).
     transfer_read_fn : Callable or None
         ``transfer_read_fn(opt_state) -> (sigma, conf)`` -- projects
         this optimizer's own state onto the canonical scale carried
@@ -1295,6 +1304,7 @@ class UpdateClass(eqx.Module):
         params, static = eqx.partition(task.model, eqx.is_inexact_array)
 
         optimizer = optimizer(population_size=popsize, solution=params)
+        es_params = optimizer.default_params.replace(**hyperparameters)
 
         init_fn, step_fn = evosax_population_based_fn(
             static=static,
@@ -1302,10 +1312,11 @@ class UpdateClass(eqx.Module):
             loss_fn=task.loss_fn,
             bounded=bounded,
             popsize=popsize,
-            es_params=optimizer.default_params.replace(**hyperparameters),
+            es_params=es_params,
             opt_hash=opt_hash,
             pass_rng=task.pass_rng,
         )
+        spec = transfer_spec_for(name, FAMILY_POPULATION)
         read_fn, write_fn = build_transfer_fns(
             name, FAMILY_POPULATION, hyperparameters
         )
@@ -1317,6 +1328,18 @@ class UpdateClass(eqx.Module):
             hash=opt_hash,
             stop_fn=stop_fn,
             family=FAMILY_POPULATION,
+            # Only the mutation GAs opt in: their next generation is
+            # scored against the baseline the writer just repaired, so
+            # they have to draw it themselves. DE and the archive
+            # methods must not -- their ``ask`` builds mutants from
+            # difference vectors of the stored population, which the
+            # repair makes identical, and identical rows have no
+            # differences. See ``docs/adr/0014``.
+            ask_fn=(
+                evosax_ask_fn(optimizer, es_params, bounded)
+                if spec.own_ask
+                else None
+            ),
             transfer_read_fn=read_fn,
             transfer_write_fn=write_fn,
         )
