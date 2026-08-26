@@ -818,8 +818,12 @@ class DataLoader:
         Parameters
         ----------
         include_best : bool, optional
-            Whether to include the per-problem virtual-best-solver
-            (``vbs``) envelope, by default False.
+            Whether to add the virtual best solver as an extra schedule
+            named ``"vbs"``, by default False. It is the *per-task*
+            oracle selection -- for each problem, the schedule reaching
+            the most targets at the full budget -- so its profile is a
+            bound on what choosing one optimizer per task can buy, not a
+            curve that dominates the portfolio at every cost.
         exclude_optimizer : str, optional
             Optimizer to exclude, by default None.
         cost_values : np.ndarray, optional
@@ -879,9 +883,9 @@ class DataLoader:
         # 1. Get the base mask from valid_files
         mask = self.valid_files.isel({OUTPUT_DIM: 0}, drop=True)
 
-        # 2. Reindex the mask to include 'vbs' and 'sbs' from _ertd
+        # 2. Reindex the mask to include the 'vbs' schedule from _ertd
         # fill_value=True ensures that any schedule NOT in self.data
-        # (like vbs/sbs) defaults to True.
+        # (like vbs) defaults to True.
         mask = mask.reindex_like(_ertd[SCHEDULE], method=None, fill_value=True)
 
         # 3. Apply the expanded mask

@@ -196,7 +196,7 @@ def test_disjoint_shards_reassemble_the_full_profile(
     tasks, compute each shard's profile in its own process, concatenate
     along ``problem``. ``shard_size=4`` does not divide the six tasks, so
     the ragged last shard is covered. ``include_best`` adds the ``vbs``
-    envelope, whose per-problem ``idxmax(SCHEDULE)`` must also stay
+    schedule, whose per-problem ``idxmax(SCHEDULE)`` must also stay
     shard-local.
     """
     full = _profile(_TASK_IDS, include_best=include_best)
