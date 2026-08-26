@@ -80,10 +80,11 @@ BASE_OPT_STYLES.update(
         "l2co": OptStyle(color="#000000", marker=None, linestyle="-"),
         "rl2co": OptStyle(color="#FF0000", marker="o", linestyle="-"),
         "randomsearch": OptStyle(color="#888888", marker=None, linestyle=":"),
-        # Best-solver envelope (added by ertd_profile(include_best=True)):
-        # a dashed line so it reads as an oracle reference, not one of the
-        # portfolio's own solid optimizer curves.
-        "sbs": OptStyle(color="#000000", marker=None, linestyle="--"),
+        # Virtual-best-solver envelope (added by
+        # ertd_profile(include_best=True)): a dashed line so it reads as
+        # an oracle reference, not one of the portfolio's own solid
+        # optimizer curves.
+        "vbs": OptStyle(color="#000000", marker=None, linestyle="--"),
         # Variant pin (a key with an underscore suffix, resolved ahead of
         # the base optimizer -- see get_schedule_styles). Every rl2co
         # schedule otherwise collapses onto base "rl2co" and so onto one

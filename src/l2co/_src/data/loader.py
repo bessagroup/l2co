@@ -41,11 +41,13 @@ import xarray as xr
 # Local
 from ..naming import (
     BUDGET,
+    COST,
     FEATURE,
     FEVALS,
     GLOBAL_MIN,
     ITERATIONS,
     KIND,
+    METRIC,
     OUTPUT_DIM,
     OUTPUT_MEAN,
     OUTPUT_MIN,
@@ -816,7 +818,8 @@ class DataLoader:
         Parameters
         ----------
         include_best : bool, optional
-            Whether to include the best optimizer, by default False.
+            Whether to include the per-problem virtual-best-solver
+            (``vbs``) envelope, by default False.
         exclude_optimizer : str, optional
             Optimizer to exclude, by default None.
         cost_values : np.ndarray, optional
@@ -832,8 +835,29 @@ class DataLoader:
             ERTD profile.
         """
         if include_best:
-            sbs = self.data[SUCCESS].sum(TARGET).idxmax(SCHEDULE)
-            d = self.create_strategy(choices=sbs, name="sbs")
+            success = self.data[SUCCESS]
+            counts = success.sum(TARGET)
+            tied_for_best = counts == counts.max(SCHEDULE)
+
+            # Tie-break: TARGET runs hardest -> easiest and success is a
+            # monotone step function, so among schedules tied on target
+            # count the first True entry is the hardest target each
+            # reached. Prefer whichever got there in fewer fevals.
+            # ``fillna`` guards a (schedule, task) combination absent
+            # from the store, which argmax's NaN-slice handling can't.
+            # ``compute`` realizes the (small) indexer eagerly -- the
+            # store is dask-backed, and vectorized ``isel`` below
+            # rejects a still-chunked indexer array (see the identical
+            # ``.compute()`` on ``calculate_ert``'s ``first_solved``).
+            hardest_reached = success.fillna(0.0).argmax(TARGET).compute()
+            speed = (
+                self.data[COST]
+                .sel({METRIC: FEVALS}, drop=True)
+                .isel({TARGET: hardest_reached})
+            )
+
+            vbs = speed.where(tied_for_best, other=np.inf).idxmin(SCHEDULE)
+            d = self.create_strategy(choices=vbs, name="vbs")
         else:
             d = self
         dims = self.task_labels.sel(
