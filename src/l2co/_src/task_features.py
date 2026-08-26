@@ -17,6 +17,90 @@ Schema = dict[str, str | list]
 
 
 # =============================================================================
+#                                                            Value predicates
+# =============================================================================
+# Shared by the derived features below and by the encoder itself: both have to
+# decide whether the tag actually said something about a feature.
+
+#: Returned by :meth:`FeatureProcessor._resolve` when a feature is neither in
+#: the tag nor derivable. Distinct from a tag that carries an explicit
+#: null-ish value, which is absent in a different way (see :func:`_is_absent`).
+_MISSING = object()
+
+
+def _unwrap_scalar(val: Any) -> Any:
+    """Unwrap a zero-dimensional array to the Python scalar it holds.
+
+    Tags reach the processor from three places -- a live ``Task.tag``, a
+    databank label matrix, and a config -- so the same value arrives as
+    a Python object, a NumPy scalar, or a zero-dimensional JAX array
+    depending on the route. Only the Python form is comparable against
+    a vocabulary key or foldable to a boolean spelling, so every value
+    is put in that form before anything looks at it. ``np.str_`` and
+    ``np.bool_`` unwrap to ``str`` and ``bool``; a NumPy or JAX float
+    unwraps to ``float``.
+
+    Parameters
+    ----------
+    val : Any
+        Raw value.
+
+    Returns
+    -------
+    Any
+        The Python scalar the value wraps, or ``val`` unchanged when it
+        is not a zero-dimensional array.
+    """
+    if getattr(val, "ndim", None) == 0 and hasattr(val, "item"):
+        return val.item()
+    return val
+
+
+def _is_absent(val: Any) -> bool:
+    """Whether a resolved feature value carries no information.
+
+    Covers the ways a feature goes missing. A tag may simply not have
+    the key (``_MISSING``). Or it may carry a null-ish value: a
+    databank store keeps one dense ``(task, feature)`` label matrix, so
+    a feature only some tasks tag round-trips as ``nan`` for the rest,
+    and feeding that to a continuous feature's ``Linear`` would put NaN
+    through the whole network rather than fail.
+
+    ``inf`` counts as absent for the same reason ``nan`` does -- it is
+    not a value the network can use, and a fill is a better answer than
+    an infinity propagating through a ``Linear``. Both are recognized
+    in numeric *and* string form, since a store round-trips them as
+    ``"nan"`` / ``"inf"``.
+
+    Parameters
+    ----------
+    val : Any
+        Resolved value, or ``_MISSING``.
+
+    Returns
+    -------
+    bool
+    """
+    val = _unwrap_scalar(val)
+    if val is _MISSING or val is None:
+        return True
+    if isinstance(val, str):
+        token = val.strip().lower()
+        if token in ("nan", "none", ""):
+            return True
+        try:
+            return not math.isfinite(float(token))
+        except ValueError:
+            return False
+    if isinstance(val, bool):
+        return False
+    try:
+        return not bool(jnp.isfinite(jnp.asarray(val, dtype=float)))
+    except (TypeError, ValueError):
+        return False
+
+
+# =============================================================================
 #                                                            Derived features
 # =============================================================================
 # Features a schema may request that are *computed from* the task tag rather
@@ -35,8 +119,17 @@ def _is_deterministic(tag: dict[str, Any]) -> bool:
     suites (``0.0`` when none is injected) and ``True`` for the
     inherently stochastic noisy suite. Values arrive either as native
     Python objects (live ``Task.tag``) or as the strings a databank
-    store round-trips, so both spellings are accepted. A missing
-    ``noise`` key is read as deterministic.
+    store round-trips, so both spellings are accepted.
+
+    A ``noise`` value that says nothing -- the key is absent, or it
+    carries ``None`` / ``nan`` / ``inf`` in either form -- is read as
+    deterministic. Absence is how a dense databank label matrix
+    represents "this suite does not tag noise", and the suites that do
+    not tag it are the noise-free ones, so this agrees with the missing
+    key. An uninterpretable *non-null* token (``"heavy"``) is read as
+    stochastic instead: the tag is asserting something about noise and
+    it is not "none", so claiming noise-freedom would be the wrong
+    direction to guess in.
 
     Parameters
     ----------
@@ -48,14 +141,19 @@ def _is_deterministic(tag: dict[str, Any]) -> bool:
     bool
         True when the task is noise-free.
     """
-    noise = tag.get("noise", 0.0)
+    noise = tag.get("noise", _MISSING)
+
+    if _is_absent(noise):
+        return True
+
+    noise = _unwrap_scalar(noise)
 
     if isinstance(noise, bool):
         return not noise
 
     if isinstance(noise, str):
         token = noise.strip().lower()
-        if token in ("", "none", "false"):
+        if token == "false":
             return True
         if token == "true":
             return False
@@ -135,15 +233,39 @@ DERIVED_FEATURES: dict[str, Callable[[dict[str, Any]], Any]] = {
 # training-set marginal -- and report which features were imputed alongside
 # any result, because a reader cannot recover that from the encoded vector.
 #
-# THE OTHER HALF OF THE CROSS-SUITE PROBLEM, which imputation does not touch.
-# A tag can disagree with the training schema by being silent about a feature
-# -- that is this section -- or by giving one a value the vocabulary has never
-# seen. The second is not absence, so no fill fires; `transform` raises
-# instead. It is not an oversight: filling a silent feature asserts a value
-# nobody stated, while remapping `helmholtz` onto `euler` would assert one the
-# tag explicitly contradicts. A processor whose vocabulary spans both task
-# sets -- or a schema that leaves the feature out -- is the honest answer, and
-# the raised message says so.
+# THE OTHER HALF OF THE CROSS-SUITE PROBLEM is a tag that disagrees with the
+# training schema not by being silent about a feature -- that is this section
+# -- but by giving one a value the vocabulary has never seen. That is not
+# absence, so no fill fires here; see the next section.
+
+# =============================================================================
+#                                                      Unknown-value handling
+# =============================================================================
+# `unknown_as_absent` routes an out-of-vocabulary categorical or boolean value
+# down the absent path above: the fill if the feature has one, otherwise the
+# ABSENT row, otherwise a raise naming both. Off by default, and the default
+# raises -- which is what a processor did before the flag existed.
+#
+# WHY IT IS A CHOICE AND NOT THE DEFAULT. The two disagreements are not equally
+# innocent. Filling a *silent* feature asserts a value nobody stated;
+# collapsing `helmholtz` onto ABSENT discards a value the tag stated
+# explicitly, and the model then reads "no information about the family" for a
+# task whose family is known and simply foreign. Both are lies, but only the
+# second one contradicts the tag.
+#
+# WHEN TO TURN IT ON. When the alternative is not running at all: a trained
+# checkpoint evaluated on a task set whose vocabulary you cannot change without
+# invalidating the checkpoint. It keeps every shape, so the artifact still
+# loads. Leave it off while *training*, where an unseen value means the schema
+# or the task set is wrong and the raise is the useful outcome.
+#
+# WHAT THIS DOES NOT BUY. The ABSENT row it routes to is only as good as the
+# training that reached it -- and on a training set where every task carries
+# every feature, nothing ever indexes that row, so it keeps its initialization
+# and contributes an untrained vector. Absence and unknown-ness are then both
+# encoded as the same arbitrary direction. The flag buys a run that completes,
+# not a run whose answer on foreign values means anything; a processor whose
+# vocabulary spans both task sets is still the honest answer.
 
 #: Vocabulary entry standing for "this feature is absent from the task tag".
 ABSENT = "__absent__"
@@ -151,37 +273,180 @@ ABSENT = "__absent__"
 #: Suffix of the companion boolean generated for each continuous feature.
 PRESENCE_SUFFIX = "__present"
 
-#: Returned by :meth:`FeatureProcessor._resolve` when a feature is neither in
-#: the tag nor derivable. Distinct from a tag that carries an explicit
-#: null-ish value, which is absent in a different way (see :func:`_is_absent`).
-_MISSING = object()
+#: The two entries a ``'boolean'`` feature's vocabulary is keyed by.
+_BOOLEAN_KEYS = frozenset({"false", "true"})
 
 
-def _normalize_categorical(val: Any) -> Any:
-    """Put a value in the form vocabularies are keyed by.
+def _is_boolean_vocab(vocab: dict[object, int]) -> bool:
+    """Whether ``vocab`` is a ``'boolean'`` feature's vocabulary.
 
-    Booleans are stored as the strings ``"false"`` / ``"true"``, so a
-    Python ``bool`` has to be folded to that form before any vocabulary
-    lookup.
+    Boolean features get the fixed two-entry vocabulary :meth:`init`
+    builds (plus :data:`ABSENT` under ``tolerate_missing``), so the
+    entries identify the kind. A *categorical* feature that happens to
+    list ``"true"`` among other values is not one, and is left alone --
+    the schema meant those strings literally.
 
-    Deliberately does not touch strings. A categorical schema is free
-    to declare ``"True"`` as a literal category, and case-folding every
-    string would make that entry unreachable.
+    Parameters
+    ----------
+    vocab : dict[object, int]
+        A feature's vocabulary.
+
+    Returns
+    -------
+    bool
+    """
+    keys = set(vocab)
+    return _BOOLEAN_KEYS <= keys and keys <= _BOOLEAN_KEYS | {ABSENT}
+
+
+def _normalize_boolean(val: Any) -> Any:
+    """Fold a value onto the ``"false"`` / ``"true"`` spellings.
+
+    The same boolean reaches the processor spelled several ways
+    depending on where the tag came from: ``True`` from a live
+    ``Task.tag``, ``np.True_`` from a NumPy label array, ``"True"``
+    from a store that stringified it, ``1`` or ``1.0`` from a config or
+    from a float label matrix. All of them mean the vocabulary entry
+    ``"true"``, so all of them are folded onto it -- otherwise a
+    perfectly well-specified task fails to encode on a spelling
+    difference.
+
+    Anything that is not one of those spellings is returned unchanged,
+    for :meth:`FeatureProcessor.transform` to treat as an unknown
+    value.
+
+    Parameters
+    ----------
+    val : Any
+        Raw value, already unwrapped by :func:`_unwrap_scalar`.
+
+    Returns
+    -------
+    Any
+        ``"false"``, ``"true"``, or ``val`` unchanged.
+    """
+    if isinstance(val, bool):
+        return str(val).lower()
+    if isinstance(val, str):
+        token = val.strip().lower()
+        if token in _BOOLEAN_KEYS or token == ABSENT:
+            return token
+        try:
+            val = float(token)
+        except ValueError:
+            return token
+    if isinstance(val, int | float):
+        if val == 0:
+            return "false"
+        if val == 1:
+            return "true"
+    return val
+
+
+def _in_vocab(val: Any, vocab: dict[object, int]) -> bool:
+    """Whether ``val`` is a key of ``vocab``, unhashable values included.
+
+    Parameters
+    ----------
+    val : Any
+        Candidate key.
+    vocab : dict[object, int]
+        The feature's vocabulary.
+
+    Returns
+    -------
+    bool
+        False for a value that cannot be a dict key at all, rather than
+        raising ``TypeError`` from the membership test.
+    """
+    try:
+        return val in vocab
+    except TypeError:
+        return False
+
+
+def _match_number_spelling(val: Any, vocab: dict[object, int]) -> Any:
+    """Fold a number onto a vocabulary key spelled the other way.
+
+    A categorical vocabulary can be keyed by numbers -- a
+    dimensionality declared as a category -- while the tag carries the
+    string a store round-tripped, or the reverse: an artifact written
+    before vocabulary keys kept their type has ``"10"`` where the live
+    tag says ``10``. Both are the same category, so both are folded
+    onto whichever spelling the vocabulary actually uses.
+
+    Only spellings that name an existing key are returned, so this can
+    never invent one.
+
+    Parameters
+    ----------
+    val : Any
+        Raw value, not a key of ``vocab``.
+    vocab : dict[object, int]
+        The feature's vocabulary.
+
+    Returns
+    -------
+    Any
+        A key of ``vocab``, or ``val`` unchanged when no spelling of it
+        is one.
+    """
+    candidates: list[Any] = []
+    if isinstance(val, str):
+        token = val.strip()
+        candidates.append(token)
+        for parse in (int, float):
+            try:
+                candidates.append(parse(token))
+            except ValueError:
+                pass
+    elif isinstance(val, int | float):
+        candidates.append(str(val))
+        if isinstance(val, float) and val.is_integer():
+            candidates.append(int(val))
+            candidates.append(str(int(val)))
+    for candidate in candidates:
+        if _in_vocab(candidate, vocab):
+            return candidate
+    return val
+
+
+def _normalize_value(val: Any, vocab: dict[object, int]) -> Any:
+    """Put a value in the form ``vocab`` is keyed by.
+
+    Zero-dimensional arrays are unwrapped first, so a NumPy or JAX
+    scalar is compared as the Python value it holds. Boolean features
+    then fold onto their two spellings (see
+    :func:`_normalize_boolean`), and a value that is not a key of a
+    categorical vocabulary gets one more chance as a number spelled the
+    other way (see :func:`_match_number_spelling`).
+
+    Categorical *strings* are otherwise left alone: a categorical schema
+    is free to declare ``"True"`` as a literal category, and
+    case-folding every string would make that entry unreachable. A
+    Python ``bool`` is still folded, since ``True`` cannot be a JSON
+    vocabulary key.
 
     Parameters
     ----------
     val : Any
         Raw value.
+    vocab : dict[object, int]
+        The feature's vocabulary.
 
     Returns
     -------
     Any
-        ``val`` unchanged, or its lowercased string form when it is a
-        ``bool``.
+        The key to look up in ``vocab``.
     """
+    val = _unwrap_scalar(val)
+    if _is_boolean_vocab(vocab):
+        return _normalize_boolean(val)
     if isinstance(val, bool):
         return str(val).lower()
-    return val
+    if _in_vocab(val, vocab):
+        return val
+    return _match_number_spelling(val, vocab)
 
 
 def _coerce_fill(val: Any) -> Any:
@@ -204,9 +469,7 @@ def _coerce_fill(val: Any) -> Any:
     Any
         The Python scalar the value wraps, or ``val`` unchanged.
     """
-    if getattr(val, "ndim", None) == 0 and hasattr(val, "item"):
-        return val.item()
-    return val
+    return _unwrap_scalar(val)
 
 
 def _presence_base(
@@ -296,7 +559,7 @@ def _validate_impute(
                     f"finite, got {val!r}."
                 )
             continue
-        if _normalize_categorical(val) not in vocab:
+        if not _in_vocab(_normalize_value(val, vocab), vocab):
             raise ValueError(
                 f"Fill value {val!r} for feature {name!r} is not in its "
                 f"vocabulary {sorted(map(str, vocab))}. An out-of-vocabulary "
@@ -305,35 +568,63 @@ def _validate_impute(
             )
 
 
-def _is_absent(val: Any) -> bool:
-    """Whether a resolved feature value carries no information.
+#: Vocabulary key types JSON can carry as a *value* and hand back
+#: unchanged. A key outside this set cannot survive a round trip at all,
+#: so :func:`_typed_vocab_pairs` refuses to write one.
+_JSON_SCALARS = (str, bool, int, float, type(None))
 
-    Covers the two ways a feature goes missing. A tag may simply not
-    have the key (``_MISSING``). Or it may carry a null-ish value: a
-    databank store keeps one dense ``(task, feature)`` label matrix, so
-    a feature only some tasks tag round-trips as ``nan`` for the rest,
-    and feeding that to a continuous feature's ``Linear`` would put NaN
-    through the whole network rather than fail.
+
+def _typed_vocab_pairs(
+    vocabs: dict[str, dict[object, int] | None],
+) -> dict[str, list[list]]:
+    """Vocabularies whose keys do not survive JSON, as ordered pairs.
+
+    A vocabulary is stored as a JSON *object*, and JSON object keys are
+    strings -- so a categorical feature keyed by the integers ``2, 3, 5,
+    10`` (a dimensionality declared as a category, say) reloads keyed by
+    ``"2", "3", "5", "10"`` and stops matching the integers a live
+    ``Task.tag`` carries. Encoding those vocabularies a second time as
+    ``[[key, index], ...]`` puts the keys in *value* position, where
+    JSON keeps the difference between ``2`` and ``"2"``.
+
+    Only the affected vocabularies are emitted, so a processor whose
+    keys are all strings -- every processor built from a `'boolean'` or
+    string-categorical schema, which is all of them today -- serializes
+    to the bytes it always did.
 
     Parameters
     ----------
-    val : Any
-        Resolved value, or ``_MISSING``.
+    vocabs : dict[str, dict[object, int] | None]
+        The processor's vocabularies.
 
     Returns
     -------
-    bool
+    dict[str, list[list]]
+        Feature name to ``[[key, index], ...]``, for the vocabularies
+        that need it. Empty when none do.
+
+    Raises
+    ------
+    ValueError
+        If a vocabulary key is not a JSON scalar. Such a key cannot
+        round-trip in either position, and writing the artifact anyway
+        would produce one that fails to load.
     """
-    if val is _MISSING or val is None:
-        return True
-    if isinstance(val, str):
-        return val.strip().lower() in ("nan", "none", "")
-    if isinstance(val, bool):
-        return False
-    try:
-        return bool(jnp.isnan(jnp.asarray(val, dtype=float)))
-    except (TypeError, ValueError):
-        return False
+    typed: dict[str, list[list]] = {}
+    for name, vocab in vocabs.items():
+        if vocab is None:
+            continue
+        bad = [k for k in vocab if not isinstance(k, _JSON_SCALARS)]
+        if bad:
+            raise ValueError(
+                f"Vocabulary of feature {name!r} is keyed by {bad!r}, "
+                f"which JSON cannot carry, so the stored processor "
+                f"could not be loaded back. Vocabulary keys must be "
+                f"strings, numbers, booleans or None."
+            )
+        if any(not isinstance(k, str) for k in vocab):
+            typed[name] = [[k, i] for k, i in vocab.items()]
+    return typed
 
 
 # =============================================================================
@@ -351,6 +642,11 @@ class FeatureProcessor(eqx.Module):
     ``deterministic``), which :meth:`transform` computes from the rest
     of the tag when the key is absent.
 
+    Boolean and categorical values are folded onto their vocabulary
+    keys before lookup, so the same value spelled ``True``,
+    ``np.True_``, ``"True"``, ``1`` or ``1.0`` all encode alike (see
+    :func:`_normalize_value`).
+
     Parameters
     ----------
     vocabs : dict[str, dict[object, int] | None]
@@ -358,10 +654,26 @@ class FeatureProcessor(eqx.Module):
         feature; a dict gives the value→index lookup for boolean or
         categorical features. Insertion order of ``vocabs`` defines
         the feature ordering used by :meth:`transform`.
+    impute : dict[str, Any], optional
+        Fill values for features a task tag does not carry, as
+        ``{feature: value}``. Default empty.
+    unknown_as_absent : bool, optional
+        Encode an out-of-vocabulary categorical or boolean value as an
+        absent one instead of raising. Default ``False``.
+
+    Attributes
+    ----------
+    vocabs : dict[str, dict[object, int] | None]
+        As above; static.
+    impute : dict[str, Any]
+        As above; static.
+    unknown_as_absent : bool
+        As above; static.
     """
 
     vocabs: dict[str, dict[object, int] | None] = eqx.field(static=True)
     impute: dict[str, Any] = eqx.field(static=True, default_factory=dict)
+    unknown_as_absent: bool = eqx.field(static=True, default=False)
 
     def __post_init__(self) -> None:
         # Coerced before validation so a fill that arrived as a NumPy
@@ -382,6 +694,7 @@ class FeatureProcessor(eqx.Module):
         *,
         tolerate_missing: bool = False,
         impute: dict[str, Any] | None = None,
+        unknown_as_absent: bool = False,
     ) -> FeatureProcessor:
         """Build a FeatureProcessor from a schema.
 
@@ -415,6 +728,16 @@ class FeatureProcessor(eqx.Module):
             ``<name>__present`` companion -- ``transform`` reads those
             off the tag, so a fill there would go nowhere. Anything
             else is rejected here. Default ``None``.
+        unknown_as_absent : bool, optional
+            Treat a categorical or boolean value that is *not* in its
+            vocabulary as an absent one -- filled from ``impute`` if
+            that feature has a fill, else encoded as :data:`ABSENT` if
+            the vocabulary has that entry, else raising a message that
+            names both. Like ``impute`` this leaves every vocabulary
+            and the feature count untouched, so a trained model still
+            loads. Default ``False``, which keeps :meth:`transform`
+            raising on an unseen value -- see the module note on why
+            that is the default.
 
         Returns
         -------
@@ -423,16 +746,25 @@ class FeatureProcessor(eqx.Module):
         vocabs: dict[str, dict[object, int] | None] = {}
 
         for name, spec in schema.items():
-            if spec == "continuous":
+            # Guarded on ``str`` because an array-valued spec answers an
+            # equality test elementwise, and ``if`` on the result raises
+            # before the categorical branch is ever reached.
+            is_type_name = isinstance(spec, str)
+            if is_type_name and spec == "continuous":
                 vocabs[name] = None
                 if tolerate_missing:
                     # Directly after its own feature, so the encoded
                     # vector stays readable in schema order.
                     vocabs[name + PRESENCE_SUFFIX] = {"false": 0, "true": 1}
-            elif spec == "boolean":
+            elif is_type_name and spec == "boolean":
                 vocabs[name] = {"false": 0, "true": 1}
             elif hasattr(spec, "__iter__"):
-                categories = list(spec)
+                # Unwrapped so a spec that arrived as a NumPy array is
+                # keyed by the Python values it holds: a ``np.int64``
+                # key is not something JSON can carry, and a vocabulary
+                # that cannot be stored is one no trained model can be
+                # reloaded against.
+                categories = [_unwrap_scalar(v) for v in spec]
                 vocabs[name] = {v: i for i, v in enumerate(categories)}
             else:
                 raise ValueError(
@@ -444,7 +776,11 @@ class FeatureProcessor(eqx.Module):
             if tolerate_missing and vocabs[name] is not None:
                 vocabs[name][ABSENT] = len(vocabs[name])
 
-        return cls(vocabs=vocabs, impute=dict(impute or {}))
+        return cls(
+            vocabs=vocabs,
+            impute=dict(impute or {}),
+            unknown_as_absent=unknown_as_absent,
+        )
 
     def transform(self, x: dict[str, Any]) -> jax.Array:
         """Encode a feature dict to a default-precision JAX array.
@@ -472,8 +808,8 @@ class FeatureProcessor(eqx.Module):
             If a feature is neither present in ``x``, nor derivable,
             nor encodable as absent (see :meth:`init`'s ``impute`` and
             ``tolerate_missing``); or if a categorical feature carries
-            a value outside its vocabulary, which no fill covers (see
-            the note below).
+            a value outside its vocabulary and the processor was not
+            built with ``unknown_as_absent`` (see the note below).
 
         Notes
         -----
@@ -483,13 +819,22 @@ class FeatureProcessor(eqx.Module):
         companion still reports whether the *tag* carried a value, so
         it reads ``false`` even where the value slot was filled.
 
-        A tag can disagree with the schema a second way, which neither
-        mechanism covers: it can carry a categorical feature with a
-        value the vocabulary has never seen. That is not absence, so
-        no fill fires, and the encoding stops with a ``KeyError``
-        naming the feature and its vocabulary. See the module note on
-        imputation for why remapping the value instead would be worse
-        than the gap it closes.
+        A tag can disagree with the schema a second way: it can carry
+        a categorical feature with a value the vocabulary has never
+        seen. That is not absence, so no fill fires by default, and the
+        encoding stops with a ``KeyError`` naming the feature and its
+        vocabulary. ``unknown_as_absent`` routes it down the absent
+        path instead -- the fill if there is one, else the ``ABSENT``
+        row -- which keeps an already-trained checkpoint usable on a
+        foreign task set at the cost of telling the model nothing about
+        a feature the tag did state. See the module note on
+        unknown-value handling.
+
+        A value that is not finite -- ``nan`` or ``inf``, in numeric or
+        string form -- counts as absent rather than as a value, so it
+        takes the fill and reads ``false`` on a presence companion. A
+        dense databank label matrix stores an untagged feature as
+        ``nan``, and an infinity is not something a ``Linear`` can use.
         """
         feats = []
         for name, vocab in self.vocabs.items():
@@ -538,22 +883,73 @@ class FeatureProcessor(eqx.Module):
             if vocab is None:
                 feats.append(val)
             else:
-                key = _normalize_categorical(val)
-                if key not in vocab:
-                    raise KeyError(
-                        f"Feature {name!r} is tagged {val!r}, which is "
-                        f"not in the vocabulary this processor was "
-                        f"built with ({sorted(map(str, vocab))}). The "
-                        f"tag is not silent about this feature, so no "
-                        f"fill applies -- imputation covers a feature "
-                        f"the tag omits, not one it gives an unseen "
-                        f"value. Encoding it takes a processor whose "
-                        f"{name!r} vocabulary lists {val!r}: train "
-                        f"against a schema that spans both task sets, "
-                        f"or leave the feature out of the schema."
-                    )
+                key = _normalize_value(val, vocab)
+                if not _in_vocab(key, vocab):
+                    key = self._resolve_unknown(name, val, vocab)
                 feats.append(vocab[key])
         return jnp.array(feats, dtype=float)
+
+    def _resolve_unknown(
+        self, name: str, val: Any, vocab: dict[object, int]
+    ) -> Any:
+        """The vocabulary key to encode an out-of-vocabulary value as.
+
+        Reached when the tag *does* carry the feature but gives it a
+        value the vocabulary has never seen -- which no fill covers by
+        default, since imputation stands in for a feature the tag omits
+        rather than for one it contradicts.
+
+        Parameters
+        ----------
+        name : str
+            Feature name.
+        val : Any
+            The value the tag carried.
+        vocab : dict[object, int]
+            The feature's vocabulary.
+
+        Returns
+        -------
+        Any
+            A key of ``vocab``, when :attr:`unknown_as_absent` is set
+            and the feature has either a fill or an :data:`ABSENT`
+            entry to fall back on.
+
+        Raises
+        ------
+        KeyError
+            Otherwise -- naming the feature, its vocabulary, and the
+            two ways to make the value encodable.
+        """
+        if self.unknown_as_absent:
+            if name in self.impute:
+                return _normalize_value(self.impute[name], vocab)
+            if ABSENT in vocab:
+                return ABSENT
+            raise KeyError(
+                f"Feature {name!r} is tagged {val!r}, which is not in "
+                f"the vocabulary this processor was built with "
+                f"({sorted(map(str, vocab))}). unknown_as_absent is "
+                f"set, but this feature has nothing to fall back on: "
+                f"it carries no impute entry and its vocabulary has no "
+                f"{ABSENT!r} row (only a processor built with "
+                f"tolerate_missing=True has one). Pass "
+                f"impute={{{name!r}: ...}} to say what an unknown "
+                f"value should read as."
+            )
+        raise KeyError(
+            f"Feature {name!r} is tagged {val!r}, which is not in the "
+            f"vocabulary this processor was built with "
+            f"({sorted(map(str, vocab))}). The tag is not silent about "
+            f"this feature, so no fill applies -- imputation covers a "
+            f"feature the tag omits, not one it gives an unseen value. "
+            f"Encoding it takes a processor whose {name!r} vocabulary "
+            f"lists {val!r}: train against a schema that spans both "
+            f"task sets, or leave the feature out of the schema. To "
+            f"read an unseen value as an absent one instead, build the "
+            f"processor with unknown_as_absent=True (see the module "
+            f"note on what that does and does not buy)."
+        )
 
     def _resolve(self, x: dict[str, Any], name: str) -> Any:
         """Look ``name`` up in the tag, falling back to its derivation.
@@ -590,6 +986,10 @@ class FeatureProcessor(eqx.Module):
         because the ``"l2co"`` registry path's explicit
         ``swap_optimizers`` list exercises it).
 
+        Names the processor does not encode are ignored, so a mapping
+        may name features belonging to other processors (the stage-1
+        models pass one keyed by optimizer name).
+
         Parameters
         ----------
         name_mapping : dict[str, str]
@@ -599,16 +999,38 @@ class FeatureProcessor(eqx.Module):
         -------
         FeatureProcessor
             New instance with renamed features.
+
+        Raises
+        ------
+        ValueError
+            If the mapping sends two features to the same name. The
+            renamed vocabulary would then hold one entry where there
+            were two -- a silently shorter feature vector, which
+            :class:`MixedEmbedding` was built for the old length of.
         """
-        new_vocabs = {
-            name_mapping.get(name, name): vocab
-            for name, vocab in self.vocabs.items()
-        }
+        new_names = [name_mapping.get(name, name) for name in self.vocabs]
+        collisions = sorted(
+            {name for name in new_names if new_names.count(name) > 1}
+        )
+        if collisions:
+            raise ValueError(
+                f"Renaming would send more than one feature to each of "
+                f"{collisions}, leaving {len(set(new_names))} features "
+                f"where there were {len(new_names)}. A shorter feature "
+                f"vector does not match the MixedEmbedding built for "
+                f"this processor, so the collision is rejected here "
+                f"rather than silently dropping a feature."
+            )
+        new_vocabs = dict(zip(new_names, self.vocabs.values(), strict=True))
         new_impute = {
             name_mapping.get(name, name): val
             for name, val in self.impute.items()
         }
-        return FeatureProcessor(vocabs=new_vocabs, impute=new_impute)
+        return FeatureProcessor(
+            vocabs=new_vocabs,
+            impute=new_impute,
+            unknown_as_absent=self.unknown_as_absent,
+        )
 
     def with_imputation(self, impute: dict[str, Any]) -> FeatureProcessor:
         """Copy of this processor that fills the named absent features.
@@ -638,29 +1060,99 @@ class FeatureProcessor(eqx.Module):
                 {"separable": False, "unimodal": True}
             )
         """
-        return FeatureProcessor(vocabs=self.vocabs, impute=dict(impute))
+        return FeatureProcessor(
+            vocabs=self.vocabs,
+            impute=dict(impute),
+            unknown_as_absent=self.unknown_as_absent,
+        )
+
+    def with_unknown_as_absent(
+        self, unknown_as_absent: bool = True
+    ) -> FeatureProcessor:
+        """Copy of this processor that survives an unseen value.
+
+        The companion of :meth:`with_imputation` for the other half of
+        the cross-suite problem: where that one covers a feature the tag
+        omits, this one covers a feature the tag gives a value the
+        vocabulary has never seen. Vocabularies, feature order and fills
+        are untouched, so a model trained against this processor still
+        loads.
+
+        Parameters
+        ----------
+        unknown_as_absent : bool, optional
+            What to set the flag to. Default ``True``.
+
+        Returns
+        -------
+        FeatureProcessor
+            New instance; ``self`` is unchanged.
+
+        Examples
+        --------
+        Run a bbob-trained processor over a task set that tags a
+        ``family`` its vocabulary does not list, reading the unseen
+        family as no information at all::
+
+            fp = (
+                FeatureProcessor.load(path)
+                .with_unknown_as_absent()
+            )
+
+        Read it as a stated value instead, which is the honest choice
+        when the foreign family really does behave like a known one::
+
+            fp = (
+                FeatureProcessor.load(path)
+                .with_imputation({"family": "bbob"})
+                .with_unknown_as_absent()
+            )
+        """
+        return FeatureProcessor(
+            vocabs=self.vocabs,
+            impute=dict(self.impute),
+            unknown_as_absent=unknown_as_absent,
+        )
 
     # ------------------------------------------------------------------
     # Serialization
     # ------------------------------------------------------------------
 
     def to_dict(self) -> dict:
-        # ``impute`` is omitted when empty so that a processor built the
-        # ordinary way serializes to exactly the bytes it always did --
-        # the stored artifacts under models/ are compared and re-read by
-        # older code paths.
+        # Every optional key is omitted when it carries nothing, so a
+        # processor built the ordinary way serializes to exactly the
+        # bytes it always did -- the stored artifacts under models/ are
+        # compared and re-read by older code paths.
         out: dict = {"vocabs": self.vocabs}
         if self.impute:
             out["impute"] = self.impute
+        if self.unknown_as_absent:
+            out["unknown_as_absent"] = True
+        typed = _typed_vocab_pairs(self.vocabs)
+        if typed:
+            out["vocab_pairs"] = typed
         return out
 
     @classmethod
     def reconstruct(
-        cls, vocabs: dict, impute: dict | None = None
+        cls,
+        vocabs: dict,
+        impute: dict | None = None,
+        unknown_as_absent: bool = False,
+        vocab_pairs: dict | None = None,
     ) -> FeatureProcessor:
-        # ``impute`` defaults so that artifacts written before it existed
-        # still load.
-        return cls(vocabs=vocabs, impute=dict(impute or {}))
+        # Every keyword past ``vocabs`` defaults, so artifacts written
+        # before it existed still load. ``vocab_pairs`` wins where it is
+        # present: it is the only copy of a vocabulary whose keys are
+        # not strings (see :func:`_typed_vocab_pairs`).
+        vocabs = dict(vocabs)
+        for name, pairs in (vocab_pairs or {}).items():
+            vocabs[name] = {key: int(index) for key, index in pairs}
+        return cls(
+            vocabs=vocabs,
+            impute=dict(impute or {}),
+            unknown_as_absent=unknown_as_absent,
+        )
 
     def store(self, path: str) -> str:
         _path = Path(path)

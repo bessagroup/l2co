@@ -49,9 +49,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Explicit `[build-system]` declaration (`hatchling`) and `[tool.hatch.build]`
   configuration in `pyproject.toml`.
 - `tests/unit/` and `tests/integration/` split with a `slow` pytest marker.
+- `FeatureProcessor.unknown_as_absent` (static field, default `False`), the
+  `unknown_as_absent=` keyword on `FeatureProcessor.init`, and the
+  `FeatureProcessor.with_unknown_as_absent()` copier. Encodes a categorical or
+  boolean value that is *not* in its vocabulary as an absent one — the
+  feature's `impute` fill if it has one, otherwise the `ABSENT` row, otherwise
+  a raise naming both — instead of raising. Leaves every vocabulary and the
+  feature count untouched, so a model trained against the processor still
+  loads; the default still raises. See `docs/adr/0015` for when to turn it on
+  and what it does not buy (the `ABSENT` row it routes to receives no gradient
+  on a training set where every task carries every feature).
 
 ### Changed
 
+- **A task tag no longer has to spell a value the way the vocabulary does.**
+  `FeatureProcessor.transform` folds boolean values onto the `"false"` /
+  `"true"` keys from every route they arrive by — `True`, `np.True_`,
+  `"True"`, `1`, `1.0`, `"1"`, a zero-dimensional JAX array — where previously
+  only `True` and `"true"` encoded and everything else raised `KeyError`. The
+  same fold runs between a numeric category and its string in both directions
+  (`10` ↔ `"10"`), which is what a databank round-trip and every artifact
+  written before vocabulary keys kept their type produce. Only spellings that
+  name an existing key are accepted, so no fold can invent one, and
+  case-folding stays confined to boolean vocabularies — a categorical schema
+  may still list `"True"` and `"true"` as two categories (`docs/adr/0015`).
+- `FeatureProcessor` vocabulary keys keep their type through `store` / `load`.
+  A vocabulary is a JSON object and JSON object keys are strings, so a
+  categorical feature keyed by the integers `2, 3, 5, 10` reloaded keyed by
+  `"2", "3", "5", "10"` and stopped matching a live `Task.tag` — an artifact
+  that encoded fine before it was stored and raised after. Affected
+  vocabularies are now written a second time as `[[key, index], ...]`, where
+  JSON keeps the difference; `reconstruct` prefers those. A processor whose
+  keys are all strings — every processor built from a `'boolean'` or
+  string-categorical schema — serializes to exactly the bytes it always did.
+  A vocabulary key JSON cannot carry at all is now rejected by `to_dict`
+  rather than written into an artifact that fails to load.
+- A non-finite feature value counts as absent rather than as a value, in
+  numeric and string form (`inf`, `-inf`, `"inf"`), joining `nan` / `None` /
+  `""`. It therefore takes an `impute` fill and reads `false` on a
+  `<name>__present` companion, instead of an infinity reaching a `Linear`. A
+  processor with neither mechanism still passes an explicit null-ish value
+  through untouched, so what an existing checkpoint encodes is unchanged.
+- `FeatureProcessor.swap_names` rejects a mapping that sends two features to
+  the same name instead of silently returning a processor with one feature
+  fewer — a shorter feature vector than the `MixedEmbedding` built for it.
+- `FeatureProcessor.init` accepts an array-valued categorical spec. The
+  branch testing `spec == "continuous"` raised `ValueError: the truth value of
+  an array ... is ambiguous` before reaching the categorical branch, so a
+  schema whose categories came off a NumPy array could not be declared at all;
+  its categories are now also unwrapped to the Python values they hold, since
+  a vocabulary keyed by `np.int64` is one JSON cannot store.
 - **The `"l2co"` meta-optimizer no longer evaluates its whole population every
   iteration.** `l2co_population_based_fn` used to call
   `vmapped_loss_and_grad` over all `max(popsize)` candidates unconditionally,
@@ -101,6 +148,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `l2co._src.*`.
 - CI workflows install with `[tool.uv.sources]` (the `--no-sources` flag is
   removed). Sibling deps are cloned to the expected paths in CI.
+
+### Fixed
+
+- The derived `deterministic` feature read a `noise` value of `nan`, `inf` or
+  `None` as *stochastic*, contradicting the documented "a missing `noise` key
+  is read as deterministic". `nan` is how a dense databank label matrix
+  represents "this suite does not tag noise", so every task in a store that
+  merely contained a noisy suite encoded as stochastic. Those now read as
+  deterministic, agreeing with the missing key; an uninterpretable non-null
+  token (`"heavy"`) still reads as stochastic.
 
 ### Deprecated
 
