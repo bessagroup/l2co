@@ -78,7 +78,9 @@ BASE_OPT_STYLES.update(
         "sepcmaes": OptStyle(color="#EE6677", marker="x"),
         "stage0": OptStyle(color="#BBBBBB", marker=None, linestyle="--"),
         "l2co": OptStyle(color="#000000", marker=None, linestyle="-"),
-        "rl2co": OptStyle(color="#FF0000", marker="o", linestyle="-"),
+        # Black, like l2co -- the trained-policy marker ("o") is what
+        # keeps the two apart when a report draws both.
+        "rl2co": OptStyle(color="#000000", marker="o", linestyle="-"),
         "randomsearch": OptStyle(color="#888888", marker=None, linestyle=":"),
         # The two oracle references, dashed and dotted so neither reads as
         # one of the portfolio's own solid optimizer curves.
@@ -94,9 +96,15 @@ BASE_OPT_STYLES.update(
         # Variant pin (a key with an underscore suffix, resolved ahead of
         # the base optimizer -- see get_schedule_styles). Every rl2co
         # schedule otherwise collapses onto base "rl2co" and so onto one
-        # red solid line, which puts the uniform-random baseline in the
+        # black solid line, which puts the uniform-random baseline in the
         # trained policy's colour. Giving it its own colour and marker
         # separates the two on colour, dash pattern, and shape at once.
+        # This pin also covers every alias that *extends* the name with
+        # a further "_"-delimited suffix -- "rl2co_random_v2",
+        # "rl2co_random_10"/"_100"/"_1000" (the iteration-budget
+        # ablation), "rl2co_random_ab", ... -- so a new random-policy
+        # alias never has to be added here to render orange-dashed; see
+        # get_schedule_styles's pin-matching.
         "rl2co_random": OptStyle(color="#EE7733", marker="s", linestyle="--"),
     }
 )
@@ -186,20 +194,27 @@ def get_schedule_styles(schedule_names: Iterable[str]) -> dict[str, OptStyle]:
     unmarked, so the deliberately plain baselines (``randomsearch``,
     ``l2co``, ``stage0``) do not sprout shapes.
 
-    A full schedule name present in ``BASE_OPT_STYLES`` (a *variant
-    pin*, e.g. ``rl2co_random``) is honoured verbatim and takes
-    precedence over its base optimizer's style. Its linestyle and
-    marker are then withheld from the cycle, so a pinned variant never
-    collides with a cycled sibling regardless of portfolio order.
+    A schedule name that either matches a compound (underscore-bearing)
+    key in ``BASE_OPT_STYLES`` exactly, or extends one with a further
+    ``"_"``-delimited suffix (a *variant pin*, e.g. ``rl2co_random``
+    covering ``rl2co_random_v2`` and ``rl2co_random_10``), is honoured
+    verbatim and takes precedence over its base optimizer's style. When
+    a name extends more than one such key, the longest key wins. A
+    pinned style's linestyle and marker are then withheld from the
+    cycle, so a pinned variant never collides with a cycled sibling
+    regardless of portfolio order.
     """
     names = list(schedule_names)
+    compound_keys = [k for k in BASE_OPT_STYLES if "_" in k]
 
-    def _is_pin(full_name: str) -> bool:
-        """Whether this name has its own entry, not just its base's."""
-        return (
-            full_name != full_name.split("_")[0]
-            and full_name in BASE_OPT_STYLES
-        )
+    def _pin_key(full_name: str) -> str | None:
+        """The compound key this name pins to, longest match wins."""
+        candidates = [
+            k
+            for k in compound_keys
+            if full_name == k or full_name.startswith(k + "_")
+        ]
+        return max(candidates, key=len) if candidates else None
 
     schedule_styles = {}
     # Per base name, the linestyles / markers already handed out. Every
@@ -208,10 +223,11 @@ def get_schedule_styles(schedule_names: Iterable[str]) -> dict[str, OptStyle]:
     used_linestyles: dict[str, set[str]] = {}
     used_markers: dict[str, set[str]] = {}
     for full_name in names:
-        if not _is_pin(full_name):
+        pin_key = _pin_key(full_name)
+        if pin_key is None:
             continue
         base_name = full_name.split("_")[0]
-        pinned = BASE_OPT_STYLES[full_name]
+        pinned = BASE_OPT_STYLES[pin_key]
         used_linestyles.setdefault(base_name, set()).add(pinned.linestyle)
         if pinned.marker is not None:
             used_markers.setdefault(base_name, set()).add(pinned.marker)
@@ -223,8 +239,9 @@ def get_schedule_styles(schedule_names: Iterable[str]) -> dict[str, OptStyle]:
         taken_mk = used_markers.setdefault(base_name, set())
 
         # 2. A variant pin wins outright; it was registered above.
-        if _is_pin(full_name):
-            schedule_styles[full_name] = BASE_OPT_STYLES[full_name]
+        pin_key = _pin_key(full_name)
+        if pin_key is not None:
+            schedule_styles[full_name] = BASE_OPT_STYLES[pin_key]
             continue
 
         # 3. Retrieve base color/marker from the global registry
