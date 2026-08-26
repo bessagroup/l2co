@@ -195,8 +195,8 @@ def test_disjoint_shards_reassemble_the_full_profile(
     This is the invariant the parallel ``ertd_report`` rests on: shard the
     tasks, compute each shard's profile in its own process, concatenate
     along ``problem``. ``shard_size=4`` does not divide the six tasks, so
-    the ragged last shard is covered. ``include_best`` adds the ``sbs``
-    envelope, whose per-problem ``idxmax(SCHEDULE)`` must also stay
+    the ragged last shard is covered. ``include_best`` adds the ``vbs``
+    schedule, whose per-problem ``idxmax(SCHEDULE)`` must also stay
     shard-local.
     """
     full = _profile(_TASK_IDS, include_best=include_best)

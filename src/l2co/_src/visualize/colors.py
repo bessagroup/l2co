@@ -80,10 +80,17 @@ BASE_OPT_STYLES.update(
         "l2co": OptStyle(color="#000000", marker=None, linestyle="-"),
         "rl2co": OptStyle(color="#FF0000", marker="o", linestyle="-"),
         "randomsearch": OptStyle(color="#888888", marker=None, linestyle=":"),
-        # Best-solver envelope (added by ertd_profile(include_best=True)):
-        # a dashed line so it reads as an oracle reference, not one of the
-        # portfolio's own solid optimizer curves.
+        # The two oracle references, dashed and dotted so neither reads as
+        # one of the portfolio's own solid optimizer curves.
+        #
+        # "sbs" -- the single best solver, one optimizer for the whole task
+        # set (`calculate_sbs`).
         "sbs": OptStyle(color="#000000", marker=None, linestyle="--"),
+        # "vbs" -- the virtual best solver, the per-task oracle selection
+        # `ertd_profile(include_best=True)` adds. Dotted like randomsearch,
+        # the other line that bounds rather than competes, and black to
+        # randomsearch's grey.
+        "vbs": OptStyle(color="#000000", marker=None, linestyle=":"),
         # Variant pin (a key with an underscore suffix, resolved ahead of
         # the base optimizer -- see get_schedule_styles). Every rl2co
         # schedule otherwise collapses onto base "rl2co" and so onto one
@@ -113,6 +120,8 @@ LABEL_MAP = {
     "rprop": "Rprop",
     "crfmnes": "CR-FM-NES",
     "mr15ga": "MR15-GA",
+    "sbs": "SBS",
+    "vbs": "VBS",
     "stage0": r"L2CO ($g_\text{first}$)",
     "l2co": r"L2CO ($g_\text{first} \rightarrow g_\text{second}$)",
     "rl2co": "RL2CO",
