@@ -594,6 +594,7 @@ def plot_ertd(
     title_text: str | None = None,
     top_left_text: str | None = None,
     show_legend: bool = True,
+    show_markers: bool = True,
     xlim: tuple[float, float] = (10**-1, 10**5),
 ) -> tuple[plt.Figure, plt.Axes]:
     """
@@ -615,6 +616,13 @@ def plot_ertd(
         Text to display in the top-left corner (e.g., "5-D"), by default None.
     show_legend : bool, optional
         Whether to display the legend on the right side, by default True.
+    show_markers : bool, optional
+        Whether to mark the curves with each schedule's marker, by
+        default True. Off leaves colour and line style to tell the
+        schedules apart, which is what a small panel wants: markers at
+        ``markevery=0.2`` cost roughly a marker per fifth of the axis on
+        every curve, and a dozen curves in a two-inch panel turns that
+        into speckle.
     xlim : tuple[float, float], optional
         Limits for the x-axis, by default (10**-1, 10**5).
 
@@ -628,7 +636,9 @@ def plot_ertd(
     The plot shows the fraction of function-target pairs solved as a function
     of normalized cost (function evaluations or iterations per dimensionality).
     The x-axis uses logarithmic scaling. Colors and line styles are determined
-    by the OPTIMIZER_COLORS and OPTIMIZER_LINESTYLES dictionaries.
+    by the OPTIMIZER_COLORS and OPTIMIZER_LINESTYLES dictionaries; markers
+    come from the same per-schedule style and can be dropped with
+    ``show_markers=False``.
     """
     fig, ax = _get_or_create_axes(ax=ax)
 
@@ -665,7 +675,7 @@ def plot_ertd(
     for schedule in ertd[SCHEDULE].values:
         color = style[schedule].color
         linestyle = style[schedule].linestyle
-        marker = style[schedule].marker
+        marker = style[schedule].marker if show_markers else None
         pretty_label = display_name(schedule)
         y = ertd.sel({SCHEDULE: schedule})
 
