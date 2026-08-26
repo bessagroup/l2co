@@ -702,19 +702,16 @@ def plot_ertd(
 
     match cost_metric:
         case "iterations":
-            # ax.set_xlabel("Iterations / dimension")
-            ax.set_xlabel("iterations / dim")
+            ax.set_xlabel("Iterations / dimension")
         case "fevals":
-            # ax.set_xlabel("Function evaluations / dimension")
-            ax.set_xlabel("f-evals / dim")
+            ax.set_xlabel("Function evaluations / dimension")
         case _:
             raise ValueError(
                 f"Invalid cost_metric: {cost_metric}. "
                 f"Choose 'fevals' or 'iterations'."
             )
 
-    # ax.set_ylabel("Fraction of function, target pairs")
-    ax.set_ylabel("Fraction of targets")
+    ax.set_ylabel("Fraction of function, target pairs")
 
     # --- Legend and Limits ---
     if show_legend:
