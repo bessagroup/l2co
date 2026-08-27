@@ -21,7 +21,8 @@ itself into the registry exactly the way importing ``rl2co`` registers
 # Standard
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from typing import Any
 
 # Third-party
 import equinox as eqx
@@ -83,6 +84,7 @@ class L2COUpdateClass(UpdateClass):
         t: float,
         sampler: Callable,
         swap_optimizers: list | None = None,
+        feature_processor_impute: Mapping[str, Any] | None = None,
         bounded: tuple[float, float] | None = (None, None),
         stop_fn: StopFunction | None = None,
         **hyperparameters,
@@ -149,6 +151,24 @@ class L2COUpdateClass(UpdateClass):
             ``L2COModel.swap_optimizers``. ``None`` (default) keeps
             the menu baked into the loaded model. Replaces the old
             hardcoded four-optimizer list (``docs/adr/0002``).
+        feature_processor_impute : Mapping[str, Any] | None, optional
+            Fill values, as ``{feature: value}``, for schema features
+            a task tag does not carry. Without this a checkpoint can
+            only be run on task sets that tag everything its training
+            schema named -- ``FeatureProcessor.transform`` raises
+            ``KeyError`` on the first feature a suite omits, in both
+            stages. Applied to both stages' ``feature_processor_task``
+            via :meth:`L2COModel.with_feature_impute`, which leaves
+            vocabularies and feature count untouched, so the checkpoint
+            still loads unchanged; what changes is only that the absent
+            feature is asserted to have the given value. Pick fills
+            that are true of the task family (or, failing that, the
+            training marginal), and report them with any result: the
+            encoded vector does not record which entries were
+            invented. Same mechanism as rl2co's
+            ``feature_processor_impute`` (both draw on
+            ``l2co.FeatureProcessor.with_imputation``). Default
+            ``None``.
         bounded : tuple[float, float] | None, optional
             Box bounds clipped onto every asked population before
             evaluation. ``None`` is treated as ``(None, None)``.
@@ -172,11 +192,17 @@ class L2COUpdateClass(UpdateClass):
             Propagated from the strategy factory: empty menu,
             stage-0 choice missing from the menu, missing
             ``task.global_min``, zero switch generation, or a
-            non-traceable stage-1 model.
+            non-traceable stage-1 model. Also propagated from
+            ``FeatureProcessor.with_imputation`` when
+            ``feature_processor_impute`` names a feature the
+            processor does not encode, or gives a fill value outside
+            that feature's vocabulary.
         """
         model = L2COModel.load(
             stage0_model=stage0_model, stage1_model=stage1_model
         )
+        if feature_processor_impute is not None:
+            model = model.with_feature_impute(dict(feature_processor_impute))
         if swap_optimizers is not None:
             steps = [
                 step
