@@ -230,20 +230,46 @@ def get_schedule_styles(schedule_names: Iterable[str]) -> dict[str, OptStyle]:
     unmarked, so the deliberately plain baselines (``randomsearch``,
     ``l2co``, ``stage0``) do not sprout shapes.
 
-    A full schedule name present in ``BASE_OPT_STYLES`` (a *variant
-    pin*, e.g. ``rl2co_random``) is honoured verbatim and takes
-    precedence over its base optimizer's style. Its linestyle and
-    marker are then withheld from the cycle, so a pinned variant never
-    collides with a cycled sibling regardless of portfolio order.
+    A schedule name that either matches a compound (underscore-bearing)
+    key in ``BASE_OPT_STYLES`` exactly, or extends one with a further
+    ``"_"``-delimited suffix (a *variant pin*, e.g. ``rl2co_random``
+    covering ``rl2co_random_v2`` and ``rl2co_random_10``), takes its
+    colour from that pin and takes precedence over its base optimizer's
+    style. When a name extends more than one such key, the longest key
+    wins. A pinned style's linestyle and marker are withheld from the
+    base optimizer's own cycle, so a pinned variant never collides with
+    a cycled sibling regardless of portfolio order.
+
+    When more than one selected schedule pins to the *same* compound
+    key (e.g. the ``rl2co_random_10`` / ``_100`` / ``_1000``
+    iteration-budget ablation, all pinned to ``rl2co_random``), they
+    would otherwise all render as one identical curve -- the pinned
+    style is a colour/shape for the *family*, not a fingerprint for
+    each member. So within a pin group of two or more, linestyle and
+    marker cycle across the group the same way a base optimizer's own
+    hyperparameter variants do (starting from the pin's own linestyle
+    and marker), while every member keeps the pin's colour. A pin group
+    of exactly one is unaffected and keeps the pinned style verbatim.
     """
     names = list(schedule_names)
+    compound_keys = [k for k in BASE_OPT_STYLES if "_" in k]
 
-    def _is_pin(full_name: str) -> bool:
-        """Whether this name has its own entry, not just its base's."""
-        return (
-            full_name != full_name.split("_")[0]
-            and full_name in BASE_OPT_STYLES
-        )
+    def _pin_key(full_name: str) -> str | None:
+        """The compound key this name pins to, longest match wins."""
+        candidates = [
+            k
+            for k in compound_keys
+            if full_name == k or full_name.startswith(k + "_")
+        ]
+        return max(candidates, key=len) if candidates else None
+
+    pin_groups: dict[str, list[str]] = {}
+    for full_name in names:
+        pin_key = _pin_key(full_name)
+        if pin_key is not None:
+            pin_groups.setdefault(pin_key, []).append(full_name)
+    pin_group_linestyles: dict[str, set[str]] = {}
+    pin_group_markers: dict[str, set[str]] = {}
 
     schedule_styles = {}
     # Per base name, the linestyles / markers already handed out. Every
@@ -252,10 +278,11 @@ def get_schedule_styles(schedule_names: Iterable[str]) -> dict[str, OptStyle]:
     used_linestyles: dict[str, set[str]] = {}
     used_markers: dict[str, set[str]] = {}
     for full_name in names:
-        if not _is_pin(full_name):
+        pin_key = _pin_key(full_name)
+        if pin_key is None:
             continue
         base_name = full_name.split("_")[0]
-        pinned = BASE_OPT_STYLES[full_name]
+        pinned = BASE_OPT_STYLES[pin_key]
         used_linestyles.setdefault(base_name, set()).add(pinned.linestyle)
         if pinned.marker is not None:
             used_markers.setdefault(base_name, set()).add(pinned.marker)
@@ -266,9 +293,41 @@ def get_schedule_styles(schedule_names: Iterable[str]) -> dict[str, OptStyle]:
         taken_ls = used_linestyles.setdefault(base_name, set())
         taken_mk = used_markers.setdefault(base_name, set())
 
-        # 2. A variant pin wins outright; it was registered above.
-        if _is_pin(full_name):
-            schedule_styles[full_name] = BASE_OPT_STYLES[full_name]
+        # 2. A variant pin wins outright; it was registered above. A
+        # solo pin keeps the family style verbatim; a pin group of two
+        # or more cycles linestyle/marker across its members so they
+        # stay distinguishable from each other, not just from the rest
+        # of the base optimizer's family.
+        pin_key = _pin_key(full_name)
+        if pin_key is not None:
+            pinned = BASE_OPT_STYLES[pin_key]
+            if len(pin_groups[pin_key]) == 1:
+                schedule_styles[full_name] = pinned
+                continue
+
+            taken_pin_ls = pin_group_linestyles.setdefault(pin_key, set())
+            taken_pin_mk = pin_group_markers.setdefault(pin_key, set())
+
+            chosen_pin_ls = next(
+                (ls for ls in line_styles if ls not in taken_pin_ls),
+                line_styles[len(taken_pin_ls) % len(line_styles)],
+            )
+            taken_pin_ls.add(chosen_pin_ls)
+
+            chosen_pin_mk = pinned.marker
+            if chosen_pin_mk is not None and chosen_pin_mk in taken_pin_mk:
+                chosen_pin_mk = next(
+                    (m for m in variant_markers if m not in taken_pin_mk),
+                    chosen_pin_mk,
+                )
+            if chosen_pin_mk is not None:
+                taken_pin_mk.add(chosen_pin_mk)
+
+            schedule_styles[full_name] = OptStyle(
+                color=pinned.color,
+                marker=chosen_pin_mk,
+                linestyle=chosen_pin_ls,
+            )
             continue
 
         # 3. Retrieve base color/marker from the global registry
