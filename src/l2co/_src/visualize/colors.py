@@ -68,17 +68,61 @@ BASE_OPT_STYLES.update(
     {
         "adam": OptStyle(color="#4477AA", marker="o"),
         "pso": OptStyle(color="#CCBB44", marker="s"),
-        # Blue, not green: the old #228833 sat a hair away from
-        # crfmnes (#117733), and the headroom-balanced quartet
-        # (l2co_experiments optimizers=headroom4) draws both, so the
-        # two curves read as one colour at figure scale. Kept darker
-        # and more saturated than adam (#4477AA) so the 52-schedule
-        # `all` field, which holds both, still separates them.
-        "lbfgs": OptStyle(color="#0077BB", marker="^"),
+        # The headroom-balanced quartet (l2co_experiments
+        # optimizers=headroom4) plus the uniform-random rl2co
+        # schedule. On an ERTD panel these are five solid,
+        # marker-free 1.0pt curves sharing 3.417in with black rl2co,
+        # black dotted vbs and grey dotted randomsearch, so hue is
+        # the only channel separating them and they have to be solved
+        # for jointly rather than picked one at a time.
+        #
+        # Chosen by searching an OKLCH grid (L 0.44-0.72, in-gamut
+        # chroma) filtered to >=3:1 contrast on white, OKLab dE >=10
+        # from randomsearch's #888888 and >=45 from black, for the
+        # 5-subset maximising the *worst* pair under normal,
+        # protanopic and deuteranopic vision (Machado 2009 at
+        # severity 1.0), subject to tritan dE >=8 and >=50 deg hue
+        # spacing. Worst pair is dE 14.3. The palette this replaced
+        # sat at 7.7, below the dE 8 floor for thin categorical
+        # lines: lbfgs/rprop collapsed to 7.7 under deuteranopia and
+        # lbfgs/crfmnes to 7.6 under tritanopia.
+        #
+        # Cool for the gradient-based half, warm for the
+        # derivative-free half, magenta for the schedule that is
+        # neither. Worst-pair dE does not depend on which optimizer
+        # takes which colour, so the assignment is free and may as
+        # well carry the family split.
+        #
+        # Two constraints worth not rediscovering. A true green
+        # cannot join this set -- every green/amber pairing tested
+        # scored dE 2.5-7.9, because red-green dichromats resolve a
+        # single chromatic axis and green and amber sit on the same
+        # side of it; mr15ga's olive is that green pushed far enough
+        # down in lightness to survive. And holding lbfgs at the old
+        # #0077BB caps the whole set at dE 5.6, since that blue
+        # crowds whatever indigo the remaining slots need, which is
+        # why the blue moved rather than staying pinned.
+        #
+        # rprop, crfmnes and mr15ga had no entry here before: they
+        # were taking positional colours from `colors` through
+        # itertools.cycle over optimizers.keys(), which is how they
+        # became #AA4499, #117733 and #332288. Pinning them also
+        # stops registry order from repainting them. Their markers
+        # are the ones that cycle handed out, so nothing but colour
+        # changes.
+        "lbfgs": OptStyle(color="#0AA0D2", marker="^"),
+        "rprop": OptStyle(color="#5E56DE", marker="d"),
+        "crfmnes": OptStyle(color="#CC7200", marker="*"),
+        "mr15ga": OptStyle(color="#4C5A04", marker="X"),
         "sepcmaes": OptStyle(color="#EE6677", marker="x"),
         "stage0": OptStyle(color="#BBBBBB", marker=None, linestyle="--"),
         "l2co": OptStyle(color="#000000", marker=None, linestyle="-"),
-        "rl2co": OptStyle(color="#FF0000", marker="o", linestyle="-"),
+        # Black, not #FF0000. crfmnes's #CC7200 is dE 0.3 from pure
+        # red under deuteranopia, so the trained policy and one of
+        # its own portfolio members would be the same line; the
+        # legend strip (media/ertd/legend.pgf in RL2CO_paper) already
+        # drew rl2co black, and the manuscript describes it as black.
+        "rl2co": OptStyle(color="#000000", marker="o", linestyle="-"),
         "randomsearch": OptStyle(color="#888888", marker=None, linestyle=":"),
         # The two oracle references, dashed and dotted so neither reads as
         # one of the portfolio's own solid optimizer curves.
@@ -94,10 +138,10 @@ BASE_OPT_STYLES.update(
         # Variant pin (a key with an underscore suffix, resolved ahead of
         # the base optimizer -- see get_schedule_styles). Every rl2co
         # schedule otherwise collapses onto base "rl2co" and so onto one
-        # red solid line, which puts the uniform-random baseline in the
-        # trained policy's colour. Giving it its own colour and marker
+        # black solid line, which puts the uniform-random baseline in
+        # the trained policy's colour. Giving it its own colour and marker
         # separates the two on colour, dash pattern, and shape at once.
-        "rl2co_random": OptStyle(color="#EE7733", marker="s", linestyle="--"),
+        "rl2co_random": OptStyle(color="#B12083", marker="s", linestyle="--"),
     }
 )
 
