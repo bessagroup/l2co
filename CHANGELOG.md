@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-09-01
+
 ### Added
 
 - `l2co.optimizers.menu_loss_and_grad`, the menu-dispatched population
@@ -39,16 +41,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `seed_batch` on `l2co._src.performance.ertd` and `DataLoader.ertd_profile`,
   bounding the bootstrap's peak memory. Affects allocation only, never the
   result.
-- Public facade modules `l2co.data`, `l2co.models`, `l2co.optimization`,
-  `l2co.features`, `l2co.history`, and `l2co.validation`. Every public symbol
-  is now reachable through exactly one topical facade in addition to the
-  flat `l2co` namespace.
-- `py.typed` marker (PEP 561). The package now ships type information to
-  consumers.
-- `CHANGELOG.md` and `CITATION.cff`.
-- Explicit `[build-system]` declaration (`hatchling`) and `[tool.hatch.build]`
-  configuration in `pyproject.toml`.
-- `tests/unit/` and `tests/integration/` split with a `slow` pytest marker.
 - `FeatureProcessor.unknown_as_absent` (static field, default `False`), the
   `unknown_as_absent=` keyword on `FeatureProcessor.init`, and the
   `FeatureProcessor.with_unknown_as_absent()` copier. Encodes a categorical or
@@ -133,6 +125,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under-reporting was largest *after* convergence, where the line search
   exhausts its budget every iteration without making progress. `lbfgs` records
   written before this change under-report their cost.
+
+### Fixed
+
+- The derived `deterministic` feature read a `noise` value of `nan`, `inf` or
+  `None` as *stochastic*, contradicting the documented "a missing `noise` key
+  is read as deterministic". `nan` is how a dense databank label matrix
+  represents "this suite does not tag noise", so every task in a store that
+  merely contained a noisy suite encoded as stochastic. Those now read as
+  deterministic, agreeing with the missing key; an uninterpretable non-null
+  token (`"heavy"`) still reads as stochastic.
+
+## [1.4.0] - 2026-06-09
+
+### Added
+
+- Public facade modules `l2co.data`, `l2co.models`, `l2co.optimization`,
+  `l2co.features`, `l2co.history`, and `l2co.validation`. Every public symbol
+  is now reachable through exactly one topical facade in addition to the
+  flat `l2co` namespace.
+- `py.typed` marker (PEP 561). The package now ships type information to
+  consumers.
+- `CHANGELOG.md` and `CITATION.cff`.
+- Explicit `[build-system]` declaration (`hatchling`) and `[tool.hatch.build]`
+  configuration in `pyproject.toml`.
+- `tests/unit/` and `tests/integration/` split with a `slow` pytest marker.
+
+### Changed
+
 - `l2co.__version__` is now populated at runtime via
   `importlib.metadata.version("l2co")`. The version lives in
   `pyproject.toml` only.
@@ -148,16 +168,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `l2co._src.*`.
 - CI workflows install with `[tool.uv.sources]` (the `--no-sources` flag is
   removed). Sibling deps are cloned to the expected paths in CI.
-
-### Fixed
-
-- The derived `deterministic` feature read a `noise` value of `nan`, `inf` or
-  `None` as *stochastic*, contradicting the documented "a missing `noise` key
-  is read as deterministic". `nan` is how a dense databank label matrix
-  represents "this suite does not tag noise", so every task in a store that
-  merely contained a noisy suite encoded as stochastic. Those now read as
-  deterministic, agreeing with the missing key; an uninterpretable non-null
-  token (`"heavy"`) still reads as stochastic.
 
 ### Deprecated
 
