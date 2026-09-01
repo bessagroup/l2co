@@ -219,9 +219,23 @@ class TransferBundle(eqx.Module):
 # =============================================================================
 
 
-def _rms(x: Array) -> Array:
-    """Root-mean-square of ``x``, NaN-safe over an all-NaN input."""
-    return jnp.sqrt(jnp.nanmean(jnp.square(jnp.asarray(x, dtype=float))))
+def _rms(x: PyTree) -> Array:
+    """Root-mean-square over every leaf of ``x``, NaN-safe over all-NaN.
+
+    ``x`` is usually a bare array, but a task whose decision vector is
+    itself a pytree (e.g. an ``eqx.Module`` rather than a flat array)
+    makes any optimizer-state field that mirrors it -- Rprop's
+    ``step_sizes``, L-BFGS's ``diff_params_memory`` -- a pytree of the
+    same shape too. Flattening across every leaf reduces to the same
+    scalar as before whenever ``x`` already is one array.
+    """
+    squares = jnp.concatenate(
+        [
+            jnp.ravel(jnp.square(jnp.asarray(leaf, dtype=float)))
+            for leaf in jax.tree.leaves(x)
+        ]
+    )
+    return jnp.sqrt(jnp.nanmean(squares))
 
 
 def _shape_factor_sq(opt_state: PyTree) -> tuple[Array, float]:
@@ -559,11 +573,16 @@ def make_read_sigma_lbfgs(
         if memory is None or count is None:
             return jnp.asarray(0.0), jnp.asarray(CONF_ABSENT)
 
-        memory = jnp.asarray(memory, dtype=float)
-        memory_size = memory.shape[0]
+        # ``diff_params_memory`` mirrors ``params``' own pytree structure
+        # -- for a flat-array task this is one array, but a task whose
+        # decision vector is itself a pytree makes it one ring buffer per
+        # leaf, all sharing the same leading (memory) axis.
+        memory_size = jnp.asarray(jax.tree.leaves(memory)[0]).shape[0]
         count = jnp.asarray(count)
         prev = (count - 2) % memory_size
-        last_step = jnp.take(memory, prev, axis=0)
+        last_step = jax.tree.map(
+            lambda leaf: jnp.take(leaf, prev, axis=0), memory
+        )
 
         sigma, conf = _finite_or_absent(_rms(last_step), CONF_EXACT)
         if not first_step_readable:
@@ -722,17 +741,20 @@ def _blend(use: Array, new: Array, old: Array) -> Array:
     return jnp.where(use, new, old).astype(jnp.asarray(old).dtype)
 
 
-def _rescale_to(values: Array, sigma: Array, use: Array) -> Array:
+def _rescale_to(values: PyTree, sigma: Array, use: Array) -> PyTree:
     """Scale ``values`` so their RMS becomes ``sigma``.
 
     The relative structure across coordinates is preserved -- this is the
     "scale goes stale, shape does not" rule. A degenerate input (all
     zeros, so no relative structure to preserve) is left alone rather
-    than divided by zero.
+    than divided by zero. ``values`` may be a pytree rather than a bare
+    array (see :func:`_rms`); the shared rescale factor is one scalar
+    computed over every leaf together, then applied leaf-wise so the
+    result keeps ``values``' own structure.
 
     Parameters
     ----------
-    values : Array
+    values : PyTree
         Per-coordinate quantity to rescale.
     sigma : Array
         Target RMS.
@@ -741,14 +763,21 @@ def _rescale_to(values: Array, sigma: Array, use: Array) -> Array:
 
     Returns
     -------
-    Array
-        Rescaled values.
+    PyTree
+        Rescaled values, same structure as ``values``.
     """
-    values = jnp.asarray(values, dtype=float)
     current = _rms(values)
     safe = jnp.isfinite(current) & (current > 0.0)
     factor = jnp.where(safe, sigma / jnp.where(safe, current, 1.0), 1.0)
-    return _blend(use & safe, values * factor, values)
+    use = use & safe
+    return jax.tree.map(
+        lambda leaf: _blend(
+            use,
+            jnp.asarray(leaf, dtype=float) * factor,
+            jnp.asarray(leaf, dtype=float),
+        ),
+        values,
+    )
 
 
 def make_write_distribution(ravel_fn: Callable) -> Callable:
@@ -1087,17 +1116,24 @@ def make_write_rprop(min_step_size: float, max_step_size: float) -> Callable:
 
         use = _usable_sigma(bundle)
         rescaled = _rescale_to(step_sizes, bundle.sigma, use)
-        rescaled = jnp.clip(rescaled, min_step_size, max_step_size)
+        rescaled = jax.tree.map(
+            lambda leaf: jnp.clip(leaf, min_step_size, max_step_size),
+            rescaled,
+        )
 
         opt_state = optax.tree.set(
-            opt_state, step_sizes=_blend(use, rescaled, step_sizes)
+            opt_state,
+            step_sizes=jax.tree.map(
+                lambda new, old: _blend(use, new, old), rescaled, step_sizes
+            ),
         )
         prev = optax.tree.get(opt_state, "prev_updates")
         if prev is not None:
+            jumping = _jumping(bundle)
             opt_state = optax.tree.set(
                 opt_state,
-                prev_updates=_blend(
-                    _jumping(bundle), jnp.zeros_like(prev), prev
+                prev_updates=jax.tree.map(
+                    lambda p: _blend(jumping, jnp.zeros_like(p), p), prev
                 ),
             )
         return opt_state

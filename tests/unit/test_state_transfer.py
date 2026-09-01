@@ -35,6 +35,9 @@ collapses the mutation scale. See ``docs/adr/0014``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -368,6 +371,73 @@ class TestShapePreservation:
         assert bool(
             jnp.allclose(after.mean, algo._ravel_solution(_bundle().x))
         )
+
+
+# --------------------------------------------------- pytree-shaped params
+
+
+class _TinyPytreeParams(eqx.Module):
+    """Stand-in for a decision vector that is itself a pytree.
+
+    Some tasks' "params" are not a flat array -- e.g.
+    ``gaussian_classification``'s decision vector is literally the
+    weights of a small classifier network (an ``eqx.Module``). Any
+    optimizer-state field that mirrors ``params`` (Rprop's
+    ``step_sizes``, L-BFGS's ``diff_params_memory``) then comes back
+    shaped like this class too, not like a bare array.
+    """
+
+    w: jax.Array
+    b: jax.Array
+    activation: Callable = eqx.field(static=True, default=jax.nn.relu)
+
+
+class TestPytreeParams:
+    """Readers/writers must not assume a bare array under the hood.
+
+    Regression coverage for a bug where ``gaussian_classification``'s
+    MLP-shaped params made ``read_sigma_rprop`` / ``make_write_rprop`` /
+    ``make_read_sigma_lbfgs`` raise ``TypeError: float() argument must
+    be a string or a real number, not 'MLP'`` -- ``_rms`` and
+    ``_rescale_to`` assumed every leaf they touched was already a bare
+    array.
+    """
+
+    @staticmethod
+    def _params():
+        return _TinyPytreeParams(w=jnp.ones((3, 2)), b=jnp.zeros((2,)))
+
+    def test_rprop_round_trips_pytree_params(self):
+        params = self._params()
+        read, write = build_transfer_fns(
+            "rprop", FAMILY_GRADIENT, {"learning_rate": 1e-3}
+        )
+        state = optax.rprop(1e-3).init(params)
+        sigma, conf = read(write(_bundle(), state))
+        assert float(conf) > CONF_ABSENT
+        assert jnp.isclose(sigma, TARGET, rtol=1e-5)
+
+    def test_lbfgs_reads_scale_off_pytree_params_after_steps(self):
+        params = self._params()
+        read, _ = build_transfer_fns("lbfgs", FAMILY_GRADIENT, {})
+        solver = optax.lbfgs()
+        state = solver.init(params)
+
+        def loss(p):
+            return sum(
+                jnp.sum(jnp.square(leaf)) for leaf in jax.tree.leaves(p)
+            )
+
+        for _ in range(3):
+            value, grads = jax.value_and_grad(loss)(params)
+            updates, state = solver.update(
+                grads, state, params, value=value, grad=grads, value_fn=loss
+            )
+            params = optax.apply_updates(params, updates)
+
+        sigma, conf = read(state)
+        assert float(conf) > CONF_ABSENT
+        assert bool(jnp.isfinite(sigma))
 
 
 # ------------------------------------------------- mr15ga's 1/5 rule
