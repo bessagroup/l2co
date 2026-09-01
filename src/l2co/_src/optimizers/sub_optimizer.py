@@ -103,10 +103,9 @@ l2co_native_optax: dict[str, Callable[..., optax.GradientTransformation]] = {
 # rather than ``popsize`` (see ``docs/adr/0010``). Mirrors what
 # ``UpdateClass.max_fevals_per_step`` carries on the registry path.
 LINESEARCH_FEVAL_BOUND: dict[str, Callable[[dict], int]] = {
-    "lbfgs": lambda hp: int(
-        hp.get("max_linesearch_steps", DEFAULT_MAX_LINESEARCH_STEPS)
-    )
-    + 1,
+    "lbfgs": lambda hp: (
+        int(hp.get("max_linesearch_steps", DEFAULT_MAX_LINESEARCH_STEPS)) + 1
+    ),
 }
 
 # Shape-affecting hyperparameter names consumed by an algorithm's

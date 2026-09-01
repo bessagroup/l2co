@@ -217,8 +217,9 @@ def _create(root: Path, runs) -> tuple[Path, dict[str, dict]]:
     store*, and reading it back asserts the round trip rather than the
     writer's bookkeeping.
     """
-    store = dump_runs(runs, root, "bbob", easiest_quantile=0.75,
-                      budget_steps=BS)
+    store = dump_runs(
+        runs, root, "bbob", easiest_quantile=0.75, budget_steps=BS
+    )
     return store, load_provenance(root, "bbob")
 
 

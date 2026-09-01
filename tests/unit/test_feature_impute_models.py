@@ -137,7 +137,10 @@ def test_stage1_with_feature_impute_leaves_the_optimizer_processor_alone():
     encodes the menu name, which every task set supplies alike."""
     plain = _stage1()
     imputed = plain.with_feature_impute(FILL)
-    assert imputed.feature_processor_optimizer == plain.feature_processor_optimizer
+    assert (
+        imputed.feature_processor_optimizer
+        == plain.feature_processor_optimizer
+    )
 
 
 #                                                                     L2COModel
@@ -157,9 +160,7 @@ def test_l2co_model_with_feature_impute_fixes_both_stages():
     model = _model().with_feature_impute(FILL)
 
     assert model.predict_stage0(task_features=SPARSE_TAG) in MENU
-    assert (
-        _predict_stage1(model.stage1_model, SPARSE_TAG) in MENU
-    )
+    assert _predict_stage1(model.stage1_model, SPARSE_TAG) in MENU
 
 
 def test_l2co_model_with_feature_impute_does_not_touch_the_original():

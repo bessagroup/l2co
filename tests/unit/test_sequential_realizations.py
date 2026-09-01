@@ -206,9 +206,10 @@ def test_marker_is_not_a_dataclass_field():
     """
     names = {f.name for f in dataclasses.fields(UpdateClass)}
     assert "sequential_realizations" not in names
-    assert "sequential_realizations" not in inspect.signature(
-        UpdateClass.__init__
-    ).parameters
+    assert (
+        "sequential_realizations"
+        not in inspect.signature(UpdateClass.__init__).parameters
+    )
 
 
 @pytest.mark.parametrize(
