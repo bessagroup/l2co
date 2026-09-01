@@ -133,3 +133,34 @@ class L2COModel(eqx.Module):
             stage0_model=new_stage0,
             stage1_model=new_stage1,
         )
+
+    def with_feature_impute(self, impute: dict[str, Any]) -> L2COModel:
+        """Fill task-tag features neither stage's checkpoint schema
+        finds in a foreign task set's tag.
+
+        Lets an already-trained model run on a task set that omits a
+        feature its schema names -- e.g. no ``separable`` tag -- by
+        asserting the given value instead of raising ``KeyError``. See
+        :meth:`Stage0Model.with_feature_impute` /
+        :meth:`Stage1Model.with_feature_impute` and
+        ``FeatureProcessor.with_imputation`` for the mechanism and its
+        caveats (the fill is asserted, not measured, and nothing
+        downstream records which features were invented).
+
+        Parameters
+        ----------
+        impute : dict[str, Any]
+            Feature name to fill value, applied to both stages'
+            ``feature_processor_task``.
+
+        Returns
+        -------
+        L2COModel
+            New instance with both stages' task processor filled.
+        """
+        new_stage0 = self.stage0_model.with_feature_impute(impute)
+        new_stage1 = self.stage1_model.with_feature_impute(impute)
+        return L2COModel(
+            stage0_model=new_stage0,
+            stage1_model=new_stage1,
+        )

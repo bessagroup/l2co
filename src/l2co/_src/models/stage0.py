@@ -166,6 +166,13 @@ class Stage0Model(AbstractModel):
     ) -> Stage0Model:
         """Replace the optimizer set with a new collection.
 
+        Generic over the concrete subclass: replaces only the
+        ``optimizers`` field via :func:`equinox.tree_at`, so every
+        other field (including subclass-specific ones like ``model``)
+        is carried over unchanged. The previous implementation
+        instantiated the abstract base directly, which raised
+        ``TypeError`` for every concrete model.
+
         Parameters
         ----------
         optimizers : Iterable[OptimizationStep]
@@ -174,11 +181,44 @@ class Stage0Model(AbstractModel):
         Returns
         -------
         Stage0Model
-            New model instance with updated optimizers.
+            New model instance (same concrete class) with updated
+            optimizers.
         """
-        return Stage0Model(
-            feature_processor_task=self.feature_processor_task,
-            optimizers=optimizers,
+        return eqx.tree_at(
+            lambda m: m.optimizers,
+            self,
+            list(optimizers),
+            is_leaf=lambda x: isinstance(x, list),
+        )
+
+    def with_feature_impute(self, impute: dict[str, Any]) -> Stage0Model:
+        """Fill task-tag features the checkpoint's schema expects but a
+        foreign task set does not carry.
+
+        Generic over the concrete subclass: replaces only
+        ``feature_processor_task`` via :func:`equinox.tree_at` (same
+        idiom as :meth:`swap_optimizers`), so every other field --
+        including the trained ``model`` -- is carried over unchanged.
+        Delegates to :meth:`FeatureProcessor.with_imputation`, which
+        leaves vocabularies and feature count untouched, so the loaded
+        weights keep matching.
+
+        Parameters
+        ----------
+        impute : dict[str, Any]
+            Feature name to fill value, forwarded to
+            ``FeatureProcessor.with_imputation``.
+
+        Returns
+        -------
+        Stage0Model
+            New model instance (same concrete class) with the filled
+            processor.
+        """
+        return eqx.tree_at(
+            lambda m: m.feature_processor_task,
+            self,
+            self.feature_processor_task.with_imputation(impute),
         )
 
 

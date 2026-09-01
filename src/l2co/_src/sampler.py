@@ -10,7 +10,6 @@ from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
-import jax.random as jr
 from jax.nn import initializers
 from jaxtyping import PRNGKeyArray, PyTree
 
@@ -95,10 +94,14 @@ def random_sampling(
         key=key,
         params=params,
     )
-    constant_samples = constant_sampling(
-        params=params, value=lower_bound, n_samples=n_samples
-    )
-    return jax.tree.map(lambda x, y: x + y, random_samples, constant_samples)
+    # Fold ``lower_bound`` in as a scalar broadcast instead of building a
+    # full ``constant_sampling`` array and adding it: that materialised a
+    # second sample-sized buffer (all zeros in the common ``lower_bound=0``
+    # case) for no reason. A scalar add broadcasts and stays fusible; a
+    # zero offset is skipped entirely.
+    if lower_bound == 0.0:
+        return random_samples
+    return jax.tree.map(lambda x: x + lower_bound, random_samples)
 
 
 def normal_sampling(
@@ -137,7 +140,7 @@ def normal_sampling(
     )
 
     constant_samples = constant_sampling(
-        params=params, value=mean, n_samples=n_samples
+        key, params=params, value=mean, n_samples=n_samples
     )
 
     return jax.tree.map(lambda x, y: x + y, normal_samples, constant_samples)
@@ -173,21 +176,25 @@ def xavier_sampling(
 
 
 def constant_sampling(
+    key: PRNGKeyArray,
     params: PyTree,
-    value: float,
     n_samples: int,
+    value: float = 0.0,
 ) -> InputParameters:
     """
     Perform constant sampling for a given PyTree of parameters.
 
     Parameters
     ----------
+    key : jax.random.PRNGKey
+        Random key, accepted for interface parity with the other samplers
+        but unused -- constant sampling is deterministic.
     params : PyTree
         Parameters to sample (used for shape reference).
-    value : float
-        Constant value to fill the samples with.
     n_samples : int
         Number of samples to generate.
+    value : float, optional
+        Constant value to fill the samples with, by default 0.0.
 
     Returns
     -------
@@ -197,7 +204,7 @@ def constant_sampling(
     return _sample(
         init_fn=initializers.constant(value),
         n_samples=n_samples,
-        key=jr.key(0),
+        key=key,
         params=params,
     )
 

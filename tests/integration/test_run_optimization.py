@@ -8,11 +8,19 @@ from typing import Callable
 from bbob_jax import registry
 from pathlib import Path
 
+import equinox as eqx
+import jax
+
 from l2co._src.budget import based_on_dimensionality
 from l2co._src.optimizer_schedule import OptimizationStep
 from l2co._src.rollout import (
     RunOptimization,
     RolloutWrapper,
+)
+from l2co._src.run_state import batch_reset
+from l2co._src.update_class import (
+    batch_run_randomsearch,
+    run_randomsearch,
 )
 from l2co_tasks import create_bbob_task
 from l2co_tasks import create_pde_task
@@ -197,3 +205,145 @@ def test_random_search_one_shot_shapes_and_best():
         float(run_state.best_loss[0])
         <= float(history_state.output_min.min()) + 1e-6
     )
+
+
+def test_random_search_lax_map_matches_vmap():
+    """``batch_run_randomsearch`` (sequential ``lax.map``) must match vmap.
+
+    The runner was changed from ``eqx.filter_vmap`` (which materialises
+    every realization's candidate set at once) to a sequential
+    ``jax.lax.map`` to bound peak memory to a single realization. Because
+    each realization consumes its own pre-split ``key``, the two execution
+    strategies must produce the same per-realization outputs (up to
+    float32 reduction-ordering noise, which XLA does not pin across the
+    two lowerings). This test pins that equivalence by running the same
+    inputs through the shipped ``lax.map`` implementation and an inline
+    vmap reference, and asserting every returned array leaf matches.
+    """
+    n_iterations = 6
+    popsize = 4
+    n_realizations = 3
+    key = jr.key(0)
+
+    task = create_bbob_task(fn_name="sphere", seed=0, dimensionality=5)
+    optimizer = OptimizationStep(
+        optimizer="randomsearch",
+        hyperparameters={"sampler": "normal", "popsize": popsize},
+    )
+    rw = RolloutWrapper.init(
+        optimizer=optimizer,
+        task=task,
+        sampler=normal_sampling,
+        key=key,
+        bounded=(None, None),
+    )
+
+    # Per-realization keys + realization-axis run state, exactly as the
+    # public ``batch_evaluate`` path builds them.
+    keys = jr.split(key, n_realizations)
+    rs = batch_reset(
+        rw.run_state,
+        rw.batch_state,
+        rw.static,
+        rw.dataset,
+        rw.loss_fn,
+        rw.pass_rng,
+        rw.sampler,
+        keys,
+    )
+
+    # Shipped implementation: sequential lax.map over realizations.
+    out_map = batch_run_randomsearch(
+        update_class=rs.update_class,
+        opt_state=rs.opt_state,
+        params=rs.params,
+        batch_state=rw.batch_state,
+        dataset=rw.dataset,
+        key=keys,
+        n_iterations=n_iterations,
+        verbose=False,
+    )
+
+    # Reference: the previous eqx.filter_vmap strategy, inlined. Mirrors
+    # the batch_state broadcast the shipped runner performs internally.
+    bs = jax.tree.map(
+        lambda x: jnp.broadcast_to(x, (n_realizations, *x.shape)),
+        rw.batch_state,
+    )
+
+    def _single(opt_state, params, batch_state, key):
+        return run_randomsearch(
+            update_class=rs.update_class,
+            opt_state=opt_state,
+            params=params,
+            batch_state=batch_state,
+            dataset=rw.dataset,
+            key=key,
+            n_iterations=n_iterations,
+            verbose=False,
+        )
+
+    out_vmap = eqx.filter_vmap(_single, in_axes=(0, 0, 0, 0))(
+        rs.opt_state, rs.params, bs, keys
+    )
+
+    map_leaves = jax.tree.leaves(eqx.filter(out_map, eqx.is_array))
+    vmap_leaves = jax.tree.leaves(eqx.filter(out_vmap, eqx.is_array))
+    assert len(map_leaves) == len(vmap_leaves)
+    for got, ref in zip(map_leaves, vmap_leaves):
+        assert got.shape == ref.shape
+        # Every output must carry the leading realization axis.
+        assert got.shape[0] == n_realizations
+        assert jnp.allclose(got, ref, equal_nan=True)
+
+
+def test_random_search_chunked_semantics(monkeypatch):
+    """Chunked random search stays self-consistent across chunk splits.
+
+    ``run_randomsearch`` processes the candidate set in chunks of
+    ``_rs_chunking`` iterations to bound peak memory. Forcing a tiny chunk
+    target splits a small budget into several padded chunks, exercising the
+    scan, the padding mask, and the cross-chunk best/final reductions.
+    ``n_iterations=7`` is deliberately not a multiple of the chunk size, so
+    the last chunk carries a padded iteration that must be masked out.
+    """
+    import l2co._src.update_class as uc_mod
+
+    # 8 candidates/chunk with popsize 3 -> chunk_iters=2, n_chunks=4 for
+    # n_iterations=7 (padded to 8; last iteration is padding).
+    monkeypatch.setattr(uc_mod, "_RS_CHUNK_TARGET_CANDIDATES", 8)
+    assert uc_mod._rs_chunking(7, 3) == (4, 2)
+
+    n_iterations = 7
+    popsize = 3
+    n_realizations = 2
+    task = create_bbob_task(fn_name="sphere", seed=0, dimensionality=4)
+    optimizer = OptimizationStep(
+        optimizer="randomsearch",
+        hyperparameters={"sampler": "normal", "popsize": popsize},
+    )
+    key = jr.key(0)
+    rw = RolloutWrapper.init(
+        optimizer=optimizer,
+        task=task,
+        sampler=normal_sampling,
+        key=key,
+        bounded=(None, None),
+    )
+    run_state, _, history_state = rw.batch_evaluate(
+        key=key, n_iterations=n_iterations, n_realizations=n_realizations
+    )
+
+    # One row per logical iteration (padding dropped), fevals unaffected.
+    assert history_state.output_min.shape == (n_realizations, n_iterations)
+    assert int(history_state.fevals.sum()) == (
+        n_realizations * n_iterations * popsize
+    )
+    # No padded (+inf) candidate leaked into the reported best, and the
+    # global best equals the smallest per-iteration minimum.
+    assert bool(jnp.all(jnp.isfinite(run_state.best_loss)))
+    assert bool(jnp.all(jnp.isfinite(history_state.output_min)))
+    for r in range(n_realizations):
+        assert float(run_state.best_loss[r]) == pytest.approx(
+            float(history_state.output_min[r].min()), abs=1e-5
+        )

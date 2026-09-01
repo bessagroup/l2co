@@ -10,8 +10,12 @@ repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.13.0
     hooks:
+      # NOTE: no `toml` in types_or — ruff only parses Python/notebook
+      # sources; feeding it pyproject.toml/uv.lock produces thousands of
+      # bogus invalid-syntax errors (pyproject is kept tidy by the
+      # sort_pyproject hook above instead).
       - id: ruff-format # formatter
-        types_or: [python, pyi, jupyter, toml]
+        types_or: [python, pyi, jupyter]
       - id: ruff-check # linter
-        types_or: [python, pyi, jupyter, toml]
+        types_or: [python, pyi, jupyter]
         args: [--fix]

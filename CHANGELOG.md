@@ -7,6 +7,137 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-09-01
+
+### Added
+
+- `l2co.optimizers.menu_loss_and_grad`, the menu-dispatched population
+  evaluator, and the `GRAD_EVALUATION_WIDTH` constant naming how many rows a
+  gradient generation evaluates. Given a menu it evaluates only the *active*
+  optimizer's rows — its `popsize` value-only for a population optimizer, the
+  single iterate with gradients for a gradient one — instead of the menu-wide
+  `max(popsize)`. Exposes `branches` / `menu_to_branch` for introspecting how
+  many distinct evaluation shapes a menu compiles to (`docs/adr/0011`).
+- `UpdateClass.max_fevals_per_step` (static, defaults to `None`) and the
+  `UpdateClass.fevals_bound` property resolving it to `popsize`. The bound is
+  what an optimizer can bill in one iteration; it exceeds `popsize` only for
+  line-search optimizers. Consumers that size a budget or normalize a
+  per-evaluation cost must read `fevals_bound` rather than `popsize`.
+- `l2co._src.optimizers.update_class.step_fevals`, the shared feval count for
+  optax step functions, and
+  `l2co._src.optimizers.lbfgs.DEFAULT_MAX_LINESEARCH_STEPS`.
+- Three-phase parallel databank dump on `l2co.databank`: `dump_databank_template`,
+  `dump_databank_task`, `dump_databank_finalize` and the `DumpPlan` hand-off
+  between them. Decomposes `dump_databank` into a single-process store layout,
+  an embarrassingly parallel per-task region write (one shard file per
+  `(task, schedule)`, so separate processes never touch the same file), and a
+  single-process finalize. `dump_databank` itself is unchanged and the two
+  paths produce identical stores.
+- `l2co.features.DERIVED_FEATURES`, mapping a feature name to a function of the
+  task tag for schema features that are computed rather than stored (currently
+  `deterministic`, read off the `noise` tag). `FeatureProcessor.transform`
+  computes a derived feature when the key is absent, so an existing databank
+  gains the feature with no trajectory re-runs.
+- `seed_batch` on `l2co._src.performance.ertd` and `DataLoader.ertd_profile`,
+  bounding the bootstrap's peak memory. Affects allocation only, never the
+  result.
+- `FeatureProcessor.unknown_as_absent` (static field, default `False`), the
+  `unknown_as_absent=` keyword on `FeatureProcessor.init`, and the
+  `FeatureProcessor.with_unknown_as_absent()` copier. Encodes a categorical or
+  boolean value that is *not* in its vocabulary as an absent one — the
+  feature's `impute` fill if it has one, otherwise the `ABSENT` row, otherwise
+  a raise naming both — instead of raising. Leaves every vocabulary and the
+  feature count untouched, so a model trained against the processor still
+  loads; the default still raises. See `docs/adr/0015` for when to turn it on
+  and what it does not buy (the `ABSENT` row it routes to receives no gradient
+  on a training set where every task carries every feature).
+
+### Changed
+
+- **A task tag no longer has to spell a value the way the vocabulary does.**
+  `FeatureProcessor.transform` folds boolean values onto the `"false"` /
+  `"true"` keys from every route they arrive by — `True`, `np.True_`,
+  `"True"`, `1`, `1.0`, `"1"`, a zero-dimensional JAX array — where previously
+  only `True` and `"true"` encoded and everything else raised `KeyError`. The
+  same fold runs between a numeric category and its string in both directions
+  (`10` ↔ `"10"`), which is what a databank round-trip and every artifact
+  written before vocabulary keys kept their type produce. Only spellings that
+  name an existing key are accepted, so no fold can invent one, and
+  case-folding stays confined to boolean vocabularies — a categorical schema
+  may still list `"True"` and `"true"` as two categories (`docs/adr/0015`).
+- `FeatureProcessor` vocabulary keys keep their type through `store` / `load`.
+  A vocabulary is a JSON object and JSON object keys are strings, so a
+  categorical feature keyed by the integers `2, 3, 5, 10` reloaded keyed by
+  `"2", "3", "5", "10"` and stopped matching a live `Task.tag` — an artifact
+  that encoded fine before it was stored and raised after. Affected
+  vocabularies are now written a second time as `[[key, index], ...]`, where
+  JSON keeps the difference; `reconstruct` prefers those. A processor whose
+  keys are all strings — every processor built from a `'boolean'` or
+  string-categorical schema — serializes to exactly the bytes it always did.
+  A vocabulary key JSON cannot carry at all is now rejected by `to_dict`
+  rather than written into an artifact that fails to load.
+- A non-finite feature value counts as absent rather than as a value, in
+  numeric and string form (`inf`, `-inf`, `"inf"`), joining `nan` / `None` /
+  `""`. It therefore takes an `impute` fill and reads `false` on a
+  `<name>__present` companion, instead of an infinity reaching a `Linear`. A
+  processor with neither mechanism still passes an explicit null-ish value
+  through untouched, so what an existing checkpoint encodes is unchanged.
+- `FeatureProcessor.swap_names` rejects a mapping that sends two features to
+  the same name instead of silently returning a processor with one feature
+  fewer — a shorter feature vector than the `MixedEmbedding` built for it.
+- `FeatureProcessor.init` accepts an array-valued categorical spec. The
+  branch testing `spec == "continuous"` raised `ValueError: the truth value of
+  an array ... is ambiguous` before reaching the categorical branch, so a
+  schema whose categories came off a NumPy array could not be declared at all;
+  its categories are now also unwrapped to the Python values they hold, since
+  a vocabulary keyed by `np.int64` is one JSON cannot store.
+- **The `"l2co"` meta-optimizer no longer evaluates its whole population every
+  iteration.** `l2co_population_based_fn` used to call
+  `vmapped_loss_and_grad` over all `max(popsize)` candidates unconditionally,
+  so an Adam or L-BFGS iteration — which consumes a single point — paid a
+  population-wide forward *and* backward pass, and a CMA-ES or PSO iteration
+  paid a backward pass it discards. Function-evaluation counts were always
+  correct, so no recorded metric was wrong; only wall-clock time was spent.
+  On a Helmholtz PINN (`d=2971`, popsize 27) one iteration cost 1067 ms where
+  a population iteration needs 219 ms and a gradient one 42 ms. Now 4.9x
+  faster on population iterations, 25.3x on gradient ones, and 4.9x per
+  realization under the batched driver (`docs/adr/0011`).
+- **The `"l2co"` meta-optimizer is no longer bit-reproducible against earlier
+  runs.** Gradient iterations now evaluate one candidate, where XLA takes a
+  different code path than the wide pass and the gradient differs by 4.33e-06
+  relative; Adam is chaotic enough that a stored convergence curve will
+  visibly diverge over a few hundred iterations. Population iterations are
+  also affected on some platforms, because dispatching per optimizer emits a
+  different compiled graph than the old single-shape call and XLA may fuse it
+  differently (identical on x86_64 Linux, up to one float32 ulp apart on
+  macOS/arm64). Trajectories are semantically unchanged throughout — this is
+  float32 last-bit noise, not a behaviour change.
+- Population iterations of the `"l2co"` meta-optimizer now record all-`NaN`
+  gradients in `OptHistory.grads`, matching what the native EvoSax factories
+  already record. Unobservable on every configured path — `run_` discards
+  gradients, and the opt-in `gradient_based_stopping_criteria` was already
+  inapplicable to population optimizers.
+- **`"lbfgs"` now bills one function evaluation per line-search trial**
+  instead of a flat 1 per iteration, on both the deterministic and the
+  stochastic wiring (`docs/adr/0010`, taking the decision `docs/adr/0006`
+  deferred). Optimizer trajectories are unaffected — this is accounting only —
+  but `fevals` and every metric derived from it change for `lbfgs`. The
+  under-reporting was largest *after* convergence, where the line search
+  exhausts its budget every iteration without making progress. `lbfgs` records
+  written before this change under-report their cost.
+
+### Fixed
+
+- The derived `deterministic` feature read a `noise` value of `nan`, `inf` or
+  `None` as *stochastic*, contradicting the documented "a missing `noise` key
+  is read as deterministic". `nan` is how a dense databank label matrix
+  represents "this suite does not tag noise", so every task in a store that
+  merely contained a noisy suite encoded as stochastic. Those now read as
+  deterministic, agreeing with the missing key; an uninterpretable non-null
+  token (`"heavy"`) still reads as stochastic.
+
+## [1.4.0] - 2026-06-09
+
 ### Added
 
 - Public facade modules `l2co.data`, `l2co.models`, `l2co.optimization`,

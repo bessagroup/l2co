@@ -18,7 +18,7 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Mathematics"
 ]
 dependencies = [
-  "bbob-jax>=1.6.5",
+  "bbob-jax>=2.1.0",
   "bessaplots>=0.4.0",
   "cloudpickle>=3.1.1",
   "dask>=2025.7.0",
@@ -26,7 +26,7 @@ dependencies = [
   "evosax>=0.2.0,<0.3",
   "f3dasm",
   "hydra-core>=1.3.2",
-  "jax>=0.4.30,<0.9",
+  "jax>=0.4.30,<=0.9.1",
   "jax-tqdm>=0.4.0",
   "jaxtyping>=0.3.2",
   "l2co-tasks",
@@ -48,7 +48,7 @@ maintainers = [
 name = "l2co"
 readme = "README.md"
 requires-python = ">=3.12"
-version = "1.4.0"
+version = "1.5.0"
 
 [project.optional-dependencies]
 dev = [
@@ -67,7 +67,8 @@ docs = [
   "pymdown-extensions>=10.17.2"
 ]
 tests = [
-  "pytest>=8.4.2"
+  "pytest>=8.4.2",
+  "pytest-cov>=6.0.0"
 ]
 
 [project.urls]

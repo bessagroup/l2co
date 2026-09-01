@@ -208,6 +208,39 @@ class Stage1Model(AbstractModel):
             optimizers=optimizers,
         )
 
+    def with_feature_impute(self, impute: dict[str, Any]) -> Stage1Model:
+        """Fill task-tag features the checkpoint's schema expects but a
+        foreign task set does not carry.
+
+        Generic over the concrete subclass: replaces only
+        ``feature_processor_task`` via :func:`equinox.tree_at`, so
+        every other field -- weights included -- is carried over
+        unchanged. Only the *task* processor is touched;
+        ``feature_processor_optimizer`` encodes the optimizer name,
+        which every task set supplies the same way, so it never needs
+        imputation. Delegates to
+        :meth:`FeatureProcessor.with_imputation`, which leaves
+        vocabularies and feature count untouched, so the loaded
+        weights keep matching.
+
+        Parameters
+        ----------
+        impute : dict[str, Any]
+            Feature name to fill value, forwarded to
+            ``FeatureProcessor.with_imputation``.
+
+        Returns
+        -------
+        Stage1Model
+            New model instance (same concrete class) with the filled
+            task processor.
+        """
+        return eqx.tree_at(
+            lambda m: m.feature_processor_task,
+            self,
+            self.feature_processor_task.with_imputation(impute),
+        )
+
 
 class EquinoxStage1Model(Stage1Model):
     """Equinox-based stage-1 model with LSTM history encoder.

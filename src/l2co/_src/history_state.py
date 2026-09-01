@@ -156,6 +156,56 @@ class HistoryState(eqx.Module):
             cursor=jnp.array(history.loss.shape[0], dtype=int),
         )
 
+    @classmethod
+    def from_reduced(
+        cls,
+        output_min: Float[Array, " n_iterations"],
+        output_mean: Float[Array, " n_iterations"],
+        output_std: Float[Array, " n_iterations"],
+        update_step: Int[Array, " n_iterations"],
+        fevals: Int[Array, " n_iterations"],
+        iterations: Int[Array, " n_iterations"],
+    ) -> HistoryState:
+        """Build a HistoryState from already-reduced per-iteration fields.
+
+        Companion to :meth:`from_history` for the reduce-in-scan rollout
+        path (:func:`l2co._src.update_class.run_` /
+        :func:`~l2co._src.update_class.batch_run_`): those drivers reduce
+        each generation's population *inside* the scan and emit the
+        ``output_min / output_mean / output_std`` statistics directly,
+        rather than stacking the full ``(n_iter, popsize, dim)``
+        :class:`OptHistory` and reducing it afterwards. The per-iteration
+        NaN-aware reductions are identical to :meth:`from_history`; this
+        constructor just skips the intermediate stacked trajectory.
+
+        Each argument is a fully-filled ``(n_iterations,)`` buffer, so
+        ``cursor`` is set to ``output_min.shape[0]`` exactly as
+        :meth:`from_history` does.
+
+        Parameters
+        ----------
+        output_min, output_mean, output_std : Float[Array, " n_iterations"]
+            Per-iteration NaN-aware min / mean / std of the population
+            loss.
+        update_step, fevals, iterations : Int[Array, " n_iterations"]
+            Per-iteration integer counters (non-cumulative; the cumulative
+            sums are applied on export, see :meth:`to_xarray`).
+
+        Returns
+        -------
+        HistoryState
+            History state populated with the given per-iteration fields.
+        """
+        return cls(
+            output_min=output_min,
+            output_mean=output_mean,
+            output_std=output_std,
+            update_step=update_step,
+            fevals=fevals,
+            iterations=iterations,
+            cursor=jnp.array(output_min.shape[0], dtype=int),
+        )
+
     def add(self, other: HistoryState) -> HistoryState:
         """
         Insert ``other``'s entries front-to-back at ``self.cursor``.

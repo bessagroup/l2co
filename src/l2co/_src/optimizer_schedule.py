@@ -29,6 +29,15 @@ __credits__ = ["Martin van der Schelling"]
 __status__ = "Stable"
 # =============================================================================
 
+# Hyperparameter key holding an explicit human-facing schedule alias. When
+# set, :attr:`OptimizationStep.name` returns it verbatim instead of the
+# derived ``{optimizer}_{k=v}`` label — used to key a learned-optimizer
+# evaluation by its training run id (e.g. ``rl2co_<run_id>``) rather than by
+# its checkpoint file stem. It is a label only: policy identity stays
+# weights-based (:func:`l2co._src.databank.provenance.policy_identity_hash`
+# excludes this key).
+ALIAS_HYPERPARAMETER = "alias"
+
 
 @dataclass
 class OptimizationStep:
@@ -85,13 +94,20 @@ class OptimizationStep:
         return {"opt_name": self.name, **self.hyperparameters}
 
     def __hash__(self):
-        """Hash based on :attr:`tag` (optimizer name + hyperparameters).
+        """Hash based on :attr:`tag_hashable` (name + hyperparameters).
 
         Intentionally narrower than the dataclass-generated ``__eq__``,
         which also compares ``stopping_criteria``. The asymmetry is fine:
         Python only requires ``a == b ⇒ hash(a) == hash(b)``.
+
+        Goes through :attr:`tag_hashable` (lists → tuples, dicts →
+        frozensets) because hyperparameters may hold unhashable
+        containers — e.g. an rl2co schedule's
+        ``n_iterations_per_action`` list — and a plain
+        ``tuple(sorted(tag.items()))`` would raise ``TypeError`` the
+        moment such a step is used as a dict key.
         """
-        return hash(tuple(sorted(self.tag.items())))
+        return hash(self.tag_hashable)
 
     @property
     def hash(self) -> int:
@@ -138,15 +154,50 @@ class OptimizationStep:
     def name(self) -> str:
         """Generate a descriptive name for this optimization step.
 
+        An explicit :data:`ALIAS_HYPERPARAMETER` (``"alias"``), when set,
+        is returned verbatim and short-circuits every derivation below —
+        the eval pipeline uses it to key a learned-optimizer run by its
+        training run id (``rl2co_<run_id>`` /
+        ``l2co_<s0_run_id>_<s1_run_id>``) rather than by the checkpoint
+        file stem, which is not a stable identity (a multi-file stage-0
+        checkpoint cannot be renamed without changing its weights hash).
+
+        Otherwise, learned meta-optimizers get compact model-derived
+        names instead of the generic ``{optimizer}_{k=v}`` join, whose
+        path-valued hyperparameters would otherwise leak into every
+        SCHEDULE label, plot legend, and databank key: ``rl2co`` names by
+        its checkpoint stem (``rl2co_10``), ``l2co`` by both stage
+        checkpoint stems plus the stage-0 fraction
+        (``l2co_s0-10_s1-25_t-0.05``).
+
         Returns
         -------
         str
-            Name combining optimizer and hyperparameters.
+            The explicit alias when set, else a name combining optimizer
+            and hyperparameters.
         """
+        alias = self.hyperparameters.get(ALIAS_HYPERPARAMETER)
+        if alias:
+            return str(alias)
+
         if self.optimizer == "rl2co":
             model_path = self.hyperparameters.get("model", "")
             stem = Path(model_path).stem if model_path else ""
             return f"rl2co_{stem}".strip("_")
+
+        elif self.optimizer == "l2co":
+            parts = ["l2co"]
+            for key, prefix in (
+                ("stage0_model", "s0"),
+                ("stage1_model", "s1"),
+            ):
+                path = self.hyperparameters.get(key, "")
+                if path:
+                    parts.append(f"{prefix}-{Path(path).stem}")
+            t = self.hyperparameters.get("t")
+            if t is not None:
+                parts.append(f"t-{t}")
+            return "_".join(parts)
 
         elif self.optimizer.startswith("randomsearch"):
             return "randomsearch"

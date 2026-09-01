@@ -3,18 +3,29 @@
 from collections.abc import Callable
 
 from .evosax_implementations import evosax_mapping
+from .lbfgs import lbfgs_mapping
 from .optax_implementations import optax_mapping
 from .random_search import random_search_mapping
+from .shade import shade_mapping
 from .update_class import UpdateClass
 
 # Registry of optimizer-name -> factory callables. Each value is a callable
 # that, when called with the keyword contract used by ``RunState.init``
 # (``**hyperparameters, task, opt_hash, bounded, stop_fn``), returns an
-# ``UpdateClass`` instance. Built-in entries come from the optax/evosax/
-# random-search modules; sibling packages inject their own via
-# ``register_optimizer`` (see below) so l2co stays standalone.
+# ``UpdateClass`` instance. Built-in entries are the base optimizers from the
+# optax/evosax/random-search/shade/lbfgs modules only. Meta-optimizers are
+# NOT hardcoded here: l2co's own ``"l2co"`` strategy self-registers via
+# ``register_optimizer`` from ``l2co._src.meta_optimizer`` (a side effect of
+# ``import l2co``), exactly the way importing ``rl2co`` registers ``"rl2co"``.
+# Keeping this back-edge out of the optimizers subpackage is what breaks the
+# ``l2co_update -> strategy_wrapper -> sub_optimizer`` import cycle — see
+# ``docs/adr/0007``.
 optimizers: dict[str, Callable[..., UpdateClass]] = (
-    evosax_mapping | optax_mapping | random_search_mapping
+    evosax_mapping
+    | optax_mapping
+    | random_search_mapping
+    | shade_mapping
+    | lbfgs_mapping
 )
 
 

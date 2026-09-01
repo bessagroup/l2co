@@ -2,12 +2,14 @@
 (:mod:`l2co._src.databank`).
 
 Covers the f3dasm-free record core (``_build_task_records``), budget
-resampling (``loss_preprocess``), tasksets, the streaming creation /
-append core (driven with hand-built ``runs`` so no f3dasm is needed),
-the read path and loaders, the raw-history round-trip, and the
-NaN-for-missing-pair semantics. The full ``dump_databank`` f3dasm
-preamble is exercised end-to-end by the ``create_optimization_dataset``
-pipeline, not here.
+resampling (``loss_preprocess``), tasksets, the create / append core
+(driven with hand-built ``runs`` through the shared template -> per-task
+-> finalize phases so no f3dasm is needed -- ``dump_databank`` and the
+SLURM-array parallel dump both drive the exact same three functions,
+serially or fanned out), the read path and loaders, the raw-history
+round-trip, and the NaN-for-missing-pair semantics. The full
+``dump_databank`` f3dasm preamble is exercised end-to-end by the
+``create_optimization_dataset`` pipeline, not here.
 
 The databank takes an explicit ``root`` directory (no machine paths in
 the library), so every test points it at the test's ``tmp_path``. The
@@ -19,12 +21,14 @@ equal what the pipeline produced for it.
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import pytest
 import xarray as xr
+import zarr
 
 from l2co import DataLoader, databank
 from l2co._src.databank import layout
@@ -36,7 +40,15 @@ from l2co._src.databank.reader import (
 )
 from l2co._src.databank.records import _build_task_records, loss_preprocess
 from l2co._src.databank.tasksets import load_taskset, save_taskset
-from l2co._src.databank.writer import _dump_append, _dump_create, _interp_loss
+from l2co._src.databank.verify import verify_databank
+from l2co._src.databank.writer import (
+    MISSING_FEATURE,
+    _dump_task_runs,
+    _dump_template_runs,
+    _interp_loss,
+    _minimal_sample_steps,
+    dump_databank_finalize,
+)
 from l2co.naming import (
     BUDGET,
     COST,
@@ -152,15 +164,38 @@ def _write_raw_runs(rundir: Path, task_budgets: list, steps, omit=()) -> list:
     return runs
 
 
-def _create_zarr(root: Path, runs, budget_steps=BS):
-    """Drive the streaming creation core directly (no f3dasm)."""
-    store = layout.zarr_store_path(root, "bbob")
-    rawroot = layout.raw_root(root, "bbob")
-    rawroot.mkdir(parents=True, exist_ok=True)
-    _dump_create(
-        store, rawroot, runs, easiest_quantile=0.75, budget_steps=budget_steps
+def _dump(root: Path, runs, *, mode: str, budget_steps=BS) -> Path:
+    """Drive the shared template -> per-task -> finalize phases directly
+    (no f3dasm; single process). ``dump_databank`` and the SLURM-array
+    parallel dump both drive these same three functions, so this is the
+    one core every entry point shares -- serial, parallel, create,
+    append alike.
+    """
+    plan = _dump_template_runs(
+        runs,
+        root,
+        "bbob",
+        mode=mode,
+        easiest_quantile=0.75,
+        taskset=None,
+        budget_steps=budget_steps,
     )
-    return store
+    smalls = _dump_task_runs(runs, plan)
+    return dump_databank_finalize(smalls, plan)
+
+
+def _create_zarr(root: Path, runs, budget_steps=BS) -> Path:
+    """Create a fresh store (``mode="error"``) via the shared core."""
+    return _dump(root, runs, mode="error", budget_steps=budget_steps)
+
+
+def _append_zarr(root: Path, runs) -> Path:
+    """Append to an existing store (``mode="append"``) via the shared core.
+
+    ``budget_steps`` is not accepted -- append always reuses the
+    existing store's grid, per :func:`l2co.databank.dump_databank`.
+    """
+    return _dump(root, runs, mode="append")
 
 
 def _records(task, nb, steps):
@@ -313,6 +348,29 @@ def test_populated_pairs(tmp_path, tasks, steps):
     }
 
 
+def test_populated_iterations(tmp_path, tasks, steps):
+    # Missing store -> empty dict (the "run everything" signal).
+    assert databank.populated_iterations(tmp_path, "bbob") == {}
+
+    # Each populated cell reports the stored run's iteration count, which
+    # is the ITERATIONS counter's max == the raw budget length here
+    # (make_loss_ds sets ITERATIONS = arange(1, nb + 1)). The omitted cell
+    # is absent, just like populated_pairs.
+    runs = _write_raw_runs(
+        tmp_path / "runs",
+        [(tasks[0], 7), (tasks[1], 13)],
+        steps,
+        omit={(tasks[1].hash, "adam_lr=0.01")},
+    )
+    _create_zarr(tmp_path, runs)
+
+    assert databank.populated_iterations(tmp_path, "bbob") == {
+        (tasks[0].hash, "randomsearch"): 7,
+        (tasks[0].hash, "adam_lr=0.01"): 7,
+        (tasks[1].hash, "randomsearch"): 13,
+    }
+
+
 #                                                                  Reader path
 # =============================================================================
 
@@ -336,6 +394,45 @@ def test_returns_compatible_dataloader(tmp_path, tasks, steps):
     # The selection stays lazy: the heavy loss variable is still
     # dask-backed (not materialised on construction).
     assert d.data[OUTPUT_MIN].chunks is not None
+
+
+def test_load_databank_to_params(tmp_path, tasks, steps):
+    """The databank loader supports the training pipelines' ``to_params``.
+
+    End-to-end contract the supervised training experiments rely on: a
+    databank selection produces ``OptimizationDynamics`` whose label
+    axis is exactly the selected schedules, NaN-free after ``filter``.
+    Also a regression test for the ``FeatureProcessor`` call sites in
+    ``task_features`` / ``optimizer_features``, which kept passing the
+    pre-refactor ``tags`` kwarg (and the ``"categorical"`` string spec)
+    after the vocabs-only refactor — breaking every ``to_params`` call.
+    """
+    runs = _write_raw_runs(
+        tmp_path / "runs", [(tasks[0], 7), (tasks[1], 13)], steps
+    )
+    _create_zarr(tmp_path, runs)
+    d = load_databank("bbob", steps, tmp_path)
+
+    dynamics = d.to_params(
+        t=0.25,
+        t_end=100,
+        schema={
+            "dimensionality": "continuous",
+            "fn_name": ["sphere", "rastrigin"],
+        },
+    )
+    labels = [str(v) for v in dynamics.y["label"].values]
+    assert sorted(labels) == sorted(s.name for s in steps)
+    # The optimizer vocabulary is the data's schedule names.
+    assert set(dynamics.feature_processor_optimizer.vocabs["optimizer"]) == {
+        s.name for s in steps
+    }
+
+    filtered = dynamics.filter()
+    assert filtered.y.sizes["label"] == len(steps)
+    assert filtered.y.sizes["sample"] > 0
+    assert not np.isnan(np.asarray(filtered.y)).any()
+    assert not np.isnan(np.asarray(filtered.x_history)).any()
 
 
 def test_performance_loader_stays_lazy_and_matches_full(
@@ -428,8 +525,12 @@ def test_recipes_of_differing_lengths_not_truncated(tmp_path, tasks):
     assert str(zl[SCHEDULE].values[0]) == long.name
 
 
-def test_inconsistent_feature_axis_raises(tmp_path, steps):
-    # two tasks with different tag keys -> different feature axis
+def test_mismatched_feature_axis_reconciled(tmp_path, steps):
+    # Two tasks with different tag keys -- e.g. a plain bbob task
+    # alongside a bbob_embedded task in one composite task suite (see
+    # l2co_tasks' bbob_headroom_train.yaml) -- must not abort the dump;
+    # the union of both tasks' feature columns is stored, with the
+    # column a task doesn't have filled with MISSING_FEATURE.
     t0 = FakeTask("aaa", "sphere", 10)
 
     @dataclass
@@ -442,8 +543,69 @@ def test_inconsistent_feature_axis_raises(tmp_path, steps):
             return {"different_key": "x"}
 
     runs = _write_raw_runs(tmp_path / "runs", [(t0, 7), (OddTask(), 7)], steps)
-    with pytest.raises(ValueError, match="feature"):
-        _create_zarr(tmp_path, runs)
+    _create_zarr(tmp_path, runs)
+
+    zd = load_databank_dataset("bbob", steps, tmp_path).load()
+    labels = zd[TASK_LABELS]
+    assert set(labels[FEATURE].values.tolist()) >= {
+        "fn_name",
+        "dimensionality",
+        "different_key",
+        "global_min",
+    }
+    fn_name_row = labels.sel({TASK_ID: "bbb", FEATURE: "fn_name"}).item()
+    assert fn_name_row == MISSING_FEATURE
+    different_key_row = labels.sel(
+        {TASK_ID: "aaa", FEATURE: "different_key"}
+    ).item()
+    assert different_key_row == MISSING_FEATURE
+    assert labels.sel({TASK_ID: "bbb", FEATURE: "different_key"}).item() == "x"
+
+
+def test_append_widens_feature_axis(tmp_path, steps):
+    # A store created from one task family, then appended with a task
+    # from a family whose tag carries a longer feature name than the
+    # store has ever seen (mirrors bbob -> bbob_embedded, whose
+    # "intrinsic_dimensionality" key is wider than anything in a plain
+    # bbob tag). The on-disk 'feature' coordinate's fixed-width dtype
+    # must not block the append the way it briefly did (widening the
+    # feature *set* alone, tested above, doesn't exercise this -- both
+    # tasks there landed in the same dump, so the store never had a
+    # narrower on-disk 'feature' dtype to begin with).
+    t0 = FakeTask("aaa", "sphere", 10)
+    runs0 = _write_raw_runs(tmp_path / "r0", [(t0, 7)], steps)
+    root = tmp_path / "root"
+    _create_zarr(root, runs0)
+
+    @dataclass
+    class EmbeddedLikeTask:
+        hash: str = "bbb"
+        global_min: float = 0.0
+
+        @property
+        def tag(self):
+            return {"fn_name": "rastrigin", "intrinsic_dimensionality": 3}
+
+    runs1 = _write_raw_runs(tmp_path / "r1", [(EmbeddedLikeTask(), 7)], steps)
+    _append_zarr(root, runs1)
+
+    zd = load_databank_dataset("bbob", steps, root).load()
+    labels = zd[TASK_LABELS]
+    assert "intrinsic_dimensionality" in labels[FEATURE].values.tolist()
+    assert (
+        labels.sel(
+            {TASK_ID: "bbb", FEATURE: "intrinsic_dimensionality"}
+        ).item()
+        == "3"
+    )
+    assert (
+        labels.sel(
+            {TASK_ID: "aaa", FEATURE: "intrinsic_dimensionality"}
+        ).item()
+        == MISSING_FEATURE
+    )
+    # the original task's own features survive the append untouched
+    assert labels.sel({TASK_ID: "aaa", FEATURE: "fn_name"}).item() == "sphere"
 
 
 #                                                                  Raw history
@@ -486,43 +648,158 @@ def test_regenerate_from_raw(tmp_path, tasks, steps):
 # =============================================================================
 
 
-def test_append_optimizer_and_task(tmp_path, tasks, steps):
+def test_append_matches_replace_over_union(tmp_path, tasks, steps):
+    """Append reproduces a from-scratch create over the exact same union
+    of runs, for the scenarios where the two are mathematically
+    equivalent: an entirely new task, and an existing task gaining a
+    schedule it never had before. Both draw their ERT target from the
+    unchanged randomsearch baseline, so reusing vs. recomputing the
+    target agrees -- growing the store in place (append) lands on the
+    same store a full rebuild would. Re-running an existing pair does
+    *not* hold this property; see test_append_rerun_keeps_old_target.
+    """
     rs, adam = steps
     # create: task0 with rs only
     runs0 = _write_raw_runs(tmp_path / "r0", [(tasks[0], 7)], [rs])
-    store = _create_zarr(tmp_path, runs0)
-    rawroot = layout.raw_root(tmp_path, "bbob")
+    append_root = tmp_path / "append"
+    _create_zarr(append_root, runs0)
 
-    base = load_databank_dataset("bbob", [rs], tmp_path).load()
-    target0_before = base[TARGET_VALUE].sel({TASK_ID: tasks[0].hash}).values
-
-    # append: task0 gains adam, and a brand-new task1 gains rs + adam
+    # append: task0 gains adam (new schedule on an existing task), and a
+    # brand-new task1 gains rs + adam (new task).
     runs1 = _write_raw_runs(
         tmp_path / "r1", [(tasks[0], 7)], [adam]
     ) + _write_raw_runs(tmp_path / "r2", [(tasks[1], 7)], [rs, adam])
-    _dump_append(store, rawroot, runs1, easiest_quantile=0.75)
+    _append_zarr(append_root, runs1)
 
-    zd = load_databank_dataset("bbob", steps, tmp_path).load()
-    assert zd.sizes[TASK_ID] == 2
-    assert zd.sizes[SCHEDULE] == 2
-
-    # old (task0, rs) cell preserved
-    old_cell = zd[OUTPUT_MIN].sel(
-        {TASK_ID: tasks[0].hash, SCHEDULE: "randomsearch"}
+    # replace: one shot over the same tasks/schedules/budget, written
+    # fresh (make_loss_ds is a pure function of (n_budget, scale), so
+    # this reproduces byte-identical loss data to the pieces above).
+    union_runs = _write_raw_runs(
+        tmp_path / "union_raw", [(tasks[0], 7), (tasks[1], 7)], steps
     )
-    assert not bool(np.isnan(old_cell).all())
-    # newly appended cells populated
-    for tid, sch in [
-        (tasks[0].hash, "adam_lr=0.01"),
-        (tasks[1].hash, "randomsearch"),
-        (tasks[1].hash, "adam_lr=0.01"),
-    ]:
-        c = zd[OUTPUT_MIN].sel({TASK_ID: tid, SCHEDULE: sch})
-        assert not bool(np.isnan(c).all())
+    union_root = tmp_path / "union"
+    _create_zarr(union_root, union_runs)
 
-    # task0 kept its original ERT targets (append reuses stored targets)
+    _assert_stores_equal(
+        layout.zarr_store_path(append_root, "bbob"),
+        layout.zarr_store_path(union_root, "bbob"),
+    )
+
+
+def test_append_rerun_keeps_old_target(tmp_path, tasks, steps):
+    """Re-running an existing ``(task, schedule)`` pair at a higher
+    budget overwrites its stored loss cell but keeps the task's ERT
+    target -- computed once, from the original run, so appended / re-run
+    optimizers stay comparable to records already scored against it. This
+    is the one case where append legitimately does *not* reproduce a
+    fresh replace-over-union (see test_append_matches_replace_over_union):
+    a replace would recompute the target from the higher-budget data
+    instead of reusing the stored one.
+    """
+    # create: task0 with rs + adam at a low budget (nb=7) ...
+    runs0 = _write_raw_runs(tmp_path / "r0", [(tasks[0], 7)], steps)
+    root = tmp_path / "root"
+    _create_zarr(root, runs0)
+    # ... plus an unrelated task1 (also nb=7) that is never re-run.
+    runs0b = _write_raw_runs(tmp_path / "r0b", [(tasks[1], 7)], steps)
+    _append_zarr(root, runs0b)
+
+    before = load_databank_dataset("bbob", steps, root).load()
+    target0_before = before[TARGET_VALUE].sel({TASK_ID: tasks[0].hash}).values
+
+    # append: re-run task0's cells at a HIGHER budget (nb=13).
+    runs1 = _write_raw_runs(tmp_path / "r1", [(tasks[0], 13)], steps)
+    _append_zarr(root, runs1)
+
+    # the re-run cells now report the higher iteration count; task1 is
+    # untouched.
+    iters = databank.populated_iterations(root, "bbob")
+    for s in steps:
+        assert iters[(tasks[0].hash, s.name)] == 13
+        assert iters[(tasks[1].hash, s.name)] == 7
+
+    # the stored loss matches the nb=13 records, not the stale nb=7 ones.
+    # (OUTPUT_MIN is target-independent, so reusing task0's old ERT
+    # target on the re-run does not affect this comparison.)
+    zd = load_databank_dataset("bbob", steps, root).load()
+    _, loss13, _, _ = _records(tasks[0], 13, steps)
+    for s in steps:
+        sel = {TASK_ID: tasks[0].hash, SCHEDULE: s.name}
+        _assert_da_close(
+            _interp_loss(loss13[s.hash], BS)[OUTPUT_MIN],
+            zd[OUTPUT_MIN].sel(sel),
+        )
+
+    # task0 kept its original ERT target despite the higher-budget re-run
+    # -- the invariant that keeps appended/re-run optimizers comparable
+    # to what was already scored.
     target0_after = zd[TARGET_VALUE].sel({TASK_ID: tasks[0].hash}).values
     np.testing.assert_array_equal(target0_before, target0_after)
+
+
+def test_append_rollback_restores_on_recovery(tmp_path, tasks, steps):
+    """A crash between the template step (snapshot + marker + grow) and
+    finalize leaves the store marked mid-append with a rollback snapshot
+    in place; a reader refuses it, and the *next* template call for the
+    same append detects the leftover snapshot, restores the store to its
+    pre-append state, and proceeds -- so re-submitting the dump chain
+    after a crash always converges to the same result a clean, one-shot
+    append would give.
+    """
+    runs0 = _write_raw_runs(tmp_path / "r0", [(tasks[0], 7)], steps)
+    root = tmp_path / "root"
+    _create_zarr(root, runs0)
+    before = load_databank_dataset("bbob", steps, root).load()
+
+    marker = layout.append_marker_path(root, "bbob")
+    rollback = layout.rollback_path(root, "bbob")
+    assert not marker.exists()
+    assert not rollback.exists()
+
+    # Simulate a crash right after the template step: run only the
+    # template phase (snapshot + marker + grow), never task/finalize.
+    runs1 = _write_raw_runs(tmp_path / "r1", [(tasks[1], 7)], steps)
+    _dump_template_runs(
+        runs1,
+        root,
+        "bbob",
+        mode="append",
+        easiest_quantile=0.75,
+        taskset=None,
+        budget_steps=BS,
+    )
+    assert marker.exists()
+    assert rollback.exists()
+
+    # A reader refuses the mid-append store.
+    with pytest.raises(RuntimeError, match="mid-append"):
+        load_databank_dataset("bbob", steps, root)
+
+    # The next append call (same runs, as a real re-submit would do)
+    # recovers: the leftover rollback is restored before it proceeds.
+    plan = _dump_template_runs(
+        runs1,
+        root,
+        "bbob",
+        mode="append",
+        easiest_quantile=0.75,
+        taskset=None,
+        budget_steps=BS,
+    )
+    smalls = _dump_task_runs(runs1, plan)
+    dump_databank_finalize(smalls, plan)
+
+    assert not marker.exists()
+    assert not rollback.exists()
+
+    zd = load_databank_dataset("bbob", steps, root).load()
+    for s in steps:
+        sel0 = {TASK_ID: tasks[0].hash, SCHEDULE: s.name}
+        _assert_da_close(
+            before[OUTPUT_MIN].sel(sel0), zd[OUTPUT_MIN].sel(sel0)
+        )
+        sel1 = {TASK_ID: tasks[1].hash, SCHEDULE: s.name}
+        assert not bool(np.isnan(zd[OUTPUT_MIN].sel(sel1)).all())
 
 
 #                                                                      Tasksets
@@ -559,3 +836,683 @@ def test_save_taskset_roundtrip(tmp_path):
         descriptions={"a1b2c3": "sphere 10D"},
     )
     assert load_taskset(tmp_path, "sel") == ["a1b2c3", "9f8e7d"]
+
+
+#                                                                  Verification
+# =============================================================================
+
+
+def _full_store(tmp_path, tasks, steps, omit=()):
+    """A complete 2 tasks x 2 schedules store under ``tmp_path``."""
+    runs = _write_raw_runs(
+        tmp_path / "runs", [(tasks[0], 7), (tasks[1], 7)], steps, omit=omit
+    )
+    return _create_zarr(tmp_path, runs)
+
+
+def _zarr_corrupt(store: Path, var: str, value, **sel):
+    """Write ``value`` into ``var`` at per-dim positions.
+
+    ``sel`` maps a dim name to a coordinate label (``taskID`` /
+    ``schedule`` strings) or an integer/slice position; unspecified dims
+    take the full slice. Value writes through zarr leave the
+    consolidated metadata valid, so the corrupted store still opens.
+    """
+    with xr.open_zarr(store) as ds:
+        dims = ds[var].dims
+        labels = {
+            d: [str(x) for x in ds[d].values]
+            for d in (TASK_ID, SCHEDULE)
+            if d in dims
+        }
+    idx = tuple(
+        labels[d].index(sel[d])
+        if isinstance(sel.get(d), str)
+        else sel.get(d, slice(None))
+        for d in dims
+    )
+    zarr.open_group(str(store), mode="r+")[var][idx] = value
+
+
+def _by_check(report, check: str):
+    return [f for f in report.findings if f.check == check]
+
+
+def test_verify_healthy_store_ok(tmp_path, tasks, steps):
+    _full_store(tmp_path, tasks, steps)
+    report = verify_databank(tmp_path, "bbob")
+
+    assert report.ok
+    assert report.errors == ()
+    assert report.warnings == ()
+    assert report.n_pairs_expected == report.n_pairs_populated == 4
+    assert report.missing_pairs == ()
+    assert _by_check(report, "completeness.summary")
+    text = str(report)
+    assert "bbob" in text and "OK" in text
+
+
+def test_verify_missing_store_raises(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        verify_databank(tmp_path, "bbob")
+
+
+def test_verify_scattered_nan_is_warning(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    _zarr_corrupt(
+        store,
+        OUTPUT_MIN,
+        np.nan,
+        **{TASK_ID: tasks[0].hash, SCHEDULE: "randomsearch", BUDGET: 0},
+    )
+    report = verify_databank(tmp_path, "bbob")
+
+    assert report.ok  # scattered non-finite loss values are expected
+    found = _by_check(report, "loss.scattered_nonfinite")
+    assert len(found) == 1
+    f = found[0]
+    assert f.severity == "warning"
+    assert f.task_id == tasks[0].hash
+    assert f.schedule == "randomsearch"
+    assert f.variable == OUTPUT_MIN
+    assert f.count == N_REAL  # one budget slot across all realizations
+
+
+def test_verify_inf_treated_as_nonfinite(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    # inf in a loss variable behaves like NaN: a warning, not an error
+    _zarr_corrupt(
+        store,
+        OUTPUT_MIN,
+        np.inf,
+        **{TASK_ID: tasks[0].hash, SCHEDULE: "randomsearch", BUDGET: 0},
+    )
+    # inf in a performance variable is an error like NaN
+    _zarr_corrupt(
+        store,
+        COST,
+        np.inf,
+        **{
+            TASK_ID: tasks[1].hash,
+            SCHEDULE: "randomsearch",
+            REALIZATION: 0,
+            "output_dim": 0,
+            TARGET: 0,
+            METRIC: 0,
+        },
+    )
+    report = verify_databank(tmp_path, "bbob")
+
+    assert not report.ok
+    assert _by_check(report, "loss.scattered_nonfinite")
+    errs = _by_check(report, "perf.nonfinite")
+    assert len(errs) == 1
+    assert errs[0].variable == COST
+    assert errs[0].count == 1
+
+
+def test_verify_whole_var_nan_is_error(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    _zarr_corrupt(
+        store,
+        "output_mean",
+        np.nan,
+        **{TASK_ID: tasks[0].hash, SCHEDULE: "adam_lr=0.01"},
+    )
+    report = verify_databank(tmp_path, "bbob")
+
+    assert not report.ok
+    errs = _by_check(report, "loss.all_nonfinite")
+    assert len(errs) == 1
+    assert errs[0].variable == "output_mean"
+    assert errs[0].task_id == tasks[0].hash
+    assert errs[0].schedule == "adam_lr=0.01"
+    # the cell is not flagged as a partial write (other loss vars intact)
+    assert not _by_check(report, "pair.partial_loss_missing")
+
+
+def test_verify_nan_in_cost_is_error(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    _zarr_corrupt(
+        store,
+        COST,
+        np.nan,
+        **{
+            TASK_ID: tasks[0].hash,
+            SCHEDULE: "randomsearch",
+            REALIZATION: 0,
+            "output_dim": 0,
+            TARGET: 0,
+            METRIC: 0,
+        },
+    )
+    report = verify_databank(tmp_path, "bbob")
+
+    assert not report.ok
+    errs = _by_check(report, "perf.nonfinite")
+    assert len(errs) == 1
+    assert errs[0].variable == COST
+    assert errs[0].count == 1
+
+
+def test_verify_partial_write_loss_missing(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    sel = {TASK_ID: tasks[0].hash, SCHEDULE: "randomsearch"}
+    for var in (
+        OUTPUT_MIN,
+        "output_mean",
+        "output_std",
+        FEVALS,
+        ITERATIONS,
+        UPDATE_STEP,
+    ):
+        _zarr_corrupt(store, var, np.nan, **sel)
+    report = verify_databank(tmp_path, "bbob")
+
+    assert not report.ok
+    errs = _by_check(report, "pair.partial_loss_missing")
+    assert len(errs) == 1
+    assert (errs[0].task_id, errs[0].schedule) == (
+        tasks[0].hash,
+        "randomsearch",
+    )
+    # one root cause, one finding: per-variable errors are suppressed
+    assert not _by_check(report, "loss.all_nonfinite")
+    assert report.n_pairs_populated == 4  # success is still non-null
+
+
+def test_verify_partial_write_perf_missing(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    sel = {TASK_ID: tasks[0].hash, SCHEDULE: "randomsearch"}
+    _zarr_corrupt(store, SUCCESS, np.nan, **sel)
+    _zarr_corrupt(store, COST, np.nan, **sel)
+    report = verify_databank(tmp_path, "bbob")
+
+    assert not report.ok
+    errs = _by_check(report, "pair.partial_perf_missing")
+    assert len(errs) == 1
+    assert (errs[0].task_id, errs[0].schedule) == (
+        tasks[0].hash,
+        "randomsearch",
+    )
+    assert report.n_pairs_populated == 3
+    # a half-written cell is not a benign missing pair
+    assert (tasks[0].hash, "randomsearch") not in report.missing_pairs
+
+
+def test_verify_unwritten_pair_is_info(tmp_path, tasks, steps):
+    _full_store(tmp_path, tasks, steps, omit={(tasks[1].hash, "adam_lr=0.01")})
+    report = verify_databank(tmp_path, "bbob")
+
+    assert report.ok
+    assert report.errors == ()
+    assert report.n_pairs_populated == 3
+    assert report.missing_pairs == ((tasks[1].hash, "adam_lr=0.01"),)
+    summary = _by_check(report, "completeness.summary")[0]
+    assert tasks[1].hash in summary.message
+
+
+def test_verify_success_non_monotone_is_error(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    sel = {TASK_ID: tasks[0].hash, SCHEDULE: "randomsearch"}
+    # solved at every target except the easiest (last) one: impossible
+    _zarr_corrupt(store, SUCCESS, 1.0, **sel)
+    _zarr_corrupt(store, SUCCESS, 0.0, **sel, **{TARGET: -1})
+    report = verify_databank(tmp_path, "bbob")
+
+    assert not report.ok
+    assert _by_check(report, "consistency.success_not_monotone")
+    assert not _by_check(report, "consistency.success_not_binary")
+
+
+def test_verify_success_non_binary_is_error(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    _zarr_corrupt(
+        store,
+        SUCCESS,
+        0.5,
+        **{
+            TASK_ID: tasks[0].hash,
+            SCHEDULE: "randomsearch",
+            REALIZATION: 0,
+            "output_dim": 0,
+            TARGET: 0,
+        },
+    )
+    report = verify_databank(tmp_path, "bbob")
+
+    assert not report.ok
+    errs = _by_check(report, "consistency.success_not_binary")
+    assert len(errs) == 1
+    assert errs[0].count == 1
+
+
+def test_verify_negative_std_is_error(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    _zarr_corrupt(
+        store,
+        "output_std",
+        -1.0,
+        **{
+            TASK_ID: tasks[0].hash,
+            SCHEDULE: "randomsearch",
+            REALIZATION: 0,
+            "output_dim": 0,
+            BUDGET: 0,
+        },
+    )
+    report = verify_databank(tmp_path, "bbob")
+
+    assert not report.ok
+    errs = _by_check(report, "consistency.negative_std")
+    assert len(errs) == 1
+    assert errs[0].count == 1
+
+
+def test_verify_counter_checks(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    cell = {TASK_ID: tasks[0].hash, SCHEDULE: "randomsearch"}
+    point = {REALIZATION: 0, "output_dim": 0}
+    # negative counter (budget slot 0, so no decreasing diff to it)
+    _zarr_corrupt(store, FEVALS, -3.0, **cell, **point, **{BUDGET: 0})
+    # non-integer counter, still below its successor (no decrease)
+    _zarr_corrupt(store, ITERATIONS, 0.5, **cell, **point, **{BUDGET: 0})
+    # spike that the next budget step falls back from (a decrease)
+    _zarr_corrupt(store, UPDATE_STEP, 1000.0, **cell, **point, **{BUDGET: 8})
+    report = verify_databank(tmp_path, "bbob")
+
+    assert not report.ok
+    neg = _by_check(report, f"consistency.counter_negative.{FEVALS}")
+    assert len(neg) == 1 and neg[0].severity == "error"
+    nonint = _by_check(report, f"consistency.counter_noninteger.{ITERATIONS}")
+    assert len(nonint) == 1 and nonint[0].severity == "warning"
+    dec = _by_check(report, f"consistency.counter_decreasing.{UPDATE_STEP}")
+    assert len(dec) == 1 and dec[0].severity == "warning"
+
+
+def test_verify_target_value_corruption(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    _zarr_corrupt(
+        store,
+        TARGET_VALUE,
+        np.nan,
+        **{TASK_ID: tasks[0].hash, TARGET: 0},
+    )
+    # a huge hardest target breaks the ascending (hardest->easiest) order
+    _zarr_corrupt(
+        store,
+        TARGET_VALUE,
+        1e9,
+        **{TASK_ID: tasks[1].hash, TARGET: 0},
+    )
+    report = verify_databank(tmp_path, "bbob")
+
+    assert not report.ok
+    nonfinite = _by_check(report, "task.target_value_nonfinite")
+    assert len(nonfinite) == 1
+    assert nonfinite[0].task_id == tasks[0].hash
+    assert nonfinite[0].schedule is None
+    unsorted = _by_check(report, "task.target_value_unsorted")
+    assert len(unsorted) == 1
+    assert unsorted[0].task_id == tasks[1].hash
+
+
+def test_verify_subset_filters(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    _zarr_corrupt(
+        store,
+        "output_mean",
+        np.nan,
+        **{TASK_ID: tasks[0].hash, SCHEDULE: "randomsearch"},
+    )
+    assert not verify_databank(tmp_path, "bbob").ok
+
+    # the corruption sits outside both of these selections
+    by_task = verify_databank(tmp_path, "bbob", task_ids=[tasks[1].hash])
+    assert by_task.ok and by_task.n_pairs_expected == 2
+    by_sched = verify_databank(tmp_path, "bbob", schedules=["adam_lr=0.01"])
+    assert by_sched.ok and by_sched.n_pairs_expected == 2
+
+    with pytest.raises(ValueError):
+        verify_databank(
+            tmp_path, "bbob", task_ids=[tasks[1].hash], taskset="sel"
+        )
+
+    # unknown requested ids: warned and skipped, not fatal
+    partial = verify_databank(
+        tmp_path, "bbob", task_ids=[tasks[1].hash, "zzz"]
+    )
+    assert partial.ok
+    assert _by_check(partial, "subset.unknown_task")
+    with pytest.raises(ValueError):
+        verify_databank(tmp_path, "bbob", task_ids=["zzz"])
+
+
+def test_verify_taskset_unknown_hash_warning(tmp_path, tasks, steps):
+    _full_store(tmp_path, tasks, steps)
+    save_taskset(
+        layout.databank_root(tmp_path, "bbob"),
+        "sel",
+        [tasks[0].hash, "deadbeef"],
+    )
+    report = verify_databank(tmp_path, "bbob")
+
+    assert report.ok  # a stale taskset is a warning, not an error
+    found = _by_check(report, "taskset.unknown_hash")
+    assert len(found) == 1
+    assert "deadbeef" in found[0].message
+
+
+def test_verify_missing_variable_is_error(tmp_path, tasks, steps):
+    store = _full_store(tmp_path, tasks, steps)
+    shutil.rmtree(store / COST)
+    zarr.consolidate_metadata(str(store))
+    report = verify_databank(tmp_path, "bbob")  # must not crash
+
+    assert not report.ok
+    errs = _by_check(report, "structure.missing_var")
+    assert len(errs) == 1
+    assert errs[0].variable == COST
+    # pair analysis still ran on the remaining variables
+    assert report.n_pairs_populated == 4
+
+
+def test_verify_budget_nondefault_is_info(tmp_path, tasks, steps):
+    _full_store(tmp_path, tasks, steps)  # BS=16 != BUDGET_STEPS
+    report = verify_databank(tmp_path, "bbob")
+
+    found = _by_check(report, "structure.budget_nondefault")
+    assert len(found) == 1
+    assert found[0].severity == "info"
+    assert report.ok
+
+
+def test_verify_facade(tmp_path, tasks, steps):
+    _full_store(tmp_path, tasks, steps)
+    report = databank.verify_databank(tmp_path, "bbob")
+    assert isinstance(report, databank.DatabankVerificationReport)
+    assert isinstance(report.findings[0], databank.VerificationFinding)
+
+
+#                                                        overlay_roots (union)
+# =============================================================================
+# Combining a read-only baseline databank with a separate learned-optimizer
+# runs store: the two stores hold a disjoint slice of the requested schedules
+# and load_databank_dataset(..., overlay_roots=[runs]) unions them lazily.
+
+
+def _overlay_step() -> OptimizationStep:
+    """A schedule absent from the `steps` fixture, standing in for a
+    learned-optimizer run dumped into the separate runs store."""
+    return OptimizationStep(optimizer="lbfgs")
+
+
+def test_overlay_unions_schedules(tmp_path, tasks, steps):
+    primary = tmp_path / "databank"
+    runs = tmp_path / "runs"
+    _create_zarr(
+        primary,
+        _write_raw_runs(
+            primary / "raw", [(tasks[0], 12), (tasks[1], 12)], steps
+        ),
+    )
+    ostep = _overlay_step()
+    _create_zarr(
+        runs,
+        _write_raw_runs(
+            runs / "raw", [(tasks[0], 12), (tasks[1], 12)], [ostep]
+        ),
+    )
+
+    requested = steps + [ostep]
+    ds = load_databank_dataset(
+        "bbob", requested, primary, overlay_roots=[runs]
+    ).load()
+
+    assert {str(s) for s in ds[SCHEDULE].values} == {s.name for s in requested}
+    assert ds.sizes[TASK_ID] == 2
+
+
+def test_overlay_restricts_to_task_intersection(tmp_path, tasks, steps):
+    primary = tmp_path / "databank"
+    runs = tmp_path / "runs"
+    _create_zarr(
+        primary,
+        _write_raw_runs(
+            primary / "raw", [(tasks[0], 12), (tasks[1], 12)], steps
+        ),
+    )
+    ostep = _overlay_step()
+    # Runs store evaluated only the first task.
+    _create_zarr(
+        runs, _write_raw_runs(runs / "raw", [(tasks[0], 12)], [ostep])
+    )
+
+    ds = load_databank_dataset(
+        "bbob", steps + [ostep], primary, overlay_roots=[runs]
+    ).load()
+
+    assert [str(t) for t in ds[TASK_ID].values] == [tasks[0].hash]
+    assert {str(s) for s in ds[SCHEDULE].values} == {
+        s.name for s in steps + [ostep]
+    }
+
+
+def test_overlay_dedups_primary_wins(tmp_path, tasks, steps):
+    primary = tmp_path / "databank"
+    runs = tmp_path / "runs"
+    _create_zarr(
+        primary,
+        _write_raw_runs(
+            primary / "raw", [(tasks[0], 12), (tasks[1], 12)], steps
+        ),
+    )
+    ostep = _overlay_step()
+    # Runs store carries a duplicate of adam plus the fresh lbfgs.
+    _create_zarr(
+        runs,
+        _write_raw_runs(
+            runs / "raw", [(tasks[0], 12), (tasks[1], 12)], [steps[1], ostep]
+        ),
+    )
+
+    ds = load_databank_dataset(
+        "bbob", steps + [ostep], primary, overlay_roots=[runs]
+    ).load()
+
+    names = [str(s) for s in ds[SCHEDULE].values]
+    assert names.count("adam_lr=0.01") == 1  # primary wins, no duplicate
+    assert set(names) == {s.name for s in steps + [ostep]}
+
+
+def test_overlay_budget_grid_mismatch_raises(tmp_path, tasks, steps):
+    primary = tmp_path / "databank"
+    runs = tmp_path / "runs"
+    _create_zarr(
+        primary,
+        _write_raw_runs(
+            primary / "raw", [(tasks[0], 12), (tasks[1], 12)], steps
+        ),
+        budget_steps=BS,
+    )
+    ostep = _overlay_step()
+    # A store dumped on a different budget grid must fail loudly, not
+    # silently drop points (join="exact" inside the concat).
+    _create_zarr(
+        runs,
+        _write_raw_runs(
+            runs / "raw", [(tasks[0], 12), (tasks[1], 12)], [ostep]
+        ),
+        budget_steps=BS * 2,
+    )
+
+    with pytest.raises(ValueError):
+        load_databank_dataset(
+            "bbob", steps + [ostep], primary, overlay_roots=[runs]
+        )
+
+
+def test_overlay_performance_loader(tmp_path, tasks, steps):
+    primary = tmp_path / "databank"
+    runs = tmp_path / "runs"
+    _create_zarr(
+        primary,
+        _write_raw_runs(
+            primary / "raw", [(tasks[0], 12), (tasks[1], 12)], steps
+        ),
+    )
+    ostep = _overlay_step()
+    _create_zarr(
+        runs,
+        _write_raw_runs(
+            runs / "raw", [(tasks[0], 12), (tasks[1], 12)], [ostep]
+        ),
+    )
+
+    pl = load_databank_performance(
+        "bbob", steps + [ostep], primary, overlay_roots=[runs]
+    )
+    assert pl.data.sizes[SCHEDULE] == len(steps) + 1
+
+
+#                    Parallel dump: template / per-task / finalize
+# =============================================================================
+# dump_databank (via _create_zarr / _append_zarr above) and the SLURM-array
+# parallel dump both drive the exact same three phases -- template, per-task,
+# finalize -- so there is no separate "serial" implementation left to compare
+# against; what these tests exercise is that fanning the per-task phase
+# across real *processes* is safe. The per-task phase is run across a real
+# process pool to validate the "one shard file per (task, schedule) cell, so
+# disjoint tasks never touch the same file" contract that lets a SLURM array
+# write one store concurrently, and that a concurrent write reproduces
+# exactly what a single-process run of the same phases would.
+
+
+def _dump_one_task_worker(run, plan):
+    """Process-pool worker: region-write ONE task's cells into plan.store."""
+    payloads = _dump_task_runs([run], plan)
+    return payloads[0] if payloads else None
+
+
+def _assert_stores_equal(store_a: Path, store_b: Path) -> None:
+    """Assert two zarr databank stores are equal (NaN-aware, order-strict)."""
+    a = xr.open_zarr(store_a, consolidated=True).load()
+    b = xr.open_zarr(store_b, consolidated=True).load()
+    assert set(a.data_vars) == set(b.data_vars)
+    assert list(a[TASK_ID].values) == list(b[TASK_ID].values)
+    assert list(a[SCHEDULE].values) == list(b[SCHEDULE].values)
+    for v in a.data_vars:
+        av = a[v]
+        bv = b[v].transpose(*av.dims)
+        if np.issubdtype(av.dtype, np.floating):
+            np.testing.assert_allclose(
+                av.values, bv.values, rtol=1e-6, atol=1e-7, equal_nan=True
+            )
+        else:
+            assert np.array_equal(av.values, bv.values), v
+
+
+def _parallel_dump(root: Path, runs, *, mode: str, concurrent: bool):
+    """Drive template -> per-task (optionally concurrent) -> finalize."""
+    plan = _dump_template_runs(
+        runs,
+        root,
+        "bbob",
+        mode=mode,
+        easiest_quantile=0.75,
+        taskset=None,
+        budget_steps=BS,
+    )
+    if concurrent:
+        from concurrent.futures import ProcessPoolExecutor
+
+        with ProcessPoolExecutor(max_workers=4) as ex:
+            payloads = list(
+                ex.map(_dump_one_task_worker, list(runs), [plan] * len(runs))
+            )
+        payloads = [p for p in payloads if p is not None]
+    else:
+        payloads = [_dump_one_task_worker(r, plan) for r in runs]
+        payloads = [p for p in payloads if p is not None]
+    return dump_databank_finalize(payloads, plan)
+
+
+def _many_task_runs(rundir: Path, steps, n_tasks: int = 6):
+    """A wider set of tasks so the concurrent write actually contends."""
+    tasks_ = [
+        FakeTask(hash=f"task{ti:02d}", fn_name="sphere", dimensionality=10)
+        for ti in range(n_tasks)
+    ]
+    return _write_raw_runs(rundir, [(t, 8) for t in tasks_], steps)
+
+
+def test_parallel_dump_create_matches_serial(tmp_path, steps):
+    """Concurrent per-task writes reproduce the serial streaming store."""
+    runs = _many_task_runs(tmp_path / "runs", steps, n_tasks=6)
+
+    serial_root = tmp_path / "serial"
+    _create_zarr(serial_root, runs, budget_steps=BS)
+
+    par_root = tmp_path / "parallel"
+    _parallel_dump(par_root, runs, mode="error", concurrent=True)
+
+    _assert_stores_equal(
+        layout.zarr_store_path(par_root, "bbob"),
+        layout.zarr_store_path(serial_root, "bbob"),
+    )
+
+
+def test_parallel_dump_append_matches_serial(tmp_path, tasks, steps):
+    """Concurrent per-task append writes reproduce a single-process append.
+
+    The append template step grows the store in place and returns before
+    any cell is written, so the process pool's workers only ever touch a
+    store that is already at its final shape -- no race between the grow
+    and the concurrent region writes.
+    """
+    base = _write_raw_runs(tmp_path / "base", [(tasks[0], 8)], steps)
+    extra = _write_raw_runs(tmp_path / "extra", [(tasks[1], 8)], steps)
+
+    # Single-process reference: create then append.
+    serial_root = tmp_path / "serial"
+    _create_zarr(serial_root, base, budget_steps=BS)
+    _append_zarr(serial_root, extra)
+    store_s = layout.zarr_store_path(serial_root, "bbob")
+
+    # Create sequentially, then append with the per-task cell writes
+    # fanned across a real process pool.
+    par_root = tmp_path / "parallel"
+    _parallel_dump(par_root, base, mode="error", concurrent=False)
+    store_p = _parallel_dump(par_root, extra, mode="append", concurrent=True)
+
+    _assert_stores_equal(Path(store_p), store_s)
+
+
+def test_parallel_dump_template_is_shape_only(tmp_path):
+    """The template loads only a 1-2 optimizer subset yet lays out a store
+    byte-equal to the serial (full-optimizer) dump."""
+    steps3 = [
+        OptimizationStep(optimizer="randomsearch"),
+        OptimizationStep(optimizer="adam", hyperparameters={"lr": 0.01}),
+        OptimizationStep(optimizer="adam", hyperparameters={"lr": 0.1}),
+    ]
+    task = FakeTask(hash="t0", fn_name="sphere", dimensionality=10)
+    runs = _write_raw_runs(tmp_path / "runs", [(task, 8)], steps3)
+
+    # The template's sample subset is randomsearch + one representative
+    # optimizer -- NOT the task's full optimizer set.
+    subset = _minimal_sample_steps(runs[0][1])
+    assert len(subset) == 2
+    assert any(s.optimizer == "randomsearch" for s in subset)
+    assert any(s.optimizer != "randomsearch" for s in subset)
+
+    serial_root = tmp_path / "serial"
+    _create_zarr(serial_root, runs, budget_steps=BS)
+
+    par_root = tmp_path / "parallel"
+    _parallel_dump(par_root, runs, mode="error", concurrent=False)
+
+    _assert_stores_equal(
+        layout.zarr_store_path(par_root, "bbob"),
+        layout.zarr_store_path(serial_root, "bbob"),
+    )

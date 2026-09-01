@@ -53,3 +53,12 @@ SEED = "seed"
 METRIC = "metric"
 TARGET_VALUE = "target_value"
 OPTIMIZATIONSTEP = "optimizationstep"
+
+# Policy-artifact provenance (see l2co._src.databank.provenance).
+# ``PROVENANCE`` doubles as the loss-history dataset attribute the
+# evaluation pipeline attaches the record under and the ``(schedule,)``
+# store variable it lands in; ``IN_TRAINING`` is the derived
+# ``(taskID, schedule)`` mask (1/0 for policy schedules, NaN for
+# static optimizers).
+PROVENANCE = "provenance"
+IN_TRAINING = "in_training"

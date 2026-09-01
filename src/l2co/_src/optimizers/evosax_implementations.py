@@ -90,8 +90,13 @@ def _evosax_partial(name: str, cls: type) -> Partial:
     """
     factory = _factory_for(cls)
     if name in _EVEN_POPSIZE_REQUIRED:
-        return Partial(factory, optimizer=cls, popsize=variable_popsize_even)
-    return Partial(factory, optimizer=cls)
+        return Partial(
+            factory,
+            optimizer=cls,
+            popsize=variable_popsize_even,
+            name=name,
+        )
+    return Partial(factory, optimizer=cls, name=name)
 
 
 evosax_mapping = {

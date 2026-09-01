@@ -20,6 +20,7 @@ from jaxtyping import PRNGKeyArray, PyTree
 from l2co_tasks import Task
 
 # Local
+from l2co._src.optimizers.state_transfer import FAMILY_POPULATION
 from l2co._src.optimizers.update_class import UpdateClass
 from l2co._src.optimizers.utils import resolve_popsize
 from l2co._src.sampler import get_sampler
@@ -93,6 +94,7 @@ class RandomSearchUpdateClass(UpdateClass):
         bounded: tuple[float | None, float | None],
         popsize: int,
         hash: int,
+        family: str = FAMILY_POPULATION,
     ):
         """Initialise the random-search update class.
 
@@ -121,6 +123,13 @@ class RandomSearchUpdateClass(UpdateClass):
             Candidates per logical iteration.
         hash : int
             Optimizer hash stamped into ``OptHistory.update_step``.
+        family : str, optional
+            Which optimizer family this is, by default
+            :data:`~l2co.optimizers.FAMILY_POPULATION`. Declared
+            explicitly because the ``UpdateClass`` default is
+            ``gradient``, which would misdescribe it -- and because this
+            subclass defines its own ``__init__``, the field has to be
+            threaded through by hand rather than inherited.
         """
 
         def _noop_init_fn(
@@ -138,6 +147,7 @@ class RandomSearchUpdateClass(UpdateClass):
             step_fn=_noop_step_fn,
             popsize=popsize,
             hash=hash,
+            family=family,
         )
         self.sampling_fn = sampling_fn
         self.static_model = static_model
@@ -181,7 +191,7 @@ def random_search_update(
         Name of the sampler used to draw candidates, resolved via
         :func:`l2co._src.sampler.get_sampler`. Must accept ``(key,
         params, n_samples, ...)`` -- i.e. ``"random"``, ``"normal"``,
-        or ``"xavier"``. Default ``"random"``.
+        ``"xavier"``, or ``"constant"``. Default ``"random"``.
     popsize : int or Callable[[Task], int], optional
         Candidates per logical iteration; total evaluations per
         ``step`` call equal ``popsize * n_iterations``. Either a
@@ -215,6 +225,11 @@ def random_search_update(
             **sampler_kwargs,
         )
 
+    # Random search carries no state between iterations, so there is
+    # nothing for a switch to hand over or receive: ``transfer_read_fn``
+    # and ``transfer_write_fn`` stay ``None``. ``family`` is still set
+    # explicitly rather than left to the ``UpdateClass`` default, which
+    # is ``gradient`` and would misdescribe it.
     return RandomSearchUpdateClass(
         sampling_fn=sampling_fn,
         static_model=static_model,
@@ -223,6 +238,7 @@ def random_search_update(
         bounded=bounded,
         popsize=popsize,
         hash=opt_hash,
+        family=FAMILY_POPULATION,
     )
 
 

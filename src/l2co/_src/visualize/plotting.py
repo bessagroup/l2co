@@ -46,7 +46,7 @@ from l2co._src.optimizer_schedule import OptimizationStep
 from l2co._src.performance import EPSILON
 from l2co._src.sampler import grid_sampling
 from l2co._src.update_class import evaluate
-from l2co._src.visualize.colors import LABEL_MAP, get_schedule_styles
+from l2co._src.visualize.colors import display_name, get_schedule_styles
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -594,6 +594,7 @@ def plot_ertd(
     title_text: str | None = None,
     top_left_text: str | None = None,
     show_legend: bool = True,
+    show_markers: bool = True,
     xlim: tuple[float, float] = (10**-1, 10**5),
 ) -> tuple[plt.Figure, plt.Axes]:
     """
@@ -615,6 +616,13 @@ def plot_ertd(
         Text to display in the top-left corner (e.g., "5-D"), by default None.
     show_legend : bool, optional
         Whether to display the legend on the right side, by default True.
+    show_markers : bool, optional
+        Whether to mark the curves with each schedule's marker, by
+        default True. Off leaves colour and line style to tell the
+        schedules apart, which is what a small panel wants: markers at
+        ``markevery=0.2`` cost roughly a marker per fifth of the axis on
+        every curve, and a dozen curves in a two-inch panel turns that
+        into speckle.
     xlim : tuple[float, float], optional
         Limits for the x-axis, by default (10**-1, 10**5).
 
@@ -628,7 +636,9 @@ def plot_ertd(
     The plot shows the fraction of function-target pairs solved as a function
     of normalized cost (function evaluations or iterations per dimensionality).
     The x-axis uses logarithmic scaling. Colors and line styles are determined
-    by the OPTIMIZER_COLORS and OPTIMIZER_LINESTYLES dictionaries.
+    by the OPTIMIZER_COLORS and OPTIMIZER_LINESTYLES dictionaries; markers
+    come from the same per-schedule style and can be dropped with
+    ``show_markers=False``.
     """
     fig, ax = _get_or_create_axes(ax=ax)
 
@@ -665,9 +675,8 @@ def plot_ertd(
     for schedule in ertd[SCHEDULE].values:
         color = style[schedule].color
         linestyle = style[schedule].linestyle
-        # marker = style[schedule].marker
-        marker = None
-        pretty_label = LABEL_MAP.get(schedule, schedule)
+        marker = style[schedule].marker if show_markers else None
+        pretty_label = display_name(schedule)
         y = ertd.sel({SCHEDULE: schedule})
 
         # FAILSAFE: Check if the entire series is NaN
@@ -703,19 +712,16 @@ def plot_ertd(
 
     match cost_metric:
         case "iterations":
-            # ax.set_xlabel("Iterations / dimension")
-            ax.set_xlabel("iterations / dim")
+            ax.set_xlabel("Iterations / dimension")
         case "fevals":
-            # ax.set_xlabel("Function evaluations / dimension")
-            ax.set_xlabel("f-evals / dim")
+            ax.set_xlabel("Function evaluations / dimension")
         case _:
             raise ValueError(
                 f"Invalid cost_metric: {cost_metric}. "
                 f"Choose 'fevals' or 'iterations'."
             )
 
-    # ax.set_ylabel("Fraction of function, target pairs")
-    ax.set_ylabel("Fraction of targets")
+    ax.set_ylabel("Fraction of function, target pairs")
 
     # --- Legend and Limits ---
     if show_legend:
@@ -927,6 +933,8 @@ def plot_update_step(
     ax: plt.Axes | None = None,
     show_legend: bool = True,
     hide_when_done: bool = False,
+    log_x: bool = False,
+    xlim: tuple[float, float] | None = None,
 ):
     """Plot a colour-coded raster of optimizer selections.
 
@@ -935,7 +943,11 @@ def plot_update_step(
     that were never written by the rollout (the padding region
     after a problem terminates early) are rendered in white so
     that the per-optimizer colour mapping is independent of the
-    order of ``optimizers``.
+    order of ``optimizers``; white always wins over the
+    ``hide_when_done`` black overlay, so the two sentinels stay
+    distinguishable (black = solved from that step on, white =
+    no data). Both sentinels get their own legend entries when
+    they can appear.
 
     Parameters
     ----------
@@ -958,6 +970,15 @@ def plot_update_step(
         optimizer colour, indicating that the problem was already
         solved and subsequent optimizer choices are immaterial.
         Default is ``False``.
+    log_x : bool, optional
+        Render the x-axis on a logarithmic scale. Only meaningful
+        together with a ``cost_metric``; the raw step index starts at
+        zero, which a log axis would clip. Default is ``False``.
+    xlim : tuple[float, float] or None, optional
+        Explicit x-axis limits; ``None`` (default) keeps matplotlib's
+        autoscaling. Pass :func:`plot_ertd`'s ``xlim`` together with
+        ``log_x=True`` and the same ``cost_metric`` to align this
+        raster with an ERTD profile of the same data.
 
     Returns
     -------
@@ -986,7 +1007,7 @@ def plot_update_step(
                 d.data[FEVALS].isel({OUTPUT_DIM: 0}).sel({SCHEDULE: schedule})
                 / dims
             )
-            x_label = "Function evaluations / dimension"
+            x_label = "f-evals / dim"
         case "iterations":
             cost_metric = (
                 d.data[ITERATIONS]
@@ -994,7 +1015,7 @@ def plot_update_step(
                 .sel({SCHEDULE: schedule})
                 / dims
             )
-            x_label = "Iterations / dimension"
+            x_label = "iterations / dim"
         case None:
             cost_metric = None
             x_label = "Steps"
@@ -1015,7 +1036,7 @@ def plot_update_step(
     opt_hashes = [opt.hash for opt in optimizers]
     styles = get_schedule_styles([opt.name for opt in optimizers])
     hex_colors = [styles[opt.name].color for opt in optimizers]
-    display_names = [LABEL_MAP[opt.name] for opt in optimizers]
+    display_names = [display_name(opt.name) for opt in optimizers]
 
     # 3. Reclassification
     # Cells of `update_step` that were never written by the rollout (the
@@ -1030,14 +1051,21 @@ def plot_update_step(
     for i, opt_hash in enumerate(opt_hashes):
         indexed_data[z_data == opt_hash] = i
 
+    # Cells that match no optimizer hash (the never-written padding)
+    # render via cmap.set_bad; computed before the done overpaint below
+    # so "no data" always wins over "solved".
+    unmatched_mask = indexed_data == -1
+
     # 3b. Optionally mark steps where the task is already solved.
     # We append black as an extra colormap entry at index len(optimizers).
     done_index = len(opt_hashes)
     if hide_when_done:
         # Take the running minimum along the budget axis so that once the
-        # global minimum is first hit, every subsequent step stays masked.
-        # `np.fmin.accumulate` ignores NaNs along the way; NaN cells
-        # then compare False against `global_min` and stay unmasked.
+        # global minimum is first hit, every subsequent step stays black.
+        # `np.fmin.accumulate` carries the running minimum *through* NaN
+        # cells (fmin prefers the non-NaN operand), so the padding region
+        # of a solved problem would also satisfy the comparison -- the
+        # `~unmatched_mask` term keeps those cells white instead.
         running_min = xr.apply_ufunc(
             np.fmin.accumulate,
             output_min,
@@ -1046,14 +1074,13 @@ def plot_update_step(
             kwargs={"axis": -1},
         )
         done_mask = (running_min <= global_min + EPSILON).values
-        indexed_data[done_mask] = done_index
+        indexed_data[done_mask & ~unmatched_mask] = done_index
         cmap_colors = list(hex_colors) + ["black"]
     else:
         cmap_colors = list(hex_colors)
 
     # Mask unmatched cells so they render via cmap.set_bad rather than
     # being mapped to whichever optimizer sits at index 0.
-    unmatched_mask = indexed_data == -1
     indexed_data = np.ma.array(indexed_data, mask=unmatched_mask)
 
     n_problems, n_steps = indexed_data.shape
@@ -1066,12 +1093,12 @@ def plot_update_step(
         # sizes (xarray's outer-join concat pads short rows with NaN
         # in FEVALS / ITERATIONS, mirroring the same padding that
         # produces unmatched UPDATE_STEP cells above). Without this
-        # fill, `pcolormesh(shading="nearest")` computes the right
-        # edge of the last visible cell as (X[j]+X[j+1])/2 = NaN and
-        # fails to render it — the Z mask only suppresses the masked
-        # cell, not its X-coord influence on neighbours. Carry-forward
-        # collapses the last visible cell to half-width on the right
-        # but keeps every drawn cell well-defined.
+        # fill, the midpoint cell edges computed below would be NaN
+        # around the last visible cell and it would fail to render —
+        # the Z mask only suppresses the masked cell, not its X-coord
+        # influence on neighbours. Carry-forward collapses the last
+        # visible cell to zero width but keeps every drawn cell
+        # well-defined.
         nan_mask = np.isnan(X)
         if nan_mask.any():
             col_idx = np.where(~nan_mask, np.arange(X.shape[1])[None, :], 0)
@@ -1080,20 +1107,11 @@ def plot_update_step(
             X = X[row_idx, col_idx]
             # Rows that are entirely NaN (a problem missing from this
             # schedule) have nothing meaningful to plot; fill with 0
-            # so matplotlib still produces a degenerate but valid mesh.
+            # so the per-row edges below stay finite (the fully masked
+            # row is skipped when drawing anyway).
             X = np.nan_to_num(X, nan=0.0)
-        problem_indices = np.arange(n_problems)
-        # Broadcast Y to match X: (n_problems, n_steps)
-        Y = np.broadcast_to(
-            problem_indices[:, np.newaxis], (n_problems, n_steps)
-        )
-        Z = indexed_data
     else:
-        # Meshgrid creates (n_problems, n_steps) grids
-        X, Y = np.meshgrid(
-            np.linspace(0.0, 1.0, n_steps), np.arange(n_problems)
-        )
-        Z = indexed_data
+        X = None
 
     # 5. Plotting
     fig, ax = _get_or_create_axes(ax=ax)
@@ -1103,16 +1121,61 @@ def plot_update_step(
     # Pin vmin/vmax so the colormap mapping is stable regardless of
     # which indices actually appear in Z (e.g. no "done" cells, or
     # an optimizer that was never selected).
-    ax.pcolormesh(
-        X,
-        Y,
-        Z,
-        cmap=cmap,
-        shading="nearest",
-        edgecolors="none",
-        vmin=0,
-        vmax=len(cmap_colors) - 1,
-    )
+    mesh_kwargs = {
+        "cmap": cmap,
+        "edgecolors": "none",
+        "vmin": 0,
+        "vmax": len(cmap_colors) - 1,
+    }
+    if X is not None:
+        # Every problem row has its own cost coordinates (optimizers
+        # differ in fevals/iterations per step, and rows terminate at
+        # different budgets), so the raster cannot be a single 2-D
+        # pcolormesh: a QuadMesh shares each cell corner between
+        # vertically adjacent cells and interpolates it from *both*
+        # rows' centers, which slants every cell edge wherever
+        # neighbouring rows disagree — the raster fills with diagonal
+        # artifacts. Draw one flat-shaded single-row mesh per problem
+        # instead, so every cell stays an axis-aligned rectangle on
+        # that row's own cost grid.
+        for i in range(n_problems):
+            row = indexed_data[i : i + 1]
+            if np.ma.getmaskarray(row).all():
+                continue
+            centers = X[i]
+            edges = np.empty(n_steps + 1)
+            if n_steps > 1:
+                edges[1:-1] = 0.5 * (centers[:-1] + centers[1:])
+                edges[0] = centers[0] - 0.5 * (centers[1] - centers[0])
+                edges[-1] = centers[-1] + 0.5 * (centers[-1] - centers[-2])
+            else:
+                edges[:] = (centers[0] - 0.5, centers[0] + 0.5)
+            if log_x:
+                # A nonpositive left edge would invalidate the first
+                # cell once the axis goes logarithmic.
+                edges = np.maximum(edges, 0.5 * centers[0])
+            ax.pcolormesh(
+                edges,
+                [i - 0.5, i + 0.5],
+                row,
+                shading="flat",
+                **mesh_kwargs,
+            )
+        # Skipped (fully masked) rows draw nothing; pin the limits so
+        # they still occupy their slot instead of shrinking the axis.
+        ax.set_ylim(-0.5, n_problems - 0.5)
+    else:
+        # Raw step index: one shared grid for all rows, a single mesh.
+        X_grid, Y_grid = np.meshgrid(
+            np.linspace(0.0, 1.0, n_steps), np.arange(n_problems)
+        )
+        ax.pcolormesh(
+            X_grid,
+            Y_grid,
+            indexed_data,
+            shading="nearest",
+            **mesh_kwargs,
+        )
 
     # 6. IEEE Style Legend
     if show_legend:
@@ -1129,18 +1192,58 @@ def plot_update_step(
             )
             for color, name in zip(hex_colors, display_names, strict=True)
         ]
+        if hide_when_done:
+            legend_elements.append(
+                Line2D(
+                    [0],
+                    [0],
+                    marker="s",
+                    color="w",
+                    label="Global min. reached",
+                    markerfacecolor="black",
+                    markersize=8,
+                    linestyle="None",
+                )
+            )
+        if unmatched_mask.any():
+            legend_elements.append(
+                Line2D(
+                    [0],
+                    [0],
+                    marker="s",
+                    color="w",
+                    label="No data",
+                    markerfacecolor="white",
+                    markeredgecolor="#BBBBBB",
+                    markersize=8,
+                    linestyle="None",
+                )
+            )
+        # The raster fills the entire axes, so an inside legend would
+        # always cover data rows; anchor it above the axes instead.
+        # Savers that use bbox_inches="tight" (e.g. f3dasm's
+        # figure_store) grow the saved figure to include it.
         ax.legend(
             handles=legend_elements,
-            loc="best",
+            loc="lower center",
+            bbox_to_anchor=(0.5, 1.02),
+            ncols=3,
             frameon=True,
             fancybox=False,
             edgecolor="#BBBBBB",
             framealpha=1.0,
             labelspacing=0.2,
-            borderaxespad=0.5,
+            borderaxespad=0.0,
+            handletextpad=0.4,
+            columnspacing=1.0,
+            fontsize="small",
         )
 
     # 7. Scientific Polish
+    if log_x:
+        ax.set_xscale("log")
+    if xlim is not None:
+        ax.set_xlim(*xlim)
     ax.set_ylabel("Problems")
     ax.set_xlabel(x_label)
 

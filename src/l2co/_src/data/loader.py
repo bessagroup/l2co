@@ -41,11 +41,13 @@ import xarray as xr
 # Local
 from ..naming import (
     BUDGET,
+    COST,
     FEATURE,
     FEVALS,
     GLOBAL_MIN,
     ITERATIONS,
     KIND,
+    METRIC,
     OUTPUT_DIM,
     OUTPUT_MEAN,
     OUTPUT_MIN,
@@ -59,6 +61,7 @@ from ..naming import (
 )
 from ..optimization_dynamics import OptimizationDynamics
 from ..performance import (
+    ERTD_SEED_BATCH,
     ertd,
     output_cummin,
     scale_by_task,
@@ -126,6 +129,11 @@ class DataLoader:
         """
         Concatenate two loaders along the problem dimension.
 
+        Non-concat dimensions are outer-aligned (``join="outer"``,
+        stated explicitly since xarray's default is changing to
+        ``"exact"``): coordinates present on only one side are kept and
+        NaN-padded on the other.
+
         Parameters
         ----------
         other : DataLoader
@@ -141,14 +149,22 @@ class DataLoader:
 
         return replace(
             self,
-            data=xr.concat([self.data, other.data], dim=PROBLEM),
+            data=xr.concat([self.data, other.data], dim=PROBLEM, join="outer"),
             task_labels=xr.concat(
-                [self.task_labels, other.task_labels], dim=PROBLEM
+                [self.task_labels, other.task_labels],
+                dim=PROBLEM,
+                join="outer",
             ),
         )
 
     def join(self, other: DataLoader) -> DataLoader:
         """Join another loader along the schedule dimension.
+
+        The ``problem`` axes are outer-aligned (``join="outer"``, stated
+        explicitly since xarray's default is changing to ``"exact"``):
+        problems present on only one side are kept and NaN-padded on the
+        other, and data variables missing from one side are NaN-filled
+        on that side's schedules.
 
         Parameters
         ----------
@@ -162,7 +178,9 @@ class DataLoader:
         """
         return replace(
             self,
-            data=xr.concat([self.data, other.data], dim=SCHEDULE),
+            data=xr.concat(
+                [self.data, other.data], dim=SCHEDULE, join="outer"
+            ),
             task_labels=self.task_labels,
         )
 
@@ -178,6 +196,14 @@ class DataLoader:
         parses the string ``task_labels`` variable into typed values. Every
         data variable in ``data`` is kept (loss trajectories and ERT
         metrics alike).
+
+        The label parse is forced to ``object`` dtype and runs on an
+        eagerly-loaded copy of ``task_labels``: without ``otypes``,
+        ``np.vectorize`` (and dask's sample-based dtype inference on a
+        lazy zarr-backed input, e.g. from ``l2co.databank``) infers the
+        output dtype from the first parsed element -- a boolean feature
+        like ``separable`` would collapse the *entire* labels array to
+        ``bool`` (``global_min`` ``"-116.56"`` -> ``True``).
 
         Parameters
         ----------
@@ -206,14 +232,15 @@ class DataLoader:
             except ValueError:
                 return val
 
+        # Labels are tiny; load them so the parse below never goes
+        # through dask (whose blockwise dtype inference ignores
+        # ``otypes``-less vectorize results -- see docstring).
         task_labels = xr.apply_ufunc(
-            np.vectorize(parse_mixed_value),
-            data[TASK_LABELS],
+            np.vectorize(parse_mixed_value, otypes=[object]),
+            data[TASK_LABELS].load(),
             input_core_dims=[[PROBLEM]],
             output_core_dims=[[PROBLEM]],
             vectorize=True,
-            dask="allowed",
-            output_dtypes=[object],
         ).T
 
         # Remove variable features from data
@@ -264,10 +291,11 @@ class DataLoader:
         Parameters
         ----------
         schema : dict[str, str]
-            Feature name to type mapping for the processor.
+            Feature name to type mapping for the processor
+            (see :meth:`FeatureProcessor.init`).
         feature_processor : FeatureProcessor | None, optional
             Pre-fitted processor. If None, a new one is
-            initialized from the data, by default None.
+            initialized from the schema, by default None.
 
         Returns
         -------
@@ -285,9 +313,7 @@ class DataLoader:
         ]
 
         if feature_processor is None:
-            feature_processor_task = FeatureProcessor.init(
-                schema=schema, tags=tags_list
-            )
+            feature_processor_task = FeatureProcessor.init(schema=schema)
         else:
             feature_processor_task = feature_processor
 
@@ -332,11 +358,13 @@ class DataLoader:
             {"optimizer": str(xi)} for xi in opt_labels.values.flatten()
         ]
 
-        # OPTIMIZER FEATURES
+        # OPTIMIZER FEATURES: one categorical feature whose vocabulary
+        # is the data's schedule names, in schedule order.
         if feature_processor is None:
             feature_processor_optimizer = FeatureProcessor.init(
-                schema={"optimizer": "categorical"},
-                tags=[{"optimizer": str(xi)} for xi in self.optimizers.values],
+                schema={
+                    "optimizer": [str(xi) for xi in self.optimizers.values]
+                },
             )
         else:
             feature_processor_optimizer = feature_processor
@@ -775,18 +803,35 @@ class DataLoader:
         include_best: bool = False,
         exclude_optimizer: str | None = None,
         cost_values: np.ndarray = DEFAULT_COST_VALUES,
+        seed_batch: int = ERTD_SEED_BATCH,
     ) -> xr.DataArray:
         """
         Compute the expected runtime distribution (ERTD) profile.
 
+        The profile is per-problem: it is never reduced over ``taskID``,
+        and the bootstrap draws depend only on the *number* of
+        realizations. A task subset therefore yields exactly the rows the
+        full selection would, so a caller may shard the computation over
+        tasks and concatenate the partials along ``problem`` (see
+        ``tests/unit/test_ertd_separability.py``).
+
         Parameters
         ----------
         include_best : bool, optional
-            Whether to include the best optimizer, by default False.
+            Whether to add the virtual best solver as an extra schedule
+            named ``"vbs"``, by default False. It is the *per-task*
+            oracle selection -- for each problem, the schedule reaching
+            the most targets at the full budget -- so its profile is a
+            bound on what choosing one optimizer per task can buy, not a
+            curve that dominates the portfolio at every cost.
         exclude_optimizer : str, optional
             Optimizer to exclude, by default None.
         cost_values : np.ndarray, optional
             Cost budget thresholds, by default ``DEFAULT_COST_VALUES``.
+        seed_batch : int, optional
+            Bootstrap replicates held in memory at once, forwarded to
+            :func:`l2co._src.performance.ertd`. Affects peak memory only,
+            not the result.
 
         Returns
         -------
@@ -794,8 +839,29 @@ class DataLoader:
             ERTD profile.
         """
         if include_best:
-            sbs = self.data[SUCCESS].sum(TARGET).idxmax(SCHEDULE)
-            d = self.create_strategy(choices=sbs, name="sbs")
+            success = self.data[SUCCESS]
+            counts = success.sum(TARGET)
+            tied_for_best = counts == counts.max(SCHEDULE)
+
+            # Tie-break: TARGET runs hardest -> easiest and success is a
+            # monotone step function, so among schedules tied on target
+            # count the first True entry is the hardest target each
+            # reached. Prefer whichever got there in fewer fevals.
+            # ``fillna`` guards a (schedule, task) combination absent
+            # from the store, which argmax's NaN-slice handling can't.
+            # ``compute`` realizes the (small) indexer eagerly -- the
+            # store is dask-backed, and vectorized ``isel`` below
+            # rejects a still-chunked indexer array (see the identical
+            # ``.compute()`` on ``calculate_ert``'s ``first_solved``).
+            hardest_reached = success.fillna(0.0).argmax(TARGET).compute()
+            speed = (
+                self.data[COST]
+                .sel({METRIC: FEVALS}, drop=True)
+                .isel({TARGET: hardest_reached})
+            )
+
+            vbs = speed.where(tied_for_best, other=np.inf).idxmin(SCHEDULE)
+            d = self.create_strategy(choices=vbs, name="vbs")
         else:
             d = self
         dims = self.task_labels.sel(
@@ -806,6 +872,7 @@ class DataLoader:
             performance=d.data,
             dims=dims,
             cost_values=cost_values,
+            seed_batch=seed_batch,
         )
 
         # Expand realization and stack dimensions to match valid_files
@@ -816,9 +883,9 @@ class DataLoader:
         # 1. Get the base mask from valid_files
         mask = self.valid_files.isel({OUTPUT_DIM: 0}, drop=True)
 
-        # 2. Reindex the mask to include 'vbs' and 'sbs' from _ertd
+        # 2. Reindex the mask to include the 'vbs' schedule from _ertd
         # fill_value=True ensures that any schedule NOT in self.data
-        # (like vbs/sbs) defaults to True.
+        # (like vbs) defaults to True.
         mask = mask.reindex_like(_ertd[SCHEDULE], method=None, fill_value=True)
 
         # 3. Apply the expanded mask

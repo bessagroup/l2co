@@ -79,6 +79,27 @@ def variable_popsize_even(task: Task) -> int:
     return popsize + (popsize % 2)
 
 
+def shade_popsize(task: Task) -> int:
+    """:func:`variable_popsize` floored at 10, for SHADE.
+
+    SHADE samples the greediness of its current-to-pbest/1 mutation as
+    ``p_i ~ U[2 / NP, 0.2]`` (Sun et al. 2020, Eqs. 5-6), which is only
+    a well-defined range for ``NP >= 10``. The paper-scale ``NP = 100``
+    remains available via the ``popsize`` hyperparameter.
+
+    Parameters
+    ----------
+    task : Task
+        Task whose ``dimensionality`` drives the formula.
+
+    Returns
+    -------
+    int
+        ``max(10, int(4 + 3 * log(d)))`` for the given task.
+    """
+    return max(10, variable_popsize(task))
+
+
 def resolve_popsize(popsize: PopSize, task: Task) -> int:
     """Coerce a :data:`PopSize` (int or callable) to a concrete ``int``.
 
