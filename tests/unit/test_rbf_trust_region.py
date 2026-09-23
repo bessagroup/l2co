@@ -222,3 +222,81 @@ def test_every_registry_key_is_already_normalized() -> None:
     assert not unreachable, (
         f"these keys cannot be resolved after normalize_key: {unreachable}"
     )
+
+
+#                                            Candidate count vs dimensionality
+# =============================================================================
+
+
+def test_candidate_count_holds_a_flop_budget() -> None:
+    """Scoring cost stays flat as the dimension grows.
+
+    Scoring is the only part of a step that scales with dimensionality
+    (``n_candidates * archive_size * num_dims``), and a flat count is
+    what made a 1024-dimensional cell take an hour.
+    """
+    from l2co._src.optimizers.rbf_trust_region import (
+        CANDIDATE_FLOPS,
+        N_CANDIDATES_MIN,
+        default_n_candidates,
+    )
+
+    archive = 32
+    for dim in (256, 512, 1024):
+        n = default_n_candidates(dim, archive)
+        if n > N_CANDIDATES_MIN:          # not yet clamped by the floor
+            assert n * archive * dim <= CANDIDATE_FLOPS
+
+
+def test_low_dimensions_are_unchanged() -> None:
+    """The cap still binds up to 256 dimensions.
+
+    Results already measured at 2-256 dimensions must not move when this
+    default changes, so the resolved count there has to stay 128.
+    """
+    from l2co._src.optimizers.rbf_trust_region import (
+        N_CANDIDATES_MAX,
+        default_n_candidates,
+    )
+
+    for dim in (2, 10, 40, 64, 256):
+        assert default_n_candidates(dim, 32) == N_CANDIDATES_MAX
+
+
+def test_high_dimensions_shrink_but_do_not_vanish() -> None:
+    """A floor keeps the surrogate minimisation meaningful."""
+    from l2co._src.optimizers.rbf_trust_region import (
+        N_CANDIDATES_MAX,
+        N_CANDIDATES_MIN,
+        default_n_candidates,
+    )
+
+    assert default_n_candidates(1024, 32) < N_CANDIDATES_MAX
+    for dim in (1024, 4096, 100_000):
+        assert default_n_candidates(dim, 32) >= N_CANDIDATES_MIN
+
+
+def test_the_algorithm_resolves_its_own_candidate_count() -> None:
+    """Constructing without the argument picks the count from the task."""
+    small = RBFTrustRegion(population_size=2, solution=jnp.zeros((10,)),
+                           archive_size=32)
+    large = RBFTrustRegion(population_size=2, solution=jnp.zeros((1024,)),
+                           archive_size=32)
+    assert small.n_candidates > large.n_candidates
+    assert small.n_candidates == 128
+
+
+def test_an_explicit_candidate_count_still_wins() -> None:
+    """The scaling is a default, not a policy."""
+    algo = RBFTrustRegion(population_size=2, solution=jnp.zeros((1024,)),
+                          archive_size=32, n_candidates=256)
+    assert algo.n_candidates == 256
+
+
+def test_a_resolved_count_below_the_population_is_rejected() -> None:
+    """The floor must not silently drop below what a step evaluates."""
+    # archive_size must clear population_size first, or that guard fires
+    # instead and the test passes for the wrong reason.
+    with pytest.raises(ValueError, match="n_candidates"):
+        RBFTrustRegion(population_size=64, solution=jnp.zeros((100_000,)),
+                       archive_size=128)

@@ -96,6 +96,48 @@ __status__ = "Stable"
 # =============================================================================
 
 
+#: Flop budget for the candidate-scoring step. Scoring costs
+#: ``n_candidates * archive_size * num_dims`` and is the *only* part of a
+#: step that grows with dimensionality -- the kernel solve is
+#: ``archive_size``-cubed by construction. Holding the product fixed
+#: keeps a step roughly as expensive at 1024 dimensions as at 2. The
+#: value is chosen so the cap still applies up to 256 dimensions:
+#: ``2**20 / (32 * 256) = 128``, and ``2**20 / (32 * 1024) = 32``.
+CANDIDATE_FLOPS = 2**20
+
+#: Bounds on the resolved candidate count. The floor keeps the surrogate
+#: minimisation meaningful at extreme dimensionality; the ceiling is the
+#: value that was previously hard-coded.
+N_CANDIDATES_MIN = 32
+N_CANDIDATES_MAX = 128
+
+
+def default_n_candidates(num_dims: int, archive_size: int) -> int:
+    """Candidates per step under a fixed scoring budget.
+
+    A flat count is what made this optimizer unusable in high dimension:
+    at 128 candidates a 1024-dimensional cell ran about an hour, and 45
+    of them overran a 2.5-hour job limit during the evaluation campaign.
+    Scaling the count down as the dimension rises keeps the per-step cost
+    roughly constant instead.
+
+    Parameters
+    ----------
+    num_dims : int
+        Problem dimensionality.
+    archive_size : int
+        Ring-buffer capacity; scoring touches every archived point.
+
+    Returns
+    -------
+    int
+        Candidate count, clipped to
+        ``[N_CANDIDATES_MIN, N_CANDIDATES_MAX]``.
+    """
+    n = CANDIDATE_FLOPS // max(archive_size * num_dims, 1)
+    return int(min(max(n, N_CANDIDATES_MIN), N_CANDIDATES_MAX))
+
+
 def rbf_popsize(task: Task) -> int:
     """Evaluations per iteration; small, because the point is frugality.
 
@@ -239,7 +281,8 @@ class RBFTrustRegion(PopulationBasedAlgorithm):
     n_candidates : int
         Trial points drawn and scored per iteration. Only ``popsize`` of
         them are ever evaluated on the real objective; the rest cost one
-        surrogate evaluation each.
+        surrogate evaluation each. Resolved from the dimensionality by
+        default -- see :func:`default_n_candidates`.
     """
 
     def __init__(
@@ -247,7 +290,7 @@ class RBFTrustRegion(PopulationBasedAlgorithm):
         population_size: int,
         solution: Solution,
         archive_size: int = 32,
-        n_candidates: int = 128,
+        n_candidates: int | None = None,
         fitness_shaping_fn: Callable = identity_fitness_shaping_fn,
         metrics_fn: Callable | None = None,
     ):
@@ -262,8 +305,11 @@ class RBFTrustRegion(PopulationBasedAlgorithm):
         archive_size : int, optional
             Ring-buffer capacity, by default 32. Kept small on purpose:
             the kernel solve is cubic in it and runs every step.
-        n_candidates : int, optional
-            Trial points scored per iteration, by default 128.
+        n_candidates : int or None, optional
+            Trial points scored per iteration. ``None`` (the default)
+            resolves it from the dimensionality through
+            :func:`default_n_candidates`, holding the per-step scoring
+            cost roughly constant; pass an int to override.
         fitness_shaping_fn, metrics_fn : Callable, optional
             EvoSax hooks.
 
@@ -284,12 +330,14 @@ class RBFTrustRegion(PopulationBasedAlgorithm):
                 "archive_size must be at least population_size; got "
                 f"{archive_size} < {population_size}."
             )
+        self.archive_size = archive_size
+        if n_candidates is None:
+            n_candidates = default_n_candidates(self.num_dims, archive_size)
         if n_candidates < population_size:
             raise ValueError(
                 "n_candidates must be at least population_size; got "
                 f"{n_candidates} < {population_size}."
             )
-        self.archive_size = archive_size
         self.n_candidates = n_candidates
 
     @property
@@ -441,7 +489,7 @@ def rbf_trust_region_update(
     bounded: tuple[float, float] | None = (None, None),
     stop_fn: StopFunction | None = None,
     archive_size: int = 32,
-    n_candidates: int = 128,
+    n_candidates: int | None = None,
     **hyperparameters,
 ) -> UpdateClass:
     """Construct an ``UpdateClass`` for :class:`RBFTrustRegion`.
@@ -467,8 +515,9 @@ def rbf_trust_region_update(
         Stopping function.
     archive_size : int, optional
         Ring-buffer capacity, by default 32.
-    n_candidates : int, optional
-        Trial points scored per iteration, by default 128.
+    n_candidates : int or None, optional
+        Trial points scored per iteration; ``None`` scales it with the
+        dimensionality (see :func:`default_n_candidates`).
     **hyperparameters
         Override fields on :class:`Params`.
 
