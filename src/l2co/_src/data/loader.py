@@ -27,7 +27,7 @@ with respect to the heavy ``loss_history`` variables. Only
 # Standard
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from time import perf_counter
@@ -804,6 +804,7 @@ class DataLoader:
         exclude_optimizer: str | None = None,
         cost_values: np.ndarray = DEFAULT_COST_VALUES,
         seed_batch: int = ERTD_SEED_BATCH,
+        realizations: Sequence[int] | None = None,
     ) -> xr.DataArray:
         """
         Compute the expected runtime distribution (ERTD) profile.
@@ -832,6 +833,16 @@ class DataLoader:
             Bootstrap replicates held in memory at once, forwarded to
             :func:`l2co._src.performance.ertd`. Affects peak memory only,
             not the result.
+        realizations : Sequence[int], optional
+            Positional indices of the runs the restart bootstrap may draw
+            from, forwarded to :func:`l2co._src.performance.ertd`, by
+            default None (every run). Two disjoint halves give two
+            independent estimates of the profile, so the spread between
+            them measures the ERTD's own sampling error.
+
+            The returned array keeps its full ``realization`` axis
+            regardless: the profile carries no realization of its own,
+            and is broadcast to match ``valid_files``.
 
         Returns
         -------
@@ -873,6 +884,7 @@ class DataLoader:
             dims=dims,
             cost_values=cost_values,
             seed_batch=seed_batch,
+            realizations=realizations,
         )
 
         # Expand realization and stack dimensions to match valid_files
