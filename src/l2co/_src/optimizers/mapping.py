@@ -8,6 +8,7 @@ from .optax_implementations import optax_mapping
 from .random_search import random_search_mapping
 from .rbf_trust_region import rbf_trust_region_mapping
 from .shade import shade_mapping
+from .turbo import turbo_mapping
 from .update_class import UpdateClass
 from .utils import normalize_key
 
@@ -40,6 +41,7 @@ optimizers: dict[str, Callable[..., UpdateClass]] = {
         | random_search_mapping
         | rbf_trust_region_mapping
         | shade_mapping
+        | turbo_mapping
         | lbfgs_mapping
     ).items()
 }
