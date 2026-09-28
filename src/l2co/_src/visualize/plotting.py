@@ -6,9 +6,12 @@ Plotting module
 
 # Standard
 import math
-from collections.abc import Iterable
+import re
+import warnings
+from collections import Counter
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Literal
+from typing import Literal, NamedTuple
 
 # Third-party
 import equinox as eqx
@@ -24,6 +27,8 @@ from matplotlib.colors import (
     LogNorm,
 )
 from matplotlib.lines import Line2D
+from matplotlib.patches import Rectangle
+from matplotlib.ticker import NullFormatter
 from scipy.interpolate import griddata
 from sklearn.metrics import r2_score
 
@@ -46,7 +51,12 @@ from l2co._src.optimizer_schedule import OptimizationStep
 from l2co._src.performance import EPSILON
 from l2co._src.sampler import grid_sampling
 from l2co._src.update_class import evaluate
-from l2co._src.visualize.colors import display_name, get_schedule_styles
+from l2co._src.visualize.colors import (
+    CATEGORY_PALETTES,
+    display_name,
+    get_schedule_styles,
+    optimizer_category,
+)
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -91,6 +101,55 @@ def set_size(
     # 4. Apply dimensions and force 8pt font
     fig.set_size_inches(target_width, target_height)
     return fig
+
+
+#                                       Right-hand curve labelling -- knobs
+# =============================================================================
+# The internals live further down, next to `plot_ertd`; the tunables sit
+# up here because `plot_ertd_profile` takes one as a default argument.
+
+#: Share of the axes width reserved for the label column when
+#: ``right_labels`` is on. 0.34 fits a ~10-character label at the
+#: default 8 pt on a single-column panel, after the connectors have
+#: taken the first third of it; a longer name shrinks the whole column.
+#: A full-width panel fits every name in the bbob portfolio unshrunk.
+DEFAULT_RIGHT_LABEL_BAND = 0.34
+
+#: Label size (points) below which the column stops being readable. The
+#: auto-fit warns rather than silently shrinking past it.
+MIN_RIGHT_LABEL_FONTSIZE = 3.5
+
+#: One label's vertical footprint, as a multiple of its font size.
+_LABEL_LINE_HEIGHT = 1.25
+
+#: Marker size on a connector's level run, per point of label size.
+_SWATCH_MARKER_SCALE = 0.55
+
+#: Axes-fraction margin kept clear to the right of the labels.
+_LABEL_RIGHT_PAD = 0.01
+
+#: Where, as a share of the label column, a connector finishes its
+#: slant from the curve end to its label's height. The slant is the only
+#: part of a connector that separates it from its neighbours, so it gets
+#: the widest share: a narrow one packs every connector into a bundle of
+#: near-vertical strokes that cannot be told apart.
+_CONNECTOR_SLANT_END = 0.22
+
+#: Where the connector's level run, which doubles as the line-style
+#: sample, stops; and where the label text starts. Both as a share of
+#: the label column.
+_CONNECTOR_END = 0.34
+_LABEL_TEXT_START = 0.37
+
+#: How a hyperparameter reads when a label has to name it to tell two
+#: variants apart. An unlisted one shows under its own name, with
+#: underscores turned to spaces so LaTeX rendering (``text.usetex``)
+#: survives it.
+_SETTING_SYMBOLS = {"learning_rate": r"$\eta$"}
+
+#: One ``key=value`` setting inside a schedule name. Values stop at the
+#: next underscore, which is where the next setting's key starts.
+_SETTING = re.compile(r"([A-Za-z][A-Za-z0-9_]*)=([^_]*)")
 
 
 #                                                           Helper Functions
@@ -275,6 +334,10 @@ def plot_ertd_profile(
     top_left_text: str | None = None,
     show_legend: bool = True,
     xlim: tuple[float, float] = (10**-1, 10**5),
+    right_labels: bool = False,
+    right_label_band: float = DEFAULT_RIGHT_LABEL_BAND,
+    right_label_fontsize: float | None = None,
+    style_by: Literal["optimizer", "category"] = "optimizer",
 ) -> tuple[plt.Figure, plt.Axes]:
     """
     Plot the run-time distribution for the given DataLoader.
@@ -300,6 +363,18 @@ def plot_ertd_profile(
         Whether to display the legend on the right side, by default True
     xlim: tuple[float, float], optional
         Limits for the x-axis, by default (10**-1, 10**5)
+    right_labels: bool, optional
+        Name each curve in a column down the right-hand side instead of
+        listing them in a box, by default False. See :func:`plot_ertd`,
+        which this forwards to unchanged.
+    right_label_band: float, optional
+        Share of the axes width the label column takes, by default
+        :data:`DEFAULT_RIGHT_LABEL_BAND`.
+    right_label_fontsize: float or None, optional
+        Label size in points; ``None`` fits it to the axes.
+    style_by: {"optimizer", "category"}, optional
+        What a curve's colour identifies, by default ``"optimizer"``.
+        See :func:`plot_ertd`.
 
     Returns
     -------
@@ -322,6 +397,10 @@ def plot_ertd_profile(
         top_left_text=top_left_text,
         show_legend=show_legend,
         xlim=xlim,
+        right_labels=right_labels,
+        right_label_band=right_label_band,
+        right_label_fontsize=right_label_fontsize,
+        style_by=style_by,
     )
 
 
@@ -584,7 +663,550 @@ def plot_3d_loss_landscape_only(
         return ax
 
 
+#                                   Right-hand curve labelling -- internals
 # =============================================================================
+
+
+class _CurveEnd(NamedTuple):
+    """Where one curve ends, and how to label it.
+
+    Attributes
+    ----------
+    name : str
+        Raw schedule name, kept so labels that collide can fall back to
+        something unique (see :func:`_disambiguate`).
+    label : str
+        Text of the label (already run through :func:`display_name`).
+    color, linestyle, marker, linewidth
+        The curve's style as drawn, with ``marker`` already resolved
+        against ``show_markers``, so the connector that joins label to
+        curve reads as the curve itself.
+    x, y : float
+        Data coordinates of the curve's last drawn point.
+    mean : float
+        Mean of the curve, used only to break ties between curves that
+        end at the same height -- the one that got there sooner sorts
+        above.
+    """
+
+    name: str
+    label: str
+    color: str
+    linestyle: str
+    marker: str | None
+    linewidth: float
+    x: float
+    y: float
+    mean: float
+
+
+def _curve_end(
+    *, x: np.ndarray, y: np.ndarray, xmax: float
+) -> tuple[float, float, float] | None:
+    """Where one curve stops being drawn, and how high it ran overall.
+
+    Parameters
+    ----------
+    x, y : np.ndarray
+        The curve's coordinates, as handed to ``ax.plot``.
+    xmax : float
+        Right edge of the plotted range; points past it are off-axis
+        and must not anchor a label.
+
+    Returns
+    -------
+    tuple[float, float, float] or None
+        ``(x, y, mean)`` of the rightmost point that is both finite and
+        on-axis, with ``mean`` taken over every on-axis point. ``None``
+        when the curve has no such point, i.e. nothing to label.
+    """
+    xs = np.asarray(x, dtype=float).ravel()
+    ys = np.asarray(y, dtype=float).ravel()
+    if xs.size != ys.size:
+        return None
+    drawn = np.flatnonzero(np.isfinite(xs) & np.isfinite(ys) & (xs <= xmax))
+    if drawn.size == 0:
+        return None
+    last = int(drawn[-1])
+    return float(xs[last]), float(ys[last]), float(np.mean(ys[drawn]))
+
+
+def _spread_labels(
+    targets: Sequence[float],
+    *,
+    min_gap: float,
+    lo: float = 0.0,
+    hi: float = 1.0,
+) -> list[float]:
+    """Label heights: as close to their curves as non-overlap allows.
+
+    Curves that finish at the same height -- and on a saturating ERTD
+    profile most of them do -- would stack their labels on one line.
+    Each label is therefore nudged off its curve's own height by the
+    smallest amount that still leaves ``min_gap`` between neighbours,
+    which keeps the ordering of the labels identical to the ordering of
+    the curve ends.
+
+    Parameters
+    ----------
+    targets : Sequence[float]
+        Preferred height per label, in any order.
+    min_gap : float
+        Smallest allowed distance between two consecutive heights: one
+        line of label text.
+    lo, hi : float, optional
+        Bounds the heights must stay inside, by default 0 and 1.
+
+    Returns
+    -------
+    list[float]
+        One height per target, **in the order the targets were given**,
+        with consecutive gaps of at least ``min_gap`` and every value
+        inside ``[lo, hi]``. When the labels cannot fit at all
+        (``(n - 1) * min_gap > hi - lo``) they are spread evenly
+        instead, which overlaps -- the caller's font is simply too
+        large for the axes.
+    """
+    values = np.asarray(targets, dtype=float)
+    n = values.size
+    if n == 0:
+        return []
+
+    order = np.argsort(values, kind="stable")
+    out = np.empty(n, dtype=float)
+
+    if (n - 1) * min_gap > hi - lo:
+        out[order] = np.linspace(lo, hi, n)
+        return out.tolist()
+
+    pos = values[order].copy()
+    # Three passes, and all three are needed: pushing up from the bottom
+    # can drive the top label past `hi`, pulling back down from the top
+    # can drive the bottom one below `lo`.
+    for i in range(1, n):
+        pos[i] = max(pos[i], pos[i - 1] + min_gap)
+    if pos[-1] > hi:
+        pos[-1] = hi
+        for i in range(n - 2, -1, -1):
+            pos[i] = min(pos[i], pos[i + 1] - min_gap)
+    if pos[0] < lo:
+        pos[0] = lo
+        for i in range(1, n):
+            pos[i] = max(pos[i], pos[i - 1] + min_gap)
+
+    out[order] = pos
+    return out.tolist()
+
+
+def _reserve_label_band(
+    ax: plt.Axes,
+    *,
+    xlim: tuple[float, float],
+    band: float,
+    artists: list[Line2D],
+) -> None:
+    """Widen the x-axis so the rightmost ``band`` of it holds no data.
+
+    The label column has to sit *inside* the axes rectangle. Panels are
+    saved on a fixed canvas whose margins are recomputed at save time
+    (``bessaplots.FigureGrid.apply`` calls ``subplots_adjust``), so
+    anything drawn beside the axes is cropped away rather than making
+    the figure wider. Stretching the logarithmic x-limit past the data
+    instead keeps the column inside the frame at any canvas size, and
+    costs only plotting width.
+
+    The column is then emptied of everything the widened axes would put
+    in it. The x-ticks, and with them the vertical grid, are pinned to
+    the decades of the *data* range. The horizontal grid lines are
+    clipped to the data region, and the y-ticks on the right-hand spine
+    are dropped, since that spine now borders the labels rather than
+    the data. Every curve is clipped too, so one running to the right
+    edge cannot spill under the labels.
+
+    Parameters
+    ----------
+    ax : plt.Axes
+        Axes to widen. Its x-scale must already be logarithmic.
+    xlim : tuple[float, float]
+        The data x-limits, i.e. what the axis would show without a
+        label column.
+    band : float
+        Share of the axes width the column gets, in (0, 1).
+    artists : list[Line2D]
+        Curves to clip to the data region.
+
+    Raises
+    ------
+    ValueError
+        ``band`` is not in (0, 1), or ``xlim`` is not positive.
+    """
+    if not 0.0 < band < 1.0:
+        raise ValueError(f"right_label_band must lie in (0, 1); got {band}.")
+    lo, hi = xlim
+    if lo <= 0.0 or hi <= lo:
+        raise ValueError(
+            f"xlim must be positive and increasing on a log axis; got {xlim}."
+        )
+
+    span = math.log10(hi) - math.log10(lo)
+    ax.set_xlim(lo, 10.0 ** (math.log10(lo) + span / (1.0 - band)))
+
+    first, last = math.ceil(math.log10(lo)), math.floor(math.log10(hi))
+    ax.set_xticks([10.0**d for d in range(first, last + 1)])
+    ax.set_xticks(
+        [
+            tick
+            for d in range(first - 1, last + 1)
+            for m in range(2, 10)
+            if lo <= (tick := m * 10.0**d) <= hi
+        ],
+        minor=True,
+    )
+    ax.xaxis.set_minor_formatter(NullFormatter())
+
+    ax.tick_params(axis="y", which="both", right=False)
+
+    clipper = Rectangle((0.0, 0.0), 1.0 - band, 1.0, transform=ax.transAxes)
+    for artist in artists:
+        artist.set_clip_path(clipper)
+    # A tick matplotlib adds at draw time copies its grid line's clip
+    # from the first tick, so clipping the ticks that exist now covers
+    # every later one as well.
+    for tick in (*ax.yaxis.get_major_ticks(), *ax.yaxis.get_minor_ticks()):
+        tick.gridline.set_clip_path(clipper)
+
+
+def _settings(name: str) -> dict[str, str]:
+    """The ``key=value`` settings a schedule name carries, in order.
+
+    Schedule names join the optimizer and its hyperparameters with
+    underscores (``adam_learning_rate=0.001_b1=0.9``), and a key may
+    hold underscores of its own. The optimizer is taken to be everything
+    before the first underscore -- the rule :func:`display_name` falls
+    back on, and so the rule behind every label that can collide.
+
+    Parameters
+    ----------
+    name : str
+        Raw schedule name.
+
+    Returns
+    -------
+    dict[str, str]
+        Setting name to its value as written in ``name``; empty when the
+        name carries none.
+    """
+    _, _, suffix = name.partition("_")
+    return dict(_SETTING.findall(suffix))
+
+
+def _disambiguate(ends: Sequence[_CurveEnd]) -> list[_CurveEnd]:
+    """Undo label collisions by naming the settings that tell them apart.
+
+    :func:`display_name` deliberately maps every hyperparameter variant
+    of an optimizer onto the one pretty label its family has, so
+    ``adam_learning_rate=0.001`` and ``adam_learning_rate=0.01`` both
+    read "Adam". In a legend listing a handful of curves that is the
+    right trade. In a column naming sixty, six rows reading "Adam" name
+    nothing at all -- so where a label is shared, each curve sharing it
+    gets the settings that differ across the group appended: "Adam
+    (η = 0.001)". Settings the group has in common are left out, since
+    they tell nothing apart. A curve the settings cannot separate falls
+    back to its raw schedule name, which is unique by construction.
+
+    Only the label column does this. A boxed legend is used where the
+    curve count is small enough for the collapsed labels to be the
+    intended reading, and changing it would move existing figures.
+
+    Parameters
+    ----------
+    ends : Sequence[_CurveEnd]
+        The curves to be labelled.
+
+    Returns
+    -------
+    list[_CurveEnd]
+        The same entries, with every label unique.
+    """
+    groups: dict[str, list[int]] = {}
+    for i, end in enumerate(ends):
+        groups.setdefault(end.label, []).append(i)
+
+    labels = [end.label for end in ends]
+    for label, members in groups.items():
+        if len(members) < 2:
+            continue
+        settings = [_settings(ends[i].name) for i in members]
+        keys = dict.fromkeys(key for s in settings for key in s)
+        varying = [k for k in keys if len({s.get(k) for s in settings}) > 1]
+        for i, own in zip(members, settings, strict=True):
+            shown = ", ".join(
+                f"{_SETTING_SYMBOLS.get(k, k.replace('_', ' '))} = {own[k]}"
+                for k in varying
+                if k in own
+            )
+            labels[i] = f"{label} ({shown})" if shown else ends[i].name
+
+    # Whatever the settings still could not separate keeps its raw name.
+    taken = Counter(labels)
+    return [
+        end._replace(label=label if taken[label] == 1 else end.name)
+        for end, label in zip(ends, labels, strict=True)
+    ]
+
+
+def _fit_label_width(
+    ax: plt.Axes,
+    texts: Sequence[plt.Text],
+    *,
+    fontsize: float,
+    right_edge: float,
+) -> float:
+    """Shrink labels until the longest of them fits the column.
+
+    Column width is a *geometry* choice -- panels of one figure have to
+    keep the same plotting area -- so an overlong name shrinks the type
+    rather than widening the band. Text width is linear in font size,
+    so one measure-and-scale pass lands on the answer.
+
+    Parameters
+    ----------
+    ax : plt.Axes
+        Axes the labels are drawn on.
+    texts : Sequence[plt.Text]
+        The label artists, already drawn at ``fontsize``.
+    fontsize : float
+        Size they were drawn at, in points.
+    right_edge : float
+        Axes-fraction x the labels must stay left of.
+
+    Returns
+    -------
+    float
+        The size the labels now carry: ``fontsize`` when they already
+        fit, or the reduced size they were reset to. Unchanged when the
+        backend has no renderer to measure with.
+    """
+    fig = ax.get_figure()
+    try:
+        renderer = fig.canvas.get_renderer()
+    except AttributeError:  # a backend that cannot measure text
+        return fontsize
+
+    axes_width = max(ax.get_window_extent(renderer).width, 1e-6)
+    widest = (
+        max(text.get_window_extent(renderer).width for text in texts)
+        / axes_width
+    )
+    available = right_edge - texts[0].get_position()[0]
+    if widest <= available or widest <= 0.0:
+        return fontsize
+
+    scaled = fontsize * available / widest
+    for text in texts:
+        text.set_fontsize(scaled)
+    return scaled
+
+
+def _draw_right_labels(
+    ax: plt.Axes,
+    ends: Sequence[_CurveEnd],
+    *,
+    band: float,
+    fontsize: float | None,
+) -> float:
+    """Name every curve in the column reserved on the right.
+
+    Each name sits at (or just off) the height its own curve ended at,
+    in black, joined to the curve by a connector drawn in the curve's
+    own colour, width and line style -- the BBOB-2009 convention, and
+    the only one that stays readable once a panel holds more curves
+    than a boxed legend can list. Curves are named top-down in the
+    order they finished, so the reading order *is* the ranking.
+
+    Call after :func:`_reserve_label_band`, which is what makes the
+    column empty.
+
+    Parameters
+    ----------
+    ax : plt.Axes
+        Axes holding the curves, already at its final limits.
+    ends : Sequence[_CurveEnd]
+        One entry per drawn curve, in any order. Labels that collide are
+        resolved first (see :func:`_disambiguate`).
+    band : float
+        Share of the axes width reserved for the column.
+    fontsize : float or None
+        Label size in points. ``None`` fits it to the axes height, the
+        number of labels and the longest label, never going above the
+        ambient font size.
+
+    Returns
+    -------
+    float
+        The label size actually used, in points.
+
+    Notes
+    -----
+    An auto-fitted size follows the figure's geometry **at call time**.
+    A caller that resizes the figure afterwards (as
+    ``FigureGrid.apply`` does) should either size it first or pin
+    ``fontsize``, or the labels will not match the axes they end up in.
+    """
+    fig = ax.get_figure()
+    base = float(plt.rcParams["font.size"])
+    if not ends:
+        return base if fontsize is None else fontsize
+
+    ends = _disambiguate(ends)
+    autofit = fontsize is None
+    height_pt = max(
+        ax.get_position().height * fig.get_figheight() * 72.0, 1e-6
+    )
+    if autofit:
+        fontsize = min(base, height_pt / (_LABEL_LINE_HEIGHT * len(ends)))
+
+    # Best curve on top: highest end value, ties to whichever climbed
+    # there first (the larger mean).
+    ends = sorted(ends, key=lambda end: (end.y, end.mean))
+
+    to_axes = ax.transAxes.inverted().transform
+    points = to_axes(ax.transData.transform([(e.x, e.y) for e in ends]))
+    # Half a line of inset top and bottom, so the first and last label
+    # sit inside the axes rather than straddling its edge.
+    gap = _LABEL_LINE_HEIGHT * fontsize / height_pt
+    slots = _spread_labels(
+        points[:, 1], min_gap=gap, lo=0.5 * gap, hi=1.0 - 0.5 * gap
+    )
+
+    x_band = 1.0 - band
+    x_slant = x_band + _CONNECTOR_SLANT_END * band
+    x_stop = x_band + _CONNECTOR_END * band
+    x_text = x_band + _LABEL_TEXT_START * band
+
+    connectors: list[Line2D] = []
+    texts: list[plt.Text] = []
+    for end, (x_end, y_end), slot in zip(ends, points, slots, strict=True):
+        # Connector: a slant from the curve end to the label's height,
+        # then a level run up to the text. It is one line, so a dotted
+        # or dashed style runs on unbroken through the bend; and it is
+        # drawn exactly as its curve is, so the level run is also the
+        # style sample a boxed legend would have shown. A curve whose
+        # data stops short of the band edge is joined from where it
+        # actually stops.
+        (connector,) = ax.plot(
+            [min(x_end, x_band), x_slant, 0.5 * (x_slant + x_stop), x_stop],
+            [y_end, slot, slot, slot],
+            transform=ax.transAxes,
+            color=end.color,
+            linestyle=end.linestyle,
+            linewidth=end.linewidth,
+            marker=end.marker,
+            markevery=[2],
+            markersize=_SWATCH_MARKER_SCALE * fontsize,
+            zorder=5,
+        )
+        connectors.append(connector)
+        texts.append(
+            ax.text(
+                x_text,
+                slot,
+                end.label,
+                transform=ax.transAxes,
+                color="black",
+                fontsize=fontsize,
+                verticalalignment="center",
+                horizontalalignment="left",
+                zorder=6,
+            )
+        )
+
+    if autofit:
+        fitted = _fit_label_width(
+            ax, texts, fontsize=fontsize, right_edge=1.0 - _LABEL_RIGHT_PAD
+        )
+        # Which of the two constraints bound decides what the caller
+        # should change, so say so rather than listing every remedy.
+        cramped_by_width = fitted < fontsize
+        if cramped_by_width:
+            for connector in connectors:
+                connector.set_markersize(_SWATCH_MARKER_SCALE * fitted)
+            fontsize = fitted
+        if fontsize < MIN_RIGHT_LABEL_FONTSIZE:
+            remedy = (
+                "widen right_label_band, or shorten the longest label"
+                if cramped_by_width
+                else "plot fewer schedules, or make the figure taller"
+            )
+            warnings.warn(
+                f"{len(ends)} curve labels had to shrink to "
+                f"{fontsize:.1f}pt to fit the label column, below the "
+                f"{MIN_RIGHT_LABEL_FONTSIZE}pt they stay readable at: "
+                f"{remedy}.",
+                UserWarning,
+                stacklevel=3,
+            )
+
+    return fontsize
+
+
+def _draw_category_key(
+    ax: plt.Axes,
+    schedules: Sequence[str],
+    *,
+    linewidth: float,
+    below_text: bool,
+) -> None:
+    """Name the optimizer categories a category-coloured panel uses.
+
+    One entry per category actually drawn, in the fixed category order,
+    each swatch in the category's middle shade. Placed top left, where an
+    ERTD panel is emptiest -- curves climb from bottom left to top right
+    -- and kept alongside a boxed legend if one is already there.
+
+    Parameters
+    ----------
+    ax : plt.Axes
+        Axes holding the curves.
+    schedules : Sequence[str]
+        The schedules drawn.
+    linewidth : float
+        Swatch width; the curves' own.
+    below_text : bool
+        Whether ``top_left_text`` occupies the corner, in which case the
+        key starts below it.
+    """
+    present = {optimizer_category(name) for name in schedules} - {None}
+    if not present:
+        return
+    handles = [
+        Line2D(
+            [],
+            [],
+            color=shades[len(shades) // 2],
+            linewidth=linewidth,
+            label=category,
+        )
+        for category, shades in CATEGORY_PALETTES.items()
+        if category in present
+    ]
+    boxed = ax.get_legend()
+    ax.legend(
+        handles=handles,
+        loc="upper left",
+        bbox_to_anchor=(0.0, 0.92 if below_text else 1.0),
+        fontsize="small",
+        frameon=True,
+        fancybox=False,
+        edgecolor="#BBBBBB",
+        framealpha=1.0,
+        labelspacing=0.2,
+        handlelength=1.5,
+        borderaxespad=0.5,
+    )
+    # A second ax.legend() replaces the first; re-add the boxed one.
+    if boxed is not None:
+        ax.add_artist(boxed)
 
 
 def plot_ertd(
@@ -596,6 +1218,10 @@ def plot_ertd(
     show_legend: bool = True,
     show_markers: bool = True,
     xlim: tuple[float, float] = (10**-1, 10**5),
+    right_labels: bool = False,
+    right_label_band: float = DEFAULT_RIGHT_LABEL_BAND,
+    right_label_fontsize: float | None = None,
+    style_by: Literal["optimizer", "category"] = "optimizer",
 ) -> tuple[plt.Figure, plt.Axes]:
     """
     Plot the expected run-time distribution for multiple optimizers.
@@ -625,6 +1251,33 @@ def plot_ertd(
         into speckle.
     xlim : tuple[float, float], optional
         Limits for the x-axis, by default (10**-1, 10**5).
+    right_labels : bool, optional
+        Name each curve in a column down the right-hand side instead of
+        listing them in a box, by default False. Past a dozen or so
+        curves a boxed legend stops working -- it covers the plot, and
+        reading it means matching colours by eye -- so each name is
+        instead put at the height its own curve ended at and joined to
+        it by a line drawn in the curve's own style, the convention of
+        the BBOB-2009 workshop comparison. Takes precedence over
+        ``show_legend``.
+    right_label_band : float, optional
+        Share of the axes width the label column takes, by default
+        :data:`DEFAULT_RIGHT_LABEL_BAND`. Widen it for long names; the
+        plotting area shrinks by the same amount. Ignored unless
+        ``right_labels``.
+    right_label_fontsize : float or None, optional
+        Label size in points. By default (``None``) it is fitted to the
+        axes height and the number of curves, never above the ambient
+        font size, and warns when the fit turns illegible. Ignored
+        unless ``right_labels``.
+    style_by : {"optimizer", "category"}, optional
+        What a curve's colour identifies, by default ``"optimizer"``.
+        ``"category"`` gives each kind of optimizer one hue (see
+        :func:`l2co.plotting.get_schedule_styles`), telling members
+        apart by shade and dash pattern, and adds a key naming the
+        categories in the top-left corner. The category is a grouping
+        cue only -- two categories can look alike to a colour-blind
+        reader -- so pair it with ``right_labels`` or the legend.
 
     Returns
     -------
@@ -639,6 +1292,14 @@ def plot_ertd(
     by the OPTIMIZER_COLORS and OPTIMIZER_LINESTYLES dictionaries; markers
     come from the same per-schedule style and can be dropped with
     ``show_markers=False``.
+
+    With ``right_labels`` the label column is carved out of the axes
+    itself (the x-limit is stretched past the data and the curves are
+    clipped to the data region), because panels are saved on a fixed
+    canvas that crops anything drawn outside the axes. An auto-fitted
+    label size follows the figure geometry at call time, so a caller
+    that resizes the figure afterwards should size it first or pin
+    ``right_label_fontsize``.
     """
     fig, ax = _get_or_create_axes(ax=ax)
 
@@ -670,7 +1331,11 @@ def plot_ertd(
 
     x = ertd["cost_per_dim"]
 
-    style = get_schedule_styles(ertd[SCHEDULE].values)
+    style = get_schedule_styles(ertd[SCHEDULE].values, by=style_by)
+
+    curves: list[Line2D] = []
+    drawn: list[str] = []
+    ends: list[_CurveEnd] = []
 
     for schedule in ertd[SCHEDULE].values:
         color = style[schedule].color
@@ -685,7 +1350,7 @@ def plot_ertd(
             # which failed
             continue
 
-        ax.plot(
+        (curve,) = ax.plot(
             x,
             y,
             label=pretty_label,
@@ -695,6 +1360,25 @@ def plot_ertd(
             markevery=0.2,
             linewidth=1.2,
         )
+        curves.append(curve)
+        drawn.append(str(schedule))
+
+        if right_labels:
+            end = _curve_end(x=x.values, y=y.values, xmax=xlim[1])
+            if end is not None:
+                ends.append(
+                    _CurveEnd(
+                        name=str(schedule),
+                        label=pretty_label,
+                        color=color,
+                        linestyle=linestyle,
+                        marker=marker,
+                        linewidth=curve.get_linewidth(),
+                        x=end[0],
+                        y=end[1],
+                        mean=end[2],
+                    )
+                )
 
     # --- Labels and Optional Annotations ---
     if title_text:
@@ -723,8 +1407,23 @@ def plot_ertd(
 
     ax.set_ylabel("Fraction of function, target pairs")
 
-    # --- Legend and Limits ---
-    if show_legend:
+    # --- Limits, then the labels ---
+    # The limits come first: both label geometries below read the axes
+    # back through its transforms, which are only final once they are set.
+    ax.set_ylim(0.0, 1.0)
+    ax.set_xlim(*xlim)
+
+    if right_labels:
+        _reserve_label_band(
+            ax=ax, xlim=xlim, band=right_label_band, artists=curves
+        )
+        _draw_right_labels(
+            ax=ax,
+            ends=ends,
+            band=right_label_band,
+            fontsize=right_label_fontsize,
+        )
+    elif show_legend:
         # loc="lower right" is usually best for ERTD plots as the curves
         # go from bottom-left to top-right.
         ax.legend(
@@ -744,8 +1443,13 @@ def plot_ertd(
             borderaxespad=0.5,
         )
 
-    ax.set_ylim(0.0, 1.0)
-    ax.set_xlim(*xlim)
+    if style_by == "category":
+        _draw_category_key(
+            ax,
+            drawn,
+            linewidth=curves[0].get_linewidth() if curves else 1.2,
+            below_text=bool(top_left_text),
+        )
 
     return fig, ax
 
