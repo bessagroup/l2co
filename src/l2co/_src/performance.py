@@ -30,7 +30,7 @@ from collections.abc import Sequence
 import numpy as np
 import xarray as xr
 
-from .naming import (
+from l2co._src.naming import (
     BUDGET,
     COST,
     FEVALS,

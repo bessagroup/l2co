@@ -38,7 +38,7 @@ from l2co_optimizers import (
 if TYPE_CHECKING:
     from l2co_optimizers import RecentHistory
 
-    from .batching import BatchState
+    from l2co._src.batching import BatchState
 
 #                                                          Authorship & Credits
 # =============================================================================

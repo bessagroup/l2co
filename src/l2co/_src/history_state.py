@@ -18,9 +18,9 @@ from jaxtyping import Array, Float, Int
 from l2co_optimizers import OptHistoryType, OptimizationStep
 from l2co_tasks import Task
 
-from .data import DataLoader
-from .data_validation import calculate_ert
-from .naming import (
+from l2co._src.data import DataLoader
+from l2co._src.data_validation import calculate_ert
+from l2co._src.naming import (
     BUDGET,
     FEATURE,
     FEVALS,
@@ -36,7 +36,7 @@ from .naming import (
     TASK_LABELS,
     UPDATE_STEP,
 )
-from .validation import normalize_budget_grid
+from l2co._src.validation import normalize_budget_grid
 
 #                                                          Authorship & Credits
 # =============================================================================

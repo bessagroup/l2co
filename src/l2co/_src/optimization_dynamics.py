@@ -9,8 +9,8 @@ from dataclasses import dataclass
 import numpy as np
 import xarray as xr
 
-from .naming import BUDGET, FEATURE
-from .task_features import FeatureProcessor
+from l2co._src.naming import BUDGET, FEATURE
+from l2co._src.task_features import FeatureProcessor
 
 
 @dataclass

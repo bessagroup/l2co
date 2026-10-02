@@ -39,6 +39,7 @@ from l2co_tasks import Task
 
 # Local
 from l2co._src.data_validation import _ert_from_quantile, loss_column_name
+from l2co._src.databank.provenance import POLICY_OPTIMIZERS
 from l2co._src.validation import normalize_budget_grid
 from l2co.naming import (
     FEATURE,
@@ -53,8 +54,6 @@ from l2co.naming import (
     TASK_LABELS,
     UPDATE_STEP,
 )
-
-from .provenance import POLICY_OPTIMIZERS
 
 #                                                          Authorship & Credits
 # =============================================================================

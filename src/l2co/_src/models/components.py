@@ -10,7 +10,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 
-from .base import AbstractModel
+from l2co._src.models.base import AbstractModel
 
 # =============================================================================
 

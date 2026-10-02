@@ -38,6 +38,8 @@ make build           # → uv build
 
 `src/l2co/` is a **stable public facade**: top-level modules (`data.py`, `models.py`, `optimization.py`, `features.py`, `history.py`, `optimizers.py`, `plotting.py`, `sampling.py`, `validation.py`, `budget.py`, `naming.py`) re-export from the private `src/l2co/_src/` implementation. **All external users — including `experiments/` — must import only from the facade**, never from `l2co._src.*`. `tests/unit/test_experiments_no_private_imports.py` enforces this via AST walk and will fail CI if violated.
 
+Inside the package every import is absolute (`from l2co._src.batching import BatchState`, never `from .batching import ...`); ruff's `TID252` with `ban-relative-imports = "all"` enforces this.
+
 When adding a new public symbol: implement in `_src/`, then add to the matching facade module (`l2co.<area>`) **and** to `src/l2co/__init__.py` if it should be importable as `l2co.X`.
 
 ### Two-Stage Optimizer Selection

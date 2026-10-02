@@ -16,12 +16,12 @@ import optax
 import xarray as xr
 from l2co_optimizers import OptimizationStep
 
-from ..optimization_dynamics import OptimizationDynamics
-from ..task_features import FeatureProcessor, MixedEmbedding
-from ..tree_utils import traj_and_stair
-from .base import AbstractModel
-from .components import MLP, LSTM_Encoder
-from .training import train_equinox
+from l2co._src.models.base import AbstractModel
+from l2co._src.models.components import MLP, LSTM_Encoder
+from l2co._src.models.training import train_equinox
+from l2co._src.optimization_dynamics import OptimizationDynamics
+from l2co._src.task_features import FeatureProcessor, MixedEmbedding
+from l2co._src.tree_utils import traj_and_stair
 
 # =============================================================================
 

@@ -135,8 +135,12 @@ select = [
   "F", # Pyflakes
   "I", # isort
   "B", # flake8-bugbear
-  "UP" # pyupgrade
+  "UP", # pyupgrade
+  "TID252" # relative imports (banned, see flake8-tidy-imports below)
 ]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401", "E402"]

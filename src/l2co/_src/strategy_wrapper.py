@@ -110,9 +110,9 @@ from l2co_optimizers import (
 )
 from l2co_tasks import Task
 
-from .models.l2co_model import L2COModel
-from .models.stage1 import Stage1Model
-from .tree_utils import traj_and_stair
+from l2co._src.models.l2co_model import L2COModel
+from l2co._src.models.stage1 import Stage1Model
+from l2co._src.tree_utils import traj_and_stair
 
 # =============================================================================
 

@@ -10,8 +10,8 @@ import jax
 import jax.numpy as jnp
 from l2co_optimizers import OptimizationStep
 
-from .stage0 import Stage0Loader, Stage0Model
-from .stage1 import Stage1Loader, Stage1Model
+from l2co._src.models.stage0 import Stage0Loader, Stage0Model
+from l2co._src.models.stage1 import Stage1Loader, Stage1Model
 
 # =============================================================================
 
