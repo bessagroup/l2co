@@ -359,69 +359,6 @@ def batch_run(
 # =============================================================================
 
 
-def evaluate(
-    run_state: RunState,
-    batch_state: BatchState,
-    static: PyTree,
-    dataset: dict[str, jax.Array],
-    loss_fn: Callable,
-    sampler: Callable,
-    n_iterations: int,
-    pass_rng: bool,
-    key: PRNGKeyArray,
-    verbose: bool,
-) -> tuple[RunState, BatchState, HistoryState]:
-    """Evaluate optimization by resetting and running to completion.
-
-    Parameters
-    ----------
-    run_state : RunState
-        Current run state.
-    batch_state : BatchState
-        Current batch state.
-    static : PyTree
-        Model of the task to optimize.
-    dataset : dict[str, jax.Array]
-        Dataset for evaluation.
-    loss_fn : Callable
-        Loss function for evaluation.
-    sampler : Callable
-        Sampling function for generating new parameters.
-    n_iterations : int
-        Number of iterations to run.
-    pass_rng : bool
-        Whether to pass RNG keys to the loss function.
-    key : PRNGKeyArray
-        PRNG key for random operations.
-    verbose : bool
-        Whether to print progress information.
-
-    Returns
-    -------
-    tuple[RunState, BatchState, HistoryState]
-        Tuple of updated RunState, BatchState and History state after
-        complete optimization run.
-    """
-    run_state = reset(
-        run_state=run_state,
-        batch_state=batch_state,
-        static=static,
-        dataset=dataset,
-        loss_fn=loss_fn,
-        pass_rng=pass_rng,
-        sampler=sampler,
-        key=key,
-    )
-    return run(
-        run_state=run_state,
-        batch_state=batch_state,
-        dataset=dataset,
-        n_iterations=n_iterations,
-        key=key,
-        verbose=verbose,
-    )
-
-
 def batch_evaluate(
     run_state: RunState,
     batch_state: BatchState,

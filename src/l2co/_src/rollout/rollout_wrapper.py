@@ -80,8 +80,6 @@ class RolloutWrapper(eqx.Module):
             key=key,
         )
 
-        pass_rng = task.pass_rng
-
         dataset = task.loaded_dataset
 
         batch_state = BatchState.init(
@@ -99,7 +97,7 @@ class RolloutWrapper(eqx.Module):
             dataset=dataset,
             loss_fn=task.loss_fn,
             sampler=sampler,
-            pass_rng=pass_rng,
+            pass_rng=task.pass_rng,
             verbose=verbose,
         )
 
