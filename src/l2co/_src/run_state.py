@@ -57,19 +57,24 @@ class RunState(eqx.Module):
     ----------
     params : InputParameters
         The current input parameters being optimized, shaped as (popsize, dim).
-    best_params : InputParameters
-        The best input parameters found so far, shaped as (dim,).
+    best_params : Float[PyTree, " dimensionality"]
+        The best input parameters found so far, shaped as (dim,): a
+        single point, without the popsize axis of ``params``.
     best_loss : Array[Float, ""]
         The best loss value found so far.
     opt_state : PyTree
         The state of the optimizer.
     update_class : UpdateClass
         The class defining the optimizer update logic.
+
+    Notes
+    -----
+    The ``RunState`` returned by :func:`batch_evaluate` / :func:`batch_run`
+    carries a leading ``n_realizations`` axis on every array field.
     """
 
     params: InputParameters
-    # TODO: this has shape (dim,) not (1, dim)
-    best_params: InputParameters
+    best_params: Float[PyTree, " dimensionality"]
     best_loss: Array[Float, ""]
     opt_state: PyTree
     update_class: UpdateClass = eqx.field(static=True)
