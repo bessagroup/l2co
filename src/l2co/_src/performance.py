@@ -24,6 +24,8 @@ create_performance_profile
 # Standard
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 # Third-party
 import numpy as np
 import xarray as xr
@@ -418,6 +420,7 @@ def ertd(
     dims: xr.DataArray,
     cost_values: np.ndarray = DEFAULT_COST_VALUES,
     seed_batch: int = ERTD_SEED_BATCH,
+    realizations: Sequence[int] | None = None,
 ) -> xr.DataArray:
     """Compute the Expected Runtime Distribution (ERTD).
 
@@ -448,11 +451,28 @@ def ertd(
         :data:`ERTD_SEED_BATCH`. Trades peak memory against Python-level
         loop overhead; pass :data:`ERTD_N_SEEDS` for the unbatched
         computation.
+    realizations : Sequence[int], optional
+        Positional indices of the runs the restart bootstrap may draw
+        from, by default None (every run in ``performance``). Passing two
+        disjoint index sets yields two independent estimates of the same
+        profile, which is how a caller measures the sampling error of the
+        ERTD rather than assuming it. Restricting the pool changes the
+        estimate -- fewer runs is a noisier bootstrap -- so the halves are
+        comparable to each other, not to the full-pool profile.
+
+        Treated as a set: indices are deduplicated and sorted before use,
+        so the same pool always gives the same answer however it was
+        built. Out-of-range indices raise.
 
     Returns
     -------
     xr.DataArray
         ERTD profile indexed by ``cost_per_dim``.
+
+    Raises
+    ------
+    ValueError
+        ``seed_batch`` is below 1, or ``realizations`` is empty.
     """
     if seed_batch < 1:
         raise ValueError(f"seed_batch must be >= 1, got {seed_batch}.")
@@ -466,6 +486,15 @@ def ertd(
     )
 
     ds = ds.unstack(PROBLEM)
+
+    if realizations is not None:
+        # A pool, not an ordering: the bootstrap indexes positionally, so
+        # without this the same set of runs in a different order would
+        # give a different estimate.
+        picks = np.unique(np.asarray(realizations, dtype=int))
+        if picks.size == 0:
+            raise ValueError("realizations must select at least one run.")
+        ds = ds.isel({REALIZATION: picks})
 
     samples = np.stack(
         [

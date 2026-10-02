@@ -52,6 +52,7 @@ from .optax_implementations import (
     normalized_optax_from_state,
     normalized_optax_normal,
 )
+from .rbf_trust_region import RBFTrustRegion
 from .shade import SHADE
 from .state_transfer import (
     FAMILY_DISTRIBUTION,
@@ -60,6 +61,7 @@ from .state_transfer import (
     build_transfer_fns,
     transfer_spec_for,
 )
+from .turbo import TuRBO
 from .update_class import step_fevals
 from .utils import normalize_key
 
@@ -81,7 +83,14 @@ __all__ = [
 # l2co-native evosax-style algorithms: absent from evosax's own
 # registries but subclassing its base API, so the generic evosax branch
 # of ``optstep_to_subopt`` drives them unchanged.
-l2co_native_evosax: dict[str, type] = {"shade": SHADE}
+# Keys are the normalized names (``normalize_key``), which is what
+# ``optstep_to_subopt`` dispatches on -- an underscored name registered
+# raw resolves directly but not as a sub-step.
+l2co_native_evosax: dict[str, type] = {
+    "shade": SHADE,
+    "rbftrustregion": RBFTrustRegion,
+    "turbo": TuRBO,
+}
 
 # l2co-native optax-style transforms: assembled by l2co rather than
 # named on the ``optax`` module, so they are absent from the
@@ -114,6 +123,8 @@ LINESEARCH_FEVAL_BOUND: dict[str, Callable[[dict], int]] = {
 # before the ``default_params.replace(...)`` overrides.
 CONSTRUCTOR_HYPERPARAMETERS: dict[str, tuple[str, ...]] = {
     "shade": ("memory_size", "archive_size"),
+    "rbftrustregion": ("archive_size", "n_candidates"),
+    "turbo": ("archive_size", "n_candidates"),
 }
 
 
