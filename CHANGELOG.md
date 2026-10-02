@@ -7,8 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-02
+
+The bare optimizers move to the new sibling package `l2co-optimizers`
+(`docs/adr/0016`); every public l2co path re-exports the same objects.
+**Requires `l2co-optimizers` 0.1.0** and, for rl2co users, an rl2co that
+registers its own `"rl2co"` schedule namer (bessagroup/rl2co#49).
+
 ### Added
 
+- Two surrogate-based optimizers, filling the portfolio's empty
+  model-based category (now shipped by `l2co-optimizers`):
+  - `rbftrustregion`: an RBF-surrogate trust-region searcher -- fit a cheap
+    surrogate to the evaluated points and spend the next evaluations where
+    it predicts low loss, inside a trust region that grows on success. Its
+    candidate count scales with dimensionality, keeping per-step cost in
+    check at 1024 dimensions.
+  - `turbo`: TuRBO, trust-region Bayesian optimization.
+- `ertd(..., realizations=)` and `DataLoader.ertd_profile(realizations=)`:
+  the runs the restart bootstrap may draw from. Two disjoint halves give two
+  independent estimates of the same profile, whose spread is the sampling
+  error. Default `None` keeps every run.
 - l2co now depends on the new sibling package **`l2co-optimizers`**, which
   holds the bare optimizers: the registry, `UpdateClass`, `OptimizationStep`,
   the optax / evosax / SHADE / TuRBO / RBF-trust-region / L-BFGS /
@@ -32,6 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Stopped tracking 27 accidentally committed scratch artefacts (three
+  unreadable root-level zarr fragments, `FEEDBACK_*.md`,
+  `scratch_precision_check.py`) and added the `.gitignore` rules that should
+  have covered them.
 - `StepFunction`, `InitFunction` and `LossFunction` aliases now describe the
   real call signatures (`step_fn(carry, sample) -> (carry, OptHistory)`,
   `init_fn(params, key=None, **sample)`, `loss_fn(model, **sample)` returning
