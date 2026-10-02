@@ -14,16 +14,19 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Float, PRNGKeyArray, PyTree
+from l2co_optimizers import (
+    InputParameters,
+    OptimizationStep,
+    RandomSearchUpdateClass,
+    SamplerFunction,
+    UpdateClass,
+    optimizer_mapping,
+)
 from l2co_tasks import Task
 
 # Local
 from .batching import BatchState
 from .history_state import HistoryState
-from .optimizer_schedule import OptimizationStep
-from .optimizers import optimizer_mapping
-from .optimizers.random_search import RandomSearchUpdateClass
-from .optimizers.update_class import UpdateClass
-from .typing import InputParameters, SamplerFunction
 from .update_class import (
     batch_run_,
     batch_run_randomsearch,

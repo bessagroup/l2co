@@ -73,7 +73,7 @@ pip install -e .
 
 - For full installation instructions, see the [Installation Guide](installation.md).
 - After installation, start by looking at the [Getting Started Guide](usage.ipynb).
-- To plug your own optimizer into the `RolloutWrapper`, see [Register your own optimizer](register_optimizer.ipynb).
+- To plug your own optimizer into the `RolloutWrapper`, see [Register your own optimizer](https://github.com/bessagroup/l2co-optimizers/blob/main/docs/register_optimizer.ipynb) in `l2co-optimizers`.
 
 ## Community Support
 

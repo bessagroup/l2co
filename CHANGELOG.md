@@ -7,6 +7,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-02
+
+The bare optimizers move to the new sibling package `l2co-optimizers`
+(`docs/adr/0016`); every public l2co path re-exports the same objects.
+**Requires `l2co-optimizers` 0.1.0** and, for rl2co users, an rl2co that
+registers its own `"rl2co"` schedule namer (bessagroup/rl2co#49).
+
+### Added
+
+- Two surrogate-based optimizers, filling the portfolio's empty
+  model-based category (now shipped by `l2co-optimizers`):
+  - `rbftrustregion`: an RBF-surrogate trust-region searcher -- fit a cheap
+    surrogate to the evaluated points and spend the next evaluations where
+    it predicts low loss, inside a trust region that grows on success. Its
+    candidate count scales with dimensionality, keeping per-step cost in
+    check at 1024 dimensions.
+  - `turbo`: TuRBO, trust-region Bayesian optimization.
+- `ertd(..., realizations=)` and `DataLoader.ertd_profile(realizations=)`:
+  the runs the restart bootstrap may draw from. Two disjoint halves give two
+  independent estimates of the same profile, whose spread is the sampling
+  error. Default `None` keeps every run.
+- l2co now depends on the new sibling package **`l2co-optimizers`**, which
+  holds the bare optimizers: the registry, `UpdateClass`, `OptimizationStep`,
+  the optax / evosax / SHADE / TuRBO / RBF-trust-region / L-BFGS /
+  random-search factories, `SubOpt`, the handshake policy, state transfer,
+  `menu_loss_and_grad`, the samplers and `OptHistory` (`docs/adr/0016`). It
+  imports neither l2co nor l2co-tasks; tasks reach it as `TaskLike`. Every
+  public l2co path (`l2co.optimizers`, `l2co.OptimizationStep`,
+  `l2co.sampling`, `l2co.history.OptHistory`, `l2co.tree_utils.vmapped_*`,
+  `l2co.naming`'s aliases) re-exports the same objects, so downstream code
+  keeps working unchanged. **Release `l2co-optimizers` 0.1.0 before or with
+  this version.**
+- `register_schedule_namer` (from `l2co-optimizers`): l2co registers how
+  `"l2co"` steps are named, byte-identical to before. rl2co must register
+  `"rl2co"` itself, so update rl2co together with this version.
+- `l2co.optimizers.optax_update`, `optax_update_extra_kwargs`,
+  `evosax_distribution_update` and `evosax_population_update` (formerly
+  `UpdateClass` classmethods).
+- `l2co.optimizers.AskFunction`, `TransferReadFunction` and
+  `TransferWriteFunction`: type aliases for `UpdateClass.ask_fn`,
+  `transfer_read_fn` and `transfer_write_fn`.
+
+### Changed
+
+- Stopped tracking 27 accidentally committed scratch artefacts (three
+  unreadable root-level zarr fragments, `FEEDBACK_*.md`,
+  `scratch_precision_check.py`) and added the `.gitignore` rules that should
+  have covered them.
+- `StepFunction`, `InitFunction` and `LossFunction` aliases now describe the
+  real call signatures (`step_fn(carry, sample) -> (carry, OptHistory)`,
+  `init_fn(params, key=None, **sample)`, `loss_fn(model, **sample)` returning
+  a scalar).
+- Built-in `step_fn` closures no longer accept unused `*args, **kwargs`.
+- `UpdateClass.stop_fn` defaults to `None`, meaning "never stop", resolved at
+  trace time in `step`; `OptimizationStep.stopping_fn` returns `None` when no
+  stopping criteria are set. Previously every factory forwarded its own
+  `stop_fn=None` default over the field default, so a factory called without
+  `stop_fn` crashed on the first step (`'NoneType' object is not callable`).
+- `StopFunction` now describes the real call, `stop_fn(recent_history,
+  opt_state)` returning a boolean array; the stopping criteria are annotated
+  against `RecentHistory` to match.
+- The popsize helpers (`variable_popsize`, `variable_popsize_even`,
+  `shade_popsize`, `resolve_popsize`) moved from `l2co._src.optimizers.utils`
+  to `l2co._src.optimizers.popsize`; the `l2co.optimizers` facade is unchanged.
+
+### Fixed
+
+- `bounded=None` now means unbounded in every built-in closure factory, and
+  `optax_update` / `optax_update_extra_kwargs` default to `(None, None)` like
+  the evosax factories. Before, `bounded=None` (the optax default) crashed the
+  first step on `jnp.clip(p, *bounded)`, and passing it explicitly to SHADE or
+  TuRBO did the same.
+- The `(init_fn, step_fn)` closure factories moved out of
+  `l2co._src.optimizers.update_class`, which now holds only `UpdateClass`:
+  `optax_fn`, `optax_extra_kwargs_fn` and `step_fevals` to
+  `optax_implementations`; `evosax_ask_fn`, `evosax_distribution_based_fn` and
+  `evosax_population_based_fn` to `evosax_implementations`;
+  `l2co_population_based_fn` to `l2co._src.meta_optimizer`.
+- **Breaking:** the `UpdateClass` factory classmethods are now plain functions
+  returning an `UpdateClass`, next to the closures they wrap:
+  `UpdateClass.optax_update` -> `l2co.optimizers.optax_update` (likewise
+  `optax_update_extra_kwargs`, `evosax_distribution_update`,
+  `evosax_population_update`). Same signatures minus `cls`; all four are
+  exported from `l2co.optimizers`. `UpdateClass` itself is now only the
+  container.
+
+### Removed
+
+- The private `l2co._src.optimizers` subpackage and
+  `l2co._src.{optimizer_schedule,stopping_criteria,opt_history,sampler}`,
+  moved to `l2co-optimizers`. Nothing stored references them by path, so
+  there are no shims. `l2co._src.tree_utils.combined_loss` /
+  `combined_loss_with_rng` are not re-exported (no users).
+- The `"rl2co"` branch of `OptimizationStep.name`; rl2co now registers it.
+- The deprecated `l2co._src.optimizers.sub_optimizer` underscore aliases
+  (`_SubOpt`, `_optstep_to_subopt`, `_resolve_popsize`,
+  `_CONSTRUCTOR_HYPERPARAMETERS`), scheduled for removal in this version.
+- `docs/register_optimizer.ipynb`, moved to `l2co-optimizers`.
+- `l2co._src.optimizers.update_class._default_stop_fn` (superseded by
+  `stop_fn=None`).
+- `UpdateClass.evosax_random_search_update`. It was unreachable: evosax's
+  `RandomSearch` normalizes to the `randomsearch` registry key, which l2co's
+  own `random_search_update` shadowed. evosax's entry is now dropped from the
+  registry explicitly. As a meta-optimizer menu entry, `randomsearch` now fails
+  with "not recognized" instead of a `TypeError` about `sampling_fn` (it never
+  built).
+
 ## [1.5.0] - 2026-09-01
 
 ### Added

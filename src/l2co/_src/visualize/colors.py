@@ -4,8 +4,22 @@
 import itertools
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Literal
+
+# Third-party
+from evosax.algorithms.distribution_based import distribution_based_algorithms
+from evosax.algorithms.population_based import population_based_algorithms
 
 # Local
+from l2co_optimizers import (
+    lbfgs_mapping,
+    normalized_evosax,
+    optax_mapping,
+    rbf_trust_region_mapping,
+    shade_mapping,
+    turbo_mapping,
+)
+
 from l2co.optimizers import optimizers
 
 #                                                          Authorship & Credits
@@ -124,17 +138,22 @@ BASE_OPT_STYLES.update(
         # drew rl2co black, and the manuscript describes it as black.
         "rl2co": OptStyle(color="#000000", marker="o", linestyle="-"),
         "randomsearch": OptStyle(color="#888888", marker=None, linestyle=":"),
-        # The two oracle references, dashed and dotted so neither reads as
-        # one of the portfolio's own solid optimizer curves.
+        # The three oracle references: black, and each in its own broken
+        # line so none reads as one of the portfolio's solid curves.
         #
         # "sbs" -- the single best solver, one optimizer for the whole task
-        # set (`calculate_sbs`).
+        # set (`DataLoader.single_best_schedule`).
         "sbs": OptStyle(color="#000000", marker=None, linestyle="--"),
-        # "vbs" -- the virtual best solver, the per-task oracle selection
+        # "vbs" -- the per-run virtual best solver, the oracle selection
         # `ertd_profile(include_best=True)` adds. Dotted like randomsearch,
         # the other line that bounds rather than competes, and black to
         # randomsearch's grey.
         "vbs": OptStyle(color="#000000", marker=None, linestyle=":"),
+        # "vbs_task" -- the per-task virtual best solver,
+        # `ertd_profile(include_task_best=True)`. Dash-dot: between the
+        # dashed sbs and the dotted vbs, as it is between them in what it
+        # may know. An exact key, so it pins ahead of base "vbs".
+        "vbs_task": OptStyle(color="#000000", marker=None, linestyle="-."),
         # Variant pin (a key with an underscore suffix, resolved ahead of
         # the base optimizer -- see get_schedule_styles). Every rl2co
         # schedule otherwise collapses onto base "rl2co" and so onto one
@@ -146,26 +165,267 @@ BASE_OPT_STYLES.update(
 )
 
 
+#                                                        Optimizer categories
+# =============================================================================
+# The alternative to one hand-tuned colour per optimizer: one hue per
+# *kind* of optimizer, so a panel of sixty curves reads as five groups
+# (see get_schedule_styles(by="category")).
+
+CATEGORY_GRADIENT = "Gradient-based"
+CATEGORY_QUASI_NEWTON = "Quasi-Newton"
+CATEGORY_DISTRIBUTION = "Distribution-based"
+CATEGORY_POPULATION = "Population-based"
+CATEGORY_MODEL_BASED = "Model-based"
+
+#: Every categorised optimizer, per category, in the fixed order its
+#: members take their styles in. Read off the registries rather than
+#: listed by hand, so an optimizer added to one lands in its category;
+#: sorted, so a member's style depends only on the category's
+#: membership and never on which schedules a figure happens to plot.
+#: Random search is left out: it is a reference line, not a competitor,
+#: and keeps its grey dotted style.
+CATEGORY_MEMBERS: dict[str, tuple[str, ...]] = {
+    CATEGORY_GRADIENT: tuple(sorted(optax_mapping)),
+    CATEGORY_QUASI_NEWTON: tuple(sorted(lbfgs_mapping)),
+    CATEGORY_DISTRIBUTION: tuple(
+        sorted(
+            name
+            for name, cls in normalized_evosax.items()
+            if cls in distribution_based_algorithms.values()
+            and name != "randomsearch"
+        )
+    ),
+    CATEGORY_POPULATION: tuple(
+        sorted(
+            [
+                name
+                for name, cls in normalized_evosax.items()
+                if cls in population_based_algorithms.values()
+            ]
+            + list(shade_mapping)
+        )
+    ),
+    CATEGORY_MODEL_BASED: tuple(
+        sorted([*rbf_trust_region_mapping, *turbo_mapping])
+    ),
+}
+
+#: Optimizer registry key to its category.
+OPTIMIZER_CATEGORIES: dict[str, str] = {
+    member: category
+    for category, members in CATEGORY_MEMBERS.items()
+    for member in members
+}
+
+#: One hue per category, stepped in lightness (dark to light) so members
+#: of a large category can differ in shade as well as dash pattern.
+#:
+#: Found by searching OKLCH lightness for fixed hue families -- blue,
+#: purple, orange, green and gold, at least 40 degrees of hue apart so
+#: each reads as its own family rather than a lighter or darker member
+#: of another -- for the set maximising the worst cross-category pair,
+#: black and randomsearch's grey included, under normal, protanopic and
+#: deuteranopic vision (Machado 2009 at severity 1.0). Shades within a
+#: category step by OKLCH L 0.06. Worst cross-category pair under normal
+#: vision is OKLab dE 15.1 (population's lighter green against
+#: model-based gold).
+#:
+#: Under red-green colour blindness the set cannot hold: gold against
+#: the lightest orange falls to dE 4.0, and purple against the blues to
+#: 4.4. Once each large category spends lightness on its own members,
+#: dichromats keep only one chromatic axis to separate categories on,
+#: and five do not fit on it. So the category is a grouping cue, never
+#: the only way to tell a curve apart: that is left to the direct labels
+#: (plot_ertd(right_labels=True)) or the legend.
+#:
+#: Quasi-Newton's purple sits next to gradient-based blue on purpose:
+#: L-BFGS is gradient-based too, only with curvature information.
+CATEGORY_PALETTES: dict[str, tuple[str, ...]] = {
+    CATEGORY_GRADIENT: ("#0458b0", "#1369cb", "#2b7cdf", "#3f8ff4", "#5ea3fd"),
+    CATEGORY_QUASI_NEWTON: ("#6c2893",),
+    CATEGORY_DISTRIBUTION: (
+        "#892d01",
+        "#a33806",
+        "#bf4306",
+        "#d45624",
+        "#e9693a",
+    ),
+    CATEGORY_POPULATION: ("#089d49", "#29b159"),
+    CATEGORY_MODEL_BASED: ("#bd9f13",),
+}
+
+#: Dash patterns a category cycles its members through, after its
+#: shades. Six, so the largest category (27 gradient methods, 5 shades)
+#: still gives every member its own shade and pattern.
+category_line_styles: list[str | tuple] = [
+    "-",
+    "--",
+    ":",
+    "-.",
+    (0, (5, 1.5, 1, 1.5, 1, 1.5)),  # dash-dot-dot
+    (0, (9, 2.5)),  # long dash
+]
+
+
+def optimizer_category(schedule_name: str) -> str | None:
+    """The category a schedule's optimizer belongs to.
+
+    Parameters
+    ----------
+    schedule_name : str
+        Schedule name, e.g. ``"adam_learning_rate=0.001"`` or
+        ``"rbf_trust_region"``.
+
+    Returns
+    -------
+    str or None
+        One of the ``CATEGORY_*`` names, or ``None`` for a schedule
+        outside every category (random search, the oracles, learned
+        policies, an optimizer registered from outside l2co).
+    """
+    optimizer = _categorised_optimizer(schedule_name)
+    return None if optimizer is None else OPTIMIZER_CATEGORIES[optimizer]
+
+
+def _categorised_optimizer(schedule_name: str) -> str | None:
+    """The categorised optimizer a schedule runs, longest name first.
+
+    A schedule is its optimizer's name, optionally followed by
+    ``_key=value`` settings. Matching the longest registered name that
+    the schedule equals or extends with an underscore is what resolves
+    ``rbf_trust_region`` whole, where splitting at the first underscore
+    would look for ``rbf``, and keeps ``adamw_...`` off ``adam``.
+    """
+    candidates = [
+        name
+        for name in OPTIMIZER_CATEGORIES
+        if schedule_name == name or schedule_name.startswith(name + "_")
+    ]
+    return max(candidates, key=len) if candidates else None
+
+
+def _styles_by_category(
+    names: list[str], styles: dict[str, OptStyle]
+) -> dict[str, OptStyle]:
+    """Restyle every categorised schedule in its category's hue.
+
+    A member takes shade ``slot % n_shades`` and dash pattern
+    ``slot // n_shades``, with ``slot`` its place in
+    :data:`CATEGORY_MEMBERS`, so every member of a category differs from
+    every other in shade, pattern or both. A second or later variant of
+    one optimizer keeps its shade and moves on to the next pattern.
+    Markers are left as ``styles`` assigned them.
+    """
+    variants: dict[str, int] = {}
+    restyled = dict(styles)
+    for name in names:
+        optimizer = _categorised_optimizer(name)
+        if optimizer is None:
+            continue
+        category = OPTIMIZER_CATEGORIES[optimizer]
+        shades = CATEGORY_PALETTES[category]
+        slot = CATEGORY_MEMBERS[category].index(optimizer)
+        variant = variants.get(optimizer, 0)
+        variants[optimizer] = variant + 1
+        restyled[name] = OptStyle(
+            color=shades[slot % len(shades)],
+            marker=styles[name].marker,
+            linestyle=category_line_styles[
+                (slot // len(shades) + variant) % len(category_line_styles)
+            ],
+        )
+    return restyled
+
+
 #: Display labels for schedules, resolved by :func:`display_name`.
 #:
 #: Prefer a **bare optimizer name** (``"adam"``): ``display_name`` falls
 #: back to it for every hyperparameter variant, so one entry covers
 #: ``adam_learning_rate=0.01`` and any future learning rate. Add a
-#: suffixed key only to give one specific variant its own label.
+#: suffixed key only to give one specific variant its own label. An
+#: optimizer whose own name has an underscore (``rbf_trust_region``)
+#: needs its full name as the key, since the fallback splits at the
+#: first one.
+#:
+#: Labels follow the source paper's abbreviation, hyphenated the way the
+#: literature writes it (evosax's ``CMA_ES`` is CMA-ES), and sentence
+#: case where there is no established abbreviation. Every label is also
+#: rendered by LaTeX under the dissertation style (``text.usetex``), so
+#: none may carry a bare ``_``, ``&``, ``%`` or ``#``.
 LABEL_MAP = {
-    "sepcmaes": "Sep-CMA-ES",
-    "randomsearch": "Random search",
-    # "l2co": r"\textbf{L2CO (Ours)}",  # You can even use LaTeX bold here
-    "lbfgs": "L-BFGS",
-    "pso": "PSO",
-    "adam": "Adam",
-    # The headroom-balanced quartet (l2co_experiments optimizers=headroom4);
-    # evosax spells the last two CR_FM_NES and MR15_GA.
-    "rprop": "Rprop",
+    # --- evosax, distribution-based ---
+    "ars": "ARS",
+    "asebo": "ASEBO",
+    "cmaes": "CMA-ES",
     "crfmnes": "CR-FM-NES",
+    # evosax's DiscoveredES (Lange et al., 2023); BBOB readers know "DES"
+    # as the unrelated Differential Evolution Strategy.
+    "des": "Discovered ES",
+    "esmc": "ESMC",
+    "gradientlessdescent": "GLD",
+    "guidedes": "Guided ES",
+    "hillclimbing": "Hill climbing",
+    "iamalgamfull": "iAMaLGaM (full)",
+    "iamalgamunivariate": "iAMaLGaM (univariate)",
+    "lmmaes": "LM-MA-ES",
+    "maes": "MA-ES",
+    "noisereusees": "NRES",
+    # Salimans et al. (2017); evosax spells it Open_ES.
+    "openes": "OpenAI-ES",
+    "persistentes": "PES",
+    "pgpe": "PGPE",
+    "rmes": "Rm-ES",
+    "sepcmaes": "Sep-CMA-ES",
+    "simulatedannealing": "Simulated annealing",
+    "simplees": "Simple ES",
+    "snes": "SNES",
+    "xnes": "xNES",
+    # --- evosax, population-based ---
+    "differentialevolution": "DE",
+    "diffusionevolution": "Diffusion evolution",
+    "gesmrga": "GESMR-GA",
     "mr15ga": "MR15-GA",
+    "pso": "PSO",
+    "samrga": "SAMR-GA",
+    "simplega": "Simple GA",
+    # --- optax, gradient-based ---
+    "adabelief": "AdaBelief",
+    "adadelta": "Adadelta",
+    "adafactor": "Adafactor",
+    "adagrad": "AdaGrad",
+    "adam": "Adam",
+    "adamax": "Adamax",
+    "adamaxw": "AdamaxW",
+    "adamw": "AdamW",
+    "adan": "Adan",
+    "amsgrad": "AMSGrad",
+    "fromage": "Fromage",
+    "lamb": "LAMB",
+    "lars": "LARS",
+    "lion": "Lion",
+    "nadam": "NAdam",
+    "nadamw": "NAdamW",
+    "noisysgd": "Noisy SGD",
+    "novograd": "NovoGrad",
+    "optimisticadam": "Optimistic Adam",
+    "optimisticgradientdescent": "Optimistic GD",
+    "radam": "RAdam",
+    "rmsprop": "RMSProp",
+    "rprop": "Rprop",
+    "sgd": "SGD",
+    "signsgd": "signSGD",
+    "sm3": "SM3",
+    "yogi": "Yogi",
+    # --- second-order and model-based ---
+    "lbfgs": "L-BFGS",
+    "rbf_trust_region": "RBF trust region",
+    "turbo": "TuRBO",
+    # --- baselines, oracles and learned policies ---
+    "randomsearch": "Random search",
     "sbs": "SBS",
-    "vbs": "VBS",
+    "vbs": "VBS (per run)",
+    "vbs_task": "VBS (per task)",
+    # "l2co": r"\textbf{L2CO (Ours)}",  # You can even use LaTeX bold here
     "stage0": r"L2CO ($g_\text{first}$)",
     "l2co": r"L2CO ($g_\text{first} \rightarrow g_\text{second}$)",
     "rl2co": "RL2CO",
@@ -204,7 +464,10 @@ def display_name(schedule_name: str) -> str:
     return LABEL_MAP.get(schedule_name.split("_")[0], schedule_name)
 
 
-def get_schedule_styles(schedule_names: Iterable[str]) -> dict[str, OptStyle]:
+def get_schedule_styles(
+    schedule_names: Iterable[str],
+    by: Literal["optimizer", "category"] = "optimizer",
+) -> dict[str, OptStyle]:
     """
     Map schedule names to OptStyle objects with appropriate styling.
 
@@ -212,6 +475,15 @@ def get_schedule_styles(schedule_names: Iterable[str]) -> dict[str, OptStyle]:
     ----------
     schedule_names : Iterable[str]
         Collection of schedule/optimizer names to style.
+    by : {"optimizer", "category"}, optional
+        What a curve's colour identifies, by default ``"optimizer"``:
+        each optimizer's own colour, as tuned in ``BASE_OPT_STYLES``.
+        ``"category"`` colours by kind of optimizer instead -- one hue
+        per category in :data:`CATEGORY_PALETTES`, members told apart by
+        shade and dash pattern -- so a panel of many curves reads as a
+        handful of groups. Schedules outside every category (random
+        search, the oracles, learned policies) keep their own style
+        either way.
 
     Returns
     -------
@@ -365,4 +637,12 @@ def get_schedule_styles(schedule_names: Iterable[str]) -> dict[str, OptStyle]:
             linestyle=chosen_linestyle,
         )
 
-    return schedule_styles
+    match by:
+        case "optimizer":
+            return schedule_styles
+        case "category":
+            return _styles_by_category(names, schedule_styles)
+        case _:
+            raise ValueError(
+                f"by must be 'optimizer' or 'category'; got {by!r}."
+            )

@@ -79,8 +79,11 @@ plugins:
     - mkdocstrings:
         handlers:
             python:
-                paths: [src, ../l2co-tasks/src]
+                paths: [src, ../l2co-tasks/src, ../l2co-optimizers/src]
                 options:
+                    # Re-exports from l2co-optimizers (l2co ADR 0016) are aliases into
+                    # another package; preload it so griffe can resolve them.
+                    preload_modules: [l2co_optimizers]
                     docstring_style: numpy
                     force_inspection: true
                     heading_level: 4
@@ -101,7 +104,7 @@ nav:
     - 'index.md'
     - Installation: 'installation.md'
     - Getting Started: 'usage.ipynb'
-    - Register your own optimizer: 'register_optimizer.ipynb'
+    - Register your own optimizer: 'https://github.com/bessagroup/l2co-optimizers/blob/main/docs/register_optimizer.ipynb'
     - API Reference:
         - 'api.md'
     - License: 

@@ -12,7 +12,7 @@ import equinox as eqx
 import jax
 
 from l2co._src.budget import based_on_dimensionality
-from l2co._src.optimizer_schedule import OptimizationStep
+from l2co_optimizers import OptimizationStep
 from l2co._src.rollout import (
     RunOptimization,
     RolloutWrapper,
@@ -111,30 +111,6 @@ def test_bbob(
         sampler=normal_sampling,
         include_input_mean=False,
     )
-
-
-def test_optimization_step_name_rl2co_with_extension():
-    step = OptimizationStep(
-        "rl2co",
-        hyperparameters={
-            "model": "/some/long/path/my_model.eqx",
-            "n_steps": 10,
-            "sequence_length": 50,
-        },
-    )
-    assert step.name == "rl2co_my_model"
-
-
-def test_optimization_step_name_rl2co_no_extension():
-    step = OptimizationStep(
-        "rl2co", hyperparameters={"model": "/path/to/model"}
-    )
-    assert step.name == "rl2co_model"
-
-
-def test_optimization_step_name_rl2co_no_model():
-    step = OptimizationStep("rl2co", hyperparameters={})
-    assert step.name == "rl2co"
 
 
 def test_optimization_step_name_non_rl2co_unchanged():

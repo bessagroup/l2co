@@ -34,11 +34,11 @@ import f3dasm
 import numpy as np
 import pandas as pd
 import xarray as xr
+from l2co_optimizers import OptimizationStep
 from l2co_tasks import Task
 
 # Local
 from l2co._src.data_validation import _ert_from_quantile, loss_column_name
-from l2co._src.optimizer_schedule import OptimizationStep
 from l2co._src.validation import normalize_budget_grid
 from l2co.naming import (
     FEATURE,

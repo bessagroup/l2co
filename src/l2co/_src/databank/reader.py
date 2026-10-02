@@ -22,9 +22,9 @@ from pathlib import Path
 
 # Third-party
 import xarray as xr
+from l2co_optimizers import OptimizationStep
 
 from l2co._src.data.loader import DataLoader
-from l2co._src.optimizer_schedule import OptimizationStep
 
 # Local
 from l2co.naming import (

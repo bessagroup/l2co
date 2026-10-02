@@ -27,7 +27,7 @@ with respect to the heavy ``loss_history`` variables. Only
 # Standard
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from time import perf_counter
@@ -84,6 +84,50 @@ __status__ = "Stable"
 DEFAULT_COST_VALUES = np.concatenate(
     ([10**-1], np.logspace(-1, 6, 1000) ** 0.8, [10**5])
 )
+
+
+#                                                        Best-solver selection
+# =============================================================================
+
+
+def _best_schedule(reached: xr.DataArray, speed: xr.DataArray) -> xr.DataArray:
+    """Pick the schedule that reached the most targets.
+
+    Ties go to the lowest ``speed`` (fevals). One pick per element of
+    whatever dims the inputs keep besides ``schedule`` -- per problem for
+    the virtual best solvers, a single pick once those are reduced away.
+    """
+    tied_for_best = reached == reached.max(SCHEDULE)
+    return speed.where(tied_for_best, other=np.inf).idxmin(SCHEDULE)
+
+
+def _pool_over_task(
+    x: xr.DataArray, how: Literal["sum", "mean"]
+) -> xr.DataArray:
+    """Reduce ``x`` over each task's runs, broadcast back to every run.
+
+    NaN (a run outside the pool, or missing from the store) is skipped.
+    The result keeps ``x``'s ``problem`` index, so it slots into
+    :func:`_best_schedule` exactly where a per-run score would.
+    """
+    return x.groupby(TASK_ID).map(
+        lambda runs: getattr(runs, how)(PROBLEM).broadcast_like(runs)
+    )
+
+
+def _in_realization_pool(
+    data: xr.Dataset, realizations: Sequence[int] | None
+) -> xr.DataArray:
+    """Mask the problems whose run the ERTD bootstrap may draw from.
+
+    ``realizations`` indexes the sorted realization values by position,
+    as :func:`l2co._src.performance.ertd` does once ``problem`` is
+    unstacked. ``None`` pools every run.
+    """
+    pool = np.unique(data[REALIZATION].values)
+    if realizations is not None:
+        pool = pool[np.unique(np.asarray(realizations, dtype=int))]
+    return data[REALIZATION].isin(pool)
 
 
 #                                                                   Data Loader
@@ -804,6 +848,8 @@ class DataLoader:
         exclude_optimizer: str | None = None,
         cost_values: np.ndarray = DEFAULT_COST_VALUES,
         seed_batch: int = ERTD_SEED_BATCH,
+        realizations: Sequence[int] | None = None,
+        include_task_best: bool = False,
     ) -> xr.DataArray:
         """
         Compute the expected runtime distribution (ERTD) profile.
@@ -818,12 +864,13 @@ class DataLoader:
         Parameters
         ----------
         include_best : bool, optional
-            Whether to add the virtual best solver as an extra schedule
-            named ``"vbs"``, by default False. It is the *per-task*
-            oracle selection -- for each problem, the schedule reaching
-            the most targets at the full budget -- so its profile is a
-            bound on what choosing one optimizer per task can buy, not a
-            curve that dominates the portfolio at every cost.
+            Whether to add the per-run virtual best solver as an extra
+            schedule named ``"vbs"``, by default False: for each problem
+            (one realization of one task), the schedule reaching the most
+            targets at the full budget, ties going to the fewer fevals.
+            Its profile is a bound on what choosing one optimizer per run
+            can buy, not a curve that dominates the portfolio at every
+            cost.
         exclude_optimizer : str, optional
             Optimizer to exclude, by default None.
         cost_values : np.ndarray, optional
@@ -832,38 +879,52 @@ class DataLoader:
             Bootstrap replicates held in memory at once, forwarded to
             :func:`l2co._src.performance.ertd`. Affects peak memory only,
             not the result.
+        realizations : Sequence[int], optional
+            Positional indices of the runs the restart bootstrap may draw
+            from, forwarded to :func:`l2co._src.performance.ertd`, by
+            default None (every run). Two disjoint halves give two
+            independent estimates of the profile, so the spread between
+            them measures the ERTD's own sampling error.
+
+            The returned array keeps its full ``realization`` axis
+            regardless: the profile carries no realization of its own,
+            and is broadcast to match ``valid_files``.
+        include_task_best : bool, optional
+            Whether to add the per-task virtual best solver as an extra
+            schedule named ``"vbs_task"``, by default False: for each
+            task, the schedule reaching the most targets summed over all
+            its runs, ties going to the fewer mean fevals. Every run of a
+            task gets the same schedule, so each task's ``vbs_task``
+            curve is exactly that schedule's curve. Only the runs in
+            ``realizations`` are pooled. The single best solver -- one
+            schedule for the whole selection -- is not a per-task
+            quantity, so it is not offered here; see
+            :meth:`single_best_schedule`.
 
         Returns
         -------
         xr.DataArray
             ERTD profile.
         """
+        d = self
+        if include_best or include_task_best:
+            counts, speed = self._final_budget_scores()
+
         if include_best:
-            success = self.data[SUCCESS]
-            counts = success.sum(TARGET)
-            tied_for_best = counts == counts.max(SCHEDULE)
+            vbs = _best_schedule(counts, speed)
+            d = d.create_strategy(choices=vbs, name="vbs")
 
-            # Tie-break: TARGET runs hardest -> easiest and success is a
-            # monotone step function, so among schedules tied on target
-            # count the first True entry is the hardest target each
-            # reached. Prefer whichever got there in fewer fevals.
-            # ``fillna`` guards a (schedule, task) combination absent
-            # from the store, which argmax's NaN-slice handling can't.
-            # ``compute`` realizes the (small) indexer eagerly -- the
-            # store is dask-backed, and vectorized ``isel`` below
-            # rejects a still-chunked indexer array (see the identical
-            # ``.compute()`` on ``calculate_ert``'s ``first_solved``).
-            hardest_reached = success.fillna(0.0).argmax(TARGET).compute()
-            speed = (
-                self.data[COST]
-                .sel({METRIC: FEVALS}, drop=True)
-                .isel({TARGET: hardest_reached})
+        if include_task_best:
+            # Pool before picking: every run of a task then carries the
+            # same score, so the per-problem pick is one pick per task.
+            # Runs outside the bootstrap's pool are left out of the
+            # pooling too, so disjoint halves stay independent.
+            in_pool = _in_realization_pool(self.data, realizations)
+            vbs_task = _best_schedule(
+                _pool_over_task(counts.where(in_pool), "sum"),
+                _pool_over_task(speed.where(in_pool), "mean"),
             )
-
-            vbs = speed.where(tied_for_best, other=np.inf).idxmin(SCHEDULE)
-            d = self.create_strategy(choices=vbs, name="vbs")
-        else:
-            d = self
+            d = d.create_strategy(choices=vbs_task, name="vbs_task")
         dims = self.task_labels.sel(
             {FEATURE: "dimensionality"}, drop=True
         ).astype(int)
@@ -873,6 +934,7 @@ class DataLoader:
             dims=dims,
             cost_values=cost_values,
             seed_batch=seed_batch,
+            realizations=realizations,
         )
 
         # Expand realization and stack dimensions to match valid_files
@@ -883,15 +945,134 @@ class DataLoader:
         # 1. Get the base mask from valid_files
         mask = self.valid_files.isel({OUTPUT_DIM: 0}, drop=True)
 
-        # 2. Reindex the mask to include the 'vbs' schedule from _ertd
-        # fill_value=True ensures that any schedule NOT in self.data
-        # (like vbs) defaults to True.
+        # 2. Reindex the mask to include the 'vbs' / 'vbs_task' schedules
+        # from _ertd. fill_value=True ensures that any schedule NOT in
+        # self.data (like vbs) defaults to True.
         mask = mask.reindex_like(_ertd[SCHEDULE], method=None, fill_value=True)
 
         # 3. Apply the expanded mask
         _ertd = _ertd.where(mask)
 
         return _ertd
+
+    def single_best_schedule(
+        self, realizations: Sequence[int] | None = None
+    ) -> str:
+        """Name the single best solver: one schedule for the whole selection.
+
+        The per-task virtual best solver's rule (see
+        :meth:`ertd_profile`), pooled over every task instead of one:
+        the schedule reaching the most targets at the full budget,
+        summed over all runs of all tasks, ties going to the fewer mean
+        fevals.
+
+        Unlike the two virtual best solvers this is *not* separable per
+        task -- a task subset can name a different schedule. A caller
+        that shards the work over tasks should sum each shard's
+        :meth:`single_best_scores` and pick once with
+        :meth:`pick_single_best`, rather than read the whole selection
+        again.
+
+        Parameters
+        ----------
+        realizations : Sequence[int], optional
+            Positional indices of the runs to pool, as in
+            :meth:`ertd_profile`, by default None (every run).
+
+        Returns
+        -------
+        str
+            The chosen schedule's name.
+        """
+        return self.pick_single_best(self.single_best_scores(realizations))
+
+    def single_best_scores(
+        self, realizations: Sequence[int] | None = None
+    ) -> xr.Dataset:
+        """Per-schedule totals the single best solver is picked from.
+
+        Additive over disjoint task subsets: the element-wise sum of two
+        subsets' scores is the scores of their union, so per-shard scores
+        can be summed and handed to :meth:`pick_single_best`.
+
+        Parameters
+        ----------
+        realizations : Sequence[int], optional
+            Positional indices of the runs to pool, as in
+            :meth:`ertd_profile`, by default None (every run).
+
+        Returns
+        -------
+        xr.Dataset
+            Indexed by ``schedule``: ``reached`` (targets reached at the
+            full budget, summed over the pooled runs), ``fevals`` (fevals
+            to the hardest of them, summed) and ``runs`` (how many runs
+            ``fevals`` sums over). Eagerly computed; float64 so that sums
+            taken in a different order agree.
+        """
+        counts, speed = self._final_budget_scores()
+        in_pool = _in_realization_pool(self.data, realizations)
+        speed = speed.where(in_pool).astype(np.float64)
+        pooled = [PROBLEM, OUTPUT_DIM]
+        return xr.Dataset(
+            {
+                "reached": counts.where(in_pool)
+                .astype(np.float64)
+                .sum(pooled),
+                "fevals": speed.sum(pooled),
+                "runs": speed.notnull().sum(pooled),
+            }
+        ).compute()
+
+    @staticmethod
+    def pick_single_best(scores: xr.Dataset) -> str:
+        """Pick the single best solver from its (summed) scores.
+
+        Parameters
+        ----------
+        scores : xr.Dataset
+            One selection's scores, or the sum of disjoint subsets'.
+
+        Returns
+        -------
+        str
+            The schedule with the most targets reached, ties to the fewer
+            mean fevals.
+        """
+        best = _best_schedule(
+            scores["reached"], scores["fevals"] / scores["runs"]
+        )
+        return str(best.item())
+
+    def _final_budget_scores(self) -> tuple[xr.DataArray, xr.DataArray]:
+        """Score every run at the full budget, for the best-solver picks.
+
+        Returns
+        -------
+        tuple[xr.DataArray, xr.DataArray]
+            Targets reached, and fevals spent reaching the hardest of
+            them, both per ``(schedule, output_dim, problem)``.
+        """
+        success = self.data[SUCCESS]
+        counts = success.sum(TARGET)
+
+        # Tie-break: TARGET runs hardest -> easiest and success is a
+        # monotone step function, so among schedules tied on target
+        # count the first True entry is the hardest target each
+        # reached. Prefer whichever got there in fewer fevals.
+        # ``fillna`` guards a (schedule, task) combination absent
+        # from the store, which argmax's NaN-slice handling can't.
+        # ``compute`` realizes the (small) indexer eagerly -- the
+        # store is dask-backed, and vectorized ``isel`` below
+        # rejects a still-chunked indexer array (see the identical
+        # ``.compute()`` on ``calculate_ert``'s ``first_solved``).
+        hardest_reached = success.fillna(0.0).argmax(TARGET).compute()
+        speed = (
+            self.data[COST]
+            .sel({METRIC: FEVALS}, drop=True)
+            .isel({TARGET: hardest_reached})
+        )
+        return counts, speed
 
     def to_labels(
         self, t: int, cost_metric: Literal["fevals", "iterations"] = "fevals"

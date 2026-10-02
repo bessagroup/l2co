@@ -124,10 +124,17 @@ def _loader(task_ids: list[str]) -> DataLoader:
 
 
 def _profile(
-    task_ids: list[str], include_best: bool = False, **kwargs
+    task_ids: list[str],
+    include_best: bool = False,
+    include_task_best: bool = False,
+    **kwargs,
 ) -> xr.DataArray:
     """Metric-selected ERTD profile over ``task_ids``, sorted by problem."""
-    prof = _loader(task_ids).ertd_profile(include_best=include_best, **kwargs)
+    prof = _loader(task_ids).ertd_profile(
+        include_best=include_best,
+        include_task_best=include_task_best,
+        **kwargs,
+    )
     return prof.sel({"metric": "fevals"}).sortby(["problem"])
 
 
@@ -185,10 +192,11 @@ def test_task_subset_matches_full_profile() -> None:
     )
 
 
+@pytest.mark.parametrize("include_task_best", [False, True])
 @pytest.mark.parametrize("include_best", [False, True])
 @pytest.mark.parametrize("shard_size", [1, 2, 4])
 def test_disjoint_shards_reassemble_the_full_profile(
-    shard_size: int, include_best: bool
+    shard_size: int, include_best: bool, include_task_best: bool
 ) -> None:
     """Concatenating per-shard profiles reproduces the whole computation.
 
@@ -197,9 +205,14 @@ def test_disjoint_shards_reassemble_the_full_profile(
     along ``problem``. ``shard_size=4`` does not divide the six tasks, so
     the ragged last shard is covered. ``include_best`` adds the ``vbs``
     schedule, whose per-problem ``idxmax(SCHEDULE)`` must also stay
-    shard-local.
+    shard-local; ``include_task_best`` adds ``vbs_task``, whose pooling
+    over a task's runs must too.
     """
-    full = _profile(_TASK_IDS, include_best=include_best)
+    oracles = {
+        "include_best": include_best,
+        "include_task_best": include_task_best,
+    }
+    full = _profile(_TASK_IDS, **oracles)
     shards = [
         _TASK_IDS[i : i + shard_size]
         for i in range(0, len(_TASK_IDS), shard_size)
@@ -207,7 +220,7 @@ def test_disjoint_shards_reassemble_the_full_profile(
     assert sorted(t for s in shards for t in s) == sorted(_TASK_IDS)
 
     reassembled = xr.concat(
-        [_profile(shard, include_best=include_best) for shard in shards],
+        [_profile(shard, **oracles) for shard in shards],
         dim="problem",
     ).sortby(["problem"])
     _assert_bit_identical(full, reassembled)

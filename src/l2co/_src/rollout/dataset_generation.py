@@ -17,11 +17,11 @@ import jax
 import jax.random as jr
 from f3dasm import ExperimentSample
 from f3dasm.datageneration import DataGenerator
+from l2co_optimizers import OptimizationStep
 from l2co_tasks import Task
 
 from l2co._src.databank.provenance import dumps_provenance
 from l2co._src.naming import PROVENANCE
-from l2co._src.optimizer_schedule import OptimizationStep
 
 from .rollout_wrapper import RolloutWrapper
 

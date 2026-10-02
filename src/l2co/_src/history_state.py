@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 import xarray as xr
 from jaxtyping import Array, Float, Int
+from l2co_optimizers import OptHistoryType, OptimizationStep
 from l2co_tasks import Task
 
 from .data import DataLoader
@@ -35,8 +36,6 @@ from .naming import (
     TASK_LABELS,
     UPDATE_STEP,
 )
-from .optimizer_schedule import OptimizationStep
-from .typing import OptHistoryType
 from .validation import normalize_budget_grid
 
 #                                                          Authorship & Credits
