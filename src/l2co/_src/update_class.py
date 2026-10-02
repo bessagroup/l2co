@@ -51,6 +51,8 @@ __credits__ = ["Martin van der Schelling"]
 __status__ = "Stable"
 # =============================================================================
 
+# Number of past generations ``RecentHistory`` keeps for ``stop_fn``.
+_RECENT_HISTORY_SIZE = 20
 
 # =============================================================================
 
@@ -66,6 +68,8 @@ def init_(
 
     Parameters
     ----------
+    update_class : UpdateClass
+        Optimizer whose ``init_fn`` builds the state.
     params : InputParameters
         Current input parameters.
     batch_state : BatchState
@@ -94,6 +98,30 @@ def step(
     update_class: UpdateClass,
     dataset: dict[str, jax.Array],
 ) -> tuple[Carry, OptHistory]:
+    """Advance one optimization step, or skip it once stopped.
+
+    The :func:`jax.lax.scan` body of :func:`run_`; :data:`batch_step_`
+    vmaps it over a leading realization axis for :func:`batch_run_`.
+
+    Parameters
+    ----------
+    carry : Carry
+        Tuple containing (params, opt_state, key, batch_state, done,
+        recent_history).
+    xs
+        Unused scan input (the iteration index).
+    update_class : UpdateClass
+        Optimizer providing ``step_fn`` and the optional ``stop_fn``.
+    dataset : dict[str, jax.Array]
+        Dataset for evaluation.
+
+    Returns
+    -------
+    tuple[Carry, OptHistory]
+        Updated carry and this step's history entry -- a NaN-filled
+        dummy entry when the step is skipped.
+    """
+
     def do_step(
         carry: Carry,
     ) -> tuple[Carry, OptHistory]:
@@ -136,9 +164,6 @@ def step(
         carry : Carry
             Tuple containing (params, opt_state, key, batch_state, done,
             recent_history).
-        dataset : dict[str, jax.Array]
-            Unused; accepted so the signature matches :meth:`do_step` for
-            :func:`jax.lax.cond`.
 
         Returns
         -------
@@ -249,7 +274,7 @@ def run_(
 ) -> tuple[
     InputParameters,
     InputParameters,
-    Array[Float, ""],
+    Float[Array, ""],
     PyTree,
     BatchState,
     HistoryState,
@@ -275,14 +300,14 @@ def run_(
 
     Returns
     -------
-    tuple[InputParameters, InputParameters, Array[Float, ""], PyTree,
+    tuple[InputParameters, InputParameters, Float[Array, ""], PyTree,
     BatchState, HistoryState]
         Updated states after optimization steps.
     """
     # Initialize moving history buffer with NaNs
     recent_history_init = RecentHistory.init(
         params=params,
-        memory_size=20,
+        memory_size=_RECENT_HISTORY_SIZE,
     )
 
     # Initialize done flag
@@ -373,7 +398,7 @@ def batch_run_(
 ) -> tuple[
     InputParameters,
     InputParameters,
-    Array[Float, ""],
+    Float[Array, ""],
     PyTree,
     BatchState,
     HistoryState,
@@ -418,7 +443,7 @@ def batch_run_(
 
     Returns
     -------
-    tuple[InputParameters, InputParameters, Array[Float, ""], PyTree,
+    tuple[InputParameters, InputParameters, Float[Array, ""], PyTree,
     BatchState, HistoryState]
         ``(params, best_params, best_loss, opt_state, batch_state,
         history_state)`` -- each output carries a leading
@@ -429,7 +454,7 @@ def batch_run_(
     recent_history_init = eqx.filter_vmap(
         RecentHistory.init,
         in_axes=(0, None),
-    )(params, 20)
+    )(params, _RECENT_HISTORY_SIZE)
 
     # Per-realization done flag.
     init_done = jnp.zeros((n_realizations,), dtype=jnp.bool_)
@@ -523,7 +548,7 @@ def batch_run_sequential_(
 ) -> tuple[
     InputParameters,
     InputParameters,
-    Array[Float, ""],
+    Float[Array, ""],
     PyTree,
     BatchState,
     HistoryState,
@@ -643,7 +668,7 @@ def batch_run_sequential_(
 
     Returns
     -------
-    tuple[InputParameters, InputParameters, Array[Float, ""], PyTree,
+    tuple[InputParameters, InputParameters, Float[Array, ""], PyTree,
     BatchState, HistoryState]
         ``(params, best_params, best_loss, opt_state, batch_state,
         history_state)`` -- each output carries a leading
@@ -713,7 +738,7 @@ def run_randomsearch(
 ) -> tuple[
     InputParameters,
     InputParameters,
-    Array[Float, ""],
+    Float[Array, ""],
     PyTree,
     BatchState,
     HistoryState,
@@ -741,7 +766,8 @@ def run_randomsearch(
     Parameters
     ----------
     update_class : UpdateClass
-        Must be a ``RandomSearchUpdateClass`` instance, providing
+        Must be a :class:`l2co_optimizers.RandomSearchUpdateClass`
+        instance, providing
         ``sampling_fn``, ``static_model``, ``loss_fn``, ``pass_rng``,
         ``bounded``, ``popsize``, and ``hash`` attributes.
     opt_state : PyTree
@@ -762,7 +788,7 @@ def run_randomsearch(
 
     Returns
     -------
-    tuple[InputParameters, InputParameters, Array[Float, ""], PyTree,
+    tuple[InputParameters, InputParameters, Float[Array, ""], PyTree,
     BatchState, HistoryState]
         ``(final_params, best_params, best_loss, opt_state,
         batch_state, history_state)`` matching :func:`run_`.
@@ -894,7 +920,7 @@ def batch_run_randomsearch(
 ) -> tuple[
     InputParameters,
     InputParameters,
-    Array[Float, ""],
+    Float[Array, ""],
     PyTree,
     BatchState,
     HistoryState,
@@ -928,7 +954,8 @@ def batch_run_randomsearch(
     Parameters
     ----------
     update_class : UpdateClass
-        Must be a ``RandomSearchUpdateClass`` instance.
+        Must be a :class:`l2co_optimizers.RandomSearchUpdateClass`
+        instance.
     opt_state : PyTree
         Per-realization scalar placeholder, shape ``(n_realizations,)``.
         Returned unchanged.
@@ -952,7 +979,7 @@ def batch_run_randomsearch(
 
     Returns
     -------
-    tuple[InputParameters, InputParameters, Array[Float, ""], PyTree,
+    tuple[InputParameters, InputParameters, Float[Array, ""], PyTree,
     BatchState, HistoryState]
         ``(params, best_params, best_loss, opt_state, batch_state,
         history_state)`` -- each output carries a leading

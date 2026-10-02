@@ -60,7 +60,7 @@ class RunState(eqx.Module):
     best_params : Float[PyTree, " dimensionality"]
         The best input parameters found so far, shaped as (dim,): a
         single point, without the popsize axis of ``params``.
-    best_loss : Array[Float, ""]
+    best_loss : Float[Array, ""]
         The best loss value found so far.
     opt_state : PyTree
         The state of the optimizer.
@@ -75,7 +75,7 @@ class RunState(eqx.Module):
 
     params: InputParameters
     best_params: Float[PyTree, " dimensionality"]
-    best_loss: Array[Float, ""]
+    best_loss: Float[Array, ""]
     opt_state: PyTree
     update_class: UpdateClass = eqx.field(static=True)
 
