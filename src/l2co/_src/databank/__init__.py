@@ -11,13 +11,13 @@ under ``tasksets/``. Audit a store's integrity with
 layout and rationale.
 """
 
-from .layout import (
+from l2co._src.databank.layout import (
     BUDGET_STEPS,
     databank_root,
     policy_artifacts_root,
     zarr_store_path,
 )
-from .provenance import (
+from l2co._src.databank.provenance import (
     MissingManifestError,
     WeightsHashMismatchError,
     bump_manifest,
@@ -33,7 +33,7 @@ from .provenance import (
     weights_hash,
     write_manifest,
 )
-from .reader import (
+from l2co._src.databank.reader import (
     held_out_task_ids,
     load_databank,
     load_databank_dataset,
@@ -43,14 +43,14 @@ from .reader import (
     populated_iterations,
     populated_pairs,
 )
-from .records import loss_preprocess
-from .tasksets import load_taskset, save_taskset
-from .verify import (
+from l2co._src.databank.records import loss_preprocess
+from l2co._src.databank.tasksets import load_taskset, save_taskset
+from l2co._src.databank.verify import (
     DatabankVerificationReport,
     VerificationFinding,
     verify_databank,
 )
-from .writer import (
+from l2co._src.databank.writer import (
     DumpPlan,
     dump_databank,
     dump_databank_finalize,

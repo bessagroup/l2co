@@ -22,8 +22,7 @@ from l2co_tasks import Task
 
 from l2co._src.databank.provenance import dumps_provenance
 from l2co._src.naming import PROVENANCE
-
-from .rollout_wrapper import RolloutWrapper
+from l2co._src.rollout.rollout_wrapper import RolloutWrapper
 
 logger = logging.getLogger(__name__)
 

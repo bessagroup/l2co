@@ -6,7 +6,7 @@ Submodule with sampling strategies
 # =============================================================================
 
 # Local
-from ._src.budget import based_on_dimensionality, fixed_budget
+from l2co._src.budget import based_on_dimensionality, fixed_budget
 
 #                                                          Authorship & Credits
 # =============================================================================

@@ -27,9 +27,9 @@ from l2co_optimizers import (
 )
 
 # Local
-from .batching import BatchState
-from .history_state import HistoryState
-from .typing import Carry
+from l2co._src.batching import BatchState
+from l2co._src.history_state import HistoryState
+from l2co._src.typing import Carry
 
 __all__ = [
     "UpdateClass",

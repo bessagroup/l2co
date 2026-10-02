@@ -27,7 +27,7 @@ import numpy as np
 import xarray as xr
 
 # Local
-from ..naming import (
+from l2co._src.naming import (
     BUDGET,
     COST,
     FEATURE,
@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     # Only used as a type hint on ``build_report``. DataLoader imports
     # from this module at runtime, so taking the runtime import here would
     # be circular.
-    from .loader import DataLoader
+    from l2co._src.data.loader import DataLoader
 
 #                                                          Authorship & Credits
 # =============================================================================

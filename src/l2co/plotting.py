@@ -6,10 +6,10 @@ Plotting module
 # =============================================================================
 
 # Local
-from ._src.visualize import bbob_plot as bbob
-from ._src.visualize import cec2005_plot as cec2005
-from ._src.visualize.colors import display_name, get_schedule_styles
-from ._src.visualize.plotting import (
+from l2co._src.visualize import bbob_plot as bbob
+from l2co._src.visualize import cec2005_plot as cec2005
+from l2co._src.visualize.colors import display_name, get_schedule_styles
+from l2co._src.visualize.plotting import (
     ertd_per_group,
     generate_report,
     plot_2d_loss_landscape_only,

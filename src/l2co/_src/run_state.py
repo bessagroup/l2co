@@ -25,9 +25,9 @@ from l2co_optimizers import (
 from l2co_tasks import Task
 
 # Local
-from .batching import BatchState
-from .history_state import HistoryState
-from .update_class import (
+from l2co._src.batching import BatchState
+from l2co._src.history_state import HistoryState
+from l2co._src.update_class import (
     batch_run_,
     batch_run_randomsearch,
     batch_run_sequential_,
@@ -35,7 +35,7 @@ from .update_class import (
     run_,
     run_randomsearch,
 )
-from .update_class import evaluate as evaluate_update_class
+from l2co._src.update_class import evaluate as evaluate_update_class
 
 #                                                          Authorship & Credits
 # =============================================================================

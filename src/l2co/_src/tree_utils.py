@@ -24,7 +24,7 @@ from l2co_optimizers import (  # noqa: F401 -- re-exported
 )
 
 # Local
-from .performance import EPSILON
+from l2co._src.performance import EPSILON
 
 #                                                          Authorship & Credits
 # =============================================================================
