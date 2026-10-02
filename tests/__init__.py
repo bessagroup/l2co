@@ -1,6 +1,6 @@
 from l2co import OptimizationStep
-from l2co._src.optimizers import optimizers
-from l2co._src.optimizers.optax_implementations import normalized_optax_normal
+from l2co_optimizers import optimizers
+from l2co_optimizers import normalized_optax_normal
 
 OPTIMIZATION_STEPS = [
     OptimizationStep(

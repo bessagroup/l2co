@@ -8,8 +8,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from l2co_optimizers import OptimizationStep
 
-from ..optimizer_schedule import OptimizationStep
 from .stage0 import Stage0Loader, Stage0Model
 from .stage1 import Stage1Loader, Stage1Model
 

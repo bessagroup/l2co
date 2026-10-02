@@ -11,12 +11,15 @@ from evosax.algorithms.distribution_based import distribution_based_algorithms
 from evosax.algorithms.population_based import population_based_algorithms
 
 # Local
-from l2co._src.optimizers.evosax_implementations import normalized_evosax
-from l2co._src.optimizers.lbfgs import lbfgs_mapping
-from l2co._src.optimizers.optax_implementations import optax_mapping
-from l2co._src.optimizers.rbf_trust_region import rbf_trust_region_mapping
-from l2co._src.optimizers.shade import shade_mapping
-from l2co._src.optimizers.turbo import turbo_mapping
+from l2co_optimizers import (
+    lbfgs_mapping,
+    normalized_evosax,
+    optax_mapping,
+    rbf_trust_region_mapping,
+    shade_mapping,
+    turbo_mapping,
+)
+
 from l2co.optimizers import optimizers
 
 #                                                          Authorship & Credits

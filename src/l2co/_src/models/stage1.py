@@ -14,9 +14,9 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 import xarray as xr
+from l2co_optimizers import OptimizationStep
 
 from ..optimization_dynamics import OptimizationDynamics
-from ..optimizer_schedule import OptimizationStep
 from ..task_features import FeatureProcessor, MixedEmbedding
 from ..tree_utils import traj_and_stair
 from .base import AbstractModel

@@ -32,8 +32,8 @@ import pytest
 from l2co_tasks import create_bbob_task
 
 from l2co._src.meta_optimizer import L2COUpdateClass
-from l2co._src.optimizers.random_search import RandomSearchUpdateClass
-from l2co._src.optimizers.update_class import UpdateClass
+from l2co_optimizers import RandomSearchUpdateClass
+from l2co_optimizers import UpdateClass
 from l2co._src.rollout import RolloutWrapper
 from l2co._src.run_state import batch_reset, batch_run
 from l2co._src.update_class import (

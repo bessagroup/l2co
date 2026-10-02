@@ -3,7 +3,7 @@
 import jax.numpy as jnp
 
 from l2co import HistoryState
-from l2co._src.opt_history import OptHistory
+from l2co_optimizers import OptHistory
 
 
 def _value_state(values, n: int) -> HistoryState:

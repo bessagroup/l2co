@@ -102,14 +102,17 @@ import jax.numpy as jnp
 import jax.random as jr
 import optax
 from jaxtyping import Array, Bool, Float, Int, PRNGKeyArray, PyTree
+from l2co_optimizers import (
+    OptimizationStep,
+    SamplerFunction,
+    SubOpt,
+    optstep_to_subopt,
+)
 from l2co_tasks import Task
 
 from .models.l2co_model import L2COModel
 from .models.stage1 import Stage1Model
-from .optimizer_schedule import OptimizationStep
-from .optimizers.sub_optimizer import SubOpt, optstep_to_subopt
 from .tree_utils import traj_and_stair
-from .typing import SamplerFunction
 
 # =============================================================================
 

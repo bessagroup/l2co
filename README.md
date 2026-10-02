@@ -89,7 +89,7 @@ pip install -e '.[dev,docs,tests]'
 
 > For detailed instructions on how to develop on this package, please refer to the [Contributing Guide](CONTRIBUTING.md).
 
-After installation, start by looking at the [Getting Started Guide](./docs/usage.ipynb). To plug your own optimizer into the `RolloutWrapper`, see [Register your own optimizer](./docs/register_optimizer.ipynb).
+After installation, start by looking at the [Getting Started Guide](./docs/usage.ipynb). To plug your own optimizer into the `RolloutWrapper`, see [Register your own optimizer](https://github.com/bessagroup/l2co-optimizers/blob/main/docs/register_optimizer.ipynb) in `l2co-optimizers`.
 
 ## Experiments
 

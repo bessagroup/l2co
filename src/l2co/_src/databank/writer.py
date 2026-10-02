@@ -76,10 +76,11 @@ from typing import Literal
 import numpy as np
 import xarray as xr
 import zarr
-from l2co_tasks import Task
 
 # Local
-from l2co._src.optimizer_schedule import OptimizationStep
+from l2co_optimizers import OptimizationStep
+from l2co_tasks import Task
+
 from l2co._src.performance import DEFAULT_EASIEST_QUANTILE
 from l2co._src.validation import normalize_budget_grid
 from l2co.naming import (

@@ -1,5 +1,7 @@
 """Constants for xarray dimension and coordinate names used throughout l2co."""
 
+from l2co_optimizers import InputParameters, OptState, SamplerFunction
+
 from l2co._src.naming import (
     BATCH,
     BUDGET,
@@ -36,7 +38,6 @@ from l2co._src.naming import (
     TRAJECTORY,
     UPDATE_STEP,
 )
-from l2co._src.typing import InputParameters, OptState, SamplerFunction
 
 __all__ = [
     "PROBLEM",

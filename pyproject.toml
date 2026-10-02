@@ -29,6 +29,7 @@ dependencies = [
   "jax>=0.4.30,<=0.9.1",
   "jax-tqdm>=0.4.0",
   "jaxtyping>=0.3.2",
+  "l2co-optimizers",
   "l2co-tasks",
   "netcdf4>=1.7.3",
   "omegaconf",
@@ -149,4 +150,5 @@ package = true
 [tool.uv.sources]
 bessaplots = {editable = true, path = "../bessaplots"}
 f3dasm = {editable = true, path = "../f3dasm"}
+l2co-optimizers = {editable = true, path = "../l2co-optimizers"}
 l2co-tasks = {editable = true, path = "../l2co-tasks"}

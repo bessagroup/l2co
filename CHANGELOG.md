@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- l2co now depends on the new sibling package **`l2co-optimizers`**, which
+  holds the bare optimizers: the registry, `UpdateClass`, `OptimizationStep`,
+  the optax / evosax / SHADE / TuRBO / RBF-trust-region / L-BFGS /
+  random-search factories, `SubOpt`, the handshake policy, state transfer,
+  `menu_loss_and_grad`, the samplers and `OptHistory` (`docs/adr/0016`). It
+  imports neither l2co nor l2co-tasks; tasks reach it as `TaskLike`. Every
+  public l2co path (`l2co.optimizers`, `l2co.OptimizationStep`,
+  `l2co.sampling`, `l2co.history.OptHistory`, `l2co.tree_utils.vmapped_*`,
+  `l2co.naming`'s aliases) re-exports the same objects, so downstream code
+  keeps working unchanged. **Release `l2co-optimizers` 0.1.0 before or with
+  this version.**
+- `register_schedule_namer` (from `l2co-optimizers`): l2co registers how
+  `"l2co"` steps are named, byte-identical to before. rl2co must register
+  `"rl2co"` itself, so update rl2co together with this version.
 - `l2co.optimizers.optax_update`, `optax_update_extra_kwargs`,
   `evosax_distribution_update` and `evosax_population_update` (formerly
   `UpdateClass` classmethods).
@@ -58,6 +72,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The private `l2co._src.optimizers` subpackage and
+  `l2co._src.{optimizer_schedule,stopping_criteria,opt_history,sampler}`,
+  moved to `l2co-optimizers`. Nothing stored references them by path, so
+  there are no shims. `l2co._src.tree_utils.combined_loss` /
+  `combined_loss_with_rng` are not re-exported (no users).
+- The `"rl2co"` branch of `OptimizationStep.name`; rl2co now registers it.
+- The deprecated `l2co._src.optimizers.sub_optimizer` underscore aliases
+  (`_SubOpt`, `_optstep_to_subopt`, `_resolve_popsize`,
+  `_CONSTRUCTOR_HYPERPARAMETERS`), scheduled for removal in this version.
+- `docs/register_optimizer.ipynb`, moved to `l2co-optimizers`.
 - `l2co._src.optimizers.update_class._default_stop_fn` (superseded by
   `stop_fn=None`).
 - `UpdateClass.evosax_random_search_update`. It was unreachable: evosax's

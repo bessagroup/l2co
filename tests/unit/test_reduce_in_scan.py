@@ -20,7 +20,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from l2co import HistoryState
-from l2co._src.opt_history import OptHistory
+from l2co_optimizers import OptHistory
 from l2co._src.update_class import _reduce_entry, _update_best
 
 N_ITER = 6

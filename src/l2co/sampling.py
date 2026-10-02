@@ -6,7 +6,7 @@ Submodule with sampling strategies
 # =============================================================================
 
 # Local
-from ._src.sampler import (
+from l2co_optimizers import (
     constant_sampling,
     get_sampler,
     grid_sampling,

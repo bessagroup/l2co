@@ -23,6 +23,7 @@ its ``(init_fn, step_fn)`` lives here for the same reason.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 # Third-party
@@ -31,23 +32,24 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import PRNGKeyArray, PyTree
+from l2co_optimizers import (
+    InitFunction,
+    InputParameters,
+    LossFunction,
+    OptHistory,
+    OptimizationStep,
+    StepFunction,
+    StopFunction,
+    UpdateClass,
+    menu_loss_and_grad,
+    register_optimizer,
+    register_schedule_namer,
+)
 from l2co_tasks import Task
 
 # Local
 from l2co._src.models.l2co_model import L2COModel
-from l2co._src.opt_history import OptHistory
-from l2co._src.optimizer_schedule import OptimizationStep
-from l2co._src.optimizers.mapping import register_optimizer
-from l2co._src.optimizers.menu_eval import menu_loss_and_grad
-from l2co._src.optimizers.update_class import UpdateClass
 from l2co._src.strategy_wrapper import l2co_population_strategy
-from l2co._src.typing import (
-    InitFunction,
-    InputParameters,
-    LossFunction,
-    StepFunction,
-    StopFunction,
-)
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -472,3 +474,39 @@ class L2COUpdateClass(UpdateClass):
 # (``budget_fn``, ``stage0_model``, ``stage1_model``, ``t``, ``sampler``,
 # ``swap_optimizers``) flow in through the step's ``**hyperparameters``.
 register_optimizer("l2co", L2COUpdateClass.l2co_population_update)
+
+
+def l2co_schedule_name(step: OptimizationStep) -> str:
+    """Schedule name for an ``"l2co"`` step: checkpoint stems plus ``t``.
+
+    ``l2co_s0-<stage0 stem>_s1-<stage1 stem>_t-<t>`` -- the model paths
+    are reduced to their stems so they do not leak into SCHEDULE labels,
+    plot legends and databank keys. Byte-identical to the branch
+    ``OptimizationStep.name`` carried before the l2co-optimizers split
+    (l2co ADR 0016); an explicit ``alias`` still wins over it.
+
+    Parameters
+    ----------
+    step : OptimizationStep
+        An ``"l2co"`` step.
+
+    Returns
+    -------
+    str
+        The schedule name.
+    """
+    parts = ["l2co"]
+    for key, prefix in (
+        ("stage0_model", "s0"),
+        ("stage1_model", "s1"),
+    ):
+        path = step.hyperparameters.get(key, "")
+        if path:
+            parts.append(f"{prefix}-{Path(path).stem}")
+    t = step.hyperparameters.get("t")
+    if t is not None:
+        parts.append(f"t-{t}")
+    return "_".join(parts)
+
+
+register_schedule_namer("l2co", l2co_schedule_name)
