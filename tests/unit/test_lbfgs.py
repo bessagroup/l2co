@@ -22,7 +22,11 @@ from l2co._src.optimizers.lbfgs import (
     lbfgs_update,
 )
 from l2co._src.optimizers.mapping import optimizer_mapping, optimizers
-from l2co._src.optimizers.update_class import UpdateClass, step_fevals
+from l2co._src.optimizers.optax_implementations import (
+    optax_update_extra_kwargs,
+    step_fevals,
+)
+from l2co._src.optimizers.update_class import UpdateClass
 
 # =============================================================================
 
@@ -132,7 +136,7 @@ def test_deterministic_task_matches_previous_registry_wiring():
     Fresh keys per evaluation of a deterministic loss are a
     mathematical no-op, so the ``"lbfgs"`` entry must produce
     trajectories bit-identical to the previous registry wiring
-    (``UpdateClass.optax_update_extra_kwargs`` with ``optax.lbfgs``)
+    (``optax_update_extra_kwargs`` with ``optax.lbfgs``)
     under the same seeds — and must never hand the loss a key.
     """
     task = Task(
@@ -142,7 +146,7 @@ def test_deterministic_task_matches_previous_registry_wiring():
         pass_rng=False,
     )
     new_wiring = _build(task)
-    old_wiring = UpdateClass.optax_update_extra_kwargs(
+    old_wiring = optax_update_extra_kwargs(
         task=task,
         optimizer=optax.lbfgs,
         opt_hash=1,

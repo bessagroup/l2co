@@ -685,7 +685,7 @@ class TestRegistryGuards:
         symptom is a switch that quietly transfers nothing.
 
         This is not hypothetical. ``lbfgs_update`` delegates to
-        ``UpdateClass.optax_update_extra_kwargs`` on deterministic tasks
+        ``optax_update_extra_kwargs`` on deterministic tasks
         (``not task.pass_rng``, which is most of them) and shipped
         without ``name="lbfgs"``, so L-BFGS reported no scale on every
         switch out of it. The tests then in place all passed: the

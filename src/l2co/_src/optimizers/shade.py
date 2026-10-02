@@ -59,16 +59,17 @@ from flax import struct
 from jax.tree_util import Partial
 from l2co_tasks import Task
 
+from l2co._src.optimizers.evosax_implementations import (
+    evosax_population_based_fn,
+)
+from l2co._src.optimizers.popsize import resolve_popsize, shade_popsize
+
 # Local
 from l2co._src.optimizers.state_transfer import (
     FAMILY_POPULATION,
     build_transfer_fns,
 )
-from l2co._src.optimizers.update_class import (
-    UpdateClass,
-    evosax_population_based_fn,
-)
-from l2co._src.optimizers.utils import resolve_popsize, shade_popsize
+from l2co._src.optimizers.update_class import UpdateClass
 from l2co._src.typing import PopSize, StopFunction
 
 #                                                          Authorship & Credits

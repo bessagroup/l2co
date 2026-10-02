@@ -40,30 +40,33 @@ from evosax.algorithms.population_based.base import PopulationBasedAlgorithm
 from jaxtyping import Array, Float, PRNGKeyArray, PyTree
 from l2co_tasks import Task
 
-from ..optimizer_schedule import OptimizationStep
-from .evosax_implementations import normalized_evosax
-from .handshake_policy import (
+from l2co._src.optimizer_schedule import OptimizationStep
+from l2co._src.optimizers.evosax_implementations import normalized_evosax
+from l2co._src.optimizers.handshake_policy import (
     POPULATION_HANDSHAKES,
     handshake_policy_for,
 )
-from .lbfgs import DEFAULT_MAX_LINESEARCH_STEPS, stock_lbfgs
-from .mapping import optimizer_mapping
-from .optax_implementations import (
+from l2co._src.optimizers.lbfgs import (
+    DEFAULT_MAX_LINESEARCH_STEPS,
+    stock_lbfgs,
+)
+from l2co._src.optimizers.mapping import optimizer_mapping
+from l2co._src.optimizers.optax_implementations import (
     normalized_optax_from_state,
     normalized_optax_normal,
+    step_fevals,
 )
-from .rbf_trust_region import RBFTrustRegion
-from .shade import SHADE
-from .state_transfer import (
+from l2co._src.optimizers.rbf_trust_region import RBFTrustRegion
+from l2co._src.optimizers.shade import SHADE
+from l2co._src.optimizers.state_transfer import (
     FAMILY_DISTRIBUTION,
     FAMILY_GRADIENT,
     FAMILY_POPULATION,
     build_transfer_fns,
     transfer_spec_for,
 )
-from .turbo import TuRBO
-from .update_class import step_fevals
-from .utils import normalize_key
+from l2co._src.optimizers.turbo import TuRBO
+from l2co._src.optimizers.utils import normalize_key
 
 # =============================================================================
 
@@ -227,8 +230,8 @@ class SubOpt(eqx.Module):
         spent. ``None`` (the default, and the case for every
         population-based adapter) means the step costs exactly
         :attr:`popsize`. :func:`grad_sub_optimizer` wires
-        :func:`~l2co._src.optimizers.update_class.step_fevals` in here,
-        which is what makes a *line-search* transform bill its true
+        :func:`~l2co._src.optimizers.optax_implementations.step_fevals`
+        in here, which is what makes a *line-search* transform bill its true
         trial count instead of a flat ``1``. Read it through
         :meth:`bill_fevals`.
     """

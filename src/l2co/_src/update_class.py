@@ -149,8 +149,14 @@ def step(
 
     _, opt_state, _, _, done, recent_history = carry
 
+    # ``stop_fn`` is static, so ``None`` (never stop) is resolved here at
+    # trace time rather than traced as a call.
+    stop = done
+    if update_class.stop_fn is not None:
+        stop = stop | update_class.stop_fn(recent_history, opt_state)
+
     (new_carry, history_entry) = jax.lax.cond(
-        done | update_class.stop_fn(recent_history, opt_state),
+        stop,
         skip_step,
         do_step,
         carry,

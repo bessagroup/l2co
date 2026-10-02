@@ -21,7 +21,7 @@ from l2co._src.optimizers.shade import (
     _truncated_cauchy,
     shade_update,
 )
-from l2co._src.optimizers.utils import shade_popsize, variable_popsize
+from l2co._src.optimizers.popsize import shade_popsize, variable_popsize
 
 # =============================================================================
 

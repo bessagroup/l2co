@@ -11,8 +11,10 @@ against (``docs/adr/0007``). Everything needed to write a new optimizer
   ``UpdateClass`` container every factory returns, and the
   ``create_schedules_experimentdata`` helper.
 * **Contract types** -- the ``InitFunction`` / ``StepFunction`` /
-  ``StopFunction`` signatures, ``InputParameters`` / ``OptState`` /
-  ``SamplerFunction`` aliases, and the ``PopSize`` spec.
+  ``StopFunction`` signatures, the handshake-side ``AskFunction`` /
+  ``TransferReadFunction`` / ``TransferWriteFunction`` signatures,
+  ``InputParameters`` / ``OptState`` / ``SamplerFunction`` aliases, and
+  the ``PopSize`` spec.
 * **Loss helpers** -- the ``vmapped_loss*`` helpers that evaluate a
   task's loss (and gradients) over a population, plus
   ``menu_loss_and_grad``, the menu-dispatched evaluator that spends
@@ -34,9 +36,11 @@ against (``docs/adr/0007``). Everything needed to write a new optimizer
   switch, and how each family reads and writes it. The handshake policy
   above decides *which population* and *whether state survives*; this
   decides *what information crosses* (``docs/adr/0013``).
-* **Base optimizer factories** -- the ``normalized_optax_normal`` /
-  ``normalized_optax_from_state`` optax registries and
-  ``random_search_update``.
+* **Base optimizer factories** -- the ``optax_update`` /
+  ``optax_update_extra_kwargs`` / ``evosax_distribution_update`` /
+  ``evosax_population_update`` ``UpdateClass`` factories, the
+  ``normalized_optax_normal`` / ``normalized_optax_from_state`` optax
+  registries and ``random_search_update``.
 * **Built-in algorithms** -- the ``SHADE`` algorithm (``shade_update``
   factory, ``shade_popsize`` default) and the L-BFGS entry
   (``lbfgs_update`` factory with per-eval-key noise semantics on
@@ -59,6 +63,12 @@ from ._src.optimizers import (
     shade_popsize,
     shade_update,
 )
+
+# Base optimizer factories / registries
+from ._src.optimizers.evosax_implementations import (
+    evosax_distribution_update,
+    evosax_population_update,
+)
 from ._src.optimizers.handshake_policy import (
     DEFAULT_HANDSHAKE_POLICY,
     HANDSHAKE_POLICY,
@@ -75,11 +85,11 @@ from ._src.optimizers.menu_eval import (
     GRAD_EVALUATION_WIDTH,
     menu_loss_and_grad,
 )
-
-# Base optimizer factories / registries
 from ._src.optimizers.optax_implementations import (
     normalized_optax_from_state,
     normalized_optax_normal,
+    optax_update,
+    optax_update_extra_kwargs,
 )
 from ._src.optimizers.random_search import random_search_update
 from ._src.optimizers.state_transfer import (
@@ -121,6 +131,7 @@ from ._src.tree_utils import (
 
 # Contract types
 from ._src.typing import (
+    AskFunction,
     InitFunction,
     InputParameters,
     OptState,
@@ -128,9 +139,12 @@ from ._src.typing import (
     SamplerFunction,
     StepFunction,
     StopFunction,
+    TransferReadFunction,
+    TransferWriteFunction,
 )
 
 __all__ = [
+    "AskFunction",
     "CONF_ABSENT",
     "CONF_ESTIMATED",
     "CONF_EXACT",
@@ -159,10 +173,14 @@ __all__ = [
     "SubOpt",
     "TRANSFER_OVERRIDES",
     "TransferBundle",
+    "TransferReadFunction",
     "TransferSpec",
+    "TransferWriteFunction",
     "UpdateClass",
     "build_transfer_fns",
     "create_schedules_experimentdata",
+    "evosax_distribution_update",
+    "evosax_population_update",
     "grad_sub_optimizer",
     "handshake_policy_for",
     "l2co_native_evosax",
@@ -172,6 +190,8 @@ __all__ = [
     "menu_loss_and_grad",
     "normalized_optax_from_state",
     "normalized_optax_normal",
+    "optax_update",
+    "optax_update_extra_kwargs",
     "optimizer_mapping",
     "optimizers",
     "optstep_to_subopt",

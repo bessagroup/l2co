@@ -18,7 +18,7 @@ import jax
 
 # Third-party
 from evosax.algorithms.base import State as EvoSaxState
-from jaxtyping import Array, Float, Int, PRNGKeyArray, PyTree
+from jaxtyping import Array, Bool, Float, Int, PRNGKeyArray, PyTree
 from optax import OptState as OptaxOptState
 
 if TYPE_CHECKING:
@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
     from .batching import BatchState
     from .opt_history import RecentHistory
+    from .optimizers.state_transfer import TransferBundle
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -72,16 +73,44 @@ class OptHistoryType(eqx.Module):
 InputParameters = Float[PyTree, " popsize dimensionality"]
 OptState = PyTree
 
+#: ``step_fn(carry, sample) -> (carry, history)`` -- one optimizer
+#: generation. ``carry`` is ``(params, opt_state, key)``; ``sample`` is the
+#: current data batch, forwarded to the loss as keyword arguments.
 StepFunction = Callable[
-    [tuple[InputParameters, PyTree, PRNGKeyArray]],
-    tuple[tuple[InputParameters, PyTree, PRNGKeyArray], dict],
+    [tuple[InputParameters, OptState, PRNGKeyArray], dict[str, Array]],
+    tuple[tuple[InputParameters, OptState, PRNGKeyArray], OptHistoryType],
 ]
 
-StopFunction = Callable[[OptHistoryType, PyTree, int], bool]
+#: ``stop_fn(recent_history, opt_state) -> stop`` -- early-stopping check
+#: evaluated before every step, on the rolling ``RecentHistory`` window.
+StopFunction = Callable[["RecentHistory", OptState], Bool[Array, ""]]
 
-InitFunction = Callable[[PyTree], OptaxOptState | EvoSaxState]
+#: ``init_fn(params, key=None, **sample) -> opt_state``. ``Callable[...]``
+#: because the batch arrives as keyword arguments, which ``Callable``
+#: cannot spell.
+InitFunction = Callable[..., OptaxOptState | EvoSaxState]
 
-LossFunction = Any
+#: ``ask_fn(opt_state, key) -> (params, opt_state)`` -- an optimizer's own
+#: sampling step, used by a handshake to draw the post-switch population.
+AskFunction = Callable[
+    [OptState, PRNGKeyArray], tuple[InputParameters, OptState]
+]
+
+#: ``transfer_read_fn(opt_state) -> (sigma, conf_sigma)`` -- projects an
+#: optimizer's state onto the scale carried across a switch.
+TransferReadFunction = Callable[
+    [OptState], tuple[Float[Array, ""], Float[Array, ""]]
+]
+
+#: ``transfer_write_fn(bundle, opt_state) -> opt_state`` -- folds a
+#: ``TransferBundle`` into an optimizer's own state.
+TransferWriteFunction = Callable[["TransferBundle", OptState], OptState]
+
+#: ``loss_fn(model, **sample) -> loss`` for one (unbatched) model, or
+#: ``loss_fn(model, key=key, **sample)`` when ``task.pass_rng``. Scalar
+#: output; the ``vmapped_loss*`` helpers add the population axis.
+#: ``Callable[...]`` because the batch arrives as keyword arguments.
+LossFunction = Callable[..., Float[Array, ""]]
 
 BudgetFn = Callable[[Any], int]
 

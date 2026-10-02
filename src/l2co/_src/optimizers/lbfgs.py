@@ -29,7 +29,7 @@ keyed on the task:
   ``optimizer="lbfgs"``. On stochastic tasks (``task.pass_rng`` true)
   it wires :func:`lbfgs_per_eval_key`; on deterministic tasks fresh
   keys are a mathematical no-op, so it uses the stock ``optax.lbfgs``
-  wiring of ``UpdateClass.optax_update_extra_kwargs`` (no key is ever
+  wiring of ``optax_update_extra_kwargs`` (no key is ever
   handed to the loss function).
 
 Per-evaluation keys make L-BFGS strictly *more* exposed to noise than
@@ -41,7 +41,7 @@ in the registry.
 Fevals are billed per linesearch trial, not per iteration
 (``docs/adr/0010``, superseding the flat ``1`` that ``docs/adr/0006``
 deferred): the count comes from
-:func:`~l2co._src.optimizers.update_class.step_fevals`, which reads
+:func:`~l2co._src.optimizers.optax_implementations.step_fevals`, which reads
 the linesearch's own ``num_linesearch_steps``. Both wirings below are
 billed the same way, so deterministic and stochastic tasks stay
 comparable.
@@ -71,11 +71,15 @@ from optax._src.linesearch import zoom_linesearch
 
 # Local
 from l2co._src.opt_history import OptHistory
+from l2co._src.optimizers.optax_implementations import (
+    optax_update_extra_kwargs,
+    step_fevals,
+)
 from l2co._src.optimizers.state_transfer import (
     FAMILY_GRADIENT,
     build_transfer_fns,
 )
-from l2co._src.optimizers.update_class import UpdateClass, step_fevals
+from l2co._src.optimizers.update_class import UpdateClass
 from l2co._src.typing import (
     InitFunction,
     InputParameters,
@@ -285,7 +289,7 @@ def optax_per_eval_key_fn(
     static: PyTree,
     optimizer: optax.GradientTransformationExtraArgs,
     loss_fn: LossFunction,
-    bounded: tuple[float, float],
+    bounded: tuple[float | None, float | None] | None,
     opt_hash: int,
     **kwargs,
 ) -> tuple[InitFunction, StepFunction]:
@@ -316,8 +320,9 @@ def optax_per_eval_key_fn(
         ``value_fn`` and ``key`` (e.g. :func:`lbfgs_per_eval_key`).
     loss_fn : LossFunction
         Loss function to optimize; must accept ``key``.
-    bounded : tuple[float, float]
-        Parameter bounds for clipping.
+    bounded : tuple[float | None, float | None] or None
+        Parameter bounds for clipping. ``None``, or ``None`` on one
+        side, leaves that side unbounded.
     opt_hash : int
         Hash for optimizer step tracking.
     **kwargs
@@ -328,6 +333,8 @@ def optax_per_eval_key_fn(
     tuple[InitFunction, StepFunction]
         Initialization and step functions for optimization.
     """
+    if bounded is None:
+        bounded = (None, None)
 
     def init_fn(
         params: InputParameters, key: PRNGKeyArray = None, **sample
@@ -340,8 +347,6 @@ def optax_per_eval_key_fn(
     def step_fn(
         carry: tuple[InputParameters, OptaxState, PRNGKeyArray],
         sample: dict,
-        *args,
-        **kwargs,
     ) -> tuple[tuple[InputParameters, OptaxState, PRNGKeyArray], OptHistory]:
         """Perform one L-BFGS step under per-evaluation noise keys."""
         input_params, opt_state, key = carry
@@ -393,7 +398,7 @@ def lbfgs_update(
     task: Task,
     opt_hash: int,
     popsize: int = 1,
-    bounded: tuple[float, float] | None = None,
+    bounded: tuple[float | None, float | None] | None = (None, None),
     stop_fn: StopFunction | None = None,
     **hyperparameters,
 ) -> UpdateClass:
@@ -404,7 +409,7 @@ def lbfgs_update(
     :func:`optax_per_eval_key_fn` so every linesearch evaluation
     draws an independent noise realization. On deterministic tasks
     fresh keys per evaluation are a mathematical no-op, so the
-    factory delegates to ``UpdateClass.optax_update_extra_kwargs``
+    factory delegates to ``optax_update_extra_kwargs``
     with a stock ``optax.lbfgs`` of the same configuration — no key
     is ever passed to the loss function, and trajectories are
     identical to the previous ``optax_implementations`` wiring of
@@ -419,8 +424,10 @@ def lbfgs_update(
     popsize : int, optional
         Population size; defaults to 1 (gradient-based optimizers
         operate on a single point).
-    bounded : tuple[float, float] or None, optional
-        Box bounds applied to parameters after each step.
+    bounded : tuple[float | None, float | None] or None, optional
+        Box bounds applied to parameters after each step. Defaults to
+        ``(None, None)``; ``None``, or ``None`` on one side, leaves that
+        side unbounded.
     stop_fn : StopFunction or None, optional
         Stopping function.
     **hyperparameters
@@ -453,7 +460,7 @@ def lbfgs_update(
         # reports ``CONF_ABSENT`` -- so this path would silently carry no
         # scale at all on every deterministic task, which is most of
         # them.
-        return UpdateClass.optax_update_extra_kwargs(
+        return optax_update_extra_kwargs(
             task=task,
             optimizer=stock_lbfgs,
             opt_hash=opt_hash,

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,6 +20,7 @@ from jax.tree_util import Partial
 
 # Local
 from .stopping_criteria import STOPPING_CRITERIA
+from .typing import StopFunction
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -223,16 +223,18 @@ class OptimizationStep:
         return self.hyperparameters.get("popsize", 1)
 
     @property
-    def stopping_fn(self) -> Callable:
+    def stopping_fn(self) -> StopFunction | None:
         """Create a stopping function from the stopping criteria.
 
         Returns
         -------
-        Callable
-            Stopping function with configured parameters.
+        StopFunction or None
+            Stopping function with configured parameters, or ``None``
+            when no stopping criteria are set (never stop; see
+            :attr:`UpdateClass.stop_fn`).
         """
         if not self.stopping_criteria:
-            return lambda *args, **kwargs: False
+            return None
 
         stop_crit = deepcopy(self.stopping_criteria)
 

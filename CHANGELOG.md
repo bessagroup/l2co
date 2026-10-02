@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `l2co.optimizers.optax_update`, `optax_update_extra_kwargs`,
+  `evosax_distribution_update` and `evosax_population_update` (formerly
+  `UpdateClass` classmethods).
+- `l2co.optimizers.AskFunction`, `TransferReadFunction` and
+  `TransferWriteFunction`: type aliases for `UpdateClass.ask_fn`,
+  `transfer_read_fn` and `transfer_write_fn`.
+
+### Changed
+
+- `StepFunction`, `InitFunction` and `LossFunction` aliases now describe the
+  real call signatures (`step_fn(carry, sample) -> (carry, OptHistory)`,
+  `init_fn(params, key=None, **sample)`, `loss_fn(model, **sample)` returning
+  a scalar).
+- Built-in `step_fn` closures no longer accept unused `*args, **kwargs`.
+- `UpdateClass.stop_fn` defaults to `None`, meaning "never stop", resolved at
+  trace time in `step`; `OptimizationStep.stopping_fn` returns `None` when no
+  stopping criteria are set. Previously every factory forwarded its own
+  `stop_fn=None` default over the field default, so a factory called without
+  `stop_fn` crashed on the first step (`'NoneType' object is not callable`).
+- `StopFunction` now describes the real call, `stop_fn(recent_history,
+  opt_state)` returning a boolean array; the stopping criteria are annotated
+  against `RecentHistory` to match.
+- The popsize helpers (`variable_popsize`, `variable_popsize_even`,
+  `shade_popsize`, `resolve_popsize`) moved from `l2co._src.optimizers.utils`
+  to `l2co._src.optimizers.popsize`; the `l2co.optimizers` facade is unchanged.
+
+### Fixed
+
+- `bounded=None` now means unbounded in every built-in closure factory, and
+  `optax_update` / `optax_update_extra_kwargs` default to `(None, None)` like
+  the evosax factories. Before, `bounded=None` (the optax default) crashed the
+  first step on `jnp.clip(p, *bounded)`, and passing it explicitly to SHADE or
+  TuRBO did the same.
+- The `(init_fn, step_fn)` closure factories moved out of
+  `l2co._src.optimizers.update_class`, which now holds only `UpdateClass`:
+  `optax_fn`, `optax_extra_kwargs_fn` and `step_fevals` to
+  `optax_implementations`; `evosax_ask_fn`, `evosax_distribution_based_fn` and
+  `evosax_population_based_fn` to `evosax_implementations`;
+  `l2co_population_based_fn` to `l2co._src.meta_optimizer`.
+- **Breaking:** the `UpdateClass` factory classmethods are now plain functions
+  returning an `UpdateClass`, next to the closures they wrap:
+  `UpdateClass.optax_update` -> `l2co.optimizers.optax_update` (likewise
+  `optax_update_extra_kwargs`, `evosax_distribution_update`,
+  `evosax_population_update`). Same signatures minus `cls`; all four are
+  exported from `l2co.optimizers`. `UpdateClass` itself is now only the
+  container.
+
+### Removed
+
+- `l2co._src.optimizers.update_class._default_stop_fn` (superseded by
+  `stop_fn=None`).
+- `UpdateClass.evosax_random_search_update`. It was unreachable: evosax's
+  `RandomSearch` normalizes to the `randomsearch` registry key, which l2co's
+  own `random_search_update` shadowed. evosax's entry is now dropped from the
+  registry explicitly. As a meta-optimizer menu entry, `randomsearch` now fails
+  with "not recognized" instead of a `TypeError` about `sampling_fn` (it never
+  built).
+
 ## [1.5.0] - 2026-09-01
 
 ### Added

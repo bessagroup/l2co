@@ -19,10 +19,11 @@ from jax.tree_util import Partial
 from jaxtyping import PRNGKeyArray, PyTree
 from l2co_tasks import Task
 
+from l2co._src.optimizers.popsize import resolve_popsize
+
 # Local
 from l2co._src.optimizers.state_transfer import FAMILY_POPULATION
 from l2co._src.optimizers.update_class import UpdateClass
-from l2co._src.optimizers.utils import resolve_popsize
 from l2co._src.sampler import get_sampler
 from l2co._src.typing import InputParameters, PopSize, StopFunction
 
@@ -139,7 +140,7 @@ class RandomSearchUpdateClass(UpdateClass):
         ) -> jax.Array:
             return jnp.array(0, dtype=int)
 
-        def _noop_step_fn(carry, sample, *args, **kwargs):
+        def _noop_step_fn(carry, sample):
             return carry, None
 
         super().__init__(
@@ -196,7 +197,7 @@ def random_search_update(
         Candidates per logical iteration; total evaluations per
         ``step`` call equal ``popsize * n_iterations``. Either a
         literal integer or a callable taking the ``Task`` (e.g.
-        :func:`l2co._src.optimizers.utils.variable_popsize`).
+        :func:`l2co._src.optimizers.popsize.variable_popsize`).
         Default 1.
     **sampler_kwargs : Any
         Forwarded to the underlying sampler (e.g. ``lower_bound`` /

@@ -73,6 +73,11 @@ from flax import struct
 from jax.tree_util import Partial
 from l2co_tasks import Task
 
+from l2co._src.optimizers.evosax_implementations import (
+    evosax_population_based_fn,
+)
+from l2co._src.optimizers.popsize import resolve_popsize
+
 # Local
 from l2co._src.optimizers.rbf_trust_region import (
     _mean_sq_dist,
@@ -82,11 +87,7 @@ from l2co._src.optimizers.state_transfer import (
     FAMILY_POPULATION,
     build_transfer_fns,
 )
-from l2co._src.optimizers.update_class import (
-    UpdateClass,
-    evosax_population_based_fn,
-)
-from l2co._src.optimizers.utils import resolve_popsize
+from l2co._src.optimizers.update_class import UpdateClass
 from l2co._src.typing import PopSize, StopFunction
 
 #                                                          Authorship & Credits
@@ -259,6 +260,7 @@ class TuRBO(PopulationBasedAlgorithm):
             from evosax.algorithms.population_based.base import (
                 metrics_fn as _m,
             )
+
             metrics_fn = _m
         super().__init__(
             population_size, solution, fitness_shaping_fn, metrics_fn
@@ -323,9 +325,7 @@ class TuRBO(PopulationBasedAlgorithm):
         f_valid = jnp.where(valid, state.archive_fitness, 0.0)
         f_mean = jnp.sum(f_valid) / jnp.maximum(n_valid, 1)
         centred = jnp.where(valid, state.archive_fitness - f_mean, 0.0)
-        f_std = jnp.sqrt(
-            jnp.sum(centred**2) / jnp.maximum(n_valid, 1)
-        ) + 1e-12
+        f_std = jnp.sqrt(jnp.sum(centred**2) / jnp.maximum(n_valid, 1)) + 1e-12
         y = centred / f_std
         alpha = jax.scipy.linalg.cho_solve((chol, True), y)
 
@@ -338,9 +338,7 @@ class TuRBO(PopulationBasedAlgorithm):
             jr.uniform(key_mask, (self.n_candidates, self.num_dims))
             < params.perturb_prob
         )
-        forced = jr.randint(
-            key_coord, (self.n_candidates,), 0, self.num_dims
-        )
+        forced = jr.randint(key_coord, (self.n_candidates,), 0, self.num_dims)
         perturb = perturb.at[jnp.arange(self.n_candidates), forced].set(True)
         cand = jnp.clip(
             state.center + jnp.where(perturb, noise, 0.0),
@@ -363,9 +361,7 @@ class TuRBO(PopulationBasedAlgorithm):
         # is the pick. With no observations yet the posterior is the
         # prior, so this is a uniform draw over the candidates -- the
         # right behaviour on the first step, and no branch needed.
-        draw = mean + jnp.sqrt(var) * jr.normal(
-            key_ts, (self.n_candidates,)
-        )
+        draw = mean + jnp.sqrt(var) * jr.normal(key_ts, (self.n_candidates,))
         idx = jnp.argsort(draw)[: self.population_size]
         return cand[idx], state
 
