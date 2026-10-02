@@ -10,9 +10,10 @@ self-registers via :func:`register_optimizer` -- is reachable here
 (``docs/adr/0007``):
 
 * **Registry & construction** -- ``optimizer_mapping`` / ``optimizers``
-  (name -> factory), the ``register_optimizer`` extension point, the
-  ``UpdateClass`` container every factory returns, and the
-  ``create_schedules_experimentdata`` helper.
+  (name -> factory), the ``register_optimizer`` extension point and its
+  naming twin ``register_schedule_namer`` (how a meta-optimizer's steps
+  are named, ``docs/adr/0016``), the ``UpdateClass`` container every
+  factory returns, and the ``create_schedules_experimentdata`` helper.
 * **Contract types** -- the ``InitFunction`` / ``StepFunction`` /
   ``StopFunction`` signatures, the handshake-side ``AskFunction`` /
   ``TransferReadFunction`` / ``TransferWriteFunction`` signatures,
@@ -114,6 +115,7 @@ from l2co_optimizers import (
     population_handshake_for,
     random_search_update,
     register_optimizer,
+    register_schedule_namer,
     resolve_popsize,
     scale_by_zoom_linesearch_per_eval_key,
     shade_popsize,
@@ -184,6 +186,7 @@ __all__ = [
     "population_handshake_for",
     "random_search_update",
     "register_optimizer",
+    "register_schedule_namer",
     "resolve_popsize",
     "scale_by_zoom_linesearch_per_eval_key",
     "shade_popsize",
