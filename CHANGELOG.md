@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **BREAKING:** `RolloutWrapper.init_from_stage0`, `RolloutWrapper.evaluate`
+  and `RolloutWrapper.run`, plus `reset_from_stage0` in `_src/run_state.py`.
+  They only served the eager two-stage driver for agentic-l2co, which
+  l2co_experiments has dropped (bessagroup/l2co_experiments#45). The L2CO
+  strategy reaches stage 1 through the registry bridge
+  (`docs/adr/0002`). Use `RolloutWrapper.batch_evaluate`, or the
+  free functions `l2co.optimization.evaluate` / `run`, which stay.
+
 ## [1.6.0] - 2026-10-02
 
 The bare optimizers move to the new sibling package `l2co-optimizers`

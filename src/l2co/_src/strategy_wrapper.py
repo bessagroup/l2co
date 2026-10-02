@@ -38,7 +38,7 @@ ask/tell loop:
   most once (``state.fired``).
 
 **Handshake** (``reset_opt_state`` + ``best_one``, reproducing the
-old ``reset_from_stage0`` path). When the stage-1 fire selects a
+former ``reset_from_stage0`` path). When the stage-1 fire selects a
 *different* optimizer, the incoming sub-optimizer's internal state is
 re-initialised around ``state.best_solution`` and the emitted
 population for that one generation is ``[best_solution,
@@ -264,9 +264,9 @@ def l2co_population_strategy(
         Which ``opt_state`` handshake the stage-1 switch applies.
         ``"legacy_reset"`` (default) re-initialises *every* incoming
         sub-optimizer around the best-so-far, reproducing the published
-        ``reset_from_stage0`` semantics that ``docs/adr/0004``'s feval
-        accounting is written against. ``"per_optimizer"`` instead
-        honours each optimizer's
+        semantics of the former ``reset_from_stage0``, which
+        ``docs/adr/0004``'s feval accounting is written against.
+        ``"per_optimizer"`` instead honours each optimizer's
         :data:`~l2co._src.optimizers.handshake_policy.HANDSHAKE_POLICY`
         entry, so only optimizers that genuinely cannot survive an
         iterate jump (``lbfgs``) are reset and adaptive ES state is
@@ -587,7 +587,7 @@ class _L2COPopulationStrategy(eqx.Module):
         dispatches on ``state.active_opt_idx`` (the fresh stage-1
         choice) and replaces that sub-optimizer's internal state with
         ``sub.init_fn(state.best_solution, key)``, reproducing the
-        old ``reset_from_stage0`` semantics (distribution-based ES
+        former ``reset_from_stage0`` semantics (distribution-based ES
         re-centred on the best-so-far; population-based ES adopts the
         evaluated handshake population on the following ``tell``).
 
