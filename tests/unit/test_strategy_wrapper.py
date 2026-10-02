@@ -680,8 +680,8 @@ def _resolved_popsize(step: OptimizationStep, task) -> int:
 class TestOptStateHandshakeGate:
     """``legacy_reset`` vs ``per_optimizer`` (``docs/adr/0009``).
 
-    The unconditional reset reproduces the published ``reset_from_stage0``
-    semantics, so it stays the default; honouring the shared
+    The unconditional reset reproduces the published semantics of the former
+    ``reset_from_stage0``, so it stays the default; honouring the shared
     ``HANDSHAKE_POLICY`` table (as the rl2co env does) is opt-in because
     it changes results. ``MENU`` is (sepcmaes, adam) and both say
     ``continue``, so under ``per_optimizer`` a switching fire resets

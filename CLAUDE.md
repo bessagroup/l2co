@@ -97,7 +97,7 @@ Meta-optimizers register a **schedule namer** next to their factory, because `Op
 
 `Task` is re-exported from `l2co` for convenience; the `create_*_task` factories (`create_bbob_task`, `create_cec2005_task`, `create_pde_task`, …) live in the sibling `l2co_tasks` package and must be imported from there directly.
 
-`RunState` itself lives in `_src/run_state.py` and also provides `reset_from_stage0`, `batch_run`, and `batch_evaluate` (not re-exported through the facade — use the `RunState` methods or import from `_src` only inside the library).
+`RunState` itself lives in `_src/run_state.py` and also provides `batch_run` and `batch_evaluate` (not re-exported through the facade — use the `RunState` methods or import from `_src` only inside the library).
 
 ### JAX/Equinox Patterns
 
