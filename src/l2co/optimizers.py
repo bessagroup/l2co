@@ -1,15 +1,19 @@
 """Public API for optimizers and for *authoring* new ones.
 
-This module is the single stable surface an optimizer author builds
-against (``docs/adr/0007``). Everything needed to write a new optimizer
--- or a meta-optimizer that self-registers via
-:func:`register_optimizer` -- is re-exported here, so downstream packages
-(rl2co, agentic-l2co) never have to reach into ``l2co._src``:
+Since l2co ADR 0016 the bare optimizers live in the sibling
+``l2co-optimizers`` package; this module re-exports its surface --
+the same objects, not copies -- so ``l2co.optimizers.X`` keeps working
+and remains the stable import path for downstream packages (rl2co,
+agentic-l2co). New code may import from ``l2co_optimizers`` directly.
+Everything needed to write a new optimizer -- or a meta-optimizer that
+self-registers via :func:`register_optimizer` -- is reachable here
+(``docs/adr/0007``):
 
 * **Registry & construction** -- ``optimizer_mapping`` / ``optimizers``
-  (name -> factory), the ``register_optimizer`` extension point, the
-  ``UpdateClass`` container every factory returns, and the
-  ``create_schedules_experimentdata`` helper.
+  (name -> factory), the ``register_optimizer`` extension point and its
+  naming twin ``register_schedule_namer`` (how a meta-optimizer's steps
+  are named, ``docs/adr/0016``), the ``UpdateClass`` container every
+  factory returns, and the ``create_schedules_experimentdata`` helper.
 * **Contract types** -- the ``InitFunction`` / ``StepFunction`` /
   ``StopFunction`` signatures, the handshake-side ``AskFunction`` /
   ``TransferReadFunction`` / ``TransferWriteFunction`` signatures,
@@ -49,98 +53,79 @@ against (``docs/adr/0007``). Everything needed to write a new optimizer
 """
 
 # Registry, construction, built-in algorithms
-from ._src.opt_history import OptHistory
-from ._src.optimizers import (
-    SHADE,
-    UpdateClass,
-    create_schedules_experimentdata,
-    lbfgs_per_eval_key,
-    lbfgs_update,
-    optimizer_mapping,
-    optimizers,
-    register_optimizer,
-    scale_by_zoom_linesearch_per_eval_key,
-    shade_popsize,
-    shade_update,
-)
-
 # Base optimizer factories / registries
-from ._src.optimizers.evosax_implementations import (
-    evosax_distribution_update,
-    evosax_population_update,
-)
-from ._src.optimizers.handshake_policy import (
-    DEFAULT_HANDSHAKE_POLICY,
-    HANDSHAKE_POLICY,
-    OPT_STATE_VARIANTS,
-    POPULATION_HANDSHAKES,
-    POPULATION_VARIANTS,
-    HandshakePolicy,
-    handshake_policy_for,
-    population_best,
-    population_best_one,
-    population_handshake_for,
-)
-from ._src.optimizers.menu_eval import (
-    GRAD_EVALUATION_WIDTH,
-    menu_loss_and_grad,
-)
-from ._src.optimizers.optax_implementations import (
-    normalized_optax_from_state,
-    normalized_optax_normal,
-    optax_update,
-    optax_update_extra_kwargs,
-)
-from ._src.optimizers.random_search import random_search_update
-from ._src.optimizers.state_transfer import (
+# Sub-optimizer primitives shared by the strategy wrappers
+# Loss helpers
+# Contract types
+from l2co_optimizers import (
     CONF_ABSENT,
     CONF_ESTIMATED,
     CONF_EXACT,
+    CONSTRUCTOR_HYPERPARAMETERS,
+    DEFAULT_HANDSHAKE_POLICY,
     FAMILIES,
     FAMILY_DISTRIBUTION,
     FAMILY_GRADIENT,
     FAMILY_POPULATION,
-    TRANSFER_OVERRIDES,
-    TransferBundle,
-    TransferSpec,
-    build_transfer_fns,
-    transfer_spec_for,
-    write_none,
-)
-
-# Sub-optimizer primitives shared by the strategy wrappers
-from ._src.optimizers.sub_optimizer import (
-    CONSTRUCTOR_HYPERPARAMETERS,
+    GRAD_EVALUATION_WIDTH,
+    HANDSHAKE_POLICY,
     LINESEARCH_FEVAL_BOUND,
-    SubOpt,
-    grad_sub_optimizer,
-    l2co_native_evosax,
-    l2co_native_optax,
-    optstep_to_subopt,
-    pop_sub_optimizer,
-    resolve_popsize,
-)
-
-# Loss helpers
-from ._src.tree_utils import (
-    vmapped_loss,
-    vmapped_loss_and_grad,
-    vmapped_loss_and_grad_with_rng,
-    vmapped_loss_with_rng,
-)
-
-# Contract types
-from ._src.typing import (
+    OPT_STATE_VARIANTS,
+    POPULATION_HANDSHAKES,
+    POPULATION_VARIANTS,
+    SHADE,
+    TRANSFER_OVERRIDES,
     AskFunction,
+    HandshakePolicy,
     InitFunction,
     InputParameters,
+    OptHistory,
     OptState,
     PopSize,
     SamplerFunction,
     StepFunction,
     StopFunction,
+    SubOpt,
+    TransferBundle,
     TransferReadFunction,
+    TransferSpec,
     TransferWriteFunction,
+    UpdateClass,
+    build_transfer_fns,
+    create_schedules_experimentdata,
+    evosax_distribution_update,
+    evosax_population_update,
+    grad_sub_optimizer,
+    handshake_policy_for,
+    l2co_native_evosax,
+    l2co_native_optax,
+    lbfgs_per_eval_key,
+    lbfgs_update,
+    menu_loss_and_grad,
+    normalized_optax_from_state,
+    normalized_optax_normal,
+    optax_update,
+    optax_update_extra_kwargs,
+    optimizer_mapping,
+    optimizers,
+    optstep_to_subopt,
+    pop_sub_optimizer,
+    population_best,
+    population_best_one,
+    population_handshake_for,
+    random_search_update,
+    register_optimizer,
+    register_schedule_namer,
+    resolve_popsize,
+    scale_by_zoom_linesearch_per_eval_key,
+    shade_popsize,
+    shade_update,
+    transfer_spec_for,
+    vmapped_loss,
+    vmapped_loss_and_grad,
+    vmapped_loss_and_grad_with_rng,
+    vmapped_loss_with_rng,
+    write_none,
 )
 
 __all__ = [
@@ -201,6 +186,7 @@ __all__ = [
     "population_handshake_for",
     "random_search_update",
     "register_optimizer",
+    "register_schedule_namer",
     "resolve_popsize",
     "scale_by_zoom_linesearch_per_eval_key",
     "shade_popsize",

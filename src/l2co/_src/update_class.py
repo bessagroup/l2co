@@ -17,17 +17,19 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax_tqdm import scan_tqdm
 from jaxtyping import Array, Float, PRNGKeyArray, PyTree
+from l2co_optimizers import (
+    InputParameters,
+    OptHistory,
+    RecentHistory,
+    UpdateClass,
+    vmapped_loss,
+    vmapped_loss_with_rng,
+)
 
 # Local
 from .batching import BatchState
 from .history_state import HistoryState
-from .opt_history import OptHistory, RecentHistory
-from .optimizers.update_class import UpdateClass
-from .tree_utils import vmapped_loss, vmapped_loss_with_rng
-from .typing import (
-    Carry,
-    InputParameters,
-)
+from .typing import Carry
 
 __all__ = [
     "UpdateClass",

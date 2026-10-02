@@ -12,6 +12,8 @@ import itertools
 import matplotlib
 import numpy as np
 import pytest
+import re
+
 import xarray as xr
 
 matplotlib.use("Agg")
@@ -19,7 +21,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 from l2co._src.naming import SCHEDULE  # noqa: E402
-from l2co._src.optimizers.mapping import normalize_key  # noqa: E402
 from l2co._src.visualize.colors import (  # noqa: E402
     BASE_OPT_STYLES,
     CATEGORY_GRADIENT,
@@ -35,6 +36,11 @@ from l2co._src.visualize.plotting import plot_ertd  # noqa: E402
 from l2co.optimizers import optimizers  # noqa: E402
 
 # =============================================================================
+
+
+def normalize_key(name: str) -> str:
+    # Registry-key normalisation (l2co_optimizers._src.utils.normalize_key).
+    return re.sub(r"[^a-zA-Z0-9]", "", name).lower()
 
 
 def _style_key(style):

@@ -12,7 +12,7 @@ import jax.random as jr
 import pytest
 from l2co_tasks import create_bbob_task
 
-from l2co._src.optimizer_schedule import OptimizationStep
+from l2co_optimizers import OptimizationStep
 from l2co._src.rollout import RolloutWrapper
 from l2co.sampling import normal_sampling
 
@@ -67,8 +67,8 @@ def test_converged_lbfgs_keeps_billing_the_linesearch():
     """
     import equinox as eqx
 
-    from l2co._src.optimizers.mapping import optimizer_mapping
-    from l2co._src.sampler import random_sampling
+    from l2co_optimizers import optimizer_mapping
+    from l2co_optimizers import random_sampling
 
     cap = 5
     task = create_bbob_task(fn_name="sphere", seed=0, dimensionality=10)

@@ -1,12 +1,13 @@
-"""Tests for the ``OptimizationStep.name`` special branches.
+"""Tests for how l2co names its meta-optimizer schedules.
 
 Learned meta-optimizers carry path-valued hyperparameters; the generic
 ``{optimizer}_{k=v}`` join would put absolute checkpoint paths into every
-SCHEDULE label, plot legend, and databank key. ``rl2co`` and ``l2co``
-therefore name themselves from the checkpoint stems instead — ``l2co``
-from both stage checkpoints plus the stage-0 fraction ``t``, so every
-(stage-0, stage-1) pair in a model-selection grid gets a distinct,
-legible label.
+SCHEDULE label, plot legend, and databank key. ``OptimizationStep.name``
+lives in ``l2co_optimizers`` and knows no meta-optimizer, so l2co
+registers a namer for ``"l2co"`` (``register_schedule_namer``, l2co ADR
+0016): both stage checkpoint stems plus the stage-0 fraction ``t``, so
+every (stage-0, stage-1) pair in a model-selection grid gets a distinct,
+legible label. rl2co registers and tests its own ``"rl2co"`` namer.
 """
 
 from l2co import ALIAS_HYPERPARAMETER, OptimizationStep
@@ -27,13 +28,13 @@ def test_alias_overrides_derived_name():
 
 def test_empty_alias_falls_back_to_derivation():
     step = OptimizationStep(
-        optimizer="rl2co",
+        optimizer="l2co",
         hyperparameters={
-            "model": "/x/experiment_data/model/7",
+            "stage0_model": "/x/experiment_data/model/7",
             ALIAS_HYPERPARAMETER: "",
         },
     )
-    assert step.name == "rl2co_7"
+    assert step.name == "l2co_s0-7"
 
 
 def test_alias_does_not_change_policy_identity():
@@ -91,13 +92,7 @@ def test_l2co_name_omits_missing_parts():
     )
 
 
-def test_rl2co_and_generic_names_unchanged():
-    rl2co = OptimizationStep(
-        optimizer="rl2co",
-        hyperparameters={"model": "/x/experiment_data/model/7"},
-    )
-    assert rl2co.name == "rl2co_7"
-
+def test_generic_names_unchanged():
     adam = OptimizationStep(
         optimizer="adam", hyperparameters={"learning_rate": 0.03}
     )

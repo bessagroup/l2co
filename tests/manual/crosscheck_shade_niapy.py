@@ -74,7 +74,7 @@ def run_l2co_shade(fn, seed: int) -> float:
     import jax.random as jr
     from l2co_tasks import Task
 
-    from l2co._src.optimizers.shade import shade_update
+    from l2co_optimizers import shade_update
 
     task = Task(model=jnp.zeros(N_DIMS), loss_fn=fn, global_min=0.0)
     update_class = shade_update(

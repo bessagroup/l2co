@@ -6,7 +6,6 @@ Module for pytree utilities.
 # =============================================================================
 
 # Standard
-from collections.abc import Callable
 from pathlib import Path
 
 # Third-party
@@ -14,7 +13,15 @@ import cloudpickle
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import PRNGKeyArray, PyTree
+
+# The population loss evaluators live in ``l2co_optimizers`` (l2co ADR
+# 0016); re-exported so ``l2co.tree_utils.vmapped_loss`` keeps working.
+from l2co_optimizers import (  # noqa: F401 -- re-exported
+    vmapped_loss,
+    vmapped_loss_and_grad,
+    vmapped_loss_and_grad_with_rng,
+    vmapped_loss_with_rng,
+)
 
 # Local
 from .performance import EPSILON
@@ -25,69 +32,6 @@ __author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
 __credits__ = ["Martin van der Schelling"]
 __status__ = "Stable"
 # =============================================================================
-
-
-def combined_loss(model: PyTree, loss_fn: Callable, sample: dict) -> jax.Array:
-    """
-    Compute the combined loss for a given set of parameters.
-
-    Parameters
-    ----------
-    model : PyTree
-        The model parameters.
-    loss_fn : Callable
-        The loss function to compute the loss.
-    sample : dict
-        Sample data for loss computation.
-
-    Returns
-    -------
-    jax.Array
-        The computed loss.
-    """
-    return loss_fn(model, **sample)
-
-
-def combined_loss_with_rng(
-    model: PyTree, loss_fn: Callable, sample: dict, key: PRNGKeyArray
-) -> jax.Array:
-    """
-    Compute the combined loss for a given set of parameters with RNG.
-
-    Parameters
-    ----------
-    model : PyTree
-        The model parameters.
-    loss_fn : Callable
-        The loss function to compute the loss.
-    sample : dict
-        Sample data for loss computation.
-    key : PRNGKeyArray
-        Random number generator key.
-
-    Returns
-    -------
-    jax.Array
-        The computed loss.
-    """
-    return loss_fn(model, **sample, key=key)
-
-
-vmapped_loss_and_grad = eqx.filter_vmap(
-    eqx.filter_value_and_grad(combined_loss), in_axes=(0, None, None)
-)
-vmapped_loss = eqx.filter_vmap(combined_loss, in_axes=(0, None, None))
-
-
-vmapped_loss_and_grad_with_rng = eqx.filter_vmap(
-    eqx.filter_value_and_grad(combined_loss_with_rng),
-    in_axes=(0, None, None, 0),
-)
-
-vmapped_loss_with_rng = eqx.filter_vmap(
-    combined_loss_with_rng,
-    in_axes=(0, None, None, 0),
-)
 
 
 # def ffill(x: jnp.ndarray) -> jnp.ndarray:

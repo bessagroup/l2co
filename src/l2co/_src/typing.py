@@ -1,5 +1,10 @@
 """
 Module for defining type aliases used throughout the optimization process.
+
+The optimizer-contract aliases (``InputParameters``, ``StepFunction``,
+``StopFunction``, ...) live in :mod:`l2co_optimizers` and are re-exported
+here so existing ``l2co._src.typing`` imports keep working. Only the
+aliases describing l2co's own rollout machinery are defined here.
 """
 
 #                                                                       Modules
@@ -7,26 +12,33 @@ Module for defining type aliases used throughout the optimization process.
 
 from __future__ import annotations
 
-from abc import abstractmethod
-
 # Standard
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-import equinox as eqx
-import jax
-
 # Third-party
-from evosax.algorithms.base import State as EvoSaxState
-from jaxtyping import Array, Bool, Float, Int, PRNGKeyArray, PyTree
-from optax import OptState as OptaxOptState
+import jax
+from jaxtyping import PRNGKeyArray, PyTree
+from l2co_optimizers import (
+    AskFunction,
+    InitFunction,
+    InputParameters,
+    LossFunction,
+    OptHistoryType,
+    OptState,
+    PopSize,
+    SamplerFunction,
+    StepFunction,
+    StopFunction,
+    TaskLike,
+    TransferReadFunction,
+    TransferWriteFunction,
+)
 
 if TYPE_CHECKING:
-    from l2co_tasks import Task
+    from l2co_optimizers import RecentHistory
 
     from .batching import BatchState
-    from .opt_history import RecentHistory
-    from .optimizers.state_transfer import TransferBundle
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -35,89 +47,28 @@ __credits__ = ["Martin van der Schelling"]
 __status__ = "Stable"
 # =============================================================================
 
-
-class OptHistoryType(eqx.Module):
-    """Abstract base class for optimization history.
-
-    Defines the interface and required fields for storing
-    per-step losses, parameters, gradients, and evaluation
-    counters during optimization.
-    """
-
-    loss: eqx.AbstractVar[Float[Array, " popsize"]]
-    params: eqx.AbstractVar[Float[PyTree, " popsize dim"]]
-    grads: eqx.AbstractVar[Float[PyTree, " popsize dim"]]
-    update_step: eqx.AbstractVar[Int[Array, " popsize"]]
-    fevals: eqx.AbstractVar[Int[Array, " popsize"]]
-    iterations: eqx.AbstractVar[Int[Array, " popsize"]]
-
-    @classmethod
-    @abstractmethod
-    def init(
-        cls, params: PyTree, popsize: int, last_step: int
-    ) -> OptHistoryType:
-        """Initialize the history."""
-        raise NotImplementedError
-
-    @abstractmethod
-    def flatten(self) -> OptHistoryType:
-        """
-        Flatten the first and second dimension of the loss,
-        params and grad.
-        """
-        raise NotImplementedError
-
-
-# =============================================================================
-
-InputParameters = Float[PyTree, " popsize dimensionality"]
-OptState = PyTree
-
-#: ``step_fn(carry, sample) -> (carry, history)`` -- one optimizer
-#: generation. ``carry`` is ``(params, opt_state, key)``; ``sample`` is the
-#: current data batch, forwarded to the loss as keyword arguments.
-StepFunction = Callable[
-    [tuple[InputParameters, OptState, PRNGKeyArray], dict[str, Array]],
-    tuple[tuple[InputParameters, OptState, PRNGKeyArray], OptHistoryType],
+__all__ = [
+    "AskFunction",
+    "BudgetFn",
+    "Carry",
+    "InitFunction",
+    "InputParameters",
+    "LossFunction",
+    "OptHistoryType",
+    "OptState",
+    "PopSize",
+    "SamplerFunction",
+    "StepFunction",
+    "StopFunction",
+    "TaskLike",
+    "TransferReadFunction",
+    "TransferWriteFunction",
 ]
-
-#: ``stop_fn(recent_history, opt_state) -> stop`` -- early-stopping check
-#: evaluated before every step, on the rolling ``RecentHistory`` window.
-StopFunction = Callable[["RecentHistory", OptState], Bool[Array, ""]]
-
-#: ``init_fn(params, key=None, **sample) -> opt_state``. ``Callable[...]``
-#: because the batch arrives as keyword arguments, which ``Callable``
-#: cannot spell.
-InitFunction = Callable[..., OptaxOptState | EvoSaxState]
-
-#: ``ask_fn(opt_state, key) -> (params, opt_state)`` -- an optimizer's own
-#: sampling step, used by a handshake to draw the post-switch population.
-AskFunction = Callable[
-    [OptState, PRNGKeyArray], tuple[InputParameters, OptState]
-]
-
-#: ``transfer_read_fn(opt_state) -> (sigma, conf_sigma)`` -- projects an
-#: optimizer's state onto the scale carried across a switch.
-TransferReadFunction = Callable[
-    [OptState], tuple[Float[Array, ""], Float[Array, ""]]
-]
-
-#: ``transfer_write_fn(bundle, opt_state) -> opt_state`` -- folds a
-#: ``TransferBundle`` into an optimizer's own state.
-TransferWriteFunction = Callable[["TransferBundle", OptState], OptState]
-
-#: ``loss_fn(model, **sample) -> loss`` for one (unbatched) model, or
-#: ``loss_fn(model, key=key, **sample)`` when ``task.pass_rng``. Scalar
-#: output; the ``vmapped_loss*`` helpers add the population axis.
-#: ``Callable[...]`` because the batch arrives as keyword arguments.
-LossFunction = Callable[..., Float[Array, ""]]
 
 BudgetFn = Callable[[Any], int]
 
-PopSize = int | Callable[["Task"], int]
-
-SamplerFunction = Callable[[PRNGKeyArray, PyTree, int], InputParameters]
-
+#: The scan carry of l2co's rollout: ``(params, opt_state, key,
+#: batch_state, done, recent_history)``.
 Carry = tuple[
     InputParameters,
     PyTree,

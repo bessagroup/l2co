@@ -15,12 +15,12 @@ import joblib
 import numpy as np
 import optax
 import xarray as xr
+from l2co_optimizers import OptimizationStep
 from sklearn.base import BaseEstimator
 from sklearn.multioutput import MultiOutputRegressor
 
 from ..naming import FEATURE
 from ..optimization_dynamics import OptimizationDynamics
-from ..optimizer_schedule import OptimizationStep
 from ..task_features import FeatureProcessor
 from .base import AbstractModel
 from .training import train_equinox

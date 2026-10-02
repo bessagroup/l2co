@@ -9,11 +9,8 @@ orchestration entry point ``init_``, and the L2CO strategy wrapper
 evosax-style strategy.
 """
 
-from l2co._src.optimizer_schedule import (
-    ALIAS_HYPERPARAMETER,
-    OptimizationStep,
-)
-from l2co._src.optimizers.update_class import UpdateClass
+from l2co_optimizers import ALIAS_HYPERPARAMETER, OptimizationStep, UpdateClass
+
 from l2co._src.rollout import RolloutWrapper, RunOptimization
 from l2co._src.run_state import RunState, reset, run
 from l2co._src.strategy_wrapper import l2co_population_strategy
