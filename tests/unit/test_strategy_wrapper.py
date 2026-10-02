@@ -38,7 +38,7 @@ from l2co import (
     OptimizationStep,
 )
 from l2co._src.meta_optimizer import L2COUpdateClass
-from l2co._src.optimizers.update_class import l2co_population_based_fn
+from l2co._src.meta_optimizer import l2co_population_based_fn
 from l2co._src.strategy_wrapper import State, l2co_population_strategy
 from l2co.models import MLP, LSTM_Encoder
 from l2co.sampling import normal_sampling

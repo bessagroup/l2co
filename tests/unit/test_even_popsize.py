@@ -15,7 +15,7 @@ from l2co._src.optimizers.evosax_implementations import (
     _EVEN_POPSIZE_REQUIRED,
     evosax_mapping,
 )
-from l2co._src.optimizers.utils import (
+from l2co._src.optimizers.popsize import (
     variable_popsize,
     variable_popsize_even,
 )

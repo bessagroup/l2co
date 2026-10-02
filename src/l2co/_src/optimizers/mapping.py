@@ -2,15 +2,15 @@
 
 from collections.abc import Callable
 
-from .evosax_implementations import evosax_mapping
-from .lbfgs import lbfgs_mapping
-from .optax_implementations import optax_mapping
-from .random_search import random_search_mapping
-from .rbf_trust_region import rbf_trust_region_mapping
-from .shade import shade_mapping
-from .turbo import turbo_mapping
-from .update_class import UpdateClass
-from .utils import normalize_key
+from l2co._src.optimizers.evosax_implementations import evosax_mapping
+from l2co._src.optimizers.lbfgs import lbfgs_mapping
+from l2co._src.optimizers.optax_implementations import optax_mapping
+from l2co._src.optimizers.random_search import random_search_mapping
+from l2co._src.optimizers.rbf_trust_region import rbf_trust_region_mapping
+from l2co._src.optimizers.shade import shade_mapping
+from l2co._src.optimizers.turbo import turbo_mapping
+from l2co._src.optimizers.update_class import UpdateClass
+from l2co._src.optimizers.utils import normalize_key
 
 # Registry of optimizer-name -> factory callables. Each value is a callable
 # that, when called with the keyword contract used by ``RunState.init``

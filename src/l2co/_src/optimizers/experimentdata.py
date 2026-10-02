@@ -13,7 +13,7 @@ from hydra.utils import instantiate
 from omegaconf import DictConfig
 
 # Local
-from ..optimizer_schedule import OptimizationStep
+from l2co._src.optimizer_schedule import OptimizationStep
 
 #                                                          Authorship & Credits
 # =============================================================================

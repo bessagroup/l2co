@@ -84,6 +84,8 @@ import jax.numpy as jnp
 import optax
 from jaxtyping import Array, Bool, Float, PyTree
 
+from l2co._src.typing import TransferReadFunction, TransferWriteFunction
+
 # =============================================================================
 
 __all__ = [
@@ -1280,7 +1282,7 @@ def build_transfer_fns(
     family: str,
     hyperparameters: dict | None = None,
     ravel_fn: Callable | None = None,
-) -> tuple[Callable, Callable]:
+) -> tuple[TransferReadFunction, TransferWriteFunction]:
     """Bind one optimizer's reader and writer at construction time.
 
     Both halves need values that are not recoverable from the state, so
@@ -1304,7 +1306,7 @@ def build_transfer_fns(
 
     Returns
     -------
-    tuple[Callable, Callable]
+    tuple[TransferReadFunction, TransferWriteFunction]
         ``(reader, writer)``. ``reader(opt_state) -> (sigma, conf)``;
         ``writer(bundle, opt_state) -> opt_state``.
 

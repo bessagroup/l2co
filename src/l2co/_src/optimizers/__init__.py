@@ -1,15 +1,23 @@
 """Optimizer subpackage providing mappings from names to implementations."""
 
-from .experimentdata import create_schedules_experimentdata
-from .lbfgs import (
+from l2co._src.optimizers.experimentdata import create_schedules_experimentdata
+from l2co._src.optimizers.lbfgs import (
     lbfgs_per_eval_key,
     lbfgs_update,
     scale_by_zoom_linesearch_per_eval_key,
 )
-from .mapping import optimizer_mapping, optimizers, register_optimizer
-from .shade import SHADE, shade_update
-from .update_class import UpdateClass
-from .utils import shade_popsize, variable_popsize, variable_popsize_even
+from l2co._src.optimizers.mapping import (
+    optimizer_mapping,
+    optimizers,
+    register_optimizer,
+)
+from l2co._src.optimizers.popsize import (
+    shade_popsize,
+    variable_popsize,
+    variable_popsize_even,
+)
+from l2co._src.optimizers.shade import SHADE, shade_update
+from l2co._src.optimizers.update_class import UpdateClass
 
 __all__ = [
     "SHADE",

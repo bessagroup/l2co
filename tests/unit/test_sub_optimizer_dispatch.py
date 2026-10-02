@@ -42,6 +42,13 @@ from l2co.optimization import OptimizationStep
 # exclude it too even though it is absent from this suite's registry.
 META_OPTIMIZERS = frozenset({"l2co", "rl2co"})
 
+# Random search is a structural baseline, not a menu entry: its
+# ``RandomSearchUpdateClass`` bypasses the step loop entirely. It used to
+# pass this check only because evosax's ``RandomSearch`` sat under the
+# same name in ``normalized_evosax`` -- and building that SubOpt raised
+# (no ``sampling_fn``).
+NON_SUBOPT_OPTIMIZERS = META_OPTIMIZERS | {"randomsearch"}
+
 
 def _subopt_registries() -> set[str]:
     """Union of every registry ``optstep_to_subopt`` dispatches on."""
@@ -66,7 +73,7 @@ class TestRegistryCoverage:
         missing = sorted(
             set(l2co.optimizers.optimizers)
             - _subopt_registries()
-            - META_OPTIMIZERS
+            - NON_SUBOPT_OPTIMIZERS
         )
         assert not missing, (
             f"registered but not resolvable to a SubOpt: {missing}. "

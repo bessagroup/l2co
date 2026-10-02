@@ -49,8 +49,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import PRNGKeyArray, PyTree
 
-from ..optimizer_schedule import OptimizationStep
-from ..typing import SamplerFunction
+from l2co._src.optimizer_schedule import OptimizationStep
+from l2co._src.typing import SamplerFunction
 
 # =============================================================================
 

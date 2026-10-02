@@ -5,17 +5,20 @@ Module for stopping criteria
 # =============================================================================
 
 # Standard
+from __future__ import annotations
+
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
 import optax
 
 # Third-party
-from jaxtyping import PyTree
+from jaxtyping import Array, Bool, PyTree
 
-# Local
-from .typing import OptHistoryType
+if TYPE_CHECKING:
+    from .opt_history import RecentHistory
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -26,15 +29,15 @@ __status__ = "Stable"
 
 
 def gradient_based_stopping_criteria(
-    history: OptHistoryType,
+    history: RecentHistory,
     opt_state: PyTree,
     grad_tol: float = 1e-3,
-) -> bool:
+) -> Bool[Array, ""]:
     """Check if optimization should stop based on gradient norms.
 
     Parameters
     ----------
-    history : OptHistoryType
+    history : RecentHistory
         Optimization history containing gradients.
     opt_state : PyTree
         Current optimizer state (unused).
@@ -43,7 +46,7 @@ def gradient_based_stopping_criteria(
 
     Returns
     -------
-    bool
+    Bool[Array, ""]
         True if mean gradient norm is below tolerance, False otherwise.
     """
     grad_norms = jax.vmap(optax.global_norm)(history.grads)
@@ -52,15 +55,15 @@ def gradient_based_stopping_criteria(
 
 
 def loss_based_stopping_criteria(
-    history: OptHistoryType,
+    history: RecentHistory,
     opt_state: PyTree,
     loss_tol: float = 1e-6,
-) -> bool:
+) -> Bool[Array, ""]:
     """Check if optimization should stop based on loss improvement.
 
     Parameters
     ----------
-    history : OptHistoryType
+    history : RecentHistory
         Optimization history containing loss values.
     opt_state : PyTree
         Current optimizer state (unused).
@@ -69,7 +72,7 @@ def loss_based_stopping_criteria(
 
     Returns
     -------
-    bool
+    Bool[Array, ""]
         True if loss improvement is below tolerance, False otherwise.
     """
     loss_improvement = jnp.abs(history.loss[-1] - history.loss[0])
@@ -77,16 +80,16 @@ def loss_based_stopping_criteria(
 
 
 def combined_stopping_criteria(
-    history: OptHistoryType,
+    history: RecentHistory,
     opt_state: PyTree,
     grad_tol: float = 1e-3,
     loss_tol: float = 1e-6,
-) -> bool:
+) -> Bool[Array, ""]:
     """Check if optimization should stop based on gradient or loss criteria.
 
     Parameters
     ----------
-    history : OptHistoryType
+    history : RecentHistory
         Optimization history containing gradients and loss values.
     opt_state : PyTree
         Current optimizer state.
@@ -97,7 +100,7 @@ def combined_stopping_criteria(
 
     Returns
     -------
-    bool
+    Bool[Array, ""]
         True if either gradient or loss stopping criteria is met,
         False otherwise.
     """
@@ -111,10 +114,10 @@ def combined_stopping_criteria(
 
 
 def covariance_matrix_stopping_criteria(
-    history: OptHistoryType,
+    history: RecentHistory,
     opt_state: PyTree,
     tol: float = 1e-12,
-) -> bool:
+) -> Bool[Array, ""]:
     """Check if optimization should stop based on covariance matrix condition.
 
     Stops if the covariance matrix contains NaN values or if the maximum
@@ -122,7 +125,7 @@ def covariance_matrix_stopping_criteria(
 
     Parameters
     ----------
-    history : OptHistoryType
+    history : RecentHistory
         Optimization history (unused).
     opt_state : PyTree
         Current optimizer state containing covariance matrix C.
@@ -131,7 +134,7 @@ def covariance_matrix_stopping_criteria(
 
     Returns
     -------
-    bool
+    Bool[Array, ""]
         True if covariance matrix contains NaN or max eigenvalue is below
         tolerance, False otherwise.
     """
@@ -145,7 +148,7 @@ def covariance_matrix_stopping_criteria(
 
 # =============================================================================
 
-STOPPING_CRITERIA: dict[str, Callable[[OptHistoryType, PyTree, int], bool]] = {
+STOPPING_CRITERIA: dict[str, Callable[..., Bool[Array, ""]]] = {
     "covariance_matrix": covariance_matrix_stopping_criteria,
     "combined": combined_stopping_criteria,
     "gradient_based": gradient_based_stopping_criteria,

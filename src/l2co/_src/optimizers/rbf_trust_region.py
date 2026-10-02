@@ -76,16 +76,17 @@ from flax import struct
 from jax.tree_util import Partial
 from l2co_tasks import Task
 
+from l2co._src.optimizers.evosax_implementations import (
+    evosax_population_based_fn,
+)
+from l2co._src.optimizers.popsize import resolve_popsize
+
 # Local
 from l2co._src.optimizers.state_transfer import (
     FAMILY_POPULATION,
     build_transfer_fns,
 )
-from l2co._src.optimizers.update_class import (
-    UpdateClass,
-    evosax_population_based_fn,
-)
-from l2co._src.optimizers.utils import resolve_popsize
+from l2co._src.optimizers.update_class import UpdateClass
 from l2co._src.typing import PopSize, StopFunction
 
 #                                                          Authorship & Credits
@@ -321,6 +322,7 @@ class RBFTrustRegion(PopulationBasedAlgorithm):
         """
         if metrics_fn is None:
             from evosax.algorithms.population_based.base import metrics_fn as m
+
             metrics_fn = m
         super().__init__(
             population_size, solution, fitness_shaping_fn, metrics_fn
@@ -387,17 +389,16 @@ class RBFTrustRegion(PopulationBasedAlgorithm):
         coef = jnp.where(valid, coef, 0.0)
 
         # --- draw candidates around the incumbent ---------------------
-        noise = jr.normal(
-            key_pert, (self.n_candidates, self.num_dims)
-        ) * state.radius
+        noise = (
+            jr.normal(key_pert, (self.n_candidates, self.num_dims))
+            * state.radius
+        )
         perturb = (
             jr.uniform(key_mask, (self.n_candidates, self.num_dims))
             < params.perturb_prob
         )
         # Force one coordinate so no candidate collapses onto the centre.
-        forced = jr.randint(
-            key_coord, (self.n_candidates,), 0, self.num_dims
-        )
+        forced = jr.randint(key_coord, (self.n_candidates,), 0, self.num_dims)
         perturb = perturb.at[jnp.arange(self.n_candidates), forced].set(True)
         cand = state.center + jnp.where(perturb, noise, 0.0)
         cand = jnp.clip(cand, params.x_min, params.x_max)
