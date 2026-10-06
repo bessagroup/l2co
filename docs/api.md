@@ -32,15 +32,7 @@
 
 ::: l2co.init_run_state
 
-::: l2co.SHADE
-
 ::: l2co.optimizers.shade_update
-
-::: l2co.optimizers.lbfgs_update
-
-::: l2co.optimizers.lbfgs_per_eval_key
-
-::: l2co.optimizers.scale_by_zoom_linesearch_per_eval_key
 
 ::: l2co.optimizers.menu_loss_and_grad
 

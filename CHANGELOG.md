@@ -54,6 +54,20 @@ longer has a task type, and l2co is the only bridge between `Task` and
 
 ### Removed
 
+- **BREAKING:** re-exports of names `l2co-optimizers` made private (no
+  sibling package used them): from `l2co.optimizers`, the per-library
+  factories `optax_update`, `optax_update_extra_kwargs`,
+  `evosax_distribution_update`, `evosax_population_update`,
+  `random_search_update`, `lbfgs_update`, `lbfgs_per_eval_key`,
+  `scale_by_zoom_linesearch_per_eval_key`, `normalized_optax_from_state`,
+  the SubOpt tables `l2co_native_optax`, `l2co_native_evosax`, the tables
+  `GRAD_EVALUATION_WIDTH`, `LINESEARCH_FEVAL_BOUND`, `OPT_STATE_VARIANTS`,
+  `POPULATION_VARIANTS`, `POPULATION_HANDSHAKES`, `TRANSFER_OVERRIDES`,
+  `TransferSpec`, `transfer_spec_for`, `population_handshake_for`,
+  `write_none`, and `vmapped_loss_and_grad_with_rng`; `SHADE` from
+  `l2co` and `l2co.optimizers`; `vmapped_loss_and_grad_with_rng` from
+  `l2co._src.tree_utils`. Built-in optimizers are reached by registry
+  name (`l2co.optimizer_mapping("shade")`).
 - **BREAKING:** the `TaskLike` re-export from `l2co._src.typing`
   (`l2co_optimizers` deletes `TaskLike` / `RunnableTaskLike`).
 - **BREAKING:** `HistoryState.to_xarray`, `to_xarray_realizations` and

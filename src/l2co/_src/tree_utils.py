@@ -19,7 +19,6 @@ import jax.numpy as jnp
 from l2co_optimizers import (  # noqa: F401 -- re-exported
     vmapped_loss,
     vmapped_loss_and_grad,
-    vmapped_loss_and_grad_with_rng,
     vmapped_loss_with_rng,
 )
 
