@@ -107,14 +107,13 @@ from jaxtyping import Array, Bool, Float, Int, PRNGKeyArray, PyTree
 from l2co_optimizers import (
     OptimizationStep,
     SamplerFunction,
-    SubOpt,
-    optstep_to_subopt,
 )
 from l2co_tasks import Task
 
 # Local
 from l2co._src.models.l2co_model import L2COModel
 from l2co._src.models.stage1 import Stage1Model
+from l2co._src.switching.sub_optimizer import SubOpt, optstep_to_subopt
 from l2co._src.tree_utils import traj_and_stair
 
 # =============================================================================
