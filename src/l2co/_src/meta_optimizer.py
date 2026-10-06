@@ -174,7 +174,7 @@ def l2co_population_based_fn(
             Key for sub-optimizer initialisation.
         **sample
             Current data batch forwarded by
-            :func:`l2co._src.update_class.init_`; unused.
+            :meth:`UpdateClass.init_state`; unused.
 
         Returns
         -------
@@ -279,15 +279,15 @@ class L2COUpdateClass(UpdateClass):
     on the meta-optimizer side -- mirroring rl2co's ``RL2COUpdateClass``
     (which lives on the rl2co side because l2co may not import rl2co).
     Built instances behave identically to any other ``UpdateClass`` --
-    hand them to :func:`l2co._src.update_class.init_` / ``run_`` (or wrap
-    them in a :class:`l2co.RunState` directly).
+    call their inherited ``init_state`` / ``run`` / ``batch_run`` (or
+    wrap them in a :class:`l2co.RunState` directly).
     """
 
     # The two-stage strategy picks a sub-optimizer from its menu and
     # dispatches on that index (``jax.lax.switch`` in
     # :mod:`l2co._src.strategy_wrapper`), and the pick differs per
     # realization -- so realizations must not be vectorized together.
-    # See :func:`l2co._src.run_state.batch_run`.
+    # See :meth:`UpdateClass.batch_run`, which reads this marker.
     sequential_realizations = True
 
     @classmethod

@@ -1,5 +1,9 @@
 # The bare optimizers move to `l2co-optimizers`; l2co is the bridge to tasks
 
+> **Superseded in part by ADR 0017:** the run loop (`init_` / `step` /
+> `run_` / `batch_run_*`), `BatchState`, `Carry` and `HistoryState`'s
+> buffer moved to `l2co-optimizers` after all. The rest stands.
+
 ADR 0007 kept the optimizers in-repo, behind a hardened facade, and
 named the condition for revisiting that: a split becomes worth it once it
 is mechanical *and* someone wants the bare optimizers without the

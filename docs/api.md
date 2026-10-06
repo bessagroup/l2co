@@ -52,6 +52,16 @@
 
 ::: l2co.OptHistory
 
+### Exporting a history
+
+`HistoryState`, `BatchState` and `OptHistory` live in `l2co_optimizers` with the run loop (ADR 0017); the exports below need xarray and the ERT, so they stay in l2co.
+
+::: l2co.history_to_xarray
+
+::: l2co.history_to_xarray_realizations
+
+::: l2co.history_to_dataloader
+
 ## Running Optimization
 
 ::: l2co.RolloutWrapper

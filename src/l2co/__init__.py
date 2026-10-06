@@ -46,7 +46,14 @@ from l2co.features import (
     MixedEmbedding,
     preprocessing_factory,
 )
-from l2co.history import BatchState, HistoryState, OptHistory
+from l2co.history import (
+    BatchState,
+    HistoryState,
+    OptHistory,
+    history_to_dataloader,
+    history_to_xarray,
+    history_to_xarray_realizations,
+)
 from l2co.models import (
     MLP,
     AbstractModel,
@@ -129,6 +136,9 @@ __all__ = [
     "evaluate",
     "features",
     "history",
+    "history_to_dataloader",
+    "history_to_xarray",
+    "history_to_xarray_realizations",
     "init_",
     "l2co_population_strategy",
     "models",

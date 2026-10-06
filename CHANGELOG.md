@@ -7,7 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The run loop moves onto `UpdateClass` in `l2co-optimizers`
+(`docs/adr/0017`, superseding that half of `docs/adr/0016`).
+**Requires an `l2co-optimizers` that ships `UpdateClass.run`** (the
+release after 0.1.0).
+
+### Added
+
+- `history_to_xarray`, `history_to_xarray_realizations` and
+  `history_to_dataloader` in `l2co.history` and at the package root: the
+  `HistoryState` exports, as free functions.
+
+### Changed
+
+- `BatchState` and `HistoryState` are re-exported from `l2co_optimizers`
+  (same names under `l2co` / `l2co.history`). `run_state.run` /
+  `batch_run` call `UpdateClass.run` / `batch_run`, so the driver choice
+  (fused, sequential for `sequential_realizations`, sequential for random
+  search) belongs to the optimizer. `l2co.init_` delegates to
+  `UpdateClass.init_state`.
+
 ### Removed
+
+- **BREAKING:** `HistoryState.to_xarray`, `to_xarray_realizations` and
+  `to_dataloader`. Call `l2co.history_to_xarray(history_state, ...)`,
+  `l2co.history_to_xarray_realizations(history_state, ...)` and
+  `l2co.history_to_dataloader(history_state, ...)` instead.
+- The private `l2co._src.batching` module and the `step` / `batch_step_`
+  / `run_` / `batch_run_` / `batch_run_sequential_` / `run_randomsearch` /
+  `batch_run_randomsearch` functions of `l2co._src.update_class`, plus the
+  `Carry` alias of `l2co._src.typing`. They are `UpdateClass` methods and
+  `l2co_optimizers.Carry` now.
 
 - **BREAKING:** `RolloutWrapper.init_from_stage0`, `RolloutWrapper.evaluate`
   and `RolloutWrapper.run`, plus `reset_from_stage0` and `evaluate` in

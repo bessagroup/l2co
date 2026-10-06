@@ -15,9 +15,10 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Float, PRNGKeyArray, PyTree
 from l2co_optimizers import (
+    BatchState,
+    HistoryState,
     InputParameters,
     OptimizationStep,
-    RandomSearchUpdateClass,
     SamplerFunction,
     UpdateClass,
     optimizer_mapping,
@@ -25,16 +26,6 @@ from l2co_optimizers import (
 from l2co_tasks import Task
 
 # Local
-from l2co._src.batching import BatchState
-from l2co._src.history_state import HistoryState
-from l2co._src.update_class import (
-    batch_run_,
-    batch_run_randomsearch,
-    batch_run_sequential_,
-    init_,
-    run_,
-    run_randomsearch,
-)
 from l2co._src.update_class import evaluate as evaluate_update_class
 
 #                                                          Authorship & Credits
@@ -130,9 +121,8 @@ class RunState(eqx.Module):
 
         # Initialize the optimizer state. RandomSearchUpdateClass carries
         # a no-op ``init_fn`` that returns a scalar placeholder, so the
-        # generic ``init_`` works for it too -- no dispatch needed.
-        opt_state = init_(
-            update_class=update_class,
+        # inherited ``init_state`` works for it too -- no dispatch needed.
+        opt_state = update_class.init_state(
             params=params,
             batch_state=batch_state,
             dataset=dataset,
@@ -205,8 +195,7 @@ def reset(
     best_params = jax.tree.map(lambda x: x[best_idx], samples)
     best_loss = loss[best_idx]
 
-    opt_state = init_(
-        update_class=run_state.update_class,
+    opt_state = run_state.update_class.init_state(
         params=samples,
         batch_state=batch_state,
         dataset=dataset,
@@ -241,6 +230,9 @@ def run(
 ) -> tuple[RunState, BatchState, HistoryState]:
     """Run optimization for a specified number of iterations.
 
+    Hands off to :meth:`UpdateClass.run`, which a subclass may override
+    (``RandomSearchUpdateClass`` does).
+
     Parameters
     ----------
     run_state : RunState
@@ -261,16 +253,8 @@ def run(
     tuple[RunState, BatchState, HistoryState]
         Updated RunState, BatchState and history state after optimization.
     """
-    # Main optimization loop (dispatch random search through its one-shot
-    # batched runner; everything else goes through the generic scan loop).
-    run_fn = (
-        run_randomsearch
-        if isinstance(run_state.update_class, RandomSearchUpdateClass)
-        else run_
-    )
     (params, best_params, best_loss, opt_state, batch_state, history_state) = (
-        run_fn(
-            update_class=run_state.update_class,
+        run_state.update_class.run(
             opt_state=run_state.opt_state,
             params=run_state.params,
             batch_state=batch_state,
@@ -302,44 +286,36 @@ def batch_run(
 ) -> tuple[RunState, BatchState, HistoryState]:
     """Run ``n_realizations`` trajectories, on whichever driver fits.
 
-    Three drivers, same signature and same output contract; the
-    optimizer decides which one it needs.
+    Hands off to :meth:`UpdateClass.batch_run`, which picks the driver:
+    one fused scan for a plain optimizer, one realization at a time for
+    an optimizer marked :attr:`UpdateClass.sequential_realizations` (the
+    meta-optimizers) or for random search. That method's docstring
+    records why, and what the two drivers do and do not agree on.
 
-    :func:`~l2co._src.update_class.batch_run_` is the default and the
-    fastest: all realizations advance together in one fused scan.
+    Parameters
+    ----------
+    run_state : RunState
+        Run state carrying a leading ``n_realizations`` axis on every
+        array field.
+    batch_state : BatchState
+        Single (un-batched) batch state.
+    dataset : dict[str, jax.Array]
+        Dataset for evaluation.
+    n_iterations : int
+        Number of iterations to run.
+    key : PRNGKeyArray
+        Per-realization PRNG keys, shape ``(n_realizations,)``.
+    verbose : bool
+        Whether to print progress information.
 
-    :func:`~l2co._src.update_class.batch_run_randomsearch` is for random
-    search, which would otherwise hold every realization's candidate set
-    in memory at once.
-
-    :func:`~l2co._src.update_class.batch_run_sequential_` runs one
-    realization at a time, for an optimizer whose step branches on a
-    choice that differs per realization -- the meta-optimizers, which
-    pick a sub-optimizer from a menu each generation. Vectorizing those
-    realizations together would force every menu entry's evaluation on
-    every generation and discard all but one, because ``vmap`` cannot
-    take a different branch per lane. That waste is per generation and
-    it scales with the task's loss, so it bites hardest where it can
-    least be afforded: on the 2241-dimensional ``convection`` PINN at 25
-    realizations, the two drivers measure 496 ms against 57 ms per
-    iteration -- 5.7 h against 0.65 h over a 41000-iteration budget,
-    against a 2.5 h SLURM wall limit on the run step.
-
-    :attr:`UpdateClass.sequential_realizations` is what marks such an
-    optimizer. Read that driver's docstring before trusting a recomputed
-    cell to match a stored one: the two agree on every discrete choice
-    but not on the resulting numbers, and it also records where the
-    sequential/fused crossover sits.
+    Returns
+    -------
+    tuple[RunState, BatchState, HistoryState]
+        Updated RunState, BatchState and history state, each carrying
+        the realization axis.
     """
-    if isinstance(run_state.update_class, RandomSearchUpdateClass):
-        run_fn = batch_run_randomsearch
-    elif run_state.update_class.sequential_realizations:
-        run_fn = batch_run_sequential_
-    else:
-        run_fn = batch_run_
     (params, best_params, best_loss, opt_state, batch_state, history_state) = (
-        run_fn(
-            update_class=run_state.update_class,
+        run_state.update_class.batch_run(
             opt_state=run_state.opt_state,
             params=run_state.params,
             batch_state=batch_state,
