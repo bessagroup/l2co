@@ -30,6 +30,13 @@ The only genuinely task-side piece was `HistoryState`'s *exports*:
 - `Carry`, into `_src/typing.py` next to the other loop aliases.
 - The loop, as methods: `UpdateClass.init_state`, `step`, `batch_step`,
   `run`, `batch_run`, `batch_run_fused` and `batch_run_sequential`.
+- `RunState` and its entry points `reset` / `batch_reset` / `run` /
+  `batch_run` / `batch_evaluate`, plus `evaluate`, which `reset` needs.
+  Once the loop moved, these are thin rewraps of it. The one task-side
+  read, `RunState.init` taking `task.model`, `loaded_dataset` and
+  `batch_size`, is a structural read like the factories' `TaskLike`. It
+  gets its own protocol, `RunnableTaskLike` (`TaskLike` plus those two
+  attributes), so that factories keep requiring only what they read.
 
 **Dispatch becomes polymorphism.** `run_state.run` / `batch_run` no
 longer inspect the optimizer:
@@ -50,25 +57,23 @@ longer inspect the optimizer:
   cannot stay methods of a class l2co no longer defines, and an l2co
   subclass would not help, because the moved `run` constructs the base
   class.
-- `evaluate`, which scores a *model* through a loss function and has no
-  `UpdateClass` in it. It moves to `_src/model_evaluation.py`, so
-  nothing named `update_class` is left in l2co.
-- `RunState`, `reset` / `run` / `batch_run` / `batch_evaluate`,
-  `RolloutWrapper`, and every meta-optimizer.
+- `RolloutWrapper`, which bundles a `RunState` with a `Task`'s static
+  structure, loss and sampler, and every meta-optimizer.
 
 **Compatibility.**
-- `l2co.BatchState`, `l2co.HistoryState` and `l2co.history` re-export
-  the moved objects. `l2co.run` and `l2co.reset` keep their
-  signatures.
+- `l2co.BatchState`, `l2co.HistoryState`, `l2co.history`,
+  `l2co.RunState`, `l2co.reset`, `l2co.run` and `l2co.evaluate`
+  re-export the moved objects, signatures unchanged.
 - **Breaking:** `l2co.init_` is removed rather than kept as a one-line
   delegate. Its only caller was rl2co's handshake, which now calls
   `update_class.init_state` itself.
 - **Breaking:** `HistoryState.to_xarray` / `to_xarray_realizations` /
   `to_dataloader` are gone; call the free functions instead.
-- The private `l2co._src.batching` and `l2co._src.update_class` modules
-  are deleted, not shimmed, as 0016 did for the optimizer modules. Nothing
+- The private `l2co._src.batching`, `l2co._src.update_class` and
+  `l2co._src.run_state` modules are deleted, not shimmed, as 0016 did for the optimizer modules. Nothing
   stored references them by path: `HistoryState` and `BatchState` are
-  never pickled, and checkpoints go through
+  never pickled, `RunState` is rebuilt per run rather than stored, and
+  checkpoints go through
   `eqx.tree_serialise_leaves`, which is path-independent.
 - `l2co-optimizers` gains `jax-tqdm` (the `verbose` progress bar). It
   must be released before the l2co that uses it; sibling dependencies

@@ -21,7 +21,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 from bessaplots import FigureGrid, TypstReport, savefig
-from l2co_optimizers import BatchState, OptimizationStep, grid_sampling
+from l2co_optimizers import (
+    BatchState,
+    OptimizationStep,
+    evaluate,
+    grid_sampling,
+)
 from l2co_tasks import Task
 from matplotlib.colors import (
     ListedColormap,
@@ -35,7 +40,6 @@ from sklearn.metrics import r2_score
 
 # Local
 from l2co._src.data import DataLoader
-from l2co._src.model_evaluation import evaluate
 from l2co._src.naming import (
     BUDGET,
     FEATURE,

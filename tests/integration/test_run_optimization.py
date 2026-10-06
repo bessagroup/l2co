@@ -17,7 +17,7 @@ from l2co._src.rollout import (
     RunOptimization,
     RolloutWrapper,
 )
-from l2co._src.run_state import batch_reset
+from l2co_optimizers import batch_reset
 from l2co.history import history_to_xarray_realizations
 from l2co_tasks import create_bbob_task
 from l2co_tasks import create_pde_task

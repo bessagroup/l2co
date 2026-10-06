@@ -31,7 +31,7 @@ from l2co_tasks import create_bbob_task
 
 from l2co._src.meta_optimizer import L2COUpdateClass
 from l2co._src.rollout import RolloutWrapper
-from l2co._src.run_state import batch_reset
+from l2co_optimizers import batch_reset
 from l2co.optimization import OptimizationStep
 from l2co.sampling import normal_sampling
 

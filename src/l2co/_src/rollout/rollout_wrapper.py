@@ -13,10 +13,14 @@ import equinox as eqx
 import jax
 import jax.random as jr
 from jaxtyping import PRNGKeyArray, PyTree
-from l2co_optimizers import BatchState, HistoryState, OptimizationStep
+from l2co_optimizers import (
+    BatchState,
+    HistoryState,
+    OptimizationStep,
+    RunState,
+    batch_evaluate,
+)
 from l2co_tasks import Task
-
-from l2co._src.run_state import RunState, batch_evaluate
 
 # =============================================================================
 

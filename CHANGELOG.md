@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 The run loop moves onto `UpdateClass` in `l2co-optimizers`
 (`docs/adr/0017`, superseding that half of `docs/adr/0016`).
-**Requires an `l2co-optimizers` that ships `UpdateClass.run`** (the
-release after 0.1.0).
+**Requires an `l2co-optimizers` that ships `UpdateClass.run` and
+`RunState`** (the release after 0.1.0).
 
 ### Added
 
@@ -25,6 +25,11 @@ release after 0.1.0).
   `batch_run` call `UpdateClass.run` / `batch_run`, so the driver choice
   (fused, sequential for `sequential_realizations`, sequential for random
   search) belongs to the optimizer.
+- `RunState`, `reset`, `run` and `evaluate` move to `l2co_optimizers`
+  (with `batch_reset` / `batch_run` / `batch_evaluate`) and are
+  re-exported unchanged as `l2co.RunState` / `l2co.reset` / `l2co.run` /
+  `l2co.evaluate` and from `l2co.optimization`. `RunState.init` now takes
+  any `l2co_optimizers.RunnableTaskLike`; `Task` qualifies.
 
 ### Removed
 
@@ -34,9 +39,10 @@ release after 0.1.0).
   `l2co.history_to_dataloader(history_state, ...)` instead.
 - **BREAKING:** `l2co.init_` (also `l2co.optimization.init_`). Call
   `update_class.init_state(params, batch_state, dataset, key)` instead.
-- The private `l2co._src.batching` and `l2co._src.update_class` modules
-  (`evaluate` now lives in `l2co._src.model_evaluation`; `l2co.evaluate`
-  is unchanged), and with them `step` / `batch_step_` / `run_` /
+- The private `l2co._src.batching`, `l2co._src.update_class` and
+  `l2co._src.run_state` modules (`l2co.evaluate`, `l2co.RunState` and
+  friends are unchanged; inside-library code imports them from
+  `l2co_optimizers`), and with them `step` / `batch_step_` / `run_` /
   `batch_run_` / `batch_run_sequential_` / `run_randomsearch` /
   `batch_run_randomsearch`, plus the `Carry` alias of `l2co._src.typing`.
   They are `UpdateClass` methods and `l2co_optimizers.Carry` now.
