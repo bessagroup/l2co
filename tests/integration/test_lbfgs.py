@@ -68,7 +68,7 @@ def test_converged_lbfgs_keeps_billing_the_linesearch():
     """
     import equinox as eqx
 
-    from l2co_optimizers import optimizer_mapping
+    from l2co import optimizer_mapping
     from l2co_optimizers import random_sampling
 
     cap = 5

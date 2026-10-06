@@ -29,7 +29,6 @@ from l2co_optimizers import (
     SamplerFunction,
     StepFunction,
     StopFunction,
-    TaskLike,
     TransferReadFunction,
     TransferWriteFunction,
 )
@@ -53,7 +52,6 @@ __all__ = [
     "SamplerFunction",
     "StepFunction",
     "StopFunction",
-    "TaskLike",
     "TransferReadFunction",
     "TransferWriteFunction",
 ]

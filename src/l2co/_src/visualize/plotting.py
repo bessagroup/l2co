@@ -21,7 +21,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 from bessaplots import FigureGrid, TypstReport, savefig
-from l2co_optimizers import BatchState, OptimizationStep, grid_sampling
+from l2co_optimizers import (
+    BatchState,
+    OptimizationStep,
+    evaluate,
+    grid_sampling,
+)
 from l2co_tasks import Task
 from matplotlib.colors import (
     ListedColormap,
@@ -48,7 +53,6 @@ from l2co._src.naming import (
     UPDATE_STEP,
 )
 from l2co._src.performance import EPSILON
-from l2co._src.update_class import evaluate
 from l2co._src.visualize.colors import (
     CATEGORY_PALETTES,
     display_name,

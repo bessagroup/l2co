@@ -15,12 +15,11 @@ from l2co_optimizers import (
     lbfgs_mapping,
     normalized_evosax,
     optax_mapping,
+    optimizers,
     rbf_trust_region_mapping,
     shade_mapping,
     turbo_mapping,
 )
-
-from l2co.optimizers import optimizers
 
 #                                                          Authorship & Credits
 # =============================================================================

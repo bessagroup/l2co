@@ -2,19 +2,29 @@
 
 Stable import surface for the rollout/dataset-generation engines
 (``RolloutWrapper``, ``RunOptimization``), the per-step ``OptimizationStep``
-configuration, the ``UpdateClass`` adapter that wraps optimizers, the
-``RunState`` helpers (``reset``, ``run``, ``evaluate``), the rollout
-orchestration entry point ``init_``, and the L2CO strategy wrapper
+configuration, the ``UpdateClass`` adapter that wraps optimizers (and,
+since ADR 0017, carries the run loop as methods), the ``RunState``
+helpers (``reset``, ``run``, ``evaluate``; all three re-exported from
+``l2co_optimizers``, ADR 0017), ``init_run_state`` -- which resolves an
+``OptimizationStep`` against a ``Task`` (ADR 0018) -- and the L2CO
+strategy wrapper
 (``l2co_population_strategy``) that exposes a trained two-stage model as an
 evosax-style strategy.
 """
 
-from l2co_optimizers import ALIAS_HYPERPARAMETER, OptimizationStep, UpdateClass
+from l2co_optimizers import (
+    ALIAS_HYPERPARAMETER,
+    OptimizationStep,
+    RunState,
+    UpdateClass,
+    evaluate,
+    reset,
+    run,
+)
 
 from l2co._src.rollout import RolloutWrapper, RunOptimization
-from l2co._src.run_state import RunState, reset, run
 from l2co._src.strategy_wrapper import l2co_population_strategy
-from l2co._src.update_class import evaluate, init_
+from l2co._src.task_bridge import init_run_state
 
 __all__ = [
     "ALIAS_HYPERPARAMETER",
@@ -24,7 +34,7 @@ __all__ = [
     "RunState",
     "UpdateClass",
     "evaluate",
-    "init_",
+    "init_run_state",
     "l2co_population_strategy",
     "reset",
     "run",
