@@ -12,8 +12,18 @@ The run loop moves onto `UpdateClass` in `l2co-optimizers`
 **Requires an `l2co-optimizers` that ships `UpdateClass.run` and
 `RunState`** (the release after 0.1.0).
 
+Then the task stops at l2co (`docs/adr/0018`): `l2co-optimizers` no
+longer has a task type, and l2co is the only bridge between `Task` and
+`OptimizationStep`. **Requires the matching `l2co-optimizers`**
+(bare factories take `model` / `loss_fn` / `pass_rng`).
+
 ### Added
 
+- `init_run_state(optimizer, task, bounded, key)` (in `l2co.optimization`
+  and at the package root): resolves an `OptimizationStep` against a
+  `Task` and builds the `RunState`.
+- `l2co.optimizers.meta_optimizers`: the registry `register_optimizer`
+  fills.
 - `history_to_xarray`, `history_to_xarray_realizations` and
   `history_to_dataloader` in `l2co.history` and at the package root: the
   `HistoryState` exports, as free functions.
@@ -28,11 +38,24 @@ The run loop moves onto `UpdateClass` in `l2co-optimizers`
 - `RunState`, `reset`, `run` and `evaluate` move to `l2co_optimizers`
   (with `batch_reset` / `batch_run` / `batch_evaluate`) and are
   re-exported unchanged as `l2co.RunState` / `l2co.reset` / `l2co.run` /
-  `l2co.evaluate` and from `l2co.optimization`. `RunState.init` now takes
-  any `l2co_optimizers.RunnableTaskLike`; `Task` qualifies.
+  `l2co.evaluate` and from `l2co.optimization`.
+- **BREAKING:** `l2co.optimizer_mapping` / `l2co.register_optimizer` (and
+  the `l2co.optimizers` versions) are now l2co's Task-level registry.
+  `optimizer_mapping(name)` returns a factory called with `task=` for
+  every name, meta or bare (unchanged for existing call sites).
+  `register_optimizer` registers a *meta-optimizer*, and raises if the
+  name is already a bare optimizer. `l2co.optimizers` no longer
+  re-exports the bare `optimizers` dict; import it from
+  `l2co_optimizers`.
+- **BREAKING:** `RunState.init` (from `l2co_optimizers`) takes
+  `(update_class, *, model, dataset, batch_size, key)`. Replace
+  `RunState.init(optimizer=, task=, bounded=, key=)` with
+  `l2co.init_run_state(optimizer=, task=, bounded=, key=)`.
 
 ### Removed
 
+- **BREAKING:** the `TaskLike` re-export from `l2co._src.typing`
+  (`l2co_optimizers` deletes `TaskLike` / `RunnableTaskLike`).
 - **BREAKING:** `HistoryState.to_xarray`, `to_xarray_realizations` and
   `to_dataloader`. Call `l2co.history_to_xarray(history_state, ...)`,
   `l2co.history_to_xarray_realizations(history_state, ...)` and

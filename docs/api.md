@@ -30,6 +30,8 @@
 
 ::: l2co.register_optimizer
 
+::: l2co.init_run_state
+
 ::: l2co.SHADE
 
 ::: l2co.optimizers.shade_update

@@ -42,7 +42,6 @@ from l2co_optimizers import (
     StopFunction,
     UpdateClass,
     menu_loss_and_grad,
-    register_optimizer,
     register_schedule_namer,
 )
 from l2co_tasks import Task
@@ -50,6 +49,7 @@ from l2co_tasks import Task
 # Local
 from l2co._src.models.l2co_model import L2COModel
 from l2co._src.strategy_wrapper import l2co_population_strategy
+from l2co._src.task_bridge import register_optimizer
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -320,15 +320,16 @@ class L2COUpdateClass(UpdateClass):
         optimizer. The stage-1 fire happens in-graph at
         ``round(t * budget_fn(task=task))`` completed generations.
 
-        This signature matches the registry contract called by
-        :meth:`l2co.RunState.init`: ``task``, ``opt_hash``,
-        ``bounded`` and ``stop_fn`` are supplied by ``RunState.init``
+        This signature matches the meta-optimizer registry contract
+        called by :func:`l2co.init_run_state`: ``task``, ``opt_hash``,
+        ``bounded`` and ``stop_fn`` are supplied by ``init_run_state``
         directly, and the remaining construction arguments arrive
         through the :class:`~l2co._src.optimizer_schedule.
         OptimizationStep`'s ``hyperparameters`` once the ``"l2co"``
         optimizer is registered (importing ``l2co`` performs that
-        registration via ``register_optimizer``). It can also be
-        called directly, e.g. from a notebook.
+        registration via l2co's ``register_optimizer``,
+        ``docs/adr/0018``). It can also be called directly, e.g. from
+        a notebook.
 
         Parameters
         ----------
@@ -400,7 +401,7 @@ class L2COUpdateClass(UpdateClass):
         UpdateClass
             Configured L2CO meta-optimizer wrapper; its ``popsize``
             is the strategy's ``population_size`` (max menu
-            popsize), so ``RunState.init`` and ``reset`` sample a
+            popsize), so ``init_run_state`` and ``reset`` sample a
             compatible population.
 
         Raises
@@ -463,11 +464,11 @@ class L2COUpdateClass(UpdateClass):
 #                                                       l2co registry injection
 # =============================================================================
 
-# Inject l2co's own two-stage meta-optimizer into the optimizer registry so
-# an ``OptimizationStep(optimizer="l2co", ...)`` resolves to
-# ``L2COUpdateClass`` inside ``l2co.RunState.init``. This is a side effect of
-# importing ``l2co`` (see ``l2co/__init__.py``); the base ``optimizers``
-# mapping deliberately no longer hardcodes ``"l2co"`` so the registry treats
+# Inject l2co's own two-stage meta-optimizer into l2co's Task-level registry
+# (``docs/adr/0018``) so an ``OptimizationStep(optimizer="l2co", ...)``
+# resolves to ``L2COUpdateClass`` inside ``l2co.init_run_state``. This is a
+# side effect of importing ``l2co`` (see ``l2co/__init__.py``); the bare
+# ``optimizers`` mapping never holds ``"l2co"``, so the registry treats
 # both meta-optimizers ("l2co" here, "rl2co" from rl2co) the same way
 # (``docs/adr/0007``). ``task``, ``opt_hash``, ``bounded`` and ``stop_fn``
 # are explicit parameters; the remaining construction arguments

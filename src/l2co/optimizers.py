@@ -7,13 +7,23 @@ and remains the stable import path for downstream packages (rl2co,
 agentic-l2co). New code may import from ``l2co_optimizers`` directly.
 Everything needed to write a new optimizer -- or a meta-optimizer that
 self-registers via :func:`register_optimizer` -- is reachable here
-(``docs/adr/0007``):
+(``docs/adr/0007``).
 
-* **Registry & construction** -- ``optimizer_mapping`` / ``optimizers``
-  (name -> factory), the ``register_optimizer`` extension point and its
-  naming twin ``register_schedule_namer`` (how a meta-optimizer's steps
-  are named, ``docs/adr/0016``), the ``UpdateClass`` container every
-  factory returns, and the ``create_schedules_experimentdata`` helper.
+The registry is the exception (``docs/adr/0018``): ``optimizer_mapping``
+and ``register_optimizer`` here are l2co's *Task-level* ones, not the
+bare registry's. ``optimizer_mapping(name)`` returns a factory called
+with ``task=``, for meta-optimizers and bare optimizers alike;
+``register_optimizer`` registers a meta-optimizer into
+``meta_optimizers``. The bare registry (``optimizers``, and the
+factories that take ``model`` / ``loss_fn`` / ``pass_rng``) is imported
+from ``l2co_optimizers`` directly.
+
+* **Registry & construction** -- the Task-level ``optimizer_mapping``,
+  the ``register_optimizer`` meta-optimizer extension point and
+  ``meta_optimizers`` it fills, the naming twin
+  ``register_schedule_namer`` (how a meta-optimizer's steps are named,
+  ``docs/adr/0016``), the ``UpdateClass`` container every factory
+  returns, and the ``create_schedules_experimentdata`` helper.
 * **Contract types** -- the ``InitFunction`` / ``StepFunction`` /
   ``StopFunction`` signatures, the handshake-side ``AskFunction`` /
   ``TransferReadFunction`` / ``TransferWriteFunction`` signatures,
@@ -106,15 +116,12 @@ from l2co_optimizers import (
     normalized_optax_normal,
     optax_update,
     optax_update_extra_kwargs,
-    optimizer_mapping,
-    optimizers,
     optstep_to_subopt,
     pop_sub_optimizer,
     population_best,
     population_best_one,
     population_handshake_for,
     random_search_update,
-    register_optimizer,
     register_schedule_namer,
     resolve_popsize,
     scale_by_zoom_linesearch_per_eval_key,
@@ -126,6 +133,12 @@ from l2co_optimizers import (
     vmapped_loss_and_grad_with_rng,
     vmapped_loss_with_rng,
     write_none,
+)
+
+from l2co._src.task_bridge import (
+    meta_optimizers,
+    optimizer_mapping,
+    register_optimizer,
 )
 
 __all__ = [
@@ -173,12 +186,12 @@ __all__ = [
     "lbfgs_per_eval_key",
     "lbfgs_update",
     "menu_loss_and_grad",
+    "meta_optimizers",
     "normalized_optax_from_state",
     "normalized_optax_normal",
     "optax_update",
     "optax_update_extra_kwargs",
     "optimizer_mapping",
-    "optimizers",
     "optstep_to_subopt",
     "pop_sub_optimizer",
     "population_best",

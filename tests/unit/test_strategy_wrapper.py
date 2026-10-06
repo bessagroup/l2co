@@ -670,7 +670,12 @@ class TestBridge:
 def _resolved_popsize(step: OptimizationStep, task) -> int:
     from l2co_optimizers import resolve_popsize
 
-    return resolve_popsize(step, task)
+    return resolve_popsize(
+        step,
+        model=task.model,
+        loss_fn=task.loss_fn,
+        pass_rng=task.pass_rng,
+    )
 
 
 #                                                  opt_state handshake gating

@@ -22,6 +22,9 @@ from l2co_optimizers import (
 )
 from l2co_tasks import Task
 
+# Local
+from l2co._src.task_bridge import init_run_state
+
 # =============================================================================
 
 
@@ -75,7 +78,7 @@ class RolloutWrapper(eqx.Module):
         RolloutWrapper
             Initialized rollout wrapper.
         """
-        run_state = RunState.init(
+        run_state = init_run_state(
             optimizer=optimizer,
             task=task,
             bounded=bounded,

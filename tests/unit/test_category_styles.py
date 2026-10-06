@@ -12,7 +12,6 @@ import itertools
 import matplotlib
 import numpy as np
 import pytest
-import re
 
 import xarray as xr
 
@@ -33,14 +32,10 @@ from l2co._src.visualize.colors import (  # noqa: E402
     optimizer_category,
 )
 from l2co._src.visualize.plotting import plot_ertd  # noqa: E402
-from l2co.optimizers import optimizers  # noqa: E402
+from l2co.optimizers import meta_optimizers  # noqa: E402
+from l2co_optimizers import normalize_key, optimizers  # noqa: E402
 
 # =============================================================================
-
-
-def normalize_key(name: str) -> str:
-    # Registry-key normalisation (l2co_optimizers._src.utils.normalize_key).
-    return re.sub(r"[^a-zA-Z0-9]", "", name).lower()
 
 
 def _style_key(style):
@@ -53,7 +48,8 @@ def _style_key(style):
 
 def test_every_registered_optimizer_has_a_category_but_the_references():
     categorised = {normalize_key(name) for name in OPTIMIZER_CATEGORIES}
-    assert set(optimizers) - categorised == {"l2co", "randomsearch"}
+    registered = set(optimizers) | set(meta_optimizers)
+    assert registered - categorised == {"l2co", "randomsearch"}
 
 
 def test_no_optimizer_sits_in_two_categories():

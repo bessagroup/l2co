@@ -78,7 +78,9 @@ def run_l2co_shade(fn, seed: int) -> float:
 
     task = Task(model=jnp.zeros(N_DIMS), loss_fn=fn, global_min=0.0)
     update_class = shade_update(
-        task=task,
+        model=task.model,
+        loss_fn=task.loss_fn,
+        pass_rng=task.pass_rng,
         opt_hash=1,
         bounded=BOUNDS,
         stop_fn=None,

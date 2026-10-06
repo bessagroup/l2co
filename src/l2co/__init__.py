@@ -77,6 +77,7 @@ from l2co.optimization import (
     RunState,
     UpdateClass,
     evaluate,
+    init_run_state,
     l2co_population_strategy,
     reset,
     run,
@@ -138,6 +139,7 @@ __all__ = [
     "history_to_dataloader",
     "history_to_xarray",
     "history_to_xarray_realizations",
+    "init_run_state",
     "l2co_population_strategy",
     "models",
     "mse_loss",
@@ -159,8 +161,9 @@ __all__ = [
 ]
 
 # Side-effecting import (kept after the public re-exports): registers the
-# "l2co" meta-optimizer into l2co's own optimizer registry, so
+# "l2co" meta-optimizer into l2co's Task-level registry, so
 # ``OptimizationStep(optimizer="l2co", ...)`` resolves to ``L2COUpdateClass``
-# in ``RunState.init``. Mirrors how importing rl2co registers "rl2co"; the
-# base registry no longer hardcodes it (see ``docs/adr/0007``).
+# in ``init_run_state`` (``docs/adr/0018``). Mirrors how importing rl2co
+# registers "rl2co"; the base registry no longer hardcodes it (see
+# ``docs/adr/0007``).
 from l2co._src import meta_optimizer as _meta_optimizer  # noqa: F401
