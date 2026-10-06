@@ -482,7 +482,7 @@ class DataLoader:
         Derived from ``success`` nullity: a ``(problem, schedule)`` cell is
         valid iff it has at least one non-null target. This assumes the
         ``success`` variable is present, which holds for every dataset
-        produced by the databank and by ``HistoryState.to_dataloader``
+        produced by the databank and by :func:`l2co.history_to_dataloader`
         (both always build the ERT metrics). ``join="outer"`` NaN-pads any
         missing ``(task, optimizer)`` combination identically across the
         loss and performance variables, so this mask matches the loss-side

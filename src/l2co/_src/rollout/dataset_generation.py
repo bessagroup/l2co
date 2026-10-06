@@ -21,6 +21,7 @@ from l2co_optimizers import OptimizationStep
 from l2co_tasks import Task
 
 from l2co._src.databank.provenance import dumps_provenance
+from l2co._src.history_state import history_to_xarray_realizations
 from l2co._src.naming import PROVENANCE
 from l2co._src.rollout.rollout_wrapper import RolloutWrapper
 
@@ -220,7 +221,7 @@ class RunOptimization(DataGenerator):
             n_realizations=self.n_realizations,
         )
 
-        data_xarr = history_state.to_xarray_realizations()
+        data_xarr = history_to_xarray_realizations(history_state)
 
         if provenance is not None:
             data_xarr.attrs[PROVENANCE] = dumps_provenance(provenance)

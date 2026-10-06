@@ -40,7 +40,7 @@ VALS = ["False", "False", "20", "gallagher_21_peaks", "0", "0.0", "-116.56"]
 
 
 def _labelled_dataset() -> xr.Dataset:
-    """Minimal dataset shaped like ``HistoryState.to_dataloader`` output."""
+    """Minimal dataset shaped like ``history_to_dataloader`` output."""
     labels = (
         xr.DataArray(
             VALS, coords={FEATURE: FEATS}, dims=[FEATURE], name=TASK_LABELS

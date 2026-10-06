@@ -18,10 +18,7 @@ from l2co._src.rollout import (
     RolloutWrapper,
 )
 from l2co._src.run_state import batch_reset
-from l2co._src.update_class import (
-    batch_run_randomsearch,
-    run_randomsearch,
-)
+from l2co.history import history_to_xarray_realizations
 from l2co_tasks import create_bbob_task
 from l2co_tasks import create_pde_task
 from l2co.sampling import normal_sampling
@@ -59,7 +56,7 @@ def run(
         n_realizations=n_realizations,
     )
 
-    data_xarr = history_state.to_xarray_realizations()
+    data_xarr = history_to_xarray_realizations(history_state)
 
 
 # =============================================================================
@@ -184,7 +181,7 @@ def test_random_search_one_shot_shapes_and_best():
 
 
 def test_random_search_lax_map_matches_vmap():
-    """``batch_run_randomsearch`` (sequential ``lax.map``) must match vmap.
+    """Random search's ``batch_run`` (sequential ``lax.map``) matches vmap.
 
     The runner was changed from ``eqx.filter_vmap`` (which materialises
     every realization's candidate set at once) to a sequential
@@ -229,8 +226,7 @@ def test_random_search_lax_map_matches_vmap():
     )
 
     # Shipped implementation: sequential lax.map over realizations.
-    out_map = batch_run_randomsearch(
-        update_class=rs.update_class,
+    out_map = rs.update_class.batch_run(
         opt_state=rs.opt_state,
         params=rs.params,
         batch_state=rw.batch_state,
@@ -248,8 +244,7 @@ def test_random_search_lax_map_matches_vmap():
     )
 
     def _single(opt_state, params, batch_state, key):
-        return run_randomsearch(
-            update_class=rs.update_class,
+        return rs.update_class.run(
             opt_state=opt_state,
             params=params,
             batch_state=batch_state,
@@ -276,14 +271,16 @@ def test_random_search_lax_map_matches_vmap():
 def test_random_search_chunked_semantics(monkeypatch):
     """Chunked random search stays self-consistent across chunk splits.
 
-    ``run_randomsearch`` processes the candidate set in chunks of
+    Random search's ``run`` processes the candidate set in chunks of
     ``_rs_chunking`` iterations to bound peak memory. Forcing a tiny chunk
     target splits a small budget into several padded chunks, exercising the
     scan, the padding mask, and the cross-chunk best/final reductions.
     ``n_iterations=7`` is deliberately not a multiple of the chunk size, so
     the last chunk carries a padded iteration that must be masked out.
     """
-    import l2co._src.update_class as uc_mod
+    # The chunking constant is private to l2co_optimizers; this end-to-end
+    # check through ``RolloutWrapper`` mirrors the unit test there.
+    import l2co_optimizers._src.random_search as uc_mod
 
     # 8 candidates/chunk with popsize 3 -> chunk_iters=2, n_chunks=4 for
     # n_iterations=7 (padded to 8; last iteration is padding).

@@ -3,8 +3,9 @@ Module for defining type aliases used throughout the optimization process.
 
 The optimizer-contract aliases (``InputParameters``, ``StepFunction``,
 ``StopFunction``, ...) live in :mod:`l2co_optimizers` and are re-exported
-here so existing ``l2co._src.typing`` imports keep working. Only the
-aliases describing l2co's own rollout machinery are defined here.
+here so existing ``l2co._src.typing`` imports keep working. Only
+``BudgetFn`` is defined here; the run-loop ``Carry`` moved to
+``l2co_optimizers`` with the loop (ADR 0017).
 """
 
 #                                                                       Modules
@@ -14,11 +15,9 @@ from __future__ import annotations
 
 # Standard
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 # Third-party
-import jax
-from jaxtyping import PRNGKeyArray, PyTree
 from l2co_optimizers import (
     AskFunction,
     InitFunction,
@@ -35,11 +34,6 @@ from l2co_optimizers import (
     TransferWriteFunction,
 )
 
-if TYPE_CHECKING:
-    from l2co_optimizers import RecentHistory
-
-    from l2co._src.batching import BatchState
-
 #                                                          Authorship & Credits
 # =============================================================================
 __author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
@@ -50,7 +44,6 @@ __status__ = "Stable"
 __all__ = [
     "AskFunction",
     "BudgetFn",
-    "Carry",
     "InitFunction",
     "InputParameters",
     "LossFunction",
@@ -66,14 +59,3 @@ __all__ = [
 ]
 
 BudgetFn = Callable[[Any], int]
-
-#: The scan carry of l2co's rollout: ``(params, opt_state, key,
-#: batch_state, done, recent_history)``.
-Carry = tuple[
-    InputParameters,
-    PyTree,
-    PRNGKeyArray,
-    "BatchState",
-    jax.Array,
-    "RecentHistory",
-]
