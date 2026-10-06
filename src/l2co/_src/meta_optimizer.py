@@ -41,7 +41,6 @@ from l2co_optimizers import (
     StepFunction,
     StopFunction,
     UpdateClass,
-    menu_loss_and_grad,
     register_schedule_namer,
 )
 from l2co_tasks import Task
@@ -49,6 +48,7 @@ from l2co_tasks import Task
 # Local
 from l2co._src.models.l2co_model import L2COModel
 from l2co._src.strategy_wrapper import l2co_population_strategy
+from l2co._src.switching.menu_eval import menu_loss_and_grad
 from l2co._src.task_bridge import register_optimizer
 
 #                                                          Authorship & Credits

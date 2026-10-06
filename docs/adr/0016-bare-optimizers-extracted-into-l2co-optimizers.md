@@ -3,6 +3,11 @@
 > **Superseded in part by ADR 0017:** the run loop (`init_` / `step` /
 > `run_` / `batch_run_*`), `BatchState`, `Carry` and `HistoryState`'s
 > buffer moved to `l2co-optimizers` after all. The rest stands.
+>
+> **Superseded in part by ADR 0019:** the switching layer
+> (`sub_optimizer`'s `SubOpt` adapter, `handshake_policy`, `menu_eval`)
+> came back to l2co; `state_transfer` and a new `optimizer_parts` seam
+> stay in `l2co-optimizers`.
 
 ADR 0007 kept the optimizers in-repo, behind a hardened facade, and
 named the condition for revisiting that: a split becomes worth it once it

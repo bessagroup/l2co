@@ -17,6 +17,12 @@ longer has a task type, and l2co is the only bridge between `Task` and
 `OptimizationStep`. **Requires the matching `l2co-optimizers`**
 (bare factories take `model` / `loss_fn` / `pass_rng`).
 
+Then the switching layer comes back to l2co (`docs/adr/0019`): l2co
+holds both the bridge to tasks and the machinery that switches between
+optimizers; `l2co-optimizers` keeps the transfer ports and a new
+`optimizer_parts` seam. **Requires the matching `l2co-optimizers`**
+(ships `optimizer_parts`, no longer ships `SubOpt`).
+
 ### Added
 
 - `init_run_state(optimizer, task, bounded, key)` (in `l2co.optimization`
@@ -27,8 +33,23 @@ longer has a task type, and l2co is the only bridge between `Task` and
 - `history_to_xarray`, `history_to_xarray_realizations` and
   `history_to_dataloader` in `l2co.history` and at the package root: the
   `HistoryState` exports, as free functions.
+- `l2co.optimizers.optimizer_parts`, `GradientParts` and
+  `PopulationParts` (re-exported from `l2co_optimizers`): an optimizer
+  unpacked into the optax transform or `(init, ask, tell)` triple a
+  switching loop drives, with popsize, family and transfer ports but no
+  handshake.
 
 ### Changed
+
+- The switching layer is implemented in l2co again
+  (`l2co._src.switching`; `docs/adr/0019`): `SubOpt`,
+  `grad_sub_optimizer`, `pop_sub_optimizer`, `optstep_to_subopt`,
+  `HandshakePolicy`, `HANDSHAKE_POLICY`, `DEFAULT_HANDSHAKE_POLICY`,
+  `handshake_policy_for`, `population_best`, `population_best_one` and
+  `menu_loss_and_grad` keep their `l2co.optimizers` names but are no
+  longer re-exports of `l2co_optimizers` objects. `optstep_to_subopt`
+  now unpacks `l2co_optimizers.optimizer_parts` and attaches the
+  handshake; the `SubOpt` it builds is unchanged.
 
 - `BatchState` and `HistoryState` are re-exported from `l2co_optimizers`
   (same names under `l2co` / `l2co.history`). `run_state.run` /
@@ -54,6 +75,10 @@ longer has a task type, and l2co is the only bridge between `Task` and
 
 ### Removed
 
+- **BREAKING:** `l2co.optimizers.resolve_popsize` and
+  `CONSTRUCTOR_HYPERPARAMETERS` (private in `l2co-optimizers` now). Read
+  the popsize as `optimizer_parts(opt_step, model=, loss_fn=,
+  pass_rng=).popsize`.
 - **BREAKING:** re-exports of names `l2co-optimizers` made private (no
   sibling package used them): from `l2co.optimizers`, the per-library
   factories `optax_update`, `optax_update_extra_kwargs`,
