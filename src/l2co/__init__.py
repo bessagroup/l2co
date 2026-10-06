@@ -83,7 +83,6 @@ from l2co.optimization import (
     run,
 )
 from l2co.optimizers import (
-    SHADE,
     create_schedules_experimentdata,
     optimizer_mapping,
     register_optimizer,
@@ -120,7 +119,6 @@ __all__ = [
     "RolloutWrapper",
     "RunOptimization",
     "RunState",
-    "SHADE",
     "ScikitStage0Model",
     "Stage0Loader",
     "Stage0Model",
