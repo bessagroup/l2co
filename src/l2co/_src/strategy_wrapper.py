@@ -91,11 +91,13 @@ fire therefore sees ``switch_generation`` post-update entries — the
 same trajectory *semantics* the stage-1 model was trained on.
 """
 
+# Standard
 from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
 
+# Third-party
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -110,6 +112,7 @@ from l2co_optimizers import (
 )
 from l2co_tasks import Task
 
+# Local
 from l2co._src.models.l2co_model import L2COModel
 from l2co._src.models.stage1 import Stage1Model
 from l2co._src.tree_utils import traj_and_stair

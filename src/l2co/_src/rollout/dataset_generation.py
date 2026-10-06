@@ -5,6 +5,7 @@ Used exclusively from the ``experiments/create_optimization_dataset/main.py``
 Hydra pipeline; not part of the inference-time API.
 """
 
+# Standard
 from __future__ import annotations
 
 import gc
@@ -12,6 +13,7 @@ import logging
 from collections.abc import Callable
 from time import time
 
+# Third-party
 import equinox as eqx
 import jax
 import jax.random as jr
@@ -20,10 +22,18 @@ from f3dasm.datageneration import DataGenerator
 from l2co_optimizers import OptimizationStep
 from l2co_tasks import Task
 
+# Local
 from l2co._src.databank.provenance import dumps_provenance
 from l2co._src.history_state import history_to_xarray_realizations
 from l2co._src.naming import PROVENANCE
 from l2co._src.rollout.rollout_wrapper import RolloutWrapper
+
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = "Martin van der Schelling (m.p.vanderschelling@tudelft.nl)"
+__credits__ = ["Martin van der Schelling"]
+__status__ = "Stable"
+# =============================================================================
 
 logger = logging.getLogger(__name__)
 

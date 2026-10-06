@@ -23,7 +23,7 @@ from l2co_optimizers import (
 from l2co_tasks import Task
 
 # Local
-from l2co._src.task_bridge import init_run_state
+from l2co._src.task_bridge import optimizer_mapping
 
 # =============================================================================
 
@@ -78,15 +78,27 @@ class RolloutWrapper(eqx.Module):
         RolloutWrapper
             Initialized rollout wrapper.
         """
-        run_state = init_run_state(
-            optimizer=optimizer,
+        # Create the UpdateClass
+        update_class = optimizer_mapping(optimizer.optimizer)(
+            **optimizer.hyperparameters,
             task=task,
+            opt_hash=optimizer.hash,
             bounded=bounded,
+            stop_fn=optimizer.stopping_fn,
+        )
+
+        # Initialize the RunState
+        run_state = RunState.init(
+            update_class,
+            model=task.model,
+            dataset=task.loaded_dataset,
+            batch_size=task.batch_size,
             key=key,
         )
 
         dataset = task.loaded_dataset
 
+        # Initialize the BatchState
         batch_state = BatchState.init(
             dataset=dataset,
             batch_size=task.batch_size,

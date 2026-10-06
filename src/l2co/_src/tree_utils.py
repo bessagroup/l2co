@@ -34,28 +34,6 @@ __status__ = "Stable"
 # =============================================================================
 
 
-# def ffill(x: jnp.ndarray) -> jnp.ndarray:
-#     """Forward fill NaN values in array.
-
-#     Parameters
-#     ----------
-#     x : jnp.ndarray
-#         Input array with potential NaN values.
-
-#     Returns
-#     -------
-#     jnp.ndarray
-#         Array with NaN values forward filled.
-#     """
-
-#     def scan_fn(carry, xi):
-#         carry = jnp.where(jnp.isnan(xi), carry, xi)
-#         return carry, carry
-
-#     _, filled = jax.lax.scan(scan_fn, jnp.nan, x)
-#     return filled
-
-
 def ffill(x: jnp.ndarray) -> jnp.ndarray:
     """Forward fill NaN values in a 2D array along axis 0."""
 
