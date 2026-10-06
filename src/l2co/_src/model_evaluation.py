@@ -1,12 +1,11 @@
 """
-The task-side helpers around :class:`~l2co_optimizers.UpdateClass`.
+Scoring models through a task's loss on one batch.
 
-The run loop itself -- ``init_state`` / ``step`` / ``run`` /
-``batch_run`` -- is a set of ``UpdateClass`` methods in
-``l2co_optimizers`` (ADR 0017). What stays here is :func:`init_`, the
-public free-function spelling of :meth:`UpdateClass.init_state`, and
-:func:`evaluate`, which scores models through a task's loss and has no
-optimizer in it.
+:func:`evaluate` is what ``run_state.reset`` uses to pick the best of a
+freshly sampled population, and what the plotting helpers use to draw
+loss landscapes. It takes a model and a loss function, not an
+optimizer: the run loop itself is a set of ``UpdateClass`` methods in
+``l2co_optimizers`` (ADR 0017).
 """
 
 #                                                                       Modules
@@ -21,7 +20,7 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 from jaxtyping import PRNGKeyArray, PyTree
-from l2co_optimizers import BatchState, InputParameters, UpdateClass
+from l2co_optimizers import BatchState
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -31,46 +30,8 @@ __status__ = "Stable"
 # =============================================================================
 
 __all__ = [
-    "UpdateClass",
     "evaluate",
-    "init_",
 ]
-
-
-def init_(
-    update_class: UpdateClass,
-    params: InputParameters,
-    batch_state: BatchState,
-    dataset: dict[str, jax.Array],
-    key: PRNGKeyArray,
-) -> PyTree:
-    """Initialize the optimizer state.
-
-    A delegate to :meth:`UpdateClass.init_state`, kept because
-    ``l2co.init_`` is public.
-
-    Parameters
-    ----------
-    update_class : UpdateClass
-        Optimizer to initialize.
-    params : InputParameters
-        Current input parameters.
-    batch_state : BatchState
-        Current batch state.
-    dataset : dict[str, jax.Array]
-        Dataset for evaluation.
-    key : PRNGKeyArray
-        PRNG key for random operations.
-
-    Returns
-    -------
-    PyTree
-        Initialized optimizer state.
-    """
-    return update_class.init_state(params, batch_state, dataset, key)
-
-
-# =============================================================================
 
 
 def _evaluate_one(

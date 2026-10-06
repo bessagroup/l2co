@@ -35,6 +35,7 @@ from sklearn.metrics import r2_score
 
 # Local
 from l2co._src.data import DataLoader
+from l2co._src.model_evaluation import evaluate
 from l2co._src.naming import (
     BUDGET,
     FEATURE,
@@ -48,7 +49,6 @@ from l2co._src.naming import (
     UPDATE_STEP,
 )
 from l2co._src.performance import EPSILON
-from l2co._src.update_class import evaluate
 from l2co._src.visualize.colors import (
     CATEGORY_PALETTES,
     display_name,

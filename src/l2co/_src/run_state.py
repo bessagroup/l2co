@@ -26,7 +26,7 @@ from l2co_optimizers import (
 from l2co_tasks import Task
 
 # Local
-from l2co._src.update_class import evaluate as evaluate_update_class
+from l2co._src.model_evaluation import evaluate
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -180,7 +180,7 @@ def reset(
         run_state.update_class.popsize,
     )
 
-    loss = evaluate_update_class(
+    loss = evaluate(
         eqx.combine(static, samples),
         batch_state,
         dataset,

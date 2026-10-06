@@ -51,20 +51,22 @@ longer inspect the optimizer:
   subclass would not help, because the moved `run` constructs the base
   class.
 - `evaluate`, which scores a *model* through a loss function and has no
-  `UpdateClass` in it.
+  `UpdateClass` in it. It moves to `_src/model_evaluation.py`, so
+  nothing named `update_class` is left in l2co.
 - `RunState`, `reset` / `run` / `batch_run` / `batch_evaluate`,
   `RolloutWrapper`, and every meta-optimizer.
 
 **Compatibility.**
 - `l2co.BatchState`, `l2co.HistoryState` and `l2co.history` re-export
-  the moved objects. `l2co.run`, `l2co.reset` and `l2co.init_` keep
-  their signatures; `init_` becomes a delegate to
-  `UpdateClass.init_state`.
+  the moved objects. `l2co.run` and `l2co.reset` keep their
+  signatures.
+- **Breaking:** `l2co.init_` is removed rather than kept as a one-line
+  delegate. Its only caller was rl2co's handshake, which now calls
+  `update_class.init_state` itself.
 - **Breaking:** `HistoryState.to_xarray` / `to_xarray_realizations` /
   `to_dataloader` are gone; call the free functions instead.
-- The private `l2co._src.batching` module and the `run_` /
-  `batch_run_*` / `step` functions of `l2co._src.update_class` are
-  deleted, not shimmed, as 0016 did for the optimizer modules. Nothing
+- The private `l2co._src.batching` and `l2co._src.update_class` modules
+  are deleted, not shimmed, as 0016 did for the optimizer modules. Nothing
   stored references them by path: `HistoryState` and `BatchState` are
   never pickled, and checkpoints go through
   `eqx.tree_serialise_leaves`, which is path-independent.

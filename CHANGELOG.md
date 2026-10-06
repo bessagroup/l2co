@@ -24,8 +24,7 @@ release after 0.1.0).
   (same names under `l2co` / `l2co.history`). `run_state.run` /
   `batch_run` call `UpdateClass.run` / `batch_run`, so the driver choice
   (fused, sequential for `sequential_realizations`, sequential for random
-  search) belongs to the optimizer. `l2co.init_` delegates to
-  `UpdateClass.init_state`.
+  search) belongs to the optimizer.
 
 ### Removed
 
@@ -33,11 +32,14 @@ release after 0.1.0).
   `to_dataloader`. Call `l2co.history_to_xarray(history_state, ...)`,
   `l2co.history_to_xarray_realizations(history_state, ...)` and
   `l2co.history_to_dataloader(history_state, ...)` instead.
-- The private `l2co._src.batching` module and the `step` / `batch_step_`
-  / `run_` / `batch_run_` / `batch_run_sequential_` / `run_randomsearch` /
-  `batch_run_randomsearch` functions of `l2co._src.update_class`, plus the
-  `Carry` alias of `l2co._src.typing`. They are `UpdateClass` methods and
-  `l2co_optimizers.Carry` now.
+- **BREAKING:** `l2co.init_` (also `l2co.optimization.init_`). Call
+  `update_class.init_state(params, batch_state, dataset, key)` instead.
+- The private `l2co._src.batching` and `l2co._src.update_class` modules
+  (`evaluate` now lives in `l2co._src.model_evaluation`; `l2co.evaluate`
+  is unchanged), and with them `step` / `batch_step_` / `run_` /
+  `batch_run_` / `batch_run_sequential_` / `run_randomsearch` /
+  `batch_run_randomsearch`, plus the `Carry` alias of `l2co._src.typing`.
+  They are `UpdateClass` methods and `l2co_optimizers.Carry` now.
 
 - **BREAKING:** `RolloutWrapper.init_from_stage0`, `RolloutWrapper.evaluate`
   and `RolloutWrapper.run`, plus `reset_from_stage0` and `evaluate` in
