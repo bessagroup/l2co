@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-07
+
 The run loop moves onto `UpdateClass` in `l2co-optimizers`
 (`docs/adr/0017`, superseding that half of `docs/adr/0016`).
 **Requires an `l2co-optimizers` that ships `UpdateClass.run` and
@@ -52,6 +54,9 @@ constraints on `Task`** (l2co-tasks ADR 0002).
 
 ### Changed
 
+- `l2co-tasks>=0.3.0` and `l2co-optimizers>=0.3.0` are declared
+  lower bounds: l2co imports `l2co_tasks.Box` (`docs/adr/0020`) and is
+  tested against l2co-optimizers 0.3.0. Until now both were unpinned.
 - The switching layer is implemented in l2co again
   (`l2co._src.switching`; `docs/adr/0019`): `SubOpt`,
   `grad_sub_optimizer`, `pop_sub_optimizer`, `optstep_to_subopt`,

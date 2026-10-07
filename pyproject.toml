@@ -29,8 +29,8 @@ dependencies = [
   "jax>=0.4.30,<=0.9.1",
   "jax-tqdm>=0.4.0",
   "jaxtyping>=0.3.2",
-  "l2co-optimizers",
-  "l2co-tasks",
+  "l2co-optimizers>=0.3.0",
+  "l2co-tasks>=0.3.0",
   "netcdf4>=1.7.3",
   "omegaconf",
   "optax>=0.2.5",
@@ -49,7 +49,7 @@ maintainers = [
 name = "l2co"
 readme = "README.md"
 requires-python = ">=3.12"
-version = "1.6.0"
+version = "1.7.0"
 
 [project.optional-dependencies]
 dev = [
