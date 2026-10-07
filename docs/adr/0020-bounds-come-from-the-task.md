@@ -60,9 +60,12 @@ call factories directly with a pair on an unconstrained task.
 
 **`tasks.bounded` is retired.** It goes from l2co-tasks' 36 task
 configs, from `base_rl2co_train.yaml` and `test.yaml` in
-l2co_experiments, and from the code that reads it
-(`benchmark_rollout.py`, `static_optimizer.py`, rl2co's
-`EnvState.from_config`). The `random` and `grid` samplers keep their own
+l2co_experiments, and from the code that reads it: `benchmark_rollout`,
+`static_optimizer`, the online multitask evaluation, the `evaluate_rl`
+and `agentic_smoke` experiments, and rl2co's `EnvState.from_config`.
+Archived configs and experiments (`conf/_archive`,
+`experiments/_archive`) are left as they were. The `random` and `grid`
+samplers keep their own
 `lower_bound` / `upper_bound` (default 0 and 1): a range for drawing
 starting points is a sampling choice, not a constraint. No config or
 command-line override sets the pair today, so nothing in use is lost.
@@ -80,13 +83,17 @@ l2co_experiments. So:
 2. **l2co_experiments.** Stop reading `tasks.bounded` and stop passing
    `bounded`; give the sampler configs their own range; add the refusal
    at `benchmark_rollout`'s strategy call; drop rl2co's
-   `EnvState.from_config` read. Then l2co-tasks' configs drop the key,
-   once no interpolation refers to it.
+   `EnvState.from_config` read. `EnvState.init` still requires the
+   argument, so the two `env_state` config sections pass an explicit
+   `bounded: null` until step 3. l2co-tasks' configs then drop the key,
+   and its slow floor test gives a unit-domain task a `Box(0, 1)` instead
+   of passing `bounded=(0, 1)`.
 3. **Remove the transitional parameters.** This is the breaking step:
    `init_run_state(optimizer, task, key)`, `RolloutWrapper.init`,
    `RunOptimization`, and in rl2co `EnvState.init`, `RunOptimization`
-   and the on-policy trainer lose `bounded`. agentic-l2co's runner
-   passes it too and changes with it.
+   and the on-policy trainer lose `bounded`, along with the two
+   `bounded: null` config lines. agentic-l2co's runner passes it too and
+   changes with it.
 
 All of this is stage 2 of l2co-tasks ADR 0002: it lands before any task
 carries a box (stage 3).
