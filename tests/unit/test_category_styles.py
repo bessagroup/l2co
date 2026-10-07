@@ -22,6 +22,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 from l2co._src.naming import SCHEDULE  # noqa: E402
 from l2co._src.visualize.colors import (  # noqa: E402
     BASE_OPT_STYLES,
+    CATEGORY_DIRECT_SEARCH,
     CATEGORY_GRADIENT,
     CATEGORY_MEMBERS,
     CATEGORY_MODEL_BASED,
@@ -50,6 +51,29 @@ def test_every_registered_optimizer_has_a_category_but_the_references():
     categorised = {normalize_key(name) for name in OPTIMIZER_CATEGORIES}
     registered = set(optimizers) | set(meta_optimizers)
     assert registered - categorised == {"l2co", "randomsearch"}
+
+
+@pytest.mark.parametrize(
+    "name, category",
+    [
+        ("bfgs", CATEGORY_QUASI_NEWTON),
+        ("dfp", CATEGORY_QUASI_NEWTON),
+        ("ipopt", CATEGORY_QUASI_NEWTON),
+        ("slsqp", CATEGORY_QUASI_NEWTON),
+        ("tnc", CATEGORY_QUASI_NEWTON),
+        ("trustconstr", CATEGORY_QUASI_NEWTON),
+        ("trustkrylov", CATEGORY_QUASI_NEWTON),
+        ("nonlinearcg", CATEGORY_GRADIENT),
+        ("cobyqa", CATEGORY_MODEL_BASED),
+        ("neldermead", CATEGORY_DIRECT_SEARCH),
+        ("powell", CATEGORY_DIRECT_SEARCH),
+    ],
+)
+def test_optimizers_named_by_hand_land_in_their_categories(name, category):
+    # Named in colors.py because l2co-optimizers keeps their tables
+    # private; a misspelt name would categorise nothing.
+    assert name in optimizers
+    assert optimizer_category(name) == category
 
 
 def test_no_optimizer_sits_in_two_categories():
