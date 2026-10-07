@@ -47,7 +47,7 @@ from l2co_tasks import Task
 
 # Local
 from l2co._src.models.l2co_model import L2COModel
-from l2co._src.strategy_wrapper import l2co_population_strategy
+from l2co._src.strategy_wrapper import _l2co_population_strategy
 from l2co._src.switching.menu_eval import menu_loss_and_grad
 from l2co._src.task_bridge import register_optimizer
 
@@ -435,7 +435,7 @@ class L2COUpdateClass(UpdateClass):
 
         max_iterations = budget_fn(task=task)
 
-        strategy = l2co_population_strategy(
+        strategy = _l2co_population_strategy(
             model=model,
             task=task,
             sampler=sampler,

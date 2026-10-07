@@ -36,7 +36,6 @@ def test_rollout_on_noisy_bbob():
         task=task,
         sampler=normal_sampling,
         key=key,
-        bounded=(None, None),
     )
     _, _, history_state = rollout_wrapper.batch_evaluate(
         key=key,

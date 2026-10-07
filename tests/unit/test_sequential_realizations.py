@@ -73,7 +73,6 @@ def _driver_inputs(step: OptimizationStep, sampler, key):
         task=_task(),
         sampler=sampler,
         key=key,
-        bounded=(None, None),
     )
     keys = jr.split(key, N_REALIZATIONS)
     run_state = batch_reset(

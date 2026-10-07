@@ -36,7 +36,6 @@ def run(
     n_iterations: int = 5,
     n_realizations: int = 2,
     key: PRNGKeyArray | None = None,
-    bounded: tuple[float | None, float | None] = (None, None),
     include_input_mean: bool = True,
 ):
     if key is None:
@@ -47,7 +46,6 @@ def run(
         task=task,
         sampler=sampler,
         key=key,
-        bounded=bounded,
     )
 
     _, _, history_state = rollout_wrapper.batch_evaluate(
@@ -163,7 +161,6 @@ def test_random_search_one_shot_shapes_and_best():
         task=task,
         sampler=normal_sampling,
         key=key,
-        bounded=(None, None),
     )
     run_state, _, history_state = rollout_wrapper.batch_evaluate(
         key=key,
@@ -208,7 +205,6 @@ def test_random_search_lax_map_matches_vmap():
         task=task,
         sampler=normal_sampling,
         key=key,
-        bounded=(None, None),
     )
 
     # Per-realization keys + realization-axis run state, exactly as the
@@ -301,7 +297,6 @@ def test_random_search_chunked_semantics(monkeypatch):
         task=task,
         sampler=normal_sampling,
         key=key,
-        bounded=(None, None),
     )
     run_state, _, history_state = rw.batch_evaluate(
         key=key, n_iterations=n_iterations, n_realizations=n_realizations

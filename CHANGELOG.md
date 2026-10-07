@@ -23,11 +23,22 @@ optimizers; `l2co-optimizers` keeps the transfer ports and a new
 `optimizer_parts` seam. **Requires the matching `l2co-optimizers`**
 (ships `optimizer_parts`, no longer ships `SubOpt`).
 
+Then bounds come from the task (`docs/adr/0020`): a task declares its
+box as an `l2co_tasks.Box` in its constraints, and the optimizers clip
+to it. Callers no longer pass `bounded`. **Requires an `l2co-tasks` with
+constraints on `Task`** (l2co-tasks ADR 0002).
+
 ### Added
 
-- `init_run_state(optimizer, task, bounded, key)` (in `l2co.optimization`
+- `init_run_state(optimizer, task, key)` (in `l2co.optimization`
   and at the package root): resolves an `OptimizationStep` against a
-  `Task` and builds the `RunState`.
+  `Task` and builds the `RunState`, clipping to the task's own box.
+- `task_bounds(task)` and `refuse_constraints(task, where)` (in
+  `l2co.optimization` and at the package root): the only way bounds
+  leave a task. `task_bounds` turns a uniform `Box` into the `(lo, hi)`
+  pair optimizers clip to and raises for an inequality, an equality or a
+  non-uniform box; a path that can't enforce constraints calls
+  `refuse_constraints`.
 - `l2co.optimizers.meta_optimizers`: the registry `register_optimizer`
   fills.
 - `history_to_xarray`, `history_to_xarray_realizations` and
@@ -75,6 +86,12 @@ optimizers; `l2co-optimizers` keeps the transfer ports and a new
 
 ### Removed
 
+- **BREAKING:** the `bounded` parameter of `RolloutWrapper.init` and
+  `RunOptimization`. Declare bounds as an `l2co_tasks.Box` in the task's
+  `constraints` instead (`docs/adr/0020`). The optimizer factories keep
+  their `bounded=` keyword, filled from `task_bounds`.
+- **BREAKING:** `l2co_population_strategy` refuses a task with
+  constraints: a strategy driven by hand has no way to enforce them.
 - **BREAKING:** `l2co.optimizers.resolve_popsize` and
   `CONSTRUCTOR_HYPERPARAMETERS` (private in `l2co-optimizers` now). Read
   the popsize as `optimizer_parts(opt_step, model=, loss_fn=,

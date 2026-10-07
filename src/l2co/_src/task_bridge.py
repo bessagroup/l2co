@@ -16,6 +16,10 @@ module is the one place the two meet:
   bare registry, wrapped so it too is called with ``task=``.
 * :func:`init_run_state` -- resolve an ``OptimizationStep`` against a
   task and build the :class:`~l2co_optimizers.RunState` for it.
+* :func:`task_bounds` / :func:`refuse_constraints` -- the task is the
+  only source of bounds (ADR 0020). ``task_bounds`` turns a task's box
+  into the ``(lo, hi)`` pair optimizers clip to; a path with no way to
+  enforce constraints calls ``refuse_constraints`` instead.
 """
 
 #                                                                       Modules
@@ -24,11 +28,14 @@ module is the one place the two meet:
 # Standard
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from functools import cache
 
 # Third-party
-from jaxtyping import PRNGKeyArray
+import jax.tree_util as jtu
+import numpy as np
+from jaxtyping import PRNGKeyArray, PyTree
 from l2co_optimizers import (
     OptimizationStep,
     RunState,
@@ -37,7 +44,7 @@ from l2co_optimizers import (
 )
 from l2co_optimizers import optimizer_mapping as bare_optimizer_mapping
 from l2co_optimizers import optimizers as bare_optimizers
-from l2co_tasks import Task
+from l2co_tasks import Box, Task
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -139,10 +146,94 @@ def _bare_from_task(key: str) -> Callable[..., UpdateClass]:
     return from_task
 
 
+def task_bounds(task: Task) -> tuple[float | None, float | None]:
+    """The box a task declares, as the ``(lo, hi)`` pair optimizers clip to.
+
+    The only way bounds leave a task (ADR 0020). Optimizers take one
+    pair for every parameter, and "best so far" ignores feasibility, so
+    only a box with the same bounds on every parameter can be enforced.
+
+    Parameters
+    ----------
+    task : Task
+        The task whose constraints to read.
+
+    Returns
+    -------
+    tuple[float | None, float | None]
+        ``(None, None)`` for a task without constraints. For a task with
+        a :class:`~l2co_tasks.Box`, its lower and upper bound, with an
+        infinite side as ``None``.
+
+    Raises
+    ------
+    ValueError
+        If the task has an :class:`~l2co_tasks.Inequality` or
+        :class:`~l2co_tasks.Equality`, or a ``Box`` whose bounds differ
+        between parameters.
+    """
+    unsupported = [c for c in task.constraints if not isinstance(c, Box)]
+    if unsupported:
+        names = ", ".join(f"{c.kind} {c.name!r}" for c in unsupported)
+        raise ValueError(
+            f"task {task.name!r} has constraints nothing in l2co can "
+            f"enforce yet ({names}); only a Box is supported (l2co ADR "
+            "0020)"
+        )
+    if not task.constraints:
+        return (None, None)
+    (box,) = task.constraints
+    return (
+        _uniform_bound(task, box.lower, "lower"),
+        _uniform_bound(task, box.upper, "upper"),
+    )
+
+
+def _uniform_bound(task: Task, bound: PyTree, side: str) -> float | None:
+    """One side of a cast box as a single number, ``None`` if infinite."""
+    values = np.concatenate(
+        [np.ravel(np.asarray(leaf)) for leaf in jtu.tree_leaves(bound)]
+        or [np.zeros(0)]
+    )
+    if values.size == 0:
+        return None
+    if not (values == values[0]).all():
+        raise ValueError(
+            f"task {task.name!r} has a Box whose {side} bound differs "
+            "between parameters; optimizers take one (lo, hi) pair for "
+            "all parameters (l2co ADR 0020)"
+        )
+    value = float(values[0])
+    return None if math.isinf(value) else value
+
+
+def refuse_constraints(task: Task, where: str) -> None:
+    """Raise if ``task`` has constraints, for a path that can't enforce
+    any (ADR 0020).
+
+    Parameters
+    ----------
+    task : Task
+        The task about to be run.
+    where : str
+        Name of the calling path, for the error message.
+
+    Raises
+    ------
+    ValueError
+        If ``task`` has any constraint, a ``Box`` included.
+    """
+    if task.constraints:
+        kinds = ", ".join(sorted({c.kind for c in task.constraints}))
+        raise ValueError(
+            f"{where} has no way to enforce a task's constraints, and "
+            f"task {task.name!r} has some ({kinds}); see l2co ADR 0020"
+        )
+
+
 def init_run_state(
     optimizer: OptimizationStep,
     task: Task,
-    bounded: tuple[float | None, float | None],
     key: PRNGKeyArray,
 ) -> RunState:
     """Build the :class:`~l2co_optimizers.RunState` for one optimizer on
@@ -158,8 +249,6 @@ def init_run_state(
         Optimizer configuration.
     task : Task
         Task to optimize.
-    bounded : tuple[float | None, float | None]
-        Box bounds (lower, upper) the optimizer clips to.
     key : PRNGKeyArray
         PRNG key for the batch state and optimizer initialization.
 
@@ -167,12 +256,18 @@ def init_run_state(
     -------
     RunState
         Initialized run state.
+
+    Raises
+    ------
+    ValueError
+        If the task has constraints :func:`task_bounds` can't turn into
+        a pair.
     """
     update_class = optimizer_mapping(optimizer.optimizer)(
         **optimizer.hyperparameters,
         task=task,
         opt_hash=optimizer.hash,
-        bounded=bounded,
+        bounded=task_bounds(task),
         stop_fn=optimizer.stopping_fn,
     )
     return RunState.init(
