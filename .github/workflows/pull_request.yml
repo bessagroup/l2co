@@ -11,10 +11,12 @@ jobs:
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v5
-      # Lint needs only ruff — not the project or its (private) sibling deps,
-      # so we install ruff directly instead of '.[dev]'.
+      # Lint needs only ruff -- not the project or its sibling deps -- so we
+      # install ruff directly instead of '.[dev]'. Pinned to the
+      # ruff-pre-commit rev in .pre-commit-config.yaml, so this job and
+      # check_pre-commit can't disagree; bump the two together.
       - name: Install ruff
-        run: uv pip install --system ruff
+        run: uv pip install --system ruff==0.13.0
       - name: Ruff check
         run: ruff check
       - name: Ruff format check
@@ -37,19 +39,25 @@ jobs:
         with:
           repository: bessagroup/l2co-tasks
           path: l2co-tasks
-          token: ${{ secrets.BESSAGROUP_READ_TOKEN }}
+          ref: ${{ github.base_ref }}
+      - name: Checkout l2co-optimizers (sibling editable dep)
+        uses: actions/checkout@v4
+        with:
+          repository: bessagroup/l2co-optimizers
+          path: l2co-optimizers
+          ref: ${{ github.base_ref }}
       - name: Checkout f3dasm (sibling editable dep)
         uses: actions/checkout@v4
         with:
           repository: bessagroup/f3dasm
           path: f3dasm
-          token: ${{ secrets.BESSAGROUP_READ_TOKEN }}
+          ref: ${{ github.base_ref }}
       - name: Checkout bessaplots (sibling editable dep)
         uses: actions/checkout@v4
         with:
           repository: bessagroup/bessaplots
           path: bessaplots
-          token: ${{ secrets.BESSAGROUP_READ_TOKEN }}
+          ref: ${{ github.base_ref }}
       - name: Set up Python ${{ matrix.version }}
         uses: actions/setup-python@v5
         with:
@@ -97,19 +105,25 @@ jobs:
         with:
           repository: bessagroup/l2co-tasks
           path: l2co-tasks
-          token: ${{ secrets.BESSAGROUP_READ_TOKEN }}
+          ref: ${{ github.base_ref }}
+      - name: Checkout l2co-optimizers
+        uses: actions/checkout@v4
+        with:
+          repository: bessagroup/l2co-optimizers
+          path: l2co-optimizers
+          ref: ${{ github.base_ref }}
       - name: Checkout f3dasm
         uses: actions/checkout@v4
         with:
           repository: bessagroup/f3dasm
           path: f3dasm
-          token: ${{ secrets.BESSAGROUP_READ_TOKEN }}
+          ref: ${{ github.base_ref }}
       - name: Checkout bessaplots
         uses: actions/checkout@v4
         with:
           repository: bessagroup/bessaplots
           path: bessaplots
-          token: ${{ secrets.BESSAGROUP_READ_TOKEN }}
+          ref: ${{ github.base_ref }}
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
@@ -131,8 +145,8 @@ jobs:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v5
       # pre-commit hooks (ruff-pre-commit, local toml-sort) run in their own
-      # isolated envs, so only pre-commit itself is needed — not the project
-      # or its (private) sibling deps.
+      # isolated envs, so only pre-commit itself is needed -- not the project
+      # or its sibling deps.
       - name: Install pre-commit
         run: uv pip install --system pre-commit
       - name: Run pre-commit checks
