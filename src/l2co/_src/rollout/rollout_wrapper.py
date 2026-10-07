@@ -23,7 +23,7 @@ from l2co_optimizers import (
 from l2co_tasks import Task
 
 # Local
-from l2co._src.task_bridge import optimizer_mapping
+from l2co._src.task_bridge import _bounds_from_task, optimizer_mapping
 
 # =============================================================================
 
@@ -68,8 +68,10 @@ class RolloutWrapper(eqx.Module):
         key : PRNGKeyArray
             Random key for initialization.
         bounded : tuple[float, float], optional
-            Parameter bounds as (lower, upper),
-            by default (None, None).
+            Transitional (l2co ADR 0020): must be ``(None, None)`` or
+            ``None``. The optimizer clips to the task's own box (see
+            :func:`~l2co.task_bounds`).
+            To be removed once no caller passes it.
         verbose : float, optional
             Whether to print progress, by default False.
 
@@ -83,7 +85,7 @@ class RolloutWrapper(eqx.Module):
             **optimizer.hyperparameters,
             task=task,
             opt_hash=optimizer.hash,
-            bounded=bounded,
+            bounded=_bounds_from_task(task, bounded, "RolloutWrapper.init"),
             stop_fn=optimizer.stopping_fn,
         )
 

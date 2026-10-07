@@ -79,8 +79,10 @@ from l2co.optimization import (
     evaluate,
     init_run_state,
     l2co_population_strategy,
+    refuse_constraints,
     reset,
     run,
+    task_bounds,
 )
 from l2co.optimizers import (
     create_schedules_experimentdata,
@@ -139,6 +141,7 @@ __all__ = [
     "history_to_xarray_realizations",
     "init_run_state",
     "l2co_population_strategy",
+    "refuse_constraints",
     "models",
     "mse_loss",
     "naming",
@@ -152,6 +155,7 @@ __all__ = [
     "reset",
     "run",
     "sampling",
+    "task_bounds",
     "train_equinox",
     "tree_utils",
     "validation",

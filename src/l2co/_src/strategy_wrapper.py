@@ -114,6 +114,7 @@ from l2co_tasks import Task
 from l2co._src.models.l2co_model import L2COModel
 from l2co._src.models.stage1 import Stage1Model
 from l2co._src.switching.sub_optimizer import SubOpt, optstep_to_subopt
+from l2co._src.task_bridge import refuse_constraints
 from l2co._src.tree_utils import traj_and_stair
 
 # =============================================================================
@@ -288,9 +289,34 @@ def l2co_population_strategy(
         If the menu is empty, the stage-0 prediction is not in the
         menu, ``task.global_min`` is ``None``, the resolved switch
         generation is ``0``, the stage-1 model is not traceable, its
-        logit head does not match the menu size, or
+        logit head does not match the menu size,
         ``opt_state_handshake`` is not one of ``"legacy_reset"`` /
-        ``"per_optimizer"``.
+        ``"per_optimizer"``, or ``task`` has constraints: a strategy
+        has no way to enforce them (l2co ADR 0020).
+    """
+    refuse_constraints(task, "l2co_population_strategy")
+    return _l2co_population_strategy(
+        model=model,
+        task=task,
+        sampler=sampler,
+        t=t,
+        max_iterations=max_iterations,
+        opt_state_handshake=opt_state_handshake,
+    )
+
+
+def _l2co_population_strategy(
+    model: L2COModel,
+    task: Task,
+    sampler: SamplerFunction,
+    t: float,
+    max_iterations: int,
+    opt_state_handshake: str = "legacy_reset",
+) -> _L2COPopulationStrategy:
+    """:func:`l2co_population_strategy` without its constraint check.
+
+    For a caller that enforces the task's box itself: the l2co
+    meta-optimizer clips every population it is handed (ADR 0020).
     """
     if opt_state_handshake not in ("legacy_reset", "per_optimizer"):
         raise ValueError(
