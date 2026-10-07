@@ -332,15 +332,6 @@ def build_pipeline(config: DictConfig) -> Pipeline:
     Pipeline
         Ready to execute with pipeline.run(mode=...).
     """
-    # Check if the optimization is box-constrained
-    if "bounded" in config.tasks:
-        bounded = (
-            config.tasks.bounded.lower_bound,
-            config.tasks.bounded.upper_bound,
-        )
-    else:
-        bounded = (None, None)
-
     # Calculate total number of experiments
     experiment_data_tasks = ExperimentData.from_yaml(
         config.tasks.experimentdata
@@ -363,7 +354,6 @@ def build_pipeline(config: DictConfig) -> Pipeline:
         budget_fn=instantiate(config.budgets),
         seed=int(config.seed),
         n_realizations=config.n_realizations,
-        bounded=bounded,
         clear_jax_cache=config.clear_jax_cache,
         verbose=config.verbose,
         save_input_parameters=config.save_input_parameters,

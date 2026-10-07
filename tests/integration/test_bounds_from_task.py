@@ -2,9 +2,8 @@
 
 ``task_bounds`` is the only way bounds leave a task; the two entry
 points that build optimizers (``init_run_state``, ``RolloutWrapper.init``)
-take them from it and, during the transition, refuse any bounds a caller
-still passes. A path with no way to enforce constraints refuses a
-constrained task outright.
+take them from it and no longer accept bounds from the caller. A path
+with no way to enforce constraints refuses a constrained task outright.
 """
 
 import equinox as eqx
@@ -90,25 +89,20 @@ def test_public_strategy_refuses_a_constrained_task():
         )
 
 
-# ------------------------------------------------ entry points, transition
+# ------------------------------------------------------------ entry points
 
 _ADAM = lo.OptimizationStep(
     optimizer="adam", hyperparameters={"learning_rate": 0.1}
 )
 
 
-@pytest.mark.parametrize("bounded", [None, (None, None), [None, None]])
-def test_init_run_state_accepts_no_bounds(bounded):
-    l2co.init_run_state(_ADAM, _task(), bounded, jr.key(0))
-
-
-def test_init_run_state_refuses_caller_bounds():
-    with pytest.raises(ValueError, match="bounds now come from the task"):
+def test_init_run_state_takes_no_caller_bounds():
+    with pytest.raises(TypeError):
         l2co.init_run_state(_ADAM, _task(), (0.0, 1.0), jr.key(0))
 
 
-def test_rollout_wrapper_refuses_caller_bounds():
-    with pytest.raises(ValueError, match="RolloutWrapper.init"):
+def test_rollout_wrapper_takes_no_caller_bounds():
+    with pytest.raises(TypeError):
         l2co.RolloutWrapper.init(
             optimizer=_ADAM,
             task=_task(),
@@ -119,7 +113,7 @@ def test_rollout_wrapper_refuses_caller_bounds():
 
 
 def _final_params(task):
-    run_state = l2co.init_run_state(_ADAM, task, None, jr.key(0))
+    run_state = l2co.init_run_state(_ADAM, task, jr.key(0))
     batch_state = lo.BatchState.init(
         dataset=task.loaded_dataset, batch_size=task.batch_size, key=jr.key(0)
     )

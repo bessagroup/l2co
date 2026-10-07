@@ -231,31 +231,9 @@ def refuse_constraints(task: Task, where: str) -> None:
         )
 
 
-def _bounds_from_task(
-    task: Task,
-    bounded: tuple[float | None, float | None] | None,
-    where: str,
-) -> tuple[float | None, float | None]:
-    """The bounds to clip ``task`` to, refusing caller-supplied ones.
-
-    Transitional (ADR 0020): entry points still accept a ``bounded``
-    argument so existing callers keep working, but only as "no bounds".
-    Real bounds must be declared as a :class:`~l2co_tasks.Box` on the
-    task.
-    """
-    if bounded is not None and tuple(bounded) != (None, None):
-        raise ValueError(
-            f"{where}: bounded={tuple(bounded)!r} -- bounds now come from "
-            "the task (l2co ADR 0020). Declare them as an l2co_tasks.Box "
-            "in the task's constraints instead."
-        )
-    return task_bounds(task)
-
-
 def init_run_state(
     optimizer: OptimizationStep,
     task: Task,
-    bounded: tuple[float | None, float | None],
     key: PRNGKeyArray,
 ) -> RunState:
     """Build the :class:`~l2co_optimizers.RunState` for one optimizer on
@@ -271,10 +249,6 @@ def init_run_state(
         Optimizer configuration.
     task : Task
         Task to optimize.
-    bounded : tuple[float | None, float | None] or None
-        Transitional (ADR 0020): must be ``(None, None)`` or ``None``.
-        The optimizer clips to the task's own box (see
-        :func:`task_bounds`). To be removed once no caller passes it.
     key : PRNGKeyArray
         PRNG key for the batch state and optimizer initialization.
 
@@ -286,14 +260,14 @@ def init_run_state(
     Raises
     ------
     ValueError
-        If ``bounded`` is not "no bounds", or the task has constraints
-        :func:`task_bounds` can't turn into a pair.
+        If the task has constraints :func:`task_bounds` can't turn into
+        a pair.
     """
     update_class = optimizer_mapping(optimizer.optimizer)(
         **optimizer.hyperparameters,
         task=task,
         opt_hash=optimizer.hash,
-        bounded=_bounds_from_task(task, bounded, "init_run_state"),
+        bounded=task_bounds(task),
         stop_fn=optimizer.stopping_fn,
     )
     return RunState.init(

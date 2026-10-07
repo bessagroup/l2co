@@ -59,9 +59,6 @@ class RunOptimization(DataGenerator):
         Random seed for reproducibility across optimization runs.
     n_realizations : int, optional
         Number of independent optimization realizations to run, by default 1.
-    bounded : Optional[Tuple[float, float]], optional
-        Bounds for the optimization variables as (lower, upper), by default
-        (None, None).
     clear_jax_cache : bool, optional
         Whether to clear the JAX cache after execution to free memory, by
         default True.
@@ -102,7 +99,6 @@ class RunOptimization(DataGenerator):
         budget_fn: Callable[[], int],
         seed: int,
         n_realizations: int = 1,
-        bounded: tuple[float, float] | None = (None, None),
         clear_jax_cache: bool = True,
         verbose: bool = False,
         save_input_parameters: bool = False,
@@ -111,7 +107,6 @@ class RunOptimization(DataGenerator):
         self.budget_fn = budget_fn
         self.seed = seed
         self.n_realizations = n_realizations
-        self.bounded = bounded
         self.clear_jax_cache = clear_jax_cache
         self.verbose = verbose
         self.save_input_parameters = save_input_parameters
@@ -221,7 +216,6 @@ class RunOptimization(DataGenerator):
             task=task,
             sampler=self.sampler,
             key=key,
-            bounded=self.bounded,
             verbose=self.verbose,
         )
 

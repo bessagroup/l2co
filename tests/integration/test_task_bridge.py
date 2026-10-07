@@ -73,9 +73,7 @@ def test_init_run_state_batch_evaluates_a_real_task(task):
     step = lo.OptimizationStep(
         optimizer="adam", hyperparameters={"learning_rate": 0.05}
     )
-    run_state = l2co.init_run_state(
-        optimizer=step, task=task, bounded=(None, None), key=jr.key(0)
-    )
+    run_state = l2co.init_run_state(optimizer=step, task=task, key=jr.key(0))
     batch_state = lo.BatchState.init(
         dataset=task.loaded_dataset, batch_size=task.batch_size, key=jr.key(0)
     )
@@ -99,9 +97,7 @@ def test_init_run_state_batch_evaluates_a_real_task(task):
 def test_init_run_state_matches_the_bare_path(task):
     """The bridge only unpacks the task: same ``RunState`` as by hand."""
     step = lo.OptimizationStep(optimizer="cmaes")
-    via_bridge = l2co.init_run_state(
-        optimizer=step, task=task, bounded=(None, None), key=jr.key(0)
-    )
+    via_bridge = l2co.init_run_state(optimizer=step, task=task, key=jr.key(0))
     update_class = lo.optimizer_mapping("cmaes")(
         model=task.model,
         loss_fn=task.loss_fn,

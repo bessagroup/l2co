@@ -1,5 +1,6 @@
-# Sample initial points uniformly at random within bounds (for bounded tasks only)
+# Sample initial points uniformly at random. The range is a sampling
+# choice, not a constraint: a task's bounds live on the task (ADR 0020).
 _partial_: true
 _target_: l2co.sampling.random_sampling
-lower_bound: ${tasks.bounded.lower_bound}  # Domain lower bound (from task config)
-upper_bound: ${tasks.bounded.upper_bound}  # Domain upper bound (from task config)
+lower_bound: 0.0
+upper_bound: 1.0
