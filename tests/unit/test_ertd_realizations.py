@@ -52,18 +52,14 @@ def test_naming_every_realization_matches_the_default() -> None:
     """The full index set is a no-op, bit-exact."""
     d = _loader(_TASK_IDS)
     full = np.arange(d.n_realization)
-    xr.testing.assert_identical(
-        _profile(), _profile(realizations=full)
-    )
+    xr.testing.assert_identical(_profile(), _profile(realizations=full))
 
 
 def test_permuting_the_index_set_is_a_no_op() -> None:
     """Selection is a set, not an order: the pool is what matters."""
     d = _loader(_TASK_IDS)
     shuffled = np.arange(d.n_realization)[::-1]
-    xr.testing.assert_identical(
-        _profile(), _profile(realizations=shuffled)
-    )
+    xr.testing.assert_identical(_profile(), _profile(realizations=shuffled))
 
 
 def test_disjoint_halves_are_independent_estimates() -> None:
@@ -79,9 +75,9 @@ def test_disjoint_halves_are_independent_estimates() -> None:
 
     first, second = _profile(realizations=lo), _profile(realizations=hi)
     assert first.shape == second.shape
-    assert not np.allclose(
-        first.values, second.values, equal_nan=True
-    ), "halves are identical -- the subset never reached the bootstrap"
+    assert not np.allclose(first.values, second.values, equal_nan=True), (
+        "halves are identical -- the subset never reached the bootstrap"
+    )
 
 
 def test_a_single_realization_is_admissible() -> None:
