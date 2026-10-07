@@ -48,6 +48,29 @@ def _run_steps(update_class, model, n_steps: int):
     return histories
 
 
+def _run_whole(update_class, task, n_iterations: int):
+    """The run path ``RolloutWrapper`` drives: ``RunState`` then ``run``."""
+    run_state = lo.RunState.init(
+        update_class,
+        model=task.model,
+        dataset=task.loaded_dataset,
+        batch_size=task.batch_size,
+        key=jr.key(0),
+    )
+    batch_state = lo.BatchState.init(
+        dataset=task.loaded_dataset, batch_size=task.batch_size, key=jr.key(0)
+    )
+    run_state, _, _ = lo.run(
+        run_state=run_state,
+        batch_state=batch_state,
+        dataset=task.loaded_dataset,
+        n_iterations=n_iterations,
+        key=jr.key(1),
+        verbose=False,
+    )
+    return run_state
+
+
 def test_count_parameters_matches_task_dimensionality(task):
     assert lo.count_parameters(task.model) == task.dimensionality
 
@@ -63,9 +86,20 @@ def test_every_bare_factory_builds_and_steps_through_the_bridge(name, task):
     except TypeError:
         update_class = factory(**kwargs, **_REQUIRED)
     assert isinstance(update_class, lo.UpdateClass)
-    if not hasattr(update_class, "sampling_fn"):
+    if hasattr(update_class, "sampling_fn"):
+        return
+    try:
         histories = _run_steps(update_class, task.model, n_steps=2)
-        assert jnp.isfinite(histories[-1].loss).any()
+    except NotImplementedError:
+        # A whole-run entry -- the scipy minimisers and IPOPT
+        # (l2co-optimizers ADRs 0002, 0003) -- has no single step: it runs
+        # its whole budget inside one call, one realization at a time.
+        # Drive that instead.
+        assert update_class.sequential_realizations
+        run_state = _run_whole(update_class, task, n_iterations=5)
+        assert jnp.isfinite(run_state.best_loss).all()
+        return
+    assert jnp.isfinite(histories[-1].loss).any()
 
 
 def test_init_run_state_batch_evaluates_a_real_task(task):
