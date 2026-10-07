@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Bounds come from the task
