@@ -14,6 +14,7 @@ from l2co_tasks import create_bbob_task
 
 from l2co_optimizers import OptimizationStep
 from l2co._src.rollout import RolloutWrapper
+from l2co.history import history_to_xarray_realizations
 from l2co.sampling import normal_sampling
 
 # =============================================================================
@@ -35,14 +36,13 @@ def test_rollout_on_noisy_bbob():
         task=task,
         sampler=normal_sampling,
         key=key,
-        bounded=(None, None),
     )
     _, _, history_state = rollout_wrapper.batch_evaluate(
         key=key,
         n_iterations=5,
         n_realizations=2,
     )
-    data = history_state.to_xarray_realizations()
+    data = history_to_xarray_realizations(history_state)
     assert bool(jnp.isfinite(jnp.asarray(data["output_min"].values)).all())
 
 
@@ -67,7 +67,7 @@ def test_converged_lbfgs_keeps_billing_the_linesearch():
     """
     import equinox as eqx
 
-    from l2co_optimizers import optimizer_mapping
+    from l2co import optimizer_mapping
     from l2co_optimizers import random_sampling
 
     cap = 5

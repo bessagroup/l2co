@@ -17,19 +17,21 @@ jobs:
         with:
           repository: bessagroup/l2co-tasks
           path: l2co-tasks
-          token: ${{ secrets.SIBLING_DEPS_TOKEN }}
+      - name: Checkout l2co-optimizers (sibling editable dep)
+        uses: actions/checkout@v4
+        with:
+          repository: bessagroup/l2co-optimizers
+          path: l2co-optimizers
       - name: Checkout f3dasm (sibling editable dep)
         uses: actions/checkout@v4
         with:
           repository: bessagroup/f3dasm
           path: f3dasm
-          token: ${{ secrets.SIBLING_DEPS_TOKEN }}
       - name: Checkout bessaplots (sibling editable dep)
         uses: actions/checkout@v4
         with:
           repository: bessagroup/bessaplots
           path: bessaplots
-          token: ${{ secrets.SIBLING_DEPS_TOKEN }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

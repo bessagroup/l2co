@@ -38,8 +38,10 @@ import jax
 import numpy as np
 import xarray as xr
 
+from l2co._src.data.baselines import calculate_sbs, calculate_vbs
+
 # Local
-from ..naming import (
+from l2co._src.naming import (
     BUDGET,
     COST,
     FEATURE,
@@ -59,16 +61,15 @@ from ..naming import (
     TASK_ID,
     TASK_LABELS,
 )
-from ..optimization_dynamics import OptimizationDynamics
-from ..performance import (
+from l2co._src.optimization_dynamics import OptimizationDynamics
+from l2co._src.performance import (
     ERTD_SEED_BATCH,
     ertd,
     output_cummin,
     scale_by_task,
 )
-from ..task_features import FeatureProcessor
-from ..tree_utils import traj_and_stair
-from .baselines import calculate_sbs, calculate_vbs
+from l2co._src.task_features import FeatureProcessor
+from l2co._src.tree_utils import traj_and_stair
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -481,7 +482,7 @@ class DataLoader:
         Derived from ``success`` nullity: a ``(problem, schedule)`` cell is
         valid iff it has at least one non-null target. This assumes the
         ``success`` variable is present, which holds for every dataset
-        produced by the databank and by ``HistoryState.to_dataloader``
+        produced by the databank and by :func:`l2co.history_to_dataloader`
         (both always build the ERT metrics). ``join="outer"`` NaN-pads any
         missing ``(task, optimizer)`` combination identically across the
         loss and performance variables, so this mask matches the loss-side
@@ -1181,7 +1182,7 @@ class DataLoader:
         """
         # Imported lazily to avoid an import cycle with report_helpers,
         # which type-hints DataLoader.
-        from .report_helpers import build_report
+        from l2co._src.data.report_helpers import build_report
 
         return build_report(self)
 

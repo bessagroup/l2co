@@ -14,7 +14,7 @@ from collections.abc import Iterable
 import numpy as np
 import xarray as xr
 
-from ..naming import (
+from l2co._src.naming import (
     BUDGET,
     OUTPUT_DIM,
     OUTPUT_MIN,
@@ -22,7 +22,7 @@ from ..naming import (
     SCHEDULE,
     TASK_ID,
 )
-from ..performance import output_cummin
+from l2co._src.performance import output_cummin
 
 __all__ = [
     "calculate_best_solver",

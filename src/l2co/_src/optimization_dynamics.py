@@ -2,15 +2,25 @@
 Wrapper for optimization dynamics data including features and trajectories.
 """
 
+# Standard
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+# Third-party
 import numpy as np
 import xarray as xr
 
-from .naming import BUDGET, FEATURE
-from .task_features import FeatureProcessor
+# Local
+from l2co._src.naming import BUDGET, FEATURE
+from l2co._src.task_features import FeatureProcessor
+
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = "Martin van der Schelling (m.p.vanderschelling@tudelft.nl)"
+__credits__ = ["Martin van der Schelling"]
+__status__ = "Stable"
+# =============================================================================
 
 
 @dataclass

@@ -9,7 +9,7 @@ import optax
 from jax_tqdm import scan_tqdm
 from tqdm import tqdm
 
-from .base import AbstractModel
+from l2co._src.models.base import AbstractModel
 
 # =============================================================================
 

@@ -4,43 +4,34 @@ A meta-optimizer's step picks a sub-optimizer from a menu and runs only
 that one, written as a ``jax.lax.switch`` on the chosen index. ``vmap``
 has no per-lane control flow, so vectorizing realizations together forces
 every branch to run on every generation and throws all but one result
-away -- which is why
-:func:`l2co._src.update_class.batch_run_sequential_` exists and why
-:func:`l2co._src.run_state.batch_run` routes the meta-optimizers to it.
+away -- which is why ``UpdateClass.batch_run_sequential`` exists and why
+``UpdateClass.batch_run`` routes the meta-optimizers to it.
 
-These tests pin the two things that has to be true:
+These tests pin, on real tasks built through l2co's ``RolloutWrapper``:
 
 1. The sequential driver is a drop-in for the fused one -- same output
    structure, same shapes, same numbers -- on an optimizer where both are
    valid (no switch to collapse, so the choice is purely about speed).
-2. ``batch_run`` actually routes on
-   :attr:`l2co.UpdateClass.sequential_realizations`, and the marker is
-   off for plain optimizers and on for the meta-optimizer bridge.
+2. The marker is on for l2co's meta-optimizer bridge.
+
+The routing rule itself, and the marker being off by default, are
+``l2co_optimizers``' to test (``tests/test_run_loop.py`` there), since
+that is where ``batch_run`` lives now (ADR 0017).
 """
 
 from __future__ import annotations
 
-import dataclasses
-import inspect
 from functools import partial
 
 import jax
-import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import pytest
 from l2co_tasks import create_bbob_task
 
 from l2co._src.meta_optimizer import L2COUpdateClass
-from l2co_optimizers import RandomSearchUpdateClass
-from l2co_optimizers import UpdateClass
 from l2co._src.rollout import RolloutWrapper
-from l2co._src.run_state import batch_reset, batch_run
-from l2co._src.update_class import (
-    batch_run_,
-    batch_run_randomsearch,
-    batch_run_sequential_,
-)
+from l2co_optimizers import batch_reset
 from l2co.optimization import OptimizationStep
 from l2co.sampling import normal_sampling
 
@@ -71,7 +62,7 @@ def _task():
 
 
 def _driver_inputs(step: OptimizationStep, sampler, key):
-    """Assemble the ``batch_run_*`` arguments both drivers share.
+    """Assemble the ``UpdateClass.batch_run_*`` arguments, plus the optimizer.
 
     Mirrors what the module-level ``batch_evaluate`` does before handing
     off to ``batch_run``: split the key per realization, then reset to
@@ -82,7 +73,6 @@ def _driver_inputs(step: OptimizationStep, sampler, key):
         task=_task(),
         sampler=sampler,
         key=key,
-        bounded=(None, None),
     )
     keys = jr.split(key, N_REALIZATIONS)
     run_state = batch_reset(
@@ -95,8 +85,7 @@ def _driver_inputs(step: OptimizationStep, sampler, key):
         sampler,
         keys,
     )
-    return dict(
-        update_class=run_state.update_class,
+    return run_state.update_class, dict(
         opt_state=run_state.opt_state,
         params=run_state.params,
         batch_state=wrapper.batch_state,
@@ -122,10 +111,10 @@ def test_sequential_driver_matches_fused_driver(step, sampler, rng):
     rather than the branch-selection difference the driver's docstring
     allows for the meta-optimizers.
     """
-    inputs = _driver_inputs(step, sampler, rng)
+    update_class, inputs = _driver_inputs(step, sampler, rng)
 
-    fused = batch_run_(**inputs)
-    sequential = batch_run_sequential_(**inputs)
+    fused = update_class.batch_run_fused(**inputs)
+    sequential = update_class.batch_run_sequential(**inputs)
 
     fused_leaves = jax.tree.leaves(fused)
     sequential_leaves = jax.tree.leaves(sequential)
@@ -157,11 +146,11 @@ def test_sequential_driver_realizations_are_independent(step, sampler, rng):
     own scalar-index run, so slicing one out of a 3-realization call must
     match running it by itself.
     """
-    inputs = _driver_inputs(step, sampler, rng)
-    batched = batch_run_sequential_(**inputs)
+    update_class, inputs = _driver_inputs(step, sampler, rng)
+    batched = update_class.batch_run_sequential(**inputs)
 
     for r in range(N_REALIZATIONS):
-        single = batch_run_sequential_(
+        single = update_class.batch_run_sequential(
             **{
                 **inputs,
                 "opt_state": jax.tree.map(
@@ -186,105 +175,8 @@ def test_sequential_driver_realizations_are_independent(step, sampler, rng):
 # =============================================================================
 
 
-def test_marker_is_off_for_plain_optimizers():
-    assert UpdateClass.sequential_realizations is False
-
-
 def test_marker_is_on_for_the_meta_optimizer_bridge():
     # l2co's own two-stage strategy dispatches on a per-realization
     # sub-optimizer index; rl2co asserts the same for its bridge in
     # its own suite (l2co may not import rl2co).
     assert L2COUpdateClass.sequential_realizations is True
-
-
-def test_marker_is_not_a_dataclass_field():
-    """A ``ClassVar`` marker must not widen any constructor signature.
-
-    ``dataclasses.fields`` is the check that matters:
-    ``__dataclass_fields__`` also carries ``ClassVar`` pseudo-entries, so
-    it would not distinguish a marker from a real field.
-    """
-    names = {f.name for f in dataclasses.fields(UpdateClass)}
-    assert "sequential_realizations" not in names
-    assert (
-        "sequential_realizations"
-        not in inspect.signature(UpdateClass.__init__).parameters
-    )
-
-
-@pytest.mark.parametrize(
-    ("marker", "is_random_search", "expected"),
-    [
-        (False, False, batch_run_),
-        (True, False, batch_run_sequential_),
-        (False, True, batch_run_randomsearch),
-        # Random search wins over the marker: it has its own driver for a
-        # different reason (peak memory), and that one is also sequential.
-        (True, True, batch_run_randomsearch),
-    ],
-    ids=["plain", "meta", "randomsearch", "randomsearch-and-marker"],
-)
-def test_batch_run_routes_on_the_marker(
-    monkeypatch, marker, is_random_search, expected
-):
-    """``batch_run`` picks the driver, and this is the rule it uses."""
-    called = {}
-
-    def _spy(name):
-        def _fn(**kwargs):
-            called["driver"] = name
-            n = jax.tree.leaves(kwargs["params"])[0].shape[0]
-            zeros = jnp.zeros((n,))
-            return (None, None, zeros, None, None, None)
-
-        return _fn
-
-    for fn in (batch_run_, batch_run_sequential_, batch_run_randomsearch):
-        monkeypatch.setattr(
-            "l2co._src.run_state." + fn.__name__, _spy(fn), raising=True
-        )
-
-    # ``RandomSearchUpdateClass`` carries its own constructor, so the
-    # probe's kwargs follow whichever base it subclasses.
-    if is_random_search:
-
-        class _Probe(RandomSearchUpdateClass):
-            sequential_realizations = marker
-
-        probe = _Probe(
-            sampling_fn=lambda *a, **k: None,
-            static_model=None,
-            loss_fn=lambda *a, **k: None,
-            pass_rng=False,
-            bounded=(None, None),
-            popsize=1,
-            hash=0,
-        )
-    else:
-
-        class _Probe(UpdateClass):
-            sequential_realizations = marker
-
-        probe = _Probe(
-            init_fn=lambda *a, **k: None,
-            step_fn=lambda *a, **k: None,
-            popsize=1,
-            hash=0,
-        )
-
-    class _RunState:
-        update_class = probe
-        opt_state = jnp.zeros((N_REALIZATIONS,))
-        params = jnp.zeros((N_REALIZATIONS, 1, 4))
-        best_params = params
-        best_loss = jnp.zeros((N_REALIZATIONS,))
-
-    batch_run(
-        run_state=_RunState(),
-        batch_state=None,
-        dataset={},
-        n_iterations=1,
-        key=jr.split(jr.key(0), N_REALIZATIONS),
-        verbose=False,
-    )
-    assert called["driver"] == expected

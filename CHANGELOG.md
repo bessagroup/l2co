@@ -7,6 +7,138 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-07
+
+The run loop moves onto `UpdateClass` in `l2co-optimizers`
+(`docs/adr/0017`, superseding that half of `docs/adr/0016`).
+**Requires an `l2co-optimizers` that ships `UpdateClass.run` and
+`RunState`** (the release after 0.1.0).
+
+Then the task stops at l2co (`docs/adr/0018`): `l2co-optimizers` no
+longer has a task type, and l2co is the only bridge between `Task` and
+`OptimizationStep`. **Requires the matching `l2co-optimizers`**
+(bare factories take `model` / `loss_fn` / `pass_rng`).
+
+Then the switching layer comes back to l2co (`docs/adr/0019`): l2co
+holds both the bridge to tasks and the machinery that switches between
+optimizers; `l2co-optimizers` keeps the transfer ports and a new
+`optimizer_parts` seam. **Requires the matching `l2co-optimizers`**
+(ships `optimizer_parts`, no longer ships `SubOpt`).
+
+Then bounds come from the task (`docs/adr/0020`): a task declares its
+box as an `l2co_tasks.Box` in its constraints, and the optimizers clip
+to it. Callers no longer pass `bounded`. **Requires an `l2co-tasks` with
+constraints on `Task`** (l2co-tasks ADR 0002).
+
+### Added
+
+- `init_run_state(optimizer, task, key)` (in `l2co.optimization`
+  and at the package root): resolves an `OptimizationStep` against a
+  `Task` and builds the `RunState`, clipping to the task's own box.
+- `task_bounds(task)` and `refuse_constraints(task, where)` (in
+  `l2co.optimization` and at the package root): the only way bounds
+  leave a task. `task_bounds` turns a uniform `Box` into the `(lo, hi)`
+  pair optimizers clip to and raises for an inequality, an equality or a
+  non-uniform box; a path that can't enforce constraints calls
+  `refuse_constraints`.
+- `l2co.optimizers.meta_optimizers`: the registry `register_optimizer`
+  fills.
+- `history_to_xarray`, `history_to_xarray_realizations` and
+  `history_to_dataloader` in `l2co.history` and at the package root: the
+  `HistoryState` exports, as free functions.
+- `l2co.optimizers.optimizer_parts`, `GradientParts` and
+  `PopulationParts` (re-exported from `l2co_optimizers`): an optimizer
+  unpacked into the optax transform or `(init, ask, tell)` triple a
+  switching loop drives, with popsize, family and transfer ports but no
+  handshake.
+
+### Changed
+
+- `l2co-tasks>=0.3.0` and `l2co-optimizers>=0.3.0` are declared
+  lower bounds: l2co imports `l2co_tasks.Box` (`docs/adr/0020`) and is
+  tested against l2co-optimizers 0.3.0. Until now both were unpinned.
+- The switching layer is implemented in l2co again
+  (`l2co._src.switching`; `docs/adr/0019`): `SubOpt`,
+  `grad_sub_optimizer`, `pop_sub_optimizer`, `optstep_to_subopt`,
+  `HandshakePolicy`, `HANDSHAKE_POLICY`, `DEFAULT_HANDSHAKE_POLICY`,
+  `handshake_policy_for`, `population_best`, `population_best_one` and
+  `menu_loss_and_grad` keep their `l2co.optimizers` names but are no
+  longer re-exports of `l2co_optimizers` objects. `optstep_to_subopt`
+  now unpacks `l2co_optimizers.optimizer_parts` and attaches the
+  handshake; the `SubOpt` it builds is unchanged.
+
+- `BatchState` and `HistoryState` are re-exported from `l2co_optimizers`
+  (same names under `l2co` / `l2co.history`). `run_state.run` /
+  `batch_run` call `UpdateClass.run` / `batch_run`, so the driver choice
+  (fused, sequential for `sequential_realizations`, sequential for random
+  search) belongs to the optimizer.
+- `RunState`, `reset`, `run` and `evaluate` move to `l2co_optimizers`
+  (with `batch_reset` / `batch_run` / `batch_evaluate`) and are
+  re-exported unchanged as `l2co.RunState` / `l2co.reset` / `l2co.run` /
+  `l2co.evaluate` and from `l2co.optimization`.
+- **BREAKING:** `l2co.optimizer_mapping` / `l2co.register_optimizer` (and
+  the `l2co.optimizers` versions) are now l2co's Task-level registry.
+  `optimizer_mapping(name)` returns a factory called with `task=` for
+  every name, meta or bare (unchanged for existing call sites).
+  `register_optimizer` registers a *meta-optimizer*, and raises if the
+  name is already a bare optimizer. `l2co.optimizers` no longer
+  re-exports the bare `optimizers` dict; import it from
+  `l2co_optimizers`.
+- **BREAKING:** `RunState.init` (from `l2co_optimizers`) takes
+  `(update_class, *, model, dataset, batch_size, key)`. Replace
+  `RunState.init(optimizer=, task=, bounded=, key=)` with
+  `l2co.init_run_state(optimizer=, task=, bounded=, key=)`.
+
+### Removed
+
+- **BREAKING:** the `bounded` parameter of `RolloutWrapper.init` and
+  `RunOptimization`. Declare bounds as an `l2co_tasks.Box` in the task's
+  `constraints` instead (`docs/adr/0020`). The optimizer factories keep
+  their `bounded=` keyword, filled from `task_bounds`.
+- **BREAKING:** `l2co_population_strategy` refuses a task with
+  constraints: a strategy driven by hand has no way to enforce them.
+- **BREAKING:** `l2co.optimizers.resolve_popsize` and
+  `CONSTRUCTOR_HYPERPARAMETERS` (private in `l2co-optimizers` now). Read
+  the popsize as `optimizer_parts(opt_step, model=, loss_fn=,
+  pass_rng=).popsize`.
+- **BREAKING:** re-exports of names `l2co-optimizers` made private (no
+  sibling package used them): from `l2co.optimizers`, the per-library
+  factories `optax_update`, `optax_update_extra_kwargs`,
+  `evosax_distribution_update`, `evosax_population_update`,
+  `random_search_update`, `lbfgs_update`, `lbfgs_per_eval_key`,
+  `scale_by_zoom_linesearch_per_eval_key`, `normalized_optax_from_state`,
+  the SubOpt tables `l2co_native_optax`, `l2co_native_evosax`, the tables
+  `GRAD_EVALUATION_WIDTH`, `LINESEARCH_FEVAL_BOUND`, `OPT_STATE_VARIANTS`,
+  `POPULATION_VARIANTS`, `POPULATION_HANDSHAKES`, `TRANSFER_OVERRIDES`,
+  `TransferSpec`, `transfer_spec_for`, `population_handshake_for`,
+  `write_none`, and `vmapped_loss_and_grad_with_rng`; `SHADE` from
+  `l2co` and `l2co.optimizers`; `vmapped_loss_and_grad_with_rng` from
+  `l2co._src.tree_utils`. Built-in optimizers are reached by registry
+  name (`l2co.optimizer_mapping("shade")`).
+- **BREAKING:** the `TaskLike` re-export from `l2co._src.typing`
+  (`l2co_optimizers` deletes `TaskLike` / `RunnableTaskLike`).
+- **BREAKING:** `HistoryState.to_xarray`, `to_xarray_realizations` and
+  `to_dataloader`. Call `l2co.history_to_xarray(history_state, ...)`,
+  `l2co.history_to_xarray_realizations(history_state, ...)` and
+  `l2co.history_to_dataloader(history_state, ...)` instead.
+- **BREAKING:** `l2co.init_` (also `l2co.optimization.init_`). Call
+  `update_class.init_state(params, batch_state, dataset, key)` instead.
+- The private `l2co._src.batching`, `l2co._src.update_class` and
+  `l2co._src.run_state` modules (`l2co.evaluate`, `l2co.RunState` and
+  friends are unchanged; inside-library code imports them from
+  `l2co_optimizers`), and with them `step` / `batch_step_` / `run_` /
+  `batch_run_` / `batch_run_sequential_` / `run_randomsearch` /
+  `batch_run_randomsearch`, plus the `Carry` alias of `l2co._src.typing`.
+  They are `UpdateClass` methods and `l2co_optimizers.Carry` now.
+
+- **BREAKING:** `RolloutWrapper.init_from_stage0`, `RolloutWrapper.evaluate`
+  and `RolloutWrapper.run`, plus `reset_from_stage0` and `evaluate` in
+  `_src/run_state.py` (neither was re-exported). They only served the eager
+  two-stage driver for agentic-l2co, which l2co_experiments has dropped
+  (bessagroup/l2co_experiments#45). The L2CO strategy reaches stage 1
+  through the registry bridge (`docs/adr/0002`). Use
+  `RolloutWrapper.batch_evaluate` (one realization: `n_realizations=1`).
+
 ## [1.6.0] - 2026-10-02
 
 The bare optimizers move to the new sibling package `l2co-optimizers`

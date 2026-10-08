@@ -30,15 +30,29 @@
 
 ::: l2co.register_optimizer
 
-::: l2co.SHADE
+::: l2co.init_run_state
 
 ::: l2co.optimizers.shade_update
 
-::: l2co.optimizers.lbfgs_update
+## Switching between optimizers
 
-::: l2co.optimizers.lbfgs_per_eval_key
+The switching layer (ADR 0019): the `SubOpt` adapter a strategy wrapper dispatches across, the handshake each optimizer gets when control passes to it, and menu-dispatched evaluation. An optimizer's own contribution — its parts and transfer ports — comes from `l2co_optimizers`.
 
-::: l2co.optimizers.scale_by_zoom_linesearch_per_eval_key
+::: l2co.optimizers.SubOpt
+
+::: l2co.optimizers.optstep_to_subopt
+
+::: l2co.optimizers.grad_sub_optimizer
+
+::: l2co.optimizers.pop_sub_optimizer
+
+::: l2co.optimizers.HandshakePolicy
+
+::: l2co.optimizers.handshake_policy_for
+
+::: l2co.optimizers.population_best
+
+::: l2co.optimizers.population_best_one
 
 ::: l2co.optimizers.menu_loss_and_grad
 
@@ -51,6 +65,16 @@
 ::: l2co.HistoryState
 
 ::: l2co.OptHistory
+
+### Exporting a history
+
+`HistoryState`, `BatchState` and `OptHistory` live in `l2co_optimizers` with the run loop (ADR 0017); the exports below need xarray and the ERT, so they stay in l2co.
+
+::: l2co.history_to_xarray
+
+::: l2co.history_to_xarray_realizations
+
+::: l2co.history_to_dataloader
 
 ## Running Optimization
 

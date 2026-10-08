@@ -9,8 +9,8 @@ Both names are re-exported here so the qualified path
 the package split.
 """
 
-from .dataset_generation import RunOptimization
-from .rollout_wrapper import RolloutWrapper
+from l2co._src.rollout.dataset_generation import RunOptimization
+from l2co._src.rollout.rollout_wrapper import RolloutWrapper
 
 __all__ = [
     "RolloutWrapper",

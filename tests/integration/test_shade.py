@@ -15,7 +15,7 @@ import jax.random as jr
 import pytest
 from l2co_tasks import create_bbob_task
 
-from l2co_optimizers import optimizer_mapping
+from l2co import optimizer_mapping
 
 # =============================================================================
 

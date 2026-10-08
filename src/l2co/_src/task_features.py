@@ -1,7 +1,9 @@
 """Feature processing, normalization, and mixed embeddings for task inputs."""
 
+# Standard
 from __future__ import annotations
 
+# Third-party
 import json
 import math
 from collections.abc import Callable
@@ -12,6 +14,13 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = "Martin van der Schelling (m.p.vanderschelling@tudelft.nl)"
+__credits__ = ["Martin van der Schelling"]
+__status__ = "Stable"
+# =============================================================================
 
 Schema = dict[str, str | list]
 

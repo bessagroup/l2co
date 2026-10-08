@@ -15,12 +15,11 @@ from l2co_optimizers import (
     lbfgs_mapping,
     normalized_evosax,
     optax_mapping,
+    optimizers,
     rbf_trust_region_mapping,
     shade_mapping,
     turbo_mapping,
 )
-
-from l2co.optimizers import optimizers
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -168,7 +167,7 @@ BASE_OPT_STYLES.update(
 #                                                        Optimizer categories
 # =============================================================================
 # The alternative to one hand-tuned colour per optimizer: one hue per
-# *kind* of optimizer, so a panel of sixty curves reads as five groups
+# *kind* of optimizer, so a panel of seventy curves reads as six groups
 # (see get_schedule_styles(by="category")).
 
 CATEGORY_GRADIENT = "Gradient-based"
@@ -176,17 +175,46 @@ CATEGORY_QUASI_NEWTON = "Quasi-Newton"
 CATEGORY_DISTRIBUTION = "Distribution-based"
 CATEGORY_POPULATION = "Population-based"
 CATEGORY_MODEL_BASED = "Model-based"
+CATEGORY_DIRECT_SEARCH = "Direct search"
+
+# l2co-optimizers registers its optimistix, scipy and IPOPT entries from
+# tables it keeps private (its ADRs 0001-0003), so they are named here
+# rather than read off a public registry. The registry-wide category
+# test fails if a new one is left out.
+#
+# Quasi-Newton takes every method that uses curvature: the BFGS family
+# (bfgs, dfp, and slsqp, trust-constr and IPOPT, which run on dense BFGS
+# or L-BFGS -- l2co-optimizers ADR 0003) and the Newton-type tnc and
+# trust-krylov, whose Hessian-vector products are differences of
+# gradients. Nonlinear CG is first-order; COBYQA builds quadratic
+# models; Nelder-Mead and Powell search directly, with no gradient and
+# no model.
+_NAMED_QUASI_NEWTON = (
+    "bfgs",
+    "dfp",
+    "ipopt",
+    "slsqp",
+    "tnc",
+    "trustconstr",
+    "trustkrylov",
+)
+_NAMED_GRADIENT = ("nonlinearcg",)
+_NAMED_MODEL_BASED = ("cobyqa",)
+_NAMED_DIRECT_SEARCH = ("neldermead", "powell")
 
 #: Every categorised optimizer, per category, in the fixed order its
-#: members take their styles in. Read off the registries rather than
-#: listed by hand, so an optimizer added to one lands in its category;
-#: sorted, so a member's style depends only on the category's
-#: membership and never on which schedules a figure happens to plot.
+#: members take their styles in. Read off the registries where they are
+#: public, so an optimizer added to one lands in its category, and named
+#: above where they are not; sorted, so a member's style depends only on
+#: the category's membership and never on which schedules a figure
+#: happens to plot.
 #: Random search is left out: it is a reference line, not a competitor,
 #: and keeps its grey dotted style.
 CATEGORY_MEMBERS: dict[str, tuple[str, ...]] = {
-    CATEGORY_GRADIENT: tuple(sorted(optax_mapping)),
-    CATEGORY_QUASI_NEWTON: tuple(sorted(lbfgs_mapping)),
+    CATEGORY_GRADIENT: tuple(sorted([*optax_mapping, *_NAMED_GRADIENT])),
+    CATEGORY_QUASI_NEWTON: tuple(
+        sorted([*lbfgs_mapping, *_NAMED_QUASI_NEWTON])
+    ),
     CATEGORY_DISTRIBUTION: tuple(
         sorted(
             name
@@ -206,8 +234,11 @@ CATEGORY_MEMBERS: dict[str, tuple[str, ...]] = {
         )
     ),
     CATEGORY_MODEL_BASED: tuple(
-        sorted([*rbf_trust_region_mapping, *turbo_mapping])
+        sorted(
+            [*rbf_trust_region_mapping, *turbo_mapping, *_NAMED_MODEL_BASED]
+        )
     ),
+    CATEGORY_DIRECT_SEARCH: tuple(sorted(_NAMED_DIRECT_SEARCH)),
 }
 
 #: Optimizer registry key to its category.
@@ -221,7 +252,7 @@ OPTIMIZER_CATEGORIES: dict[str, str] = {
 #: of a large category can differ in shade as well as dash pattern.
 #:
 #: Found by searching OKLCH lightness for fixed hue families -- blue,
-#: purple, orange, green and gold, at least 40 degrees of hue apart so
+#: purple, orange, green, gold and teal, at least 40 degrees of hue apart so
 #: each reads as its own family rather than a lighter or darker member
 #: of another -- for the set maximising the worst cross-category pair,
 #: black and randomsearch's grey included, under normal, protanopic and
@@ -230,11 +261,19 @@ OPTIMIZER_CATEGORIES: dict[str, str] = {
 #: vision is OKLab dE 15.1 (population's lighter green against
 #: model-based gold).
 #:
+#: Quasi-Newton's second shade steps *darker*: a lighter purple drifts
+#: toward the blues, dropping its protanopic distance to them from 4.5 to
+#: 3.5, while the darker one keeps every other category at dE >= 18.1
+#: (10.1 under either simulation). Direct search's teal sits in the one
+#: free hue gap, between green and blue; only dark teals clear the
+#: normal-vision floor there, and this one keeps dE >= 18.8 to every
+#: other colour (7.8 under either simulation).
+#:
 #: Under red-green colour blindness the set cannot hold: gold against
 #: the lightest orange falls to dE 4.0, and purple against the blues to
 #: 4.4. Once each large category spends lightness on its own members,
 #: dichromats keep only one chromatic axis to separate categories on,
-#: and five do not fit on it. So the category is a grouping cue, never
+#: and six do not fit on it. So the category is a grouping cue, never
 #: the only way to tell a curve apart: that is left to the direct labels
 #: (plot_ertd(right_labels=True)) or the legend.
 #:
@@ -242,7 +281,7 @@ OPTIMIZER_CATEGORIES: dict[str, str] = {
 #: L-BFGS is gradient-based too, only with curvature information.
 CATEGORY_PALETTES: dict[str, tuple[str, ...]] = {
     CATEGORY_GRADIENT: ("#0458b0", "#1369cb", "#2b7cdf", "#3f8ff4", "#5ea3fd"),
-    CATEGORY_QUASI_NEWTON: ("#6c2893",),
+    CATEGORY_QUASI_NEWTON: ("#5b1180", "#6c2893"),
     CATEGORY_DISTRIBUTION: (
         "#892d01",
         "#a33806",
@@ -252,10 +291,11 @@ CATEGORY_PALETTES: dict[str, tuple[str, ...]] = {
     ),
     CATEGORY_POPULATION: ("#089d49", "#29b159"),
     CATEGORY_MODEL_BASED: ("#bd9f13",),
+    CATEGORY_DIRECT_SEARCH: ("#014441",),
 }
 
 #: Dash patterns a category cycles its members through, after its
-#: shades. Six, so the largest category (27 gradient methods, 5 shades)
+#: shades. Six, so the largest category (28 gradient methods, 5 shades)
 #: still gives every member its own shade and pattern.
 category_line_styles: list[str | tuple] = [
     "-",

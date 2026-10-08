@@ -19,11 +19,11 @@ from l2co_optimizers import OptimizationStep
 from sklearn.base import BaseEstimator
 from sklearn.multioutput import MultiOutputRegressor
 
-from ..naming import FEATURE
-from ..optimization_dynamics import OptimizationDynamics
-from ..task_features import FeatureProcessor
-from .base import AbstractModel
-from .training import train_equinox
+from l2co._src.models.base import AbstractModel
+from l2co._src.models.training import train_equinox
+from l2co._src.naming import FEATURE
+from l2co._src.optimization_dynamics import OptimizationDynamics
+from l2co._src.task_features import FeatureProcessor
 
 # =============================================================================
 

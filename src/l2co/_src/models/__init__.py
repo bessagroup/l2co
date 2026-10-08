@@ -14,17 +14,21 @@ Every public class is re-exported here so the qualified name
 package split.
 """
 
-from .base import AbstractModel
-from .components import MLP, LSTM_Encoder
-from .l2co_model import L2COModel
-from .stage0 import (
+from l2co._src.models.base import AbstractModel
+from l2co._src.models.components import MLP, LSTM_Encoder
+from l2co._src.models.l2co_model import L2COModel
+from l2co._src.models.stage0 import (
     EquinoxStage0Model,
     ScikitStage0Model,
     Stage0Loader,
     Stage0Model,
 )
-from .stage1 import EquinoxStage1Model, Stage1Loader, Stage1Model
-from .training import mse_loss, train_equinox
+from l2co._src.models.stage1 import (
+    EquinoxStage1Model,
+    Stage1Loader,
+    Stage1Model,
+)
+from l2co._src.models.training import mse_loss, train_equinox
 
 __all__ = [
     "MLP",

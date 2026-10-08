@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from .layout import TASKSET_DIR
+from l2co._src.databank.layout import TASKSET_DIR
 
 #                                                          Authorship & Credits
 # =============================================================================

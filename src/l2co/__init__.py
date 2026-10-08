@@ -46,7 +46,14 @@ from l2co.features import (
     MixedEmbedding,
     preprocessing_factory,
 )
-from l2co.history import BatchState, HistoryState, OptHistory
+from l2co.history import (
+    BatchState,
+    HistoryState,
+    OptHistory,
+    history_to_dataloader,
+    history_to_xarray,
+    history_to_xarray_realizations,
+)
 from l2co.models import (
     MLP,
     AbstractModel,
@@ -70,13 +77,14 @@ from l2co.optimization import (
     RunState,
     UpdateClass,
     evaluate,
-    init_,
+    init_run_state,
     l2co_population_strategy,
+    refuse_constraints,
     reset,
     run,
+    task_bounds,
 )
 from l2co.optimizers import (
-    SHADE,
     create_schedules_experimentdata,
     optimizer_mapping,
     register_optimizer,
@@ -113,7 +121,6 @@ __all__ = [
     "RolloutWrapper",
     "RunOptimization",
     "RunState",
-    "SHADE",
     "ScikitStage0Model",
     "Stage0Loader",
     "Stage0Model",
@@ -129,8 +136,12 @@ __all__ = [
     "evaluate",
     "features",
     "history",
-    "init_",
+    "history_to_dataloader",
+    "history_to_xarray",
+    "history_to_xarray_realizations",
+    "init_run_state",
     "l2co_population_strategy",
+    "refuse_constraints",
     "models",
     "mse_loss",
     "naming",
@@ -144,6 +155,7 @@ __all__ = [
     "reset",
     "run",
     "sampling",
+    "task_bounds",
     "train_equinox",
     "tree_utils",
     "validation",
@@ -151,8 +163,9 @@ __all__ = [
 ]
 
 # Side-effecting import (kept after the public re-exports): registers the
-# "l2co" meta-optimizer into l2co's own optimizer registry, so
+# "l2co" meta-optimizer into l2co's Task-level registry, so
 # ``OptimizationStep(optimizer="l2co", ...)`` resolves to ``L2COUpdateClass``
-# in ``RunState.init``. Mirrors how importing rl2co registers "rl2co"; the
-# base registry no longer hardcodes it (see ``docs/adr/0007``).
+# in ``init_run_state`` (``docs/adr/0018``). Mirrors how importing rl2co
+# registers "rl2co"; the base registry no longer hardcodes it (see
+# ``docs/adr/0007``).
 from l2co._src import meta_optimizer as _meta_optimizer  # noqa: F401

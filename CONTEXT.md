@@ -54,9 +54,22 @@ state is reset or continued. Named variants: `best`, `best_one`,
 `reset_opt_state`, `continue_opt_state`. Which variants a given
 optimizer needs is tabulated once, in
 `l2co.optimizers.HANDSHAKE_POLICY`, and shared by every consumer.
+What crosses the switch besides the population — the scale carried by
+each optimizer's **transfer ports** — is the optimizer's own business
+and lives in `l2co-optimizers` (ADR 0019).
 It is due exactly when `last_optimizer_idx >= 0` and the optimizer
 about to run differs from it — optimizer identity is by *menu index*,
 never by `OptimizationStep.hash`.
+
+**Sub-optimizer** (`SubOpt`):
+One menu entry as a strategy wrapper drives it: an optimizer's
+**parts** (`l2co_optimizers.optimizer_parts` — the optax transform or
+`(init, ask, tell)` triple, popsize, family, transfer ports) plus the
+handshake it gets on a switch. Built by `optstep_to_subopt`; the
+static `is_pop` flag picks the `lax.switch` branch implementation. The
+switching layer (`_src/switching/`) owns it (ADR 0019).
+_Avoid_: "optimizer parts" for the adapter (the parts carry no
+handshake), "sub-step"
 
 **Menu**:
 The ordered tuple of candidate optimizers (`OptimizationStep`s) a

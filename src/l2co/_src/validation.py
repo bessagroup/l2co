@@ -10,7 +10,7 @@ import numpy as np
 import xarray as xr
 
 # Local
-from .naming import BUDGET
+from l2co._src.naming import BUDGET
 
 #                                                          Authorship & Credits
 # =============================================================================

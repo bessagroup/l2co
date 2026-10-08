@@ -5,6 +5,7 @@ Used exclusively from the ``experiments/create_optimization_dataset/main.py``
 Hydra pipeline; not part of the inference-time API.
 """
 
+# Standard
 from __future__ import annotations
 
 import gc
@@ -12,6 +13,7 @@ import logging
 from collections.abc import Callable
 from time import time
 
+# Third-party
 import equinox as eqx
 import jax
 import jax.random as jr
@@ -20,10 +22,18 @@ from f3dasm.datageneration import DataGenerator
 from l2co_optimizers import OptimizationStep
 from l2co_tasks import Task
 
+# Local
 from l2co._src.databank.provenance import dumps_provenance
+from l2co._src.history_state import history_to_xarray_realizations
 from l2co._src.naming import PROVENANCE
+from l2co._src.rollout.rollout_wrapper import RolloutWrapper
 
-from .rollout_wrapper import RolloutWrapper
+#                                                          Authorship & Credits
+# =============================================================================
+__author__ = "Martin van der Schelling (m.p.vanderschelling@tudelft.nl)"
+__credits__ = ["Martin van der Schelling"]
+__status__ = "Stable"
+# =============================================================================
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +59,6 @@ class RunOptimization(DataGenerator):
         Random seed for reproducibility across optimization runs.
     n_realizations : int, optional
         Number of independent optimization realizations to run, by default 1.
-    bounded : Optional[Tuple[float, float]], optional
-        Bounds for the optimization variables as (lower, upper), by default
-        (None, None).
     clear_jax_cache : bool, optional
         Whether to clear the JAX cache after execution to free memory, by
         default True.
@@ -92,7 +99,6 @@ class RunOptimization(DataGenerator):
         budget_fn: Callable[[], int],
         seed: int,
         n_realizations: int = 1,
-        bounded: tuple[float, float] | None = (None, None),
         clear_jax_cache: bool = True,
         verbose: bool = False,
         save_input_parameters: bool = False,
@@ -101,7 +107,6 @@ class RunOptimization(DataGenerator):
         self.budget_fn = budget_fn
         self.seed = seed
         self.n_realizations = n_realizations
-        self.bounded = bounded
         self.clear_jax_cache = clear_jax_cache
         self.verbose = verbose
         self.save_input_parameters = save_input_parameters
@@ -211,7 +216,6 @@ class RunOptimization(DataGenerator):
             task=task,
             sampler=self.sampler,
             key=key,
-            bounded=self.bounded,
             verbose=self.verbose,
         )
 
@@ -221,7 +225,7 @@ class RunOptimization(DataGenerator):
             n_realizations=self.n_realizations,
         )
 
-        data_xarr = history_state.to_xarray_realizations()
+        data_xarr = history_to_xarray_realizations(history_state)
 
         if provenance is not None:
             data_xarr.attrs[PROVENANCE] = dumps_provenance(provenance)

@@ -38,7 +38,7 @@ ask/tell loop:
   most once (``state.fired``).
 
 **Handshake** (``reset_opt_state`` + ``best_one``, reproducing the
-old ``reset_from_stage0`` path). When the stage-1 fire selects a
+former ``reset_from_stage0`` path). When the stage-1 fire selects a
 *different* optimizer, the incoming sub-optimizer's internal state is
 re-initialised around ``state.best_solution`` and the emitted
 population for that one generation is ``[best_solution,
@@ -91,11 +91,13 @@ fire therefore sees ``switch_generation`` post-update entries — the
 same trajectory *semantics* the stage-1 model was trained on.
 """
 
+# Standard
 from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
 
+# Third-party
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -105,14 +107,15 @@ from jaxtyping import Array, Bool, Float, Int, PRNGKeyArray, PyTree
 from l2co_optimizers import (
     OptimizationStep,
     SamplerFunction,
-    SubOpt,
-    optstep_to_subopt,
 )
 from l2co_tasks import Task
 
-from .models.l2co_model import L2COModel
-from .models.stage1 import Stage1Model
-from .tree_utils import traj_and_stair
+# Local
+from l2co._src.models.l2co_model import L2COModel
+from l2co._src.models.stage1 import Stage1Model
+from l2co._src.switching.sub_optimizer import SubOpt, optstep_to_subopt
+from l2co._src.task_bridge import refuse_constraints
+from l2co._src.tree_utils import traj_and_stair
 
 # =============================================================================
 
@@ -264,9 +267,9 @@ def l2co_population_strategy(
         Which ``opt_state`` handshake the stage-1 switch applies.
         ``"legacy_reset"`` (default) re-initialises *every* incoming
         sub-optimizer around the best-so-far, reproducing the published
-        ``reset_from_stage0`` semantics that ``docs/adr/0004``'s feval
-        accounting is written against. ``"per_optimizer"`` instead
-        honours each optimizer's
+        semantics of the former ``reset_from_stage0``, which
+        ``docs/adr/0004``'s feval accounting is written against.
+        ``"per_optimizer"`` instead honours each optimizer's
         :data:`~l2co._src.optimizers.handshake_policy.HANDSHAKE_POLICY`
         entry, so only optimizers that genuinely cannot survive an
         iterate jump (``lbfgs``) are reset and adaptive ES state is
@@ -286,9 +289,34 @@ def l2co_population_strategy(
         If the menu is empty, the stage-0 prediction is not in the
         menu, ``task.global_min`` is ``None``, the resolved switch
         generation is ``0``, the stage-1 model is not traceable, its
-        logit head does not match the menu size, or
+        logit head does not match the menu size,
         ``opt_state_handshake`` is not one of ``"legacy_reset"`` /
-        ``"per_optimizer"``.
+        ``"per_optimizer"``, or ``task`` has constraints: a strategy
+        has no way to enforce them (l2co ADR 0020).
+    """
+    refuse_constraints(task, "l2co_population_strategy")
+    return _l2co_population_strategy(
+        model=model,
+        task=task,
+        sampler=sampler,
+        t=t,
+        max_iterations=max_iterations,
+        opt_state_handshake=opt_state_handshake,
+    )
+
+
+def _l2co_population_strategy(
+    model: L2COModel,
+    task: Task,
+    sampler: SamplerFunction,
+    t: float,
+    max_iterations: int,
+    opt_state_handshake: str = "legacy_reset",
+) -> _L2COPopulationStrategy:
+    """:func:`l2co_population_strategy` without its constraint check.
+
+    For a caller that enforces the task's box itself: the l2co
+    meta-optimizer clips every population it is handed (ADR 0020).
     """
     if opt_state_handshake not in ("legacy_reset", "per_optimizer"):
         raise ValueError(
@@ -334,7 +362,15 @@ def l2co_population_strategy(
             f"must share one menu (use L2COModel.swap_optimizers)."
         ) from None
 
-    sub_optimizers = tuple(optstep_to_subopt(step, task=task) for step in menu)
+    sub_optimizers = tuple(
+        optstep_to_subopt(
+            step,
+            model=task.model,
+            loss_fn=task.loss_fn,
+            pass_rng=task.pass_rng,
+        )
+        for step in menu
+    )
     population_size = max(sub.popsize for sub in sub_optimizers)
     name_hashes_arr = jnp.array(
         [sub.name_hash for sub in sub_optimizers], dtype=int
@@ -587,7 +623,7 @@ class _L2COPopulationStrategy(eqx.Module):
         dispatches on ``state.active_opt_idx`` (the fresh stage-1
         choice) and replaces that sub-optimizer's internal state with
         ``sub.init_fn(state.best_solution, key)``, reproducing the
-        old ``reset_from_stage0`` semantics (distribution-based ES
+        former ``reset_from_stage0`` semantics (distribution-based ES
         re-centred on the best-so-far; population-based ES adopts the
         evaluated handshake population on the following ``tell``).
 
