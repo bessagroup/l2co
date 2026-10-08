@@ -87,7 +87,8 @@ constraints on `Task`** (l2co-tasks ADR 0002).
 - **BREAKING:** `RunState.init` (from `l2co_optimizers`) takes
   `(update_class, *, model, dataset, batch_size, key)`. Replace
   `RunState.init(optimizer=, task=, bounded=, key=)` with
-  `l2co.init_run_state(optimizer=, task=, bounded=, key=)`.
+  `l2co.init_run_state(optimizer=, task=, key=)`, and declare the bounds
+  as an `l2co_tasks.Box` in the task's `constraints` (`docs/adr/0020`).
 
 ### Removed
 
