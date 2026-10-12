@@ -1403,6 +1403,7 @@ requires-dist = [
     { name = "optax", specifier = ">=0.2.5" },
     { name = "pandas" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.4.0" },
+    { name = "pycutest", marker = "extra == 'cutest'", specifier = ">=1.8,<2" },
     { name = "pymdown-extensions", marker = "extra == 'docs'", specifier = ">=10.16.1" },
     { name = "pytest", marker = "extra == 'tests'", specifier = ">=8.4.1" },
     { name = "pytest-cov", marker = "extra == 'tests'", specifier = ">=6.2.1" },
@@ -1410,7 +1411,7 @@ requires-dist = [
     { name = "setuptools", marker = "extra == 'dev'", specifier = ">=77.0.0" },
     { name = "wheel", marker = "extra == 'dev'" },
 ]
-provides-extras = ["dev", "docs", "tests"]
+provides-extras = ["cutest", "dev", "docs", "tests"]
 
 [[package]]
 name = "lineax"
