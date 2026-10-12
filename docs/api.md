@@ -111,6 +111,17 @@ at the switch generation. See the design record in
 
 ::: l2co.preprocessing_factory
 
+### Performance profiles
+
+How each optimizer's cost to reach a target compares with the cheapest
+optimizer's, task by task (ADR 0021): `DataLoader.expected_runtime`
+builds the per-task cost table, `performance_profile` turns any subset
+of it into ratio curves, and `plot_performance_profile` draws one.
+
+::: l2co.data.performance_profile
+
+::: l2co.plotting.plot_performance_profile
+
 ## Databank
 
 A lazy-loadable databank that stores a whole dataset in a single

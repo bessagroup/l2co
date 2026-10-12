@@ -62,3 +62,9 @@ OPTIMIZATIONSTEP = "optimizationstep"
 # static optimizers).
 PROVENANCE = "provenance"
 IN_TRAINING = "in_training"
+
+# Performance profiles (docs/adr/0021). ``POSITION`` is a ladder position
+# -- 0 the easiest stored target, 1 the hardest -- and ``RATIO`` the
+# ratio axis of the profile curve.
+POSITION = "position"
+RATIO = "ratio"

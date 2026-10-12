@@ -65,6 +65,7 @@ from l2co._src.optimization_dynamics import OptimizationDynamics
 from l2co._src.performance import (
     ERTD_SEED_BATCH,
     ertd,
+    expected_runtime,
     output_cummin,
     scale_by_task,
 )
@@ -955,6 +956,36 @@ class DataLoader:
         _ertd = _ertd.where(mask)
 
         return _ertd
+
+    def expected_runtime(
+        self,
+        positions: Sequence[float],
+        cost_metric: Literal["fevals", "iterations"] = "fevals",
+    ) -> xr.DataArray:
+        """Per-task expected runtime to each ladder position.
+
+        The cost table a performance profile is built from (see
+        ``docs/adr/0021`` and :func:`l2co.data.performance_profile`):
+        for each task and schedule, the cost spent over all runs divided
+        by the runs that reached the target.
+
+        Parameters
+        ----------
+        positions : Sequence[float]
+            Ladder positions, 0 (the easiest stored target) to 1 (the
+            hardest, ``global_min + 1e-8``).
+        cost_metric : {'fevals', 'iterations'}, optional
+            Cost to count, by default 'fevals'.
+
+        Returns
+        -------
+        xr.DataArray
+            Expected runtime over ``taskID`` x ``schedule`` x
+            ``position``.
+        """
+        return expected_runtime(
+            self.data, positions=positions, cost_metric=cost_metric
+        )
 
     def single_best_schedule(
         self, realizations: Sequence[int] | None = None

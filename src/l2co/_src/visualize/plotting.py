@@ -49,6 +49,7 @@ from l2co._src.naming import (
     OUTPUT_DIM,
     OUTPUT_MIN,
     PROBLEM,
+    RATIO,
     SCHEDULE,
     UPDATE_STEP,
 )
@@ -1442,6 +1443,215 @@ def plot_ertd(
             # Tighten vertical space between entries
             labelspacing=0.2,
             # Distance from the axis edge
+            borderaxespad=0.5,
+        )
+
+    if style_by == "category":
+        _draw_category_key(
+            ax,
+            drawn,
+            linewidth=curves[0].get_linewidth() if curves else 1.2,
+            below_text=bool(top_left_text),
+        )
+
+    return fig, ax
+
+
+#: Gap, in decades, between the end of a performance profile's ratio
+#: axis and its ∞ point.
+_INFINITY_GAP_DECADES = 0.5
+
+
+def plot_performance_profile(
+    profile: xr.Dataset,
+    ax: plt.Axes | None = None,
+    title_text: str | None = None,
+    top_left_text: str | None = None,
+    show_legend: bool = True,
+    show_markers: bool = True,
+    right_labels: bool = False,
+    right_label_band: float = DEFAULT_RIGHT_LABEL_BAND,
+    right_label_fontsize: float | None = None,
+    style_by: Literal["optimizer", "category"] = "optimizer",
+) -> tuple[plt.Figure, plt.Axes]:
+    """
+    Plot a performance profile, one curve per schedule.
+
+    Each curve is the fraction of tasks on which the schedule is within
+    a factor of the cheapest, on a log ratio axis ending at the profile's
+    ``max_ratio`` (see ``docs/adr/0021``). Past an axis break each curve
+    ends at an ∞ point at its solve rate: the gap between the two is the
+    tasks it solved more than ``max_ratio`` times slower than the best.
+
+    Parameters
+    ----------
+    profile : xr.Dataset
+        One profile from :func:`l2co.data.performance_profile`: ``rho``
+        over ``schedule`` x ``ratio`` and ``solve_rate`` over
+        ``schedule``. Select a single ``position`` first.
+    ax : plt.Axes, optional
+        Axes to plot on. If None, creates a new figure, by default None.
+    title_text, top_left_text, show_legend, show_markers, right_labels,
+    right_label_band, right_label_fontsize, style_by
+        As in :func:`plot_ertd`, so a profile panel and an ERTD panel of
+        the same selection look alike.
+
+    Returns
+    -------
+    tuple[plt.Figure, plt.Axes]
+        The matplotlib figure and axes containing the plot.
+    """
+    fig, ax = _get_or_create_axes(ax=ax)
+
+    ax.set_xscale("log")
+    ax.grid(
+        True,
+        which="major",
+        color="gray",
+        linestyle="-",
+        linewidth=0.5,
+        alpha=0.7,
+    )
+    ax.grid(
+        True,
+        which="minor",
+        color="gray",
+        linestyle=":",
+        linewidth=0.3,
+        alpha=0.5,
+    )
+    ax.tick_params(
+        axis="both", which="both", direction="in", top=True, right=True
+    )
+
+    rho = profile["rho"]
+    x = rho[RATIO].values
+    max_ratio = float(x[-1])
+    x_inf = max_ratio * 10.0**_INFINITY_GAP_DECADES
+
+    style = get_schedule_styles(rho[SCHEDULE].values, by=style_by)
+
+    curves: list[Line2D] = []
+    drawn: list[str] = []
+    ends: list[_CurveEnd] = []
+
+    for schedule in rho[SCHEDULE].values:
+        y = rho.sel({SCHEDULE: schedule}).values
+        if np.isnan(y).all():
+            continue
+        color = style[schedule].color
+        linestyle = style[schedule].linestyle
+        marker = style[schedule].marker if show_markers else None
+        pretty_label = display_name(schedule)
+        solved = float(profile["solve_rate"].sel({SCHEDULE: schedule}))
+
+        (curve,) = ax.plot(
+            x,
+            y,
+            drawstyle="steps-post",
+            label=pretty_label,
+            color=color,
+            linestyle=linestyle,
+            marker=marker,
+            markevery=0.2,
+            linewidth=1.2,
+        )
+        # Across the axis break to the ∞ point, kept out of the legend.
+        (bridge,) = ax.plot(
+            [max_ratio, x_inf],
+            [y[-1], solved],
+            label="_nolegend_",
+            color=color,
+            linestyle=":",
+            linewidth=curve.get_linewidth(),
+        )
+        (point,) = ax.plot(
+            [x_inf],
+            [solved],
+            label="_nolegend_",
+            color=color,
+            marker="o",
+            markersize=2.5,
+        )
+        curves.extend([curve, bridge, point])
+        drawn.append(str(schedule))
+
+        if right_labels:
+            ends.append(
+                _CurveEnd(
+                    name=str(schedule),
+                    label=pretty_label,
+                    color=color,
+                    linestyle=linestyle,
+                    marker=marker,
+                    linewidth=curve.get_linewidth(),
+                    x=x_inf,
+                    y=solved,
+                    mean=float(np.nanmean(y)),
+                )
+            )
+
+    if title_text:
+        ax.set_title(title_text)
+
+    if top_left_text:
+        ax.text(
+            0.02,
+            0.98,
+            top_left_text,
+            transform=ax.transAxes,
+            verticalalignment="top",
+        )
+
+    ax.set_xlabel("Ratio to the cheapest optimizer")
+    ax.set_ylabel("Fraction of tasks")
+
+    # Limits first: the label column reads the axes back through its
+    # transforms, which are only final once they are set.
+    xlim = (float(x[0]), x_inf)
+    ax.set_ylim(0.0, 1.0)
+    ax.set_xlim(xlim[0], x_inf * 10.0 ** (_INFINITY_GAP_DECADES / 2))
+    ax.axvline(max_ratio, color="gray", linewidth=0.8)
+
+    if right_labels:
+        _reserve_label_band(
+            ax=ax, xlim=xlim, band=right_label_band, artists=curves
+        )
+
+    # Decades up to the cap, then the ∞ point; nothing in the break.
+    decades = range(
+        math.ceil(math.log10(xlim[0])), math.floor(math.log10(max_ratio)) + 1
+    )
+    ax.set_xticks(
+        [10.0**d for d in decades] + [x_inf],
+        labels=[f"$10^{{{d}}}$" for d in decades] + ["∞"],
+    )
+    ax.set_xticks(
+        [
+            tick
+            for d in range(decades.start - 1, decades.stop)
+            for m in range(2, 10)
+            if xlim[0] <= (tick := m * 10.0**d) <= max_ratio
+        ],
+        minor=True,
+    )
+    ax.xaxis.set_minor_formatter(NullFormatter())
+
+    if right_labels:
+        _draw_right_labels(
+            ax=ax,
+            ends=ends,
+            band=right_label_band,
+            fontsize=right_label_fontsize,
+        )
+    elif show_legend:
+        ax.legend(
+            loc="best",
+            frameon=True,
+            fancybox=False,
+            edgecolor="#BBBBBB",
+            framealpha=1.0,
+            labelspacing=0.2,
             borderaxespad=0.5,
         )
 

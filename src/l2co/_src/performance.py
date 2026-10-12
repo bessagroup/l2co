@@ -14,8 +14,10 @@ add_random_samples_combinations
     Add random samples as optimizers to the optimization dataset.
 calculate_performance_ratio
     Calculate the performance ratio for the given dataset.
-create_performance_profile
-    Create a performance profile for the given experiment data and budget.
+expected_runtime
+    Per-task expected runtime to each ladder position.
+performance_profile
+    Dolan-Moré performance profile of a per-task runtime table.
 """
 
 #                                                                       Modules
@@ -37,9 +39,12 @@ from l2co._src.naming import (
     FEVALS,
     GLOBAL_MIN,
     ITERATIONS,
+    METRIC,
     OUTPUT_DIM,
     OUTPUT_MIN,
+    POSITION,
     PROBLEM,
+    RATIO,
     REALIZATION,
     SCHEDULE,
     SEED,
@@ -308,49 +313,6 @@ def scale_by_problem(data: xr.DataArray) -> xr.DataArray:
 
 
 # =============================================================================
-
-
-def performance_profile(
-    performance: xr.DataArray, max_f_value: int = 2.0
-) -> xr.DataArray:
-    """
-    Create a performance profile for the given performance data.
-
-    Parameters
-    ----------
-    performance : xr.DataArray
-        Performance data for optimization problems.
-    max_f_value : int, optional
-        Maximum performance ratio, by default 2.0.
-
-    Returns
-    -------
-    xr.DataArray
-        Performance profile.
-    """
-
-    p = performance.isel({BUDGET: -1})
-    rij = (p + 1.0) / 1.0
-
-    ds_f = xr.Dataset(
-        {
-            "performance_profile": rij,
-            "relative_error": xr.DataArray(
-                np.logspace(np.log10(1.0), np.log10(max_f_value), 1000),
-                dims="relative_error",
-            ),
-        }
-    )
-
-    performance_profile: xr.DataArray = (
-        np.less_equal(ds_f, ds_f.relative_error + 1e-2)
-        .where(~ds_f.isnull(), np.nan)
-        .mean(dim=PROBLEM)["performance_profile"]
-    )
-
-    rel_error = (performance_profile["relative_error"] * 100) - 100
-
-    return performance_profile.assign_coords({"relative_error": rel_error})
 
 
 def rtd(performance: xr.DataArray) -> xr.DataArray:
@@ -984,3 +946,148 @@ def calculate_ert(
     if GLOBAL_MIN in result.coords:
         result = result.drop_vars(GLOBAL_MIN)
     return result
+
+
+#                                       Performance profiles (docs/adr/0021)
+# =============================================================================
+
+
+def _ladder_index(position: float, n_targets: int) -> int:
+    """Stored target index of a ladder position.
+
+    Targets are stored hardest first, so position 1 is index 0 and
+    position 0 the last index. A position between two stored targets
+    takes the nearer one; exactly halfway, the harder one, so a profile
+    never asks for less than it was told to.
+    """
+    return int(np.ceil((n_targets - 1) * (1.0 - position) - 0.5 - 1e-9))
+
+
+def expected_runtime(
+    performance: xr.Dataset,
+    positions: Sequence[float],
+    cost_metric: str = FEVALS,
+) -> xr.DataArray:
+    """Per-task expected runtime to each ladder position.
+
+    For one optimizer on one task: the cost spent over all of its runs,
+    divided by the number of runs that reached the target. A failed run
+    adds its stored cost to the total but nothing to the divisor. This is
+    the closed form of the quantity the ERTD's restart bootstrap
+    estimates (:func:`ertd`), so no resampling is needed.
+
+    Parameters
+    ----------
+    performance : xr.Dataset
+        Dataset with ``cost`` (over ``metric``) and ``success``, both
+        over ``target`` (stored hardest first) and a ``problem`` axis
+        stacking ``realization`` and ``taskID``. Exactly one
+        ``output_dim``.
+    positions : Sequence[float]
+        Ladder positions, 0 (easiest stored target) to 1 (hardest).
+    cost_metric : str, optional
+        ``"fevals"`` or ``"iterations"``, by default ``"fevals"``.
+
+    Returns
+    -------
+    xr.DataArray
+        Expected runtime over ``taskID`` x ``schedule`` x ``position``,
+        with the stored target index each position used as a ``target``
+        coordinate along ``position``. NaN where the schedule has no data
+        on the task, infinite where no run reached the target.
+    """
+    n_targets = performance.sizes[TARGET]
+    indices = xr.DataArray(
+        [_ladder_index(p, n_targets) for p in positions],
+        dims=POSITION,
+        coords={POSITION: list(positions)},
+    )
+    ds = (
+        performance[[COST, SUCCESS]]
+        .sel({METRIC: cost_metric})
+        .squeeze(OUTPUT_DIM, drop=True)
+        .isel({TARGET: indices})
+        .unstack(PROBLEM)
+    )
+    # With no data both sums are 0 (NaN-skipping), and 0 / 0 is NaN; with
+    # data but no success, total / 0 is infinite. xarray keeps both quiet.
+    total = ds[COST].sum(REALIZATION)
+    solved = ds[SUCCESS].sum(REALIZATION)
+    return (total / solved).transpose(TASK_ID, SCHEDULE, POSITION)
+
+
+#: Right end of a performance profile's ratio axis (docs/adr/0021).
+DEFAULT_MAX_RATIO = 1e4
+
+#: Points on the log10 ratio axis: 0.02 decades apart up to 1e4.
+DEFAULT_RATIO_POINTS = 201
+
+
+def performance_profile(
+    ert: xr.DataArray,
+    max_ratio: float = DEFAULT_MAX_RATIO,
+    n_points: int = DEFAULT_RATIO_POINTS,
+) -> xr.Dataset:
+    """Dolan-Moré performance profile of a per-task runtime table.
+
+    For each task, every schedule's runtime is divided by the cheapest
+    schedule's; the profile is the fraction of tasks on which that ratio
+    is at most each value on a log10 axis from 1 to ``max_ratio`` (see
+    ``docs/adr/0021``). Pure, and reduces only over ``taskID``, so a
+    report can read the table once and profile any subset of its tasks.
+
+    Parameters
+    ----------
+    ert : xr.DataArray
+        Expected runtime over ``taskID`` x ``schedule`` (any further
+        axes, e.g. ``position``, are kept), as
+        :meth:`l2co.DataLoader.expected_runtime` returns.
+    max_ratio : float, optional
+        Right end of the ratio axis, by default :data:`DEFAULT_MAX_RATIO`.
+        A larger ratio still counts as solved, in ``solve_rate``.
+    n_points : int, optional
+        Points on the ratio axis, by default
+        :data:`DEFAULT_RATIO_POINTS`.
+
+    Returns
+    -------
+    xr.Dataset
+        Per schedule:
+
+        - ``rho``: the profile curve over ``ratio``;
+        - ``win_rate``: the fraction of tasks on which it is the
+          cheapest, an exact tie counting for every tied schedule;
+        - ``solve_rate``: the fraction of tasks it solves at all, the
+          curve's limit past any cap.
+
+        Over the task set: ``n_tasks``, and ``n_unsolved``, the tasks no
+        schedule solves. Those stay in every fraction's denominator as a
+        failure for all, so ``solve_rate`` is an absolute solve rate.
+
+        The profile covers only tasks every schedule has data for (NaN
+        in ``ert`` is no data). ``n_dropped`` counts the tasks left out,
+        and ``n_missing`` per schedule the tasks it has no data on --
+        who caused the drops.
+    """
+    complete = ert.notnull().all(SCHEDULE)
+    common = ert.where(complete)
+    best = common.min(SCHEDULE)
+    # A task nobody solves has no cheapest schedule: inf / inf is NaN,
+    # which counts as neither a win nor a solve. A dropped task is NaN
+    # throughout and counts in no denominator.
+    ratio = common / best
+    n_tasks = complete.sum(TASK_ID)
+    grid = np.logspace(0.0, np.log10(max_ratio), n_points)
+    grid[-1] = max_ratio  # logspace's own end point is rounded
+    ratios = xr.DataArray(grid, dims=RATIO, coords={RATIO: grid})
+    return xr.Dataset(
+        {
+            "rho": (ratio <= ratios).sum(TASK_ID) / n_tasks,
+            "win_rate": (ratio == 1).sum(TASK_ID) / n_tasks,
+            "solve_rate": np.isfinite(ratio).sum(TASK_ID) / n_tasks,
+            "n_tasks": n_tasks,
+            "n_unsolved": (complete & np.isinf(best)).sum(TASK_ID),
+            "n_dropped": (~complete).sum(TASK_ID),
+            "n_missing": ert.isnull().sum(TASK_ID),
+        }
+    )
