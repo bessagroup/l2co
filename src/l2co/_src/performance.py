@@ -217,7 +217,9 @@ def min_custom(ds: xr.Dataset) -> xr.DataArray:
     if g_min.isnull().all():
         p = x - x.min(skipna=True)
     else:
-        p = x - g_min
+        # A loss below global_min scores as reaching it (see
+        # :func:`shift_to_quality_value`).
+        p = (x - g_min).clip(min=0.0)
 
     # 2. Calculate epsilon for the log shift
     # We find the smallest positive value to avoid log(0)
@@ -691,6 +693,8 @@ def quality_value(x: xr.DataArray, g_min: float) -> xr.DataArray:
     -------
     xr.DataArray
         Scaled quality values where 0 indicates optimal solution.
+        Never negative: a value below ``g_min`` scores 0 (see
+        :func:`shift_to_quality_value`).
 
     Notes
     -----
@@ -699,7 +703,7 @@ def quality_value(x: xr.DataArray, g_min: float) -> xr.DataArray:
     """
     if np.isnan(g_min):
         g_min = x.min(skipna=True)
-    qv = x - g_min
+    qv = (x - g_min).clip(min=0.0)
 
     # # scaling
     # sf = (
@@ -736,6 +740,12 @@ def shift_to_quality_value(data: xr.Dataset, g_min: float) -> xr.Dataset:
     the original scale of the objective. If ``g_min`` is NaN, the
     minimum of ``output_min`` over the data is used as a fallback.
 
+    A loss below ``g_min`` scores 0, as if it had reached ``g_min``.
+    That happens when ``g_min`` was set empirically and an optimizer
+    finds a lower value; the quality value is never negative, so the
+    log scales and ratios downstream stay finite. The dump records each
+    such case (:func:`global_min_breaches`) so ``g_min`` can be re-tuned.
+
     Parameters
     ----------
     data : xr.Dataset
@@ -746,11 +756,73 @@ def shift_to_quality_value(data: xr.Dataset, g_min: float) -> xr.Dataset:
     Returns
     -------
     xr.Dataset
-        Copy of ``data`` with ``output_min`` shifted by ``-g_min``.
+        Copy of ``data`` with ``output_min`` shifted by ``-g_min`` and
+        floored at 0.
     """
     if np.isnan(g_min):
         g_min = float(data[OUTPUT_MIN].min(skipna=True))
-    return data.assign({OUTPUT_MIN: data[OUTPUT_MIN] - g_min})
+    return data.assign({OUTPUT_MIN: (data[OUTPUT_MIN] - g_min).clip(min=0.0)})
+
+
+#: A loss counts as a ``global_min`` breach below ``global_min - rtol *
+#: max(1, |global_min|)``. The same rule and default as the CUTEst floor
+#: test in l2co_experiments; the margin absorbs float noise at an exact
+#: optimum.
+GLOBAL_MIN_BREACH_RTOL = 1e-6
+
+
+def global_min_breaches(
+    data: xr.Dataset,
+    g_min: float,
+    rtol: float = GLOBAL_MIN_BREACH_RTOL,
+) -> dict[str, dict[str, float | int]]:
+    """The schedules whose lowest loss on a task is below ``g_min``.
+
+    Parameters
+    ----------
+    data : xr.Dataset
+        One task's raw ``output_min`` over ``schedule`` (and any of
+        ``realization`` / ``budget`` / ``output_dim``), before the shift
+        into quality-value space.
+    g_min : float
+        The task's ``global_min``. NaN means there is none to breach.
+    rtol : float, optional
+        Breach margin, relative to ``max(1, |g_min|)``, by default
+        :data:`GLOBAL_MIN_BREACH_RTOL`.
+
+    Returns
+    -------
+    dict[str, dict[str, float | int]]
+        Per breaching schedule: ``best``, its lowest loss; ``margin``,
+        how far that is below ``g_min``; and ``realization``, the run
+        that reached it (when the data has that axis). Empty when no
+        schedule breaches.
+    """
+    if not np.isfinite(g_min):
+        return {}
+    floor = g_min - rtol * max(1.0, abs(g_min))
+    loss = data[OUTPUT_MIN]
+    breaches: dict[str, dict[str, float | int]] = {}
+    for schedule in loss[SCHEDULE].values:
+        values = loss.sel({SCHEDULE: schedule})
+        flat = np.asarray(values.values, dtype=np.float64).reshape(-1)
+        if np.isnan(flat).all():
+            continue
+        i = int(np.nanargmin(flat))
+        best = float(flat[i])
+        if not best < floor:
+            continue
+        record: dict[str, float | int] = {
+            "best": best,
+            "margin": g_min - best,
+        }
+        if REALIZATION in values.dims:
+            index = np.unravel_index(i, values.shape)[
+                values.dims.index(REALIZATION)
+            ]
+            record["realization"] = int(values[REALIZATION].values[index])
+        breaches[str(schedule)] = record
+    return breaches
 
 
 def compute_task_targets(

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- A loss below a task's `global_min` now scores as reaching it. The
+  quality value `loss - global_min` is floored at 0 in
+  `shift_to_quality_value` (ERT targets and success), `min_custom`
+  (`scale_by_task`), the report's `shifted_final_min` and
+  `log_stabilized_minmax_scale_with_global_min` (`traj_and_stair`, so
+  training and inference features alike). Before, an empirical
+  `global_min` that a run beat gave a negative gap, and NaN under the
+  log scales. ERT success is unchanged: such a run already solved
+  every target.
+
+### Added
+
+- Every databank dump writes `<root>/<dataset>/global_min_breaches.json`:
+  each task on which a run went below `global_min`, with the lowest
+  loss, how far below it is, and which schedule and realization
+  reached it. A finalize warning gives the count and path. The margin
+  for float noise is `1e-6 * max(1, |global_min|)`, as in the CUTEst
+  floor test. `l2co._src.performance.global_min_breaches` finds them
+  for one task.
+
 ## [1.7.0] - 2026-10-07
 
 The run loop moves onto `UpdateClass` in `l2co-optimizers`

@@ -91,7 +91,11 @@ from l2co._src.databank.provenance import (
     record_weights_hash,
     weights_hash,
 )
-from l2co._src.databank.records import _build_task_records, _iter_task_runs
+from l2co._src.databank.records import (
+    BREACHES_ATTR,
+    _build_task_records,
+    _iter_task_runs,
+)
 from l2co._src.databank.schema import (
     STORE_DTYPE,
     big_template,
@@ -104,6 +108,7 @@ from l2co._src.performance import DEFAULT_EASIEST_QUANTILE
 from l2co._src.validation import normalize_budget_grid
 from l2co.naming import (
     FEATURE,
+    GLOBAL_MIN,
     IN_TRAINING,
     OPTIMIZATIONSTEP,
     PROVENANCE,
@@ -1465,6 +1470,70 @@ def _accumulate_schedule_payload(
     )
 
 
+def _write_global_min_breaches(
+    task_smalls: list[xr.Dataset], plan: DumpPlan
+) -> None:
+    """Record the tasks on which a run beat ``global_min``.
+
+    An empirical ``global_min`` (e.g. CUTEst's) can sit above the true
+    minimum. The dump scores such a run as reaching ``global_min`` (see
+    :func:`l2co._src.performance.shift_to_quality_value`) and records it
+    here, in :func:`~l2co._src.databank.layout.global_min_breaches_path`,
+    so the value can be re-tuned. The file maps each breached ``taskID``
+    to its ``task`` tag, ``global_min``, the lowest loss any schedule
+    reached (``best``), how far below ``global_min`` that is
+    (``margin``), and each breaching schedule's own ``best`` /
+    ``margin`` / ``realization``.
+
+    A fresh dump writes the file from scratch. An append merges into it:
+    a schedule this dump wrote for a task replaces that schedule's old
+    entry, or removes it if the new runs no longer breach.
+    """
+    path = layout.global_min_breaches_path(Path(plan.root), plan.dataset_name)
+    tasks: dict[str, dict] = {}
+    if plan.mode == "append" and path.is_file():
+        tasks = json.loads(path.read_text())
+
+    n_breached = 0
+    for ds in task_smalls:
+        task_hash = str(ds.attrs["task_hash"])
+        written = set(json.loads(ds.attrs["schedules_json"]))
+        old = tasks.pop(task_hash, None)
+        new = (
+            json.loads(ds.attrs[BREACHES_ATTR])
+            if BREACHES_ATTR in ds.attrs
+            else None
+        )
+        schedules = {
+            name: record
+            for name, record in (old or {}).get("schedules", {}).items()
+            if name not in written
+        }
+        if new is not None:
+            n_breached += 1
+            schedules.update(new["schedules"])
+        if not schedules:
+            continue
+        head = new if new is not None else old
+        best = min(record["best"] for record in schedules.values())
+        tasks[task_hash] = {
+            "task": head["task"],
+            GLOBAL_MIN: head[GLOBAL_MIN],
+            "best": best,
+            "margin": head[GLOBAL_MIN] - best,
+            "schedules": dict(sorted(schedules.items())),
+        }
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(dict(sorted(tasks.items())), indent=2))
+    if n_breached:
+        logger.warning(
+            f"dump_databank: on {n_breached} task(s), a run reached a loss "
+            "below the task's global_min. Those runs score as reaching "
+            f"global_min. Re-tune global_min from {path}."
+        )
+
+
 def dump_databank_finalize(
     task_smalls: list[xr.Dataset],
     plan: DumpPlan,
@@ -1571,6 +1640,8 @@ def dump_databank_finalize(
         plan.taskids,
         plan.schedules,
     )
+
+    _write_global_min_breaches(task_smalls, plan)
 
     _archive_policy_artifacts(
         Path(plan.root),

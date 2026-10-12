@@ -13,6 +13,7 @@ filesystems where opening thousands of HDF5 files is expensive.
 <root>/<dataset_name>/tasksets/<name>.txt         # named task selections
 <root>/<dataset_name>/policy_artifacts/<schedule>/  # archived policy artifacts
     <checkpoint files> + <stem>.manifest.json + provenance.json
+<root>/<dataset_name>/global_min_breaches.json    # runs below global_min
 ```
 
 `<root>` is the databank base directory supplied by the caller (the application
@@ -148,6 +149,37 @@ the raw history to `loss_history_raw/` and region-writes the interpolated histor
 
 Writes that touch distinct `(taskID, schedule)` cells are chunk-disjoint and
 safe to parallelise; resizing and `consolidate_metadata` are single-writer.
+
+### Runs below `global_min`
+
+A task's `global_min` is sometimes set empirically (CUTEst), so a run can
+reach a lower loss. The dump scores that run as if it reached `global_min`:
+the quality value (`loss - global_min`) is floored at 0, so it solves every
+target, and the read-side log scales stay finite. Finalize then writes
+`global_min_breaches.json`, so the value can be re-tuned:
+
+```json
+{
+  "<taskID>": {
+    "task": {"fn_name": "MEXHAT", "dimensionality": 2},
+    "global_min": -0.04,
+    "best": -0.0402,
+    "margin": 0.0002,
+    "schedules": {
+      "<schedule>": {"best": -0.0402, "margin": 0.0002, "realization": 3}
+    }
+  }
+}
+```
+
+`best` is the lowest loss over every run of the task, `margin` how far it
+sits below `global_min`. Losses come from the raw histories, at the
+precision the run wrote, not from the float32 store. A loss counts only
+when it is more than `1e-6 * max(1, |global_min|)` below `global_min`
+(`l2co._src.performance.GLOBAL_MIN_BREACH_RTOL`, the CUTEst floor test's
+rule), so float noise at an exact optimum is not reported. Every dump
+writes the file, so an empty `{}` means nothing breached. An append merges
+into it: a schedule it re-runs replaces that schedule's entry, or drops it.
 
 ## Reading
 

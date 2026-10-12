@@ -285,7 +285,9 @@ def shifted_final_min(
     earlier. Taking the minimum across the budget axis gives the best
     value the optimizer actually achieved, regardless of where in the
     trajectory it occurred. The result is strictly positive by
-    construction.
+    construction: a final loss below ``global_min`` (an empirical
+    ``global_min`` an optimizer beat) is floored at the shift, so it
+    scores ``EPSILON``, as if it had reached ``global_min``.
 
     Parameters
     ----------
@@ -303,7 +305,7 @@ def shifted_final_min(
     if OUTPUT_DIM in final.dims:
         final = final.isel({OUTPUT_DIM: 0}, drop=True)
     shift = per_task_shift(data=data, task_labels=task_labels)
-    return final - shift + EPSILON
+    return (final - shift).clip(min=0.0) + EPSILON
 
 
 #                                          Performance-profile (Dolan-Moré) AUC
