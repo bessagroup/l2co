@@ -59,6 +59,7 @@ def test_every_registered_optimizer_has_a_category_but_the_references():
         ("bfgs", CATEGORY_QUASI_NEWTON),
         ("dfp", CATEGORY_QUASI_NEWTON),
         ("ipopt", CATEGORY_QUASI_NEWTON),
+        ("lbfgsb", CATEGORY_QUASI_NEWTON),
         ("slsqp", CATEGORY_QUASI_NEWTON),
         ("tnc", CATEGORY_QUASI_NEWTON),
         ("trustconstr", CATEGORY_QUASI_NEWTON),
