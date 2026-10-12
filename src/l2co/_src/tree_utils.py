@@ -184,9 +184,11 @@ def log_stabilized_minmax_scale_with_global_min(
     Returns
     -------
     jax.Array
-        Log-stabilized scaled array in range [0, 1].
+        Log-stabilized scaled array in range [0, 1]. A value below
+        ``global_min`` (an empirical ``global_min`` an optimizer beat)
+        scales to 0, as if it had reached ``global_min``.
     """
-    p = x - global_min
+    p = jnp.maximum(x - global_min, 0.0)
     p_log10 = jnp.log10(p + EPSILON)
     min_value = jnp.log10(EPSILON)
     max_value = p_log10[0]

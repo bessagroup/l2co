@@ -21,6 +21,7 @@ equal what the pipeline produced for it.
 
 from __future__ import annotations
 
+import json
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -143,12 +144,15 @@ def tasks() -> list[FakeTask]:
     ]
 
 
-def _write_raw_runs(rundir: Path, task_budgets: list, steps, omit=()) -> list:
+def _write_raw_runs(
+    rundir: Path, task_budgets: list, steps, omit=(), scale: float = 10.0
+) -> list:
     """Write raw loss netCDFs and return ``runs`` = [(task, {step: path})].
 
     ``task_budgets`` is a list of ``(task, raw_budget_length)`` pairs.
     ``omit`` is a set of ``(task_hash, step_name)`` pairs to leave out
-    (to exercise ragged / missing-pair handling).
+    (to exercise ragged / missing-pair handling). ``scale`` is
+    :func:`make_loss_ds`'s.
     """
     rundir.mkdir(parents=True, exist_ok=True)
     runs = []
@@ -158,7 +162,7 @@ def _write_raw_runs(rundir: Path, task_budgets: list, steps, omit=()) -> list:
             if (task.hash, s.name) in omit:
                 continue
             p = rundir / f"{task.hash}_{s.hash}.nc"
-            make_loss_ds(nb, scale=10.0).to_netcdf(p)
+            make_loss_ds(nb, scale=scale).to_netcdf(p)
             step_paths[s] = p
         runs.append((task, step_paths))
     return runs
@@ -1516,3 +1520,100 @@ def test_parallel_dump_template_is_shape_only(tmp_path):
         layout.zarr_store_path(par_root, "bbob"),
         layout.zarr_store_path(serial_root, "bbob"),
     )
+
+
+#                                                          global_min breaches
+# =============================================================================
+
+
+def _breach_task() -> FakeTask:
+    """A task whose ``global_min`` (0.5) the scale-10 runs beat.
+
+    :func:`make_loss_ds` at 8 budget steps bottoms out at
+    ``10 * exp(-3.5) + 1e-3`` (realization 0, last step), about 0.303.
+    """
+    return FakeTask(
+        hash="b0b0b0", fn_name="mexhat", dimensionality=2, global_min=0.5
+    )
+
+
+def _breaches(root: Path) -> dict:
+    path = layout.global_min_breaches_path(root, "bbob")
+    return json.loads(path.read_text())
+
+
+def test_dump_without_breach_writes_empty_record(tmp_path, tasks, steps):
+    runs = _write_raw_runs(tmp_path / "runs", [(t, 8) for t in tasks], steps)
+    _create_zarr(tmp_path / "db", runs)
+    assert _breaches(tmp_path / "db") == {}
+
+
+def test_dump_records_breach_and_scores_it_as_solved(tmp_path, tasks, steps):
+    task = _breach_task()
+    runs = _write_raw_runs(
+        tmp_path / "runs", [(task, 8), (tasks[0], 8)], steps
+    )
+    root = tmp_path / "db"
+    _create_zarr(root, runs)
+
+    best = 10.0 * np.exp(-3.5) + 1e-3
+    run = {"best": pytest.approx(best), "margin": pytest.approx(0.5 - best)}
+    assert _breaches(root) == {
+        task.hash: {
+            "task": task.tag,
+            "global_min": 0.5,
+            **run,
+            "schedules": {
+                s.name: {**run, "realization": 0}
+                for s in sorted(steps, key=lambda s: s.name)
+            },
+        }
+    }
+    # Below global_min counts as reaching it: every run solves every
+    # target, including the hardest.
+    zd = load_databank_dataset("bbob", steps, root).load()
+    assert zd[SUCCESS].sel({TASK_ID: task.hash}).values.all()
+
+
+def test_append_merges_breaches(tmp_path, tasks, steps):
+    task = _breach_task()
+    root = tmp_path / "db"
+    _create_zarr(
+        root, _write_raw_runs(tmp_path / "r0", [(task, 8)], steps[:1])
+    )
+    _append_zarr(
+        root,
+        _write_raw_runs(
+            tmp_path / "r1", [(task, 8), (tasks[0], 8)], steps[1:]
+        ),
+    )
+    breaches = _breaches(root)
+    assert list(breaches) == [task.hash]
+    assert set(breaches[task.hash]["schedules"]) == {s.name for s in steps}
+
+
+def test_append_rerun_drops_a_breach_it_no_longer_makes(tmp_path, steps):
+    task = _breach_task()
+    root = tmp_path / "db"
+    _create_zarr(root, _write_raw_runs(tmp_path / "r0", [(task, 8)], steps))
+    # Re-run the first schedule higher up: 100 * exp(-3.5) is about 3.
+    rerun = _write_raw_runs(
+        tmp_path / "r1", [(task, 8)], steps[:1], scale=100.0
+    )
+    _append_zarr(root, rerun)
+    assert set(_breaches(root)[task.hash]["schedules"]) == {steps[1].name}
+
+    rerun = _write_raw_runs(
+        tmp_path / "r2", [(task, 8)], steps[1:], scale=100.0
+    )
+    _append_zarr(root, rerun)
+    assert _breaches(root) == {}
+
+
+def test_parallel_dump_records_breaches_like_serial(tmp_path, tasks, steps):
+    runs = _write_raw_runs(
+        tmp_path / "runs", [(_breach_task(), 8), (tasks[0], 8)], steps
+    )
+    _create_zarr(tmp_path / "serial", runs)
+    _parallel_dump(tmp_path / "parallel", runs, mode="error", concurrent=True)
+    assert _breaches(tmp_path / "parallel") == _breaches(tmp_path / "serial")

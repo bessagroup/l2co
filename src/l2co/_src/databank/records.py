@@ -40,6 +40,7 @@ from l2co_tasks import Task
 # Local
 from l2co._src.data_validation import _ert_from_quantile, loss_column_name
 from l2co._src.databank.provenance import POLICY_OPTIMIZERS
+from l2co._src.performance import global_min_breaches
 from l2co._src.validation import normalize_budget_grid
 from l2co.naming import (
     FEATURE,
@@ -61,6 +62,11 @@ __author__ = "Martin van der Schelling (M.P.vanderSchelling@tudelft.nl)"
 __credits__ = ["Martin van der Schelling"]
 __status__ = "Stable"
 # =============================================================================
+
+# Payload attribute carrying a task's ``global_min`` breaches from the
+# per-task dump step to finalize, which writes them to the dataset's
+# ``global_min_breaches.json`` (see ``writer._write_global_min_breaches``).
+BREACHES_ATTR = "global_min_breaches"
 
 # Integer counters that nearest-neighbour interpolation promotes to
 # float and that must be cast back so dtypes stay consistent with the
@@ -245,7 +251,12 @@ def _build_task_records(
         ``(task_ds, loss_by_hash, perf_by_hash, opt_by_hash)`` where the
         three dicts are keyed by ``OptimizationStep.hash``. When
         ``existing_targets`` was supplied, ``task_ds`` simply echoes
-        those targets.
+        those targets. When a schedule's lowest loss is below the
+        task's ``global_min`` (:func:`l2co._src.performance.
+        global_min_breaches`), ``task_ds.attrs[BREACHES_ATTR]`` holds
+        a JSON record: the task's ``tag``, its ``global_min`` and the
+        breaching ``schedules``. Those losses still score as reaching
+        ``global_min``.
 
     Raises
     ------
@@ -285,6 +296,12 @@ def _build_task_records(
         b, easiest_quantile=easiest_quantile, targets=existing_targets
     )
     task_ds = _task_dataset(task, perf_all[TARGET_VALUE])
+    breaches = global_min_breaches(b, gmin)
+    if breaches:
+        task_ds.attrs[BREACHES_ATTR] = json.dumps(
+            {"task": task.tag, GLOBAL_MIN: gmin, "schedules": breaches},
+            default=str,
+        )
     perf_vars = perf_all.drop_vars(TARGET_VALUE)
 
     loss_by_hash: dict[int, xr.Dataset] = {}
