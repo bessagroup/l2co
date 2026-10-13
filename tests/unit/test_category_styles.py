@@ -65,6 +65,7 @@ def test_every_registered_optimizer_has_a_category_but_the_references():
         ("trustconstr", CATEGORY_QUASI_NEWTON),
         ("trustkrylov", CATEGORY_QUASI_NEWTON),
         ("nonlinearcg", CATEGORY_GRADIENT),
+        ("cobyla", CATEGORY_MODEL_BASED),
         ("cobyqa", CATEGORY_MODEL_BASED),
         ("neldermead", CATEGORY_DIRECT_SEARCH),
         ("powell", CATEGORY_DIRECT_SEARCH),
