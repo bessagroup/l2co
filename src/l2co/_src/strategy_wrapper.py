@@ -272,8 +272,10 @@ def l2co_population_strategy(
         ``"per_optimizer"`` instead honours each optimizer's
         :data:`~l2co._src.optimizers.handshake_policy.HANDSHAKE_POLICY`
         entry, so only optimizers that genuinely cannot survive an
-        iterate jump (``lbfgs``) are reset and adaptive ES state is
-        preserved -- matching what the rl2co environment does. Opt-in
+        iterate jump (``lbfgs``, and the solvers that evaluate the
+        objective themselves, such as ``bfgs``) are reset and adaptive
+        ES state is preserved -- matching what the rl2co environment
+        does. Opt-in
         because it changes L2CO results; see ``docs/adr/0009``.
 
     Returns
