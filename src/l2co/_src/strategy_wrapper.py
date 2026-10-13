@@ -70,6 +70,11 @@ losses) — see the identical convention in rl2co's evosax wrapper.
 * ``tell`` accepts ``value_fn=`` — a callable ``params -> scalar
   loss`` that line-search transforms (``optax.lbfgs``) probe at trial
   points; plain transforms ignore it.
+* Every grad step forwards ``value`` (``fitness[0]``) and ``grad``
+  (``grads[0]``) to the transform's ``update``, with or without a
+  ``value_fn``. A solver that evaluates the objective itself
+  (``bfgs``, ``slsqp``, ...; l2co-optimizers ADR 0011) reads the loss
+  there; plain transforms ignore both.
 * ``init`` accepts an all-``NaN`` ``fitness``: the bridge in
   :mod:`l2co._src.optimizers.update_class` does not evaluate the
   initial population (matching the stock l2co machinery, where the
@@ -950,9 +955,9 @@ class _L2COPopulationStrategy(eqx.Module):
         ``sub.tell_fn``, store the user-supplied snapshot verbatim.
         Grad branch: read ``grads[0]`` at the iterate
         ``population[0]``, apply the optax update, store the
-        post-step point at slot 0 with all-NaN fitness. ``value_fn``
-        (with ``value`` = ``fitness[0]``, ``grad`` = ``grads[0]``) is
-        forwarded to line-search transforms when supplied.
+        post-step point at slot 0 with all-NaN fitness. ``value`` =
+        ``fitness[0]`` and ``grad`` = ``grads[0]`` are forwarded on
+        every grad step, and ``value_fn`` with them when supplied.
 
         Parameters
         ----------
@@ -967,7 +972,7 @@ class _L2COPopulationStrategy(eqx.Module):
             sub-optimizers.
         value_fn : Callable | None
             Line-search probe callable (``optax.lbfgs``); ``None``
-            reproduces the stock single-argument ``update``.
+            forwards only ``value`` and ``grad``.
         key : PRNGKeyArray
             Forwarded to the sub-optimizer.
 
@@ -1011,15 +1016,12 @@ class _L2COPopulationStrategy(eqx.Module):
                     )
                 pre_step = jax.tree.map(lambda x: x[0], population)
                 g0 = jax.tree.map(lambda x: x[0], grads)
-                extra_args = (
-                    {}
-                    if value_fn is None
-                    else {
-                        "value": fitness[0],
-                        "grad": g0,
-                        "value_fn": value_fn,
-                    }
-                )
+                # The loss at ``pre_step`` goes to every grad step: a
+                # solver that evaluates the objective itself reads it
+                # through a stub objective (l2co-optimizers ADR 0011).
+                extra_args = {"value": fitness[0], "grad": g0}
+                if value_fn is not None:
+                    extra_args["value_fn"] = value_fn
                 updates, new_sub_state = sub_i.step_fn(
                     g0, pre_step, state.sub_states[i], key, **extra_args
                 )
