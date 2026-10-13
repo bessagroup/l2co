@@ -28,6 +28,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for float noise is `1e-6 * max(1, |global_min|)`, as in the CUTEst
   floor test. `l2co._src.performance.global_min_breaches` finds them
   for one task.
+- Performance profiles (`docs/adr/0021`): how each optimizer's cost to
+  reach a target compares with the cheapest optimizer's, task by task.
+  - `DataLoader.expected_runtime(positions, cost_metric="fevals")`: for
+    each task and schedule, the cost spent over all runs divided by the
+    runs that reached the target, at each ladder position (0 = easiest
+    stored target, 1 = hardest). NaN is no data, infinity never reached.
+  - `l2co.data.performance_profile(ert, max_ratio=1e4, n_points=201)`:
+    ratio curves over any subset of that table, with `win_rate`,
+    `solve_rate`, and counts of tasks nobody solved and tasks dropped
+    for missing data.
+  - `l2co.plotting.plot_performance_profile`: draws one profile, with
+    `plot_ertd`'s styling options and an ∞ point at each solve rate.
+  - `l2co.naming.POSITION` and `RATIO`: the two new axes.
+
+### Removed
+
+- `l2co._src.performance.performance_profile` (a private final-loss
+  ratio profile with no callers). The name now belongs to the function
+  above.
 
 ## [1.7.0] - 2026-10-07
 

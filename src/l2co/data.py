@@ -9,8 +9,10 @@ from l2co._src.data import (
     DataLoader,
 )
 from l2co._src.data_validation import create_combined_odata
+from l2co._src.performance import performance_profile
 
 __all__ = [
     "DataLoader",
     "create_combined_odata",
+    "performance_profile",
 ]
