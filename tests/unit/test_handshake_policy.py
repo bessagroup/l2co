@@ -14,7 +14,11 @@ tests pin the table's contents, the fallback, and the propagation into
 import pytest
 
 # Local
-from l2co_optimizers import OptimizationStep
+from l2co_optimizers import (
+    OptimizationStep,
+    normalize_key,
+    optimizer_mapping,
+)
 
 from l2co._src.switching.handshake_policy import (
     OPT_STATE_VARIANTS,
@@ -49,17 +53,36 @@ class TestTable:
             assert policy.population in POPULATION_VARIANTS, name
             assert policy.opt_state in OPT_STATE_VARIANTS, name
 
-    def test_lbfgs_is_the_one_reset_entry(self):
+    def test_reset_entries_are_lbfgs_and_the_self_evaluating_solvers(self):
         # The whole reason the table exists: L-BFGS curvature and
         # line-search state describe the neighbourhood of an iterate the
-        # handshake jumps away from.
-        resets = [
+        # handshake jumps away from. The solvers that evaluate the
+        # objective themselves also keep the iterate itself in their
+        # state (l2co-optimizers ADR 0011).
+        resets = {
             name
             for name, policy in HANDSHAKE_POLICY.items()
             if policy.opt_state == "reset"
-        ]
-        assert resets == ["lbfgs"]
-        assert HANDSHAKE_POLICY["lbfgs"].population == "best"
+        }
+        assert resets == {
+            "lbfgs",
+            "bfgs",
+            "dfp",
+            "nonlinearcg",
+            "neldermead",
+            "lbfgsb",
+            "slsqp",
+        }
+        for name in resets:
+            assert HANDSHAKE_POLICY[name].population == "best", name
+
+    def test_every_entry_names_a_registered_optimizer(self):
+        # Lookup is by exact name, so a row whose name the registry
+        # does not know can never apply -- and a misspelt ``reset`` row
+        # silently falls back to ``continue``.
+        for name in HANDSHAKE_POLICY:
+            assert normalize_key(name) == name, name
+            optimizer_mapping(name)
 
     def test_gradient_optimizers_take_best_and_continue(self):
         for name in ("adam", "sgd"):

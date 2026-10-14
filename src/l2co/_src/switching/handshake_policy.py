@@ -100,16 +100,21 @@ class HandshakePolicy(eqx.Module):
         ``"continue"`` -- the optimizer's internal state carries over,
         so switching back resumes its own adaptation. ``"reset"`` -- the
         internal state is re-initialised, for optimizers whose
-        accumulated state cannot survive an iterate jump. "Re-initialised
-        *around the best parameters*" would overstate it: L-BFGS, the one
-        tabulated ``"reset"``, has an ``init`` that reads its argument's
-        shape and dtype only (``optax`` ``transform.py:1719`` stores
-        ``zeros_like(params)``), so the values passed do not reach the
-        state. An optimizer whose ``init`` *does* read them -- any evosax
-        distribution-based algorithm, which takes its ``mean`` from the
-        argument -- would make the point handed in load-bearing, and the
-        caller must then pass the best parameters rather than whatever
-        population it happens to hold.
+        accumulated state cannot survive an iterate jump. Whether the
+        point handed to ``init`` matters depends on the optimizer.
+        L-BFGS's ``init`` reads its argument's shape and dtype only
+        (``optax`` ``transform.py:1719`` stores ``zeros_like(params)``),
+        so the values passed do not reach the state. The solvers that
+        evaluate the objective themselves -- ``bfgs``, ``dfp``,
+        ``nonlinearcg``, ``neldermead``, ``lbfgsb``, ``slsqp`` -- keep
+        their iterate *in* the state, so for them the point is
+        load-bearing: ``init`` at the wrong point makes the solver's next
+        evaluation somewhere the loop did not put it. Every caller
+        therefore re-initialises at the point the incoming optimizer
+        will step from: the best parameters where the handshake jumps
+        the iterate (the rl2co environment, this package's strategy
+        wrapper, rl2co's ``evosax_wrapper``), the current iterate where
+        it does not (rl2co's ``optax_wrapper``).
     """
 
     population: str = eqx.field(static=True)
@@ -132,15 +137,16 @@ This pair is the conservative choice: ``best_one`` degenerates to
 ``best`` whenever ``popsize == 1`` (the default for gradient-based
 optimizers), so the fallback matches the tabulated behaviour for both
 gradient-based and population-based entries. It differs only for
-optimizers that need their internal state *reset* on a switch --
-``lbfgs`` is the one known case, and it is tabulated explicitly. Add an
-entry for any new optimizer whose internal state cannot survive an
-iterate jump.
+optimizers that need their internal state *reset* on a switch -- those
+are tabulated explicitly. Add an entry for any new optimizer whose
+internal state cannot survive an iterate jump: falling back to
+``continue`` is not merely suboptimal for one that keeps its iterate in
+its state, it feeds the solver a loss and gradient measured somewhere
+other than where it believes it is.
 """
 
 HANDSHAKE_POLICY: dict[str, HandshakePolicy] = {
     "adam": HandshakePolicy("best", "continue"),
-    "adam_variable_updates": HandshakePolicy("best", "continue"),
     "sgd": HandshakePolicy("best", "continue"),
     "sepcmaes": HandshakePolicy("best_one", "continue"),
     "cmaes": HandshakePolicy("best_one", "continue"),
@@ -151,6 +157,19 @@ HANDSHAKE_POLICY: dict[str, HandshakePolicy] = {
     # the iterate it was building them at, and the handshake jumps the
     # iterate somewhere else.
     "lbfgs": HandshakePolicy("best", "reset"),
+    # The solvers that evaluate the objective themselves (l2co-optimizers
+    # ADR 0011). Each keeps its iterate in its state -- optimistix's
+    # ``y`` / ``y_eval``, scipy's Fortran workspace, the Nelder-Mead
+    # simplex -- next to state that describes that iterate's
+    # neighbourhood: a Hessian estimate, a conjugate direction, a
+    # simplex and its losses. A jump leaves both wrong, and only
+    # ``init`` at the new point makes them agree with it again.
+    "bfgs": HandshakePolicy("best", "reset"),
+    "dfp": HandshakePolicy("best", "reset"),
+    "nonlinearcg": HandshakePolicy("best", "reset"),
+    "neldermead": HandshakePolicy("best", "reset"),
+    "lbfgsb": HandshakePolicy("best", "reset"),
+    "slsqp": HandshakePolicy("best", "reset"),
 }
 """Handshake policy per optimizer name, keyed as in the registry."""
 
