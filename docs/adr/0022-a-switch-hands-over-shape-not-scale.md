@@ -73,19 +73,34 @@ NaN within 50 generations.
 A scale describes what an optimizer *is looking at*. It says nothing
 about what the next optimizer *should* look at.
 
-**Part of the drop is still unexplained.** The databank's random-policy
-row for the same task set (schedule `1567478`, written 2026-08-22,
-before the 2026-08-24/25 switching changes) reaches 1e-8 in 1472 of
-2500 runs. Turning the scale off wins back 325 of the 541 runs lost; 216
-are still missing. The same batch also added:
+**The scale write accounts for the whole drop.** The databank's
+random-policy row for the same task set (schedule `1567478`, written
+2026-08-22, before the 2026-08-24/25 switching changes) appeared to
+reach 1e-8 in 1472 of 2500 runs, against 1256 with the scale off. That
+difference is a measurement artifact, which step 1 settled:
 
-- own-ask: CR-FM-NES and the mutation GAs draw their own post-switch
-  population;
-- the repaired GA baseline;
-- refusal of non-finite bundles;
-- the "no news" gate, in the training environment only.
+- the databank stores losses in float32, while the A/B harness stores
+  float64;
+- near a BBOB optimum (|f| ~ 10–100), one float32 step is about 1e-6, so
+  a stored run within half a step of the optimum rounds onto it and
+  counts as reaching 1e-8;
+- on all 100 tasks the optimum rounds down in float32, so this always
+  favours the stored row.
 
-Step 1 below explains this gap before anything else is measured.
+Rounding the harness runs to float32 before scoring
+(l2co_experiments#57, `ab.py databank`) gives:
+
+| | runs reaching 1e-8 |
+|---|---|
+| databank row | 1472 |
+| scale on | 1180 |
+| scale off | 1552 |
+
+Scale off against the stored row is +0.8 runs per task (Wilcoxon
+p = 0.096): within noise, since the two use different keys. Scale on
+against it is −2.9 runs per task (p = 2.8e-6). The other changes in that
+batch (own-ask, the repaired GA baseline, refusing non-finite bundles)
+cost nothing detectable.
 
 ## What goes stale, and how
 
@@ -296,16 +311,13 @@ exception is recorded in this ADR with the numbers behind it.
 Each step is measured before the next one starts. Steps 3 and 5 stay on
 branches until their A/Bs decide.
 
-1. **Explain the gap.** Two jobs on the existing A/B harness:
-   - rerun the databank's own random-policy pipeline on today's code,
-     with the scale on. About 931 means the gap is a code change; about
-     1472 means the harness or the key is responsible.
-   - run the harness with the scale off and own-ask off for crfmnes and
-     the GAs. `TransferSpec.own_ask` is a static per-optimizer field, so
-     the harness overrides it without touching the library.
-
-   If own-ask turns out to cost the gap, it joins the things this plan
-   changes.
+1. **Explain the gap. Done (2026-10-15).** The gap was a float32
+   measurement artifact, not a cost of the other August changes (see "Why
+   the scale stops crossing"). Neither planned job was needed: rerunning
+   the pipeline, or turning own-ask off. A side effect for every
+   databank-based analysis: on BBOB, a 1e-8 target on stored losses
+   means "float32-equal to the optimum", about 1e-6. Float64 runs must be
+   rounded the same way before they are compared with stored rows.
 2. **Close the deployment mismatch.** The shared function lands
    carrying only the news gate and "no scale", in the environment, both
    wrappers and l2co's strategy wrapper. This is certain and large, so
@@ -396,7 +408,6 @@ statistically real. Otherwise the arms calibrate k and check c.
 
   The confirmation half has half the tasks, so it may need more
   realizations to detect an effect near 0.3 decades.
-- The step-1 gap check runs on `headroom4` only.
 
 ### Regeneration
 
