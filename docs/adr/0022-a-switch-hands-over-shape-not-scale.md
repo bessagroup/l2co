@@ -260,12 +260,17 @@ order and the evidence counters are one function in the switching
 layer. It lives here for the same reason the handshake policy and the
 population builders do (ADR 0009 and its amendment). Its callers are:
 
-- rl2co's environment and both deployment wrappers (rl2co ADR 0010);
-- **l2co's own strategy wrapper.** L2CO switches at most once, at the
-  stage-1 fire, and a different pick has never run, so it always
-  restarts. Its `opt_state_handshake` option then has nothing left to
-  choose between: `"per_optimizer"` and the default `"legacy_reset"`
-  both end in the same restart. The option is removed. `transfer_shape`
+- rl2co's environment and both deployment wrappers (rl2co ADR 0010),
+  from step 2;
+- **l2co's own strategy wrapper, from step 3.** Step 2 changes nothing
+  there: L2CO carries no scale, and its one switch goes into an
+  optimizer that has never run, so it always has news. It joins when the
+  restart lands, which is what makes its option redundant. L2CO
+  switches at most once, at the stage-1 fire, and a different pick has
+  never run, so under the restart it always restarts. Its
+  `opt_state_handshake` option then has nothing left to choose
+  between: `"per_optimizer"` and the default `"legacy_reset"` both end
+  in the same restart. The option is removed. `transfer_shape`
   is off for L2CO until a measurement on L2CO's own switch shows it
   helps. Before this lands, the default must be checked bit for bit
   against `legacy_reset` on the existing L2CO tests. If it differs (a
@@ -319,9 +324,11 @@ branches until their A/Bs decide.
    means "float32-equal to the optimum", about 1e-6. Float64 runs must be
    rounded the same way before they are compared with stored rows.
 2. **Close the deployment mismatch.** The shared function lands
-   carrying only the news gate and "no scale", in the environment, both
-   wrappers and l2co's strategy wrapper. This is certain and large, so
-   it lands on `develop` and is followed by the first regeneration.
+   carrying only the news gate and "no scale", in the environment and
+   both deployment wrappers. `optax_wrapper` always has news, because
+   its sub-optimizers share one iterate (rl2co ADR 0010). This is
+   certain and large, so it lands on `develop` and is followed by the
+   first regeneration.
 3. **Staleness, in two arms.** Both are compared against step 2:
    - **3a:** the own-shape gate only. A stale shape becomes neutral, but
      the member keeps its scale and does not restart.
