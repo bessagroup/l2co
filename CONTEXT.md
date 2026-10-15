@@ -61,6 +61,24 @@ It is due exactly when `last_optimizer_idx >= 0` and the optimizer
 about to run differs from it — optimizer identity is by *menu index*,
 never by `OptimizationStep.hash`.
 
+**Stale**:
+An optimizer's own state is stale at a switch's destination when it no
+longer fits there: the destination is too far from where it was, in its
+own widths, or it cannot report a scale, or its shape rests on too
+little evidence. A stale optimizer restarts (ADR 0022).
+_Avoid_: invalid, expired, outdated
+
+**Scale gate**:
+The check that a shape's measurement scale is within a factor of the
+receiving optimizer's own scale. A shape measured at a coarser scale
+always passes (ADR 0022).
+
+**Distance gate**:
+The check that a switch's destination lies within a few of the shape's
+own widths of the point where the shape was measured: near along
+directions the shape says are wide, nearer along those it says are
+narrow (ADR 0022).
+
 **Sub-optimizer** (`SubOpt`):
 One menu entry as a strategy wrapper drives it: an optimizer's
 **parts** (`l2co_optimizers.optimizer_parts` — the optax transform or
