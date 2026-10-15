@@ -41,6 +41,10 @@ Owned by l2co:
 * **Menu evaluation** -- ``menu_loss_and_grad``, the menu-dispatched
   evaluator that spends only the *active* optimizer's evaluation width
   instead of the menu-wide generation width (ADR 0011).
+* **The switch** -- ``has_news`` and ``handshake_incoming``: whether a
+  switch tells the incoming optimizer anything new, and the one
+  reset-write-population sequence the rl2co environment and both
+  deployment wrappers run on every switch (ADR 0022).
 
 Re-exported from ``l2co-optimizers``:
 
@@ -125,6 +129,7 @@ from l2co._src.switching.sub_optimizer import (
     optstep_to_subopt,
     pop_sub_optimizer,
 )
+from l2co._src.switching.switch import handshake_incoming, has_news
 from l2co._src.task_bridge import (
     meta_optimizers,
     optimizer_mapping,
@@ -161,7 +166,9 @@ __all__ = [
     "build_transfer_fns",
     "create_schedules_experimentdata",
     "grad_sub_optimizer",
+    "handshake_incoming",
     "handshake_policy_for",
+    "has_news",
     "menu_loss_and_grad",
     "meta_optimizers",
     "normalized_optax_normal",

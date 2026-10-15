@@ -7,6 +7,9 @@
   switch, and the canonical population layouts.
 * ``menu_eval`` -- menu-dispatched loss evaluation that spends only the
   active optimizer's evaluation width (ADR 0011).
+* ``switch`` -- the switch sequence itself, one implementation every
+  consumer calls: whether a switch carries news, then reset, write and
+  population in that order (ADR 0022).
 
 What each optimizer exposes to this layer (its transfer ports, its
 parts) lives in ``l2co_optimizers``; deciding when and how to switch

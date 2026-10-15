@@ -47,6 +47,13 @@ One ask/eval/tell cycle: exactly one iteration of the active
 optimizer, one history entry, one budget tick.
 _Avoid_: "step" (overloaded with optimizer-internal steps), "epoch"
 
+**News**:
+What a switch carries when the handed-over point is better than anything
+the incoming optimizer has found itself, or when that optimizer has
+never run. A switch without news moves nothing (ADR 0022; rl2co ADR
+0009).
+_Avoid_: improvement, progress — reserve those for the loss curve.
+
 **Handshake**:
 The state transfer applied when the active optimizer changes: which
 population the incoming optimizer sees, and whether its internal
@@ -54,9 +61,12 @@ state is reset or continued. Named variants: `best`, `best_one`,
 `reset_opt_state`, `continue_opt_state`. Which variants a given
 optimizer needs is tabulated once, in
 `l2co.optimizers.HANDSHAKE_POLICY`, and shared by every consumer.
-What crosses the switch besides the population — the scale carried by
-each optimizer's **transfer ports** — is the optimizer's own business
-and lives in `l2co-optimizers` (ADR 0019).
+How each optimizer reads and absorbs what crosses — its **transfer
+ports** — is the optimizer's own business and lives in `l2co-optimizers`
+(ADR 0019). The order the steps run in, and whether they run at all,
+is one shared sequence every consumer calls (ADR 0022): a switch that
+brings the incoming optimizer no **news** moves nothing, and no scale
+crosses unless switched on for measurement.
 It is due exactly when `last_optimizer_idx >= 0` and the optimizer
 about to run differs from it — optimizer identity is by *menu index*,
 never by `OptimizationStep.hash`.
