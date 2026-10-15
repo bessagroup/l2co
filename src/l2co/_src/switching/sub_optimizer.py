@@ -47,6 +47,7 @@ from l2co_optimizers import (
     GradientParts,
     LossFunction,
     OptimizationStep,
+    SwitchPorts,
     optimizer_parts,
     step_fevals,
 )
@@ -175,6 +176,13 @@ class SubOpt(eqx.Module):
         in here, which is what makes a *line-search* transform bill its true
         trial count instead of a flat ``1``. Read it through
         :meth:`bill_fevals`.
+    switch_ports : SwitchPorts | None
+        What this sub-optimizer declares to the switch beyond its scale:
+        where it is, the shape it has learned and how fast that shape
+        adapts, what a restart keeps, and how to forget its shape
+        (:class:`~l2co_optimizers.SwitchPorts`, l2co-optimizers ADR
+        0012). Taken from the same ``optimizer_parts`` the ``UpdateClass``
+        path builds them in; ``None`` for a hand-built adapter.
     """
 
     is_pop: bool = eqx.field(static=True)
@@ -191,6 +199,7 @@ class SubOpt(eqx.Module):
     transfer_read_fn: Callable | None = eqx.field(static=True, default=None)
     transfer_write_fn: Callable | None = eqx.field(static=True, default=None)
     own_ask: bool = eqx.field(static=True, default=False)
+    switch_ports: SwitchPorts | None = eqx.field(static=True, default=None)
 
     @property
     def fevals_bound(self) -> int:
@@ -298,6 +307,7 @@ def grad_sub_optimizer(
     family: str = FAMILY_GRADIENT,
     transfer_read_fn: Callable | None = None,
     transfer_write_fn: Callable | None = None,
+    switch_ports: SwitchPorts | None = None,
 ) -> SubOpt:
     """Wrap an optax gradient transformation as a ``SubOpt``.
 
@@ -318,6 +328,8 @@ def grad_sub_optimizer(
         ``"continue"`` (default) or ``"reset"``; see
         :class:`SubOpt`. Defaulted so hand-built adapters keep the
         universal behaviour without opting in.
+    switch_ports : SwitchPorts | None, optional
+        See :class:`SubOpt`. Defaults to ``None``.
 
     Returns
     -------
@@ -403,6 +415,7 @@ def grad_sub_optimizer(
         family=family,
         transfer_read_fn=transfer_read_fn,
         transfer_write_fn=transfer_write_fn,
+        switch_ports=switch_ports,
     )
 
 
@@ -419,6 +432,7 @@ def pop_sub_optimizer(
     transfer_read_fn: Callable | None = None,
     transfer_write_fn: Callable | None = None,
     own_ask: bool = False,
+    switch_ports: SwitchPorts | None = None,
 ) -> SubOpt:
     """Wrap an evosax-style ``(init, ask, tell)`` triple as a ``SubOpt``.
 
@@ -445,6 +459,8 @@ def pop_sub_optimizer(
         Whether a switch should draw this sub-optimizer's post-switch
         population from ``ask_fn`` instead of handing it a layout; see
         :class:`SubOpt`. Defaults to False.
+    switch_ports : SwitchPorts | None, optional
+        See :class:`SubOpt`. Defaults to ``None``.
 
     Returns
     -------
@@ -464,6 +480,7 @@ def pop_sub_optimizer(
         family=family,
         transfer_read_fn=transfer_read_fn,
         transfer_write_fn=transfer_write_fn,
+        switch_ports=switch_ports,
         own_ask=own_ask,
     )
 
@@ -526,6 +543,7 @@ def optstep_to_subopt(
             family=parts.family,
             transfer_read_fn=parts.transfer_read_fn,
             transfer_write_fn=parts.transfer_write_fn,
+            switch_ports=parts.switch_ports,
         )
     return pop_sub_optimizer(
         init_fn=parts.init_fn,
@@ -539,4 +557,5 @@ def optstep_to_subopt(
         transfer_read_fn=parts.transfer_read_fn,
         transfer_write_fn=parts.transfer_write_fn,
         own_ask=parts.own_ask,
+        switch_ports=parts.switch_ports,
     )

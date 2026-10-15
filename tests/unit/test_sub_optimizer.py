@@ -46,6 +46,15 @@ def _step(name: str, **hyperparameters) -> OptimizationStep:
     return OptimizationStep(optimizer=name, hyperparameters=hyperparameters)
 
 
+def _same_ports(a, b):
+    """Two builds of one optimizer's switch ports declare the same."""
+    assert a is not None and b is not None
+    assert a.read_point is b.read_point
+    assert a.read_shape is b.read_shape
+    assert a.shape_rates == b.shape_rates
+    assert a.restart_keeps == b.restart_keeps
+
+
 class TestOwnedByL2CO:
     """The switching layer is l2co's, not a re-export (ADR 0019)."""
 
@@ -126,12 +135,27 @@ class TestPopulationWrapping:
         assert sub.own_ask == parts.own_ask
         assert sub.family == parts.family
         assert sub.max_fevals_per_step is None
+        # The switch ports come along, so the switch reads the same point,
+        # shape and rates on this path as on the UpdateClass one.
+        _same_ports(sub.switch_ports, parts.switch_ports)
         params = problem["model"]
         state = sub.init_fn(params, jr.key(0))
         population, state = sub.step_fn(params, state, jr.key(1))
         assert population.shape == (sub.popsize, *params.shape)
         fitness = jax.vmap(problem["loss_fn"])(population)
         sub.tell_fn(state, population, fitness, jr.key(2))
+
+
+class TestSwitchPortsAttached:
+    """A gradient ``SubOpt`` carries its parts' switch ports too."""
+
+    def test_gradient_ports_pass_through(self, problem):
+        step = _step("adam", learning_rate=1e-2)
+        sub = optstep_to_subopt(step, **problem)
+        parts = optimizer_parts(step, **problem)
+        _same_ports(sub.switch_ports, parts.switch_ports)
+        # A gradient optimizer's point is the iterate the loop holds.
+        assert sub.switch_ports.read_point is None
 
 
 class TestHandshakeAttached:

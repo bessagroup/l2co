@@ -44,7 +44,11 @@ Owned by l2co:
 * **The switch** -- ``has_news`` and ``handshake_incoming``: whether a
   switch tells the incoming optimizer anything new, and the one
   reset-write-population sequence the rl2co environment and both
-  deployment wrappers run on every switch (ADR 0022).
+  deployment wrappers run on every switch (ADR 0022). With its
+  ``gate_own_state`` on, it also checks whether the incoming
+  optimizer's own state is stale at the destination (``OwnState``,
+  ``read_own_state``, ``is_stale``, ``own_distance``,
+  ``DISTANCE_THRESHOLD``) and restarts it or forgets its shape.
 
 Re-exported from ``l2co-optimizers``:
 
@@ -129,7 +133,15 @@ from l2co._src.switching.sub_optimizer import (
     optstep_to_subopt,
     pop_sub_optimizer,
 )
-from l2co._src.switching.switch import handshake_incoming, has_news
+from l2co._src.switching.switch import (
+    DISTANCE_THRESHOLD,
+    OwnState,
+    handshake_incoming,
+    has_news,
+    is_stale,
+    own_distance,
+    read_own_state,
+)
 from l2co._src.task_bridge import (
     meta_optimizers,
     optimizer_mapping,
@@ -142,6 +154,7 @@ __all__ = [
     "CONF_ESTIMATED",
     "CONF_EXACT",
     "DEFAULT_HANDSHAKE_POLICY",
+    "DISTANCE_THRESHOLD",
     "FAMILIES",
     "FAMILY_DISTRIBUTION",
     "FAMILY_GRADIENT",
@@ -153,6 +166,7 @@ __all__ = [
     "InputParameters",
     "OptHistory",
     "OptState",
+    "OwnState",
     "PopSize",
     "PopulationParts",
     "SamplerFunction",
@@ -169,15 +183,18 @@ __all__ = [
     "handshake_incoming",
     "handshake_policy_for",
     "has_news",
+    "is_stale",
     "menu_loss_and_grad",
     "meta_optimizers",
     "normalized_optax_normal",
     "optimizer_mapping",
     "optimizer_parts",
     "optstep_to_subopt",
+    "own_distance",
     "pop_sub_optimizer",
     "population_best",
     "population_best_one",
+    "read_own_state",
     "register_optimizer",
     "register_schedule_namer",
     "shade_popsize",
