@@ -386,9 +386,13 @@ def handshake_incoming(
     restart_broken : bool, optional
         Restart a broken incoming optimizer (``own.broken``) at the
         handed-over point, with or without news. Independent of
-        ``gate_own_state``. Defaults to ``False`` until its A/B decides.
-        Step 3's A/B found that the switch otherwise keeps a broken
-        CR-FM-NES, and every later visit to it is NaN.
+        ``gate_own_state``. Without it the switch keeps a broken
+        CR-FM-NES, and every later visit to it is NaN; its A/B found
+        that it removes every such visit and changes no result. Off
+        here only because it needs ``own`` and a restart, which a caller
+        that keeps no per-optimizer state cannot give; rl2co's
+        environment and deployment bridge turn it on by default
+        (decided 2026-10-16).
 
     Returns
     -------
