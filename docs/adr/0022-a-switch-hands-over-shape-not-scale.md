@@ -287,7 +287,8 @@ stored in the databank runs with the defaults.
 | Keyword | Default | Deleted when |
 |---|---|---|
 | `transfer_scale` | off from step 2 | step 3 lands, together with the scale-write code |
-| `gate_own_state` | on from step 3 | step 5 has been measured |
+| `gate_own_state` | off: step 3 measured, no arm passed | step 5 is decided |
+| `restart_broken` | on in rl2co since 2026-10-16 (off in the bare function, which needs `own=`) | not deleted: a correctness fix |
 | `transfer_shape` | on from step 5, if step 5 lands | the final A/B is done |
 
 ### Thresholds
@@ -350,6 +351,30 @@ branches until their A/Bs decide.
    the reason, the quadratic-consistency check moves into step 4. If
    they rarely pass for every reason, step 5 is dropped for that menu
    without running the oracle.
+
+   **Measured (2026-10-16): both arms fail.** On the calibration half
+   (bessagroup/l2co_experiments#58), 3a is neutral at every c (−0.03 to
+   −0.08 decades, every interval spanning zero). 3b is worse at c = 1
+   (+0.48 [+0.06, +1.00]) and c = 2 (+0.35), all of it on the embedded
+   suite, and the harm shrinks as c grows, to −0.09 [−0.29, +0.16] at
+   c = 10. So `gate_own_state` stays off, no c is chosen, and the last
+   row of the table applies. The census was not logged: the rl2co
+   bridge has no hook for it yet.
+
+   The same run found that the step-2 switch keeps a *broken* optimizer.
+   Once CR-FM-NES's state goes NaN, every later visit to it is NaN from
+   start to end: 80% of its NaN generations. A narrower rule was added
+   and measured once on the confirmation half: `restart_broken` restarts
+   an optimizer whose point, or a width it reports, is NaN or infinite
+   (`OwnState.broken`), on every switch, news or not. It did no harm
+   (all 80 tasks tie) and removed every visit that starts broken
+   (478 → 0 on `headroom4`). It missed its pre-set bar (a 90% cut of
+   "carried" NaN generations; 86.6%) only because that count also took
+   in restarted visits that broke again on their own. It was switched
+   on anyway, by decision after the data: resuming a NaN state never
+   helps. It is on by default in rl2co's environment and deployment
+   bridge. It changes dynamics, so it joins step 2 in the first
+   regeneration if both land before it.
 4. **Slope test, then the oracle experiment.** The slope test
    (l2co-optimizers ADR 0012) checks every reader's unit against a
    known answer. The oracle experiment then measures what an incoming
