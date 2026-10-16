@@ -432,17 +432,19 @@ discus, bent cigar, sharp ridge, different powers, rotated Rosenbrock
 and attractive sector. Controls: sphere, where there is no shape to
 learn, so every arm must match `neutral` (a check on the writers); and
 Rastrigin, where the local curvature is the bumps' and not the bowl's
-(the scale problem). That is 36 tasks × 3 receivers × 2 values of k =
-216 cells, each running the 6 arms × 10 realizations. The estimate is
-60–120 CPU-hours, to be confirmed by a smoke run.
+(the scale problem). The sphere runs with k = 0, starting the receiver
+at the initial sample: L-BFGS solves it outright. That is 204 cells,
+each running the arms × 10 realizations.
 
-**Measure.** For each paired realization: the receiver's log10 gap at
-fixed fractions of its budget, its final gap, and the evaluations it
-needs from the switch to reach 1e-1 … 1e-8. Averaged per task, then
-over the badly conditioned tasks, with a bootstrap interval.
+**Measure.** For each paired realization, the log10 gap of the
+receiver's *own* best (from the switch on) at 0.1, 0.3, 1, 3, 10, 30
+and 100% of its budget, and the generation it first reaches each target
+from 1e1 to 1e-8. The primary measure is *anytime*: the mean of those
+log gaps. It is averaged per task, then over the badly conditioned
+tasks, with a bootstrap interval.
 
 **Decision, fixed before the run.** "Helps" means beating `neutral` by
-at least 0.3 decades in the final gap, with the 95% interval above
+at least 0.3 decades in the anytime gap, with the 95% interval clear of
 zero, averaged over the badly conditioned tasks, for a given receiver.
 
 | Result | Then |
@@ -453,8 +455,19 @@ zero, averaged over the badly conditioned tasks, for a given receiver.
 | `L-BFGS estimate` helps for a receiver a menu uses | Build step 5 for that receiver, give the policy a "restart with this shape" action and the matching observation, then train with and without it. |
 
 `true, elsewhere` against `true` gives the first value of the distance
-gate c if step 5 goes ahead. The controls must pass, with every sphere
-arm within noise of `neutral`, or the run is void.
+gate c if step 5 goes ahead. The sphere control must pass, with every
+arm within 0.01 decades of `neutral` in every realization, or the run is
+void.
+
+*Revised after the smoke run, before the real run (2026-10-16).* The
+measure was the run's final gap. It could not see the effect: on the
+10D ellipsoid every arm reached 1e-8 long before the budget ended,
+although the true shape got CMA-ES there 25–30% sooner, and on the 40D
+ellipsoid a fresh CR-FM-NES never got back below L-BFGS's point, so the
+run's best tied every arm there. Hence the receiver's own best and the
+anytime gap. The sphere's k = 0 and its 0.01-decade tolerance came from
+the same smoke run. Implementation: bessagroup/l2co_experiments
+`experiments/shape_oracle/`.
 
 ### How every step is judged
 
