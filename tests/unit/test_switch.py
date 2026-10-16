@@ -399,6 +399,20 @@ class TestBrokenRestart:
             self._run(own=_own(), restart=None)
 
 
+class TestNoHandOver:
+    def test_only_resumes(self):
+        # News, a broken state and the gate all on: with hand_over off
+        # nothing of the sequence runs.
+        reset = _primitives({})[0]
+        for kwargs in (
+            {},
+            {"reset": reset},
+            {"restart_broken": True, "own": _own(broken=True)},
+            {"own": _own()},
+        ):
+            assert _gated(hand_over=False, **kwargs) == RESUME, kwargs
+
+
 class TestReadOwnState:
     @pytest.fixture(scope="class")
     def problem(self):

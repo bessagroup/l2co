@@ -295,6 +295,7 @@ def handshake_incoming(
     restart_stale: bool = True,
     distance_threshold: float = DISTANCE_THRESHOLD,
     restart_broken: bool = False,
+    hand_over: bool = True,
 ) -> tuple[P, S]:
     """Hand control to the incoming optimizer.
 
@@ -393,12 +394,20 @@ def handshake_incoming(
         that keeps no per-optimizer state cannot give; rl2co's
         environment and deployment bridge turn it on by default
         (decided 2026-10-16).
+    hand_over : bool, optional
+        ``False`` skips the whole sequence: the incoming optimizer
+        ``resume``s exactly as if no switch had happened, nothing reset,
+        written or handed over, broken or not. A measurement baseline
+        ("no hand-over"), to test whether handing over the best point
+        helps at all. Defaults to ``True``.
 
     Returns
     -------
     tuple[P, S]
         The incoming optimizer's population, and the updated state.
     """
+    if not hand_over:
+        return resume(state)
     news = jnp.asarray(news)
     broken = jnp.asarray(False)
     if restart_broken:
