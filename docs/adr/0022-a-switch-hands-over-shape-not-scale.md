@@ -384,37 +384,77 @@ branches until their A/Bs decide.
 
 ### The oracle experiment
 
-BBOB tasks are JAX functions, so the true curvature at any point and
-scale can be computed. Four arms separate the two gates:
+*Revised 2026-10-16, after step 3.* The first version measured shapes at
+the switches a uniform-random policy happens to make. Step 3 and the
+reach count (bessagroup/l2co_experiments#58) showed that random
+switching gives a shape almost nothing to act on: at most 1.3% of a
+`headroom4` run and 5.7% of a `families10` run. That says little about a
+trained policy, which could switch *in order to* use a shape: let a
+gradient optimizer measure the curvature, then hand it to a fresh
+evolution strategy. So the oracle now asks the question that bounds
+every policy, on scripted switches: **at the best moment, does a correct
+shape help the receiver enough for any policy to profit?**
 
-| Arm | Curvature measured at | At scale |
-|---|---|---|
-| ideal | the destination | the receiver's resulting scale |
-| wrong scale | the destination | the provider's |
-| wrong place | the measurement point | the receiver's resulting scale |
-| real reader | the measurement point | the provider's |
+**Schedule.** One scripted switch per run. L-BFGS runs from the
+harness's initial sample for k iterations, k ∈ {10, 100}; both are
+reported and neither is tuned. Then a fresh receiver starts at the best
+point, as a first visit does today, and runs the rest of the budget
+(the harness rule: 1000 · d iterations, at most 25,000).
 
-"True curvature at a scale" is defined as follows:
+**Receivers.** CMA-ES (full matrix), sep-CMA-ES (diagonal) and
+CR-FM-NES (diagonal plus one widening direction; `headroom4`'s only
+evolution strategy).
 
-- **Cloud:** the Hessian averaged over an isotropic Gaussian centred
-  where the arm says, with the width the arm says. 16 samples, with one
-  fixed key shared by all arms.
-- **Negative curvature:** eigenvalues are floored at 1e-6 × the largest
-  before inverting. This is also the rule for any reader that meets
-  negative curvature.
-- **Representation:** the result is projected onto the bundle's layout
-  before writing. The oracle therefore measures the best *this design*
-  can do. No `headroom4` receiver can hold a full matrix, so there is
-  no unprojected arm.
+**Arms.** All keep the receiver's own default width; only its shape
+differs. They share the L-BFGS phase and the receiver's keys, so every
+realization is paired across arms.
 
-The cost on the calibration half (about 41k switches, about 9k of them
-at d = 1024) is an estimated 75–225 CPU-hours, as an array job.
+| Arm | The receiver starts with |
+|---|---|
+| neutral | its default shape: today's behaviour |
+| true | the true curvature at the switch point, at the receiver's width, written as fully as the receiver can hold it |
+| true, layout | `true` projected onto the bundle's layout first (diagonal plus widest and narrowest direction); differs from `true` only for CMA-ES |
+| true, L-BFGS's scale | the true curvature at the switch point, averaged at L-BFGS's last step length instead of the receiver's width: the scale problem on its own |
+| L-BFGS estimate | the inverse curvature L-BFGS's memory implies (its last ≤ 10 pairs, two-loop recursion applied to the identity), projected onto the layout: what a real reader would hand over |
+| true, elsewhere | the true curvature at the run's start point instead of the switch point: how much "where measured" matters |
 
-Run it on functions whose curvature varies from place to place
-(Rosenbrock, attractive sector, Rastrigin) and on one where it does not
-(ellipsoid). **The ideal arm must beat step 3's baseline by at least 0.3
-decades per task**, or step 5 is dropped even if the effect is
-statistically real. Otherwise the arms calibrate k and check c.
+"True curvature" keeps the definition above (Q17): the Hessian averaged
+over an isotropic Gaussian of the stated width at the stated point, 16
+samples on one fixed key, eigenvalues floored at 1e-6 × the largest,
+inverted and normalised to determinant 1. A point Hessian is not enough:
+BBOB's oscillation transform makes even the ellipsoid's Hessian
+indefinite at some points.
+
+**Tasks.** Built directly with `create_bbob_task` at d ∈ {10, 40},
+instances 101 and 102. Seed 0, the policy test set's instance, is never
+used. Badly conditioned, where a shape should matter: ellipsoid,
+discus, bent cigar, sharp ridge, different powers, rotated Rosenbrock
+and attractive sector. Controls: sphere, where there is no shape to
+learn, so every arm must match `neutral` (a check on the writers); and
+Rastrigin, where the local curvature is the bumps' and not the bowl's
+(the scale problem). That is 36 tasks × 3 receivers × 2 values of k =
+216 cells, each running the 6 arms × 10 realizations. The estimate is
+60–120 CPU-hours, to be confirmed by a smoke run.
+
+**Measure.** For each paired realization: the receiver's log10 gap at
+fixed fractions of its budget, its final gap, and the evaluations it
+needs from the switch to reach 1e-1 … 1e-8. Averaged per task, then
+over the badly conditioned tasks, with a bootstrap interval.
+
+**Decision, fixed before the run.** "Helps" means beating `neutral` by
+at least 0.3 decades in the final gap, with the 95% interval above
+zero, averaged over the badly conditioned tasks, for a given receiver.
+
+| Result | Then |
+|---|---|
+| `true` does not help, for any receiver | Step 5 is closed: not even a perfect shape at the best moment pays, so no policy can profit from one. |
+| `true` helps, `true, layout` does not | The layout loses the value: redesign it or close step 5. |
+| `true, layout` helps, `L-BFGS estimate` does not | The readers are the bottleneck. `true, L-BFGS's scale` says whether that is the scale (a gating problem) or the estimate itself. |
+| `L-BFGS estimate` helps for a receiver a menu uses | Build step 5 for that receiver, give the policy a "restart with this shape" action and the matching observation, then train with and without it. |
+
+`true, elsewhere` against `true` gives the first value of the distance
+gate c if step 5 goes ahead. The controls must pass, with every sphere
+arm within noise of `neutral`, or the run is void.
 
 ### How every step is judged
 
