@@ -121,6 +121,10 @@ class OwnState(eqx.Module):
         by the caller (updates times the rates the optimizer declares).
     has_run : Bool[Array, ""]
         Whether it has produced a generation since the run began.
+    broken : Bool[Array, ""]
+        Whether its state has stopped being a number: its point, or a
+        width it declares it can report, is NaN or infinite. Such an
+        optimizer only produces NaN until it is restarted.
     """
 
     point: Float[Array, " d"]
@@ -129,6 +133,7 @@ class OwnState(eqx.Module):
     scale_readable: Bool[Array, ""]
     evidence: Float[Array, " 2"]
     has_run: Bool[Array, ""]
+    broken: Bool[Array, ""]
 
 
 def read_own_state(
@@ -164,7 +169,11 @@ def read_own_state(
     Returns
     -------
     OwnState
-        The view :func:`is_stale` reads.
+        The view :func:`is_stale` and ``restart_broken`` read. It is
+        *broken* when its point is not finite, or when it reports a
+        width (it has a shape, or a scale reader that is not absent) and
+        that width is not finite. An optimizer that has no width to
+        report is not broken for lacking one.
 
     Raises
     ------
@@ -186,12 +195,17 @@ def read_own_state(
     if switch_ports is not None and switch_ports.read_shape is not None:
         shape = switch_ports.read_shape(opt_state)
         readable = jnp.isfinite(shape.scale) & (shape.scale > 0.0)
+        width_broken = jnp.logical_not(jnp.isfinite(shape.scale))
         has_shape = True
     else:
         sigma, conf = read_scale(opt_state)
         shape = Shape.neutral(flat_point.shape[0], sigma)
         readable = (conf > CONF_ABSENT) & jnp.isfinite(sigma) & (sigma > 0)
+        width_broken = (conf > CONF_ABSENT) & jnp.logical_not(
+            jnp.isfinite(sigma)
+        )
         has_shape = False
+    point_broken = jnp.logical_not(jnp.all(jnp.isfinite(flat_point)))
     return OwnState(
         point=flat_point,
         shape=shape,
@@ -199,6 +213,7 @@ def read_own_state(
         scale_readable=readable,
         evidence=jnp.asarray(evidence, dtype=float),
         has_run=jnp.asarray(has_run),
+        broken=point_broken | width_broken,
     )
 
 
@@ -279,6 +294,7 @@ def handshake_incoming(
     gate_own_state: bool = False,
     restart_stale: bool = True,
     distance_threshold: float = DISTANCE_THRESHOLD,
+    restart_broken: bool = False,
 ) -> tuple[P, S]:
     """Hand control to the incoming optimizer.
 
@@ -298,11 +314,15 @@ def handshake_incoming(
        scale describes what *it* was looking at, and handing it over made
        runs worse (l2co ADR 0022).
     2. **Reset**, on news only. ``reset`` is ``None`` for an optimizer
-       tabulated ``continue``. With ``gate_own_state`` on, a
-       ``continue`` optimizer whose own state is stale at the
-       destination (:func:`is_stale`) is restarted instead (``restart``,
-       arm 3b of ADR 0022) or, with ``restart_stale`` off, keeps its
-       scale and has its shape made neutral (``neutralize``, arm 3a).
+       tabulated ``continue``. With ``restart_broken`` on, a broken
+       optimizer (:attr:`OwnState.broken`) is restarted on *every*
+       switch, news or not, and then arrives as on a switch with news:
+       a broken state has nothing to keep, and resuming it only
+       produces NaN. With ``gate_own_state`` on, a ``continue``
+       optimizer whose own state is stale at the destination
+       (:func:`is_stale`) is restarted instead (``restart``, arm 3b of
+       ADR 0022) or, with ``restart_stale`` off, keeps its scale and has
+       its shape made neutral (``neutralize``, arm 3a).
     3. **Write** the tagged bundle into the incoming optimizer.
     4. **Population.** With news, the optimizer arrives: it draws its own
        population from the state just written where it has an
@@ -363,6 +383,12 @@ def handshake_incoming(
         3a).
     distance_threshold : float, optional
         The distance gate, in the optimizer's own widths.
+    restart_broken : bool, optional
+        Restart a broken incoming optimizer (``own.broken``) at the
+        handed-over point, with or without news. Independent of
+        ``gate_own_state``. Defaults to ``False`` until its A/B decides.
+        Step 3's A/B found that the switch otherwise keeps a broken
+        CR-FM-NES, and every later visit to it is NaN.
 
     Returns
     -------
@@ -370,24 +396,43 @@ def handshake_incoming(
         The incoming optimizer's population, and the updated state.
     """
     news = jnp.asarray(news)
+    broken = jnp.asarray(False)
+    if restart_broken:
+        if own is None:
+            raise ValueError(
+                "restart_broken needs the incoming optimizer's "
+                "own state (own=)"
+            )
+        if reset is None and restart is None:
+            raise ValueError("restart_broken needs a restart")
+        broken = own.broken
+        # A restarted optimizer arrives: write, then its population.
+        news = news | broken
     if not transfer_scale:
         bundle = TransferBundle.absent(bundle.x, bundle.f)
     bundle = eqx.tree_at(lambda b: b.moves_iterate, bundle, news)
 
     if reset is not None:
         state = jax.lax.cond(news, reset, lambda s: s, state)
-    elif gate_own_state:
-        if own is None:
-            raise ValueError(
-                "gate_own_state needs the incoming optimizer's "
-                "own state (own=)"
-            )
-        if restart_stale and restart is None:
-            raise ValueError("restart_stale needs a restart")
-        action = restart if restart_stale else neutralize
-        if action is not None:
-            stale = news & is_stale(own, bundle.x, distance_threshold)
-            state = jax.lax.cond(stale, action, lambda s: s, state)
+    else:
+        if restart_broken:
+            state = jax.lax.cond(broken, restart, lambda s: s, state)
+        if gate_own_state:
+            if own is None:
+                raise ValueError(
+                    "gate_own_state needs the incoming optimizer's "
+                    "own state (own=)"
+                )
+            if restart_stale and restart is None:
+                raise ValueError("restart_stale needs a restart")
+            action = restart if restart_stale else neutralize
+            if action is not None:
+                stale = (
+                    news
+                    & jnp.logical_not(broken)
+                    & is_stale(own, bundle.x, distance_threshold)
+                )
+                state = jax.lax.cond(stale, action, lambda s: s, state)
 
     if write is not None:
         state = write(bundle, state)

@@ -48,7 +48,9 @@ Owned by l2co:
   ``gate_own_state`` on, it also checks whether the incoming
   optimizer's own state is stale at the destination (``OwnState``,
   ``read_own_state``, ``is_stale``, ``own_distance``,
-  ``DISTANCE_THRESHOLD``) and restarts it or forgets its shape.
+  ``DISTANCE_THRESHOLD``) and restarts it or forgets its shape. With
+  ``restart_broken`` on, it restarts an incoming optimizer whose own
+  state is NaN or infinite (``OwnState.broken``) on every switch.
 
 Re-exported from ``l2co-optimizers``:
 

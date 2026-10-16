@@ -235,6 +235,7 @@ def _own(
     readable=True,
     has_shape=False,
     evidence=(5.0, 5.0),
+    broken=False,
 ):
     """An optimizer at the origin with scale 1 and a neutral shape."""
     return OwnState(
@@ -244,6 +245,7 @@ def _own(
         scale_readable=jnp.asarray(readable),
         evidence=jnp.asarray(evidence),
         has_run=jnp.asarray(has_run),
+        broken=jnp.asarray(broken),
     )
 
 
@@ -347,6 +349,56 @@ class TestGatedSequence:
             _gated(own=_own(), restart=None)
 
 
+class TestBrokenRestart:
+    """``restart_broken``: a broken optimizer restarts on every switch."""
+
+    def _run(self, **kwargs):
+        defaults = dict(
+            gate_own_state=False, restart_broken=True, destination=NEAR
+        )
+        defaults.update(kwargs)
+        return _gated(**defaults)
+
+    def test_broken_restarts_and_arrives(self):
+        assert self._run(own=_own(broken=True)) == RESTART + WRITE + LAYOUT
+
+    def test_broken_restarts_without_news_too(self):
+        # Resuming a NaN state only produces NaN, so a switch with no
+        # news restarts it and lets it arrive.
+        log = self._run(own=_own(broken=True), news=False)
+        assert log == RESTART + WRITE + LAYOUT
+
+    def test_a_sound_optimizer_is_step_2(self):
+        assert self._run(own=_own()) == WRITE + LAYOUT
+        assert self._run(own=_own(), news=False) == WRITE + RESUME
+
+    def test_off_keeps_a_broken_state(self):
+        log = self._run(own=_own(broken=True), restart_broken=False)
+        assert log == WRITE + LAYOUT
+
+    def test_a_reset_row_resets_a_broken_state_without_news(self):
+        reset = _primitives({})[0]
+        log = self._run(own=_own(broken=True), news=False, reset=reset)
+        assert log == RESET + WRITE + LAYOUT
+
+    def test_with_the_gate_it_restarts_once(self):
+        # Broken and far: restarted for being broken, not neutralised
+        # on top by arm 3a.
+        log = self._run(
+            own=_own(broken=True),
+            gate_own_state=True,
+            restart_stale=False,
+            destination=FAR,
+        )
+        assert log == RESTART + WRITE + LAYOUT
+
+    def test_it_needs_its_inputs(self):
+        with pytest.raises(ValueError, match="own="):
+            self._run()
+        with pytest.raises(ValueError, match="restart"):
+            self._run(own=_own(), restart=None)
+
+
 class TestReadOwnState:
     @pytest.fixture(scope="class")
     def problem(self):
@@ -403,3 +455,39 @@ class TestReadOwnState:
                 evidence=jnp.zeros(2),
                 has_run=jnp.asarray(True),
             )
+
+    def _own_of(self, sub, state, point=None):
+        return read_own_state(
+            sub.switch_ports,
+            state,
+            read_scale=sub.transfer_read_fn,
+            evidence=jnp.zeros(2),
+            has_run=jnp.asarray(True),
+            point=point,
+        )
+
+    def test_a_nan_width_is_broken(self, problem):
+        sub = self._sub(problem, "crfmnes")
+        state = sub.init_fn(jnp.full(DIM, 0.25), jr.key(0))
+        assert not bool(self._own_of(sub, state).broken)
+        nan = state.replace(std=jnp.asarray(jnp.nan))
+        assert bool(self._own_of(sub, nan).broken)
+        inf = state.replace(std=jnp.asarray(jnp.inf))
+        assert bool(self._own_of(sub, inf).broken)
+
+    def test_a_nan_point_is_broken(self, problem):
+        sub = self._sub(problem, "sepcmaes")
+        state = sub.init_fn(jnp.full(DIM, 0.25), jr.key(0))
+        nan = state.replace(mean=state.mean.at[0].set(jnp.nan))
+        assert bool(self._own_of(sub, nan).broken)
+
+    def test_a_gradient_optimizer_is_broken_by_its_iterate(self, problem):
+        sub = self._sub(problem, "adam", learning_rate=1e-2)
+        state = sub.init_fn(jnp.zeros(DIM), jr.key(0))
+        # Before its first step Adam has no step to report. That is not
+        # broken: it declares no width yet.
+        own = self._own_of(sub, state, point=jnp.zeros(DIM))
+        assert not bool(own.scale_readable)
+        assert not bool(own.broken)
+        nan = jnp.zeros(DIM).at[1].set(jnp.nan)
+        assert bool(self._own_of(sub, state, point=nan).broken)
