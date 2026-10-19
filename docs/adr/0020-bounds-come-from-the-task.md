@@ -19,6 +19,12 @@ side of it: **the task is the only source of bounds, and every path that
 takes a task refuses what it can't enforce.** It extends the bridge from
 ADR 0018.
 
+> **Amended by `docs/adr/0023`.** A box may differ per parameter:
+> `task_bounds` then returns it per parameter, and every `bounded=`
+> keyword takes that form too. Sampled starts are projected onto the
+> task's box before they are evaluated. The bullet below that raises for
+> a box whose values differ between parameters no longer holds.
+
 **One helper.** `task_bounds(task)` in `_src/task_bridge.py` is the only
 way bounds leave a task:
 - No constraints: `(None, None)`, exactly what today's empty config
