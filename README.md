@@ -17,7 +17,7 @@
 
 ## Summary
 
-**L2CO** is a Python project accompanying the paper 'Learning to Choose Optimizers'. 
+**L2CO** is a Python project accompanying the paper [*Learning to Choose Optimizers*](https://ieeexplore.ieee.org/document/11727310) (IEEE CEC 2026). 
 
 ## Statement of need
 
