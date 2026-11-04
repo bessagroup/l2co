@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-11-04
+
 ### Changed
 
 - A loss below a task's `global_min` now scores as reaching it. The
