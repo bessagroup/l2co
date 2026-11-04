@@ -60,7 +60,7 @@ reductions stay strictly positive. Matches the convention used elsewhere
 in the L2CO experiment stack."""
 
 _PP_TAU_MAX: float = 100.0
-"""Upper bound of the Dolan-Moré performance-profile ratio axis."""
+"""Upper bound of the final-loss ratio profile's axis (see :func:`pp_auc`)."""
 
 _ERTD_FEVALS_PER_DIM: tuple[int, ...] = (1, 10, 100, 1_000, 10_000, 100_000)
 """Cost-per-dim points sampled in :func:`build_report` for the
@@ -285,7 +285,9 @@ def shifted_final_min(
     earlier. Taking the minimum across the budget axis gives the best
     value the optimizer actually achieved, regardless of where in the
     trajectory it occurred. The result is strictly positive by
-    construction.
+    construction: a final loss below ``global_min`` (an empirical
+    ``global_min`` an optimizer beat) is floored at the shift, so it
+    scores ``EPSILON``, as if it had reached ``global_min``.
 
     Parameters
     ----------
@@ -303,15 +305,20 @@ def shifted_final_min(
     if OUTPUT_DIM in final.dims:
         final = final.isel({OUTPUT_DIM: 0}, drop=True)
     shift = per_task_shift(data=data, task_labels=task_labels)
-    return final - shift + EPSILON
+    return (final - shift).clip(min=0.0) + EPSILON
 
 
-#                                          Performance-profile (Dolan-Moré) AUC
+#                                              Final-loss ratio profile AUC
 # =============================================================================
 
 
 def pp_auc(shifted: xr.DataArray, schedule: str) -> float:
-    """Dolan-Moré performance-profile AUC in ``[0, 1]`` for one schedule.
+    """Final-loss ratio profile AUC in ``[0, 1]`` for one schedule.
+
+    A Dolan-Moré-style construction on *final loss*, not cost: it is not
+    the performance profile of ``docs/adr/0021``
+    (:func:`l2co.data.performance_profile`), which compares the cost to
+    reach a target. The name predates that one and is kept.
 
     Builds the ratio ``r_p = shifted[schedule, p] / min_s shifted[s, p]``
     over ``problem``, integrates the empirical CDF ``ρ(τ) = P(r ≤ τ)`` by

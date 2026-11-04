@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-11-04
+
+### Changed
+
+- A loss below a task's `global_min` now scores as reaching it. The
+  quality value `loss - global_min` is floored at 0 in
+  `shift_to_quality_value` (ERT targets and success), `min_custom`
+  (`scale_by_task`), the report's `shifted_final_min` and
+  `log_stabilized_minmax_scale_with_global_min` (`traj_and_stair`, so
+  training and inference features alike). Before, an empirical
+  `global_min` that a run beat gave a negative gap, and NaN under the
+  log scales. ERT success is unchanged: such a run already solved
+  every target.
+
+### Added
+
+- Every databank dump writes `<root>/<dataset>/global_min_breaches.json`:
+  each task on which a run went below `global_min`, with the lowest
+  loss, how far below it is, and which schedule and realization
+  reached it. A finalize warning gives the count and path. The margin
+  for float noise is `1e-6 * max(1, |global_min|)`, as in the CUTEst
+  floor test. `l2co._src.performance.global_min_breaches` finds them
+  for one task.
+- Performance profiles (`docs/adr/0021`): how each optimizer's cost to
+  reach a target compares with the cheapest optimizer's, task by task.
+  - `DataLoader.expected_runtime(positions, cost_metric="fevals")`: for
+    each task and schedule, the cost spent over all runs divided by the
+    runs that reached the target, at each ladder position (0 = easiest
+    stored target, 1 = hardest). NaN is no data, infinity never reached.
+  - `l2co.data.performance_profile(ert, max_ratio=1e4, n_points=201)`:
+    ratio curves over any subset of that table, with `win_rate`,
+    `solve_rate`, and counts of tasks nobody solved and tasks dropped
+    for missing data.
+  - `l2co.plotting.plot_performance_profile`: draws one profile, with
+    `plot_ertd`'s styling options and an ∞ point at each solve rate.
+  - `l2co.naming.POSITION` and `RATIO`: the two new axes.
+
+### Removed
+
+- `l2co._src.performance.performance_profile` (a private final-loss
+  ratio profile with no callers). The name now belongs to the function
+  above.
+
 ## [1.7.0] - 2026-10-07
 
 The run loop moves onto `UpdateClass` in `l2co-optimizers`
@@ -87,7 +130,8 @@ constraints on `Task`** (l2co-tasks ADR 0002).
 - **BREAKING:** `RunState.init` (from `l2co_optimizers`) takes
   `(update_class, *, model, dataset, batch_size, key)`. Replace
   `RunState.init(optimizer=, task=, bounded=, key=)` with
-  `l2co.init_run_state(optimizer=, task=, bounded=, key=)`.
+  `l2co.init_run_state(optimizer=, task=, key=)`, and declare the bounds
+  as an `l2co_tasks.Box` in the task's `constraints` (`docs/adr/0020`).
 
 ### Removed
 

@@ -21,11 +21,14 @@ layer is overwritten with zero weights and a one-hot bias, forcing
 the argmax to a chosen menu index regardless of input.
 """
 
+import dataclasses
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+import optax
 import pytest
 from l2co_tasks import create_bbob_task
 
@@ -41,6 +44,7 @@ from l2co._src.meta_optimizer import L2COUpdateClass
 from l2co._src.meta_optimizer import l2co_population_based_fn
 from l2co._src.strategy_wrapper import State, l2co_population_strategy
 from l2co.models import MLP, LSTM_Encoder
+from l2co.optimizers import grad_sub_optimizer
 from l2co.sampling import normal_sampling
 
 MAX_ITERATIONS = 8
@@ -396,6 +400,47 @@ class TestInitAskTell:
         assert not jnp.allclose(old0, new0)
         # Post-step fitness is all-NaN (point not re-evaluated).
         assert jnp.isnan(new_state.fitness).all()
+
+    def test_grad_step_forwards_value_without_value_fn(self):
+        # A solver that evaluates the objective itself reads the loss at
+        # the iterate from ``value`` (l2co-optimizers ADR 0011), so the
+        # grad branch forwards it even when no ``value_fn`` is given.
+        strategy, _ = _make_strategy(stage0_idx=1)  # adam slot active
+
+        def update(updates, state, params=None, *, value=None, grad=None, **_):
+            if value is None or grad is None:
+                raise ValueError("value/grad not forwarded")
+            # Move by exactly -value, so the new point shows what arrived.
+            return jax.tree.map(
+                lambda g: jnp.full_like(g, -value), grad
+            ), state
+
+        probe = grad_sub_optimizer(
+            optax.GradientTransformationExtraArgs(
+                lambda _: optax.EmptyState(), update
+            ),
+            name_hash=strategy.sub_optimizers[1].name_hash,
+        )
+        strategy = dataclasses.replace(
+            strategy, sub_optimizers=(strategy.sub_optimizers[0], probe)
+        )
+        n = strategy.population_size
+        _, state = _initial_state(strategy)
+        population, state = strategy.ask(
+            jr.key(2), state, strategy.default_params
+        )
+        fitness = jnp.full((n,), jnp.nan).at[0].set(5.0)
+        new_state, _ = strategy.tell(
+            jr.key(3),
+            population,
+            fitness,
+            state,
+            strategy.default_params,
+            grads=jax.tree.map(jnp.ones_like, population),
+        )
+        old0 = jax.tree.leaves(population)[0][0]
+        new0 = jax.tree.leaves(new_state.population)[0][0]
+        np.testing.assert_allclose(new0, old0 - 5.0)
 
     def test_tell_without_grads_raises_when_menu_has_grad_opt(self):
         strategy, _ = _make_strategy()

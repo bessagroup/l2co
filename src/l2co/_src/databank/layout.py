@@ -9,6 +9,7 @@ caller-supplied root directory ``root``::
     <root>/<dataset_name>/loss_history_raw/    # per-pair raw netCDF
         loss_<taskID>_<optimizer_hash>.nc
     <root>/<dataset_name>/tasksets/<name>.txt  # named task selections
+    <root>/<dataset_name>/global_min_breaches.json  # runs below global_min
 
 The databank holds **no machine-specific paths** of its own: the caller
 passes ``root`` (the application resolves it from its own config, e.g. a
@@ -59,6 +60,10 @@ LOSS_RAW_DIR = "loss_history_raw"
 # purged scratch; archiving here keeps the dataset self-sufficient for
 # re-evaluation (see ``provenance.py``).
 POLICY_ARTIFACTS_DIR = "policy_artifacts"
+
+# Per-dataset record of the tasks on which a run beat ``global_min`` (see
+# ``writer._write_global_min_breaches``).
+GLOBAL_MIN_BREACHES_FILE = "global_min_breaches.json"
 
 # Number of points on the fixed budget grid the zarr ``loss_history`` is
 # interpolated onto at write time. The raw histories under
@@ -205,3 +210,23 @@ def policy_artifacts_root(root: Path, dataset_name: str) -> Path:
         record.
     """
     return databank_root(root, dataset_name) / POLICY_ARTIFACTS_DIR
+
+
+def global_min_breaches_path(root: Path, dataset_name: str) -> Path:
+    """Return the dataset's ``global_min`` breach record.
+
+    Parameters
+    ----------
+    root : pathlib.Path
+        The databank base directory.
+    dataset_name : str
+        Name of the dataset.
+
+    Returns
+    -------
+    pathlib.Path
+        ``<root>/<dataset_name>/global_min_breaches.json`` (not required
+        to exist). Every dump writes it; an empty mapping means no run
+        beat its task's ``global_min``.
+    """
+    return databank_root(root, dataset_name) / GLOBAL_MIN_BREACHES_FILE

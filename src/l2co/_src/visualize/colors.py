@@ -178,28 +178,31 @@ CATEGORY_MODEL_BASED = "Model-based"
 CATEGORY_DIRECT_SEARCH = "Direct search"
 
 # l2co-optimizers registers its optimistix, scipy and IPOPT entries from
-# tables it keeps private (its ADRs 0001-0003), so they are named here
-# rather than read off a public registry. The registry-wide category
-# test fails if a new one is left out.
+# tables it keeps private (its ADRs 0001-0003, 0006 and 0009), so they are
+# named here rather than read off a public registry. The registry-wide
+# category test fails if a new one is left out.
 #
 # Quasi-Newton takes every method that uses curvature: the BFGS family
-# (bfgs, dfp, and slsqp, trust-constr and IPOPT, which run on dense BFGS
-# or L-BFGS -- l2co-optimizers ADR 0003) and the Newton-type tnc and
+# (bfgs, dfp, scipy's L-BFGS-B -- l2co-optimizers ADR 0006 -- and slsqp,
+# trust-constr and IPOPT, which run on dense BFGS or L-BFGS --
+# l2co-optimizers ADR 0003) and the Newton-type tnc and
 # trust-krylov, whose Hessian-vector products are differences of
 # gradients. Nonlinear CG is first-order; COBYQA builds quadratic
-# models; Nelder-Mead and Powell search directly, with no gradient and
-# no model.
+# models and COBYLA linear ones (l2co-optimizers ADR 0009), both in a
+# trust region; Nelder-Mead and Powell search directly, with no gradient
+# and no model.
 _NAMED_QUASI_NEWTON = (
     "bfgs",
     "dfp",
     "ipopt",
+    "lbfgsb",
     "slsqp",
     "tnc",
     "trustconstr",
     "trustkrylov",
 )
 _NAMED_GRADIENT = ("nonlinearcg",)
-_NAMED_MODEL_BASED = ("cobyqa",)
+_NAMED_MODEL_BASED = ("cobyla", "cobyqa")
 _NAMED_DIRECT_SEARCH = ("neldermead", "powell")
 
 #: Every categorised optimizer, per category, in the fixed order its
