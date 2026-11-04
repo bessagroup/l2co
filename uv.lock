@@ -1220,7 +1220,7 @@ wheels = [
 
 [[package]]
 name = "l2co"
-version = "1.7.0"
+version = "1.8.0"
 source = { editable = "." }
 dependencies = [
     { name = "bbob-jax" },
@@ -1310,7 +1310,7 @@ provides-extras = ["dev", "docs", "tests"]
 
 [[package]]
 name = "l2co-optimizers"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "../l2co-optimizers" }
 dependencies = [
     { name = "casadi" },
@@ -1363,7 +1363,7 @@ provides-extras = ["dev", "docs", "tests"]
 
 [[package]]
 name = "l2co-tasks"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "../l2co-tasks" }
 dependencies = [
     { name = "bbob-jax" },
