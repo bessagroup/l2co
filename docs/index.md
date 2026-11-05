@@ -4,11 +4,13 @@
   <img src="img/logo.png" alt="BBOB functions 3D overview" width="50%">
 </div>
 
-[View on GitHub](https://github.com/bessagroup/l2co)
+[**GitHub**](https://github.com/bessagroup/l2co)
+| [**PyPI**](https://pypi.org/project/l2co/)
+| [**Paper**](https://doi.org/10.1109/CEC69861.2026.11727310)
 
 ## Summary
 
-**L2CO** is a Python project accompanying the paper 'Learning to Choose Optimizers'. 
+**L2CO** is a Python project accompanying the paper [*Learning to Choose Optimizers*](https://doi.org/10.1109/CEC69861.2026.11727310) (IEEE CEC 2026).
 
 ## Statement of need
 
@@ -37,6 +39,7 @@ L2CO builds on the following packages:
 | [f3dasm](https://github.com/bessagroup/f3dasm) | Framework for data-driven design and analysis of structures and materials |
 | [bbob-jax](https://github.com/bessagroup/bbob-jax) | JAX implementation of the BBOB benchmark functions |
 | [l2co-tasks](https://github.com/bessagroup/l2co-tasks) | Benchmark functions and tasks used by L2CO (BBOB, CEC 2005, PDE, neural network training) |
+| [l2co-optimizers](https://github.com/bessagroup/l2co-optimizers) | Bare optimizers compatible with the L2CO library |
 | [bessaplots](https://github.com/bessagroup/bessaplots) | Plotting utilities |
 | [JAX](https://github.com/jax-ml/jax) | Composable transformations of NumPy programs |
 | [Equinox](https://github.com/patrick-kidger/equinox) | Neural networks and more for JAX |
@@ -44,9 +47,25 @@ L2CO builds on the following packages:
 | [EvoSax](https://github.com/RobertTLange/evosax) | Evolutionary strategies in JAX |
 | [scikit-learn](https://github.com/scikit-learn/scikit-learn) | Machine learning in Python |
 
-## Authorship
+## Authorship & Citation
 
-* Current creator and developer: [M.P. van der Schelling](https://github.com/mpvanderschelling/) (M.P.vanderSchelling@tudelft.nl)
+Current creator and developer: [M.P. van der Schelling](https://github.com/mpvanderschelling/) (M.P.vanderSchelling@tudelft.nl, [ORCID](https://orcid.org/0000-0003-3602-0452))
+
+If you use `l2co` in your research or in a scientific publication, it is appreciated that you cite the paper below:
+
+**IEEE Congress on Evolutionary Computation (CEC) 2026** ([paper](https://doi.org/10.1109/CEC69861.2026.11727310)):
+```bibtex
+@inproceedings{vanderSchelling2026,
+  title     = {Learning to Choose Optimizers},
+  author    = {M. P. van der Schelling and D. Toshniwal and M. A. Bessa},
+  booktitle = {2026 IEEE Congress on Evolutionary Computation (CEC)},
+  year      = {2026},
+  pages     = {1--8},
+  publisher = {IEEE},
+  doi       = {10.1109/CEC69861.2026.11727310},
+  url       = {https://doi.org/10.1109/CEC69861.2026.11727310}
+}
+```
 
 
 ## Experiments
@@ -61,14 +80,14 @@ The experimental pipeline consists of three stages, available in the `/experimen
 
 The `experiments/` folder also includes `generate_figures.py` for ERTD plot generation and `submit_job.sh` for SLURM cluster submission. See [`experiments/README.md`](https://github.com/bessagroup/l2co/tree/main/experiments/README.md) for full documentation on configuration, parameters, and Hydra overrides.
 
+The results in the paper were produced with l2co [v1.3.1](https://github.com/bessagroup/l2co/tree/v1.3.1). The code has evolved since.
+
 ## Getting started
 
-Install via git clone (not yet on PyPI):
+Install from PyPI (Python 3.12 or newer):
 
 ```bash
-git clone https://github.com/bessagroup/l2co.git
-cd l2co
-pip install -e .
+pip install l2co
 ```
 
 - For full installation instructions, see the [Installation Guide](installation.md).
@@ -78,7 +97,7 @@ pip install -e .
 ## Community Support
 
 * If you find any **issues, bugs or problems** within this repository, please use the [GitHub issue tracker](https://github.com/bessagroup/l2co/issues) to report them.
-* If you have **questions, feature requests or ideas** for this project, please use the [GitHub Discussions](https://github.com/bessagroup/L2CO/discussions)
+* If you have **questions, feature requests or ideas** for this project, please use the [GitHub Discussions](https://github.com/bessagroup/l2co/discussions)
 
 Please refer to L2CO's [Code of Conduct](https://github.com/bessagroup/l2co/blob/main/CODE_OF_CONDUCT.md)
 
