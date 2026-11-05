@@ -41,7 +41,3 @@ jobs:
           pypi-token: ${{ secrets.pypi_token }}
           github-user: bessagroup
           github-token: ${{ github.token }}
-          # l2co is not on PyPI yet; without this the action refuses to
-          # create the project. Drop it once 1.8.1 is published, to match
-          # l2co-tasks and l2co-optimizers.
-          allow-first-release: true
