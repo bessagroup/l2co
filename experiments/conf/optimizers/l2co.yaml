@@ -1,8 +1,10 @@
-# L2CO learned optimizer: uses a pretrained stage0 + stage1 model pair
-# Update stage0_model and stage1_model paths to point to your trained checkpoints
+# L2CO learned optimizer: uses a pretrained stage0 + stage1 model pair.
+# The model paths are required (???); pass your trained checkpoints, e.g.
+#   optimizers.0.hyperparameters.stage0_model=/path/to/stage0/model
+#   optimizers.0.hyperparameters.stage1_model=/path/to/stage1/model
 - optimizer: l2co
   hyperparameters:
-    stage0_model: /Users/martin/Documents/GitHub/l2co_experiments/experiments/l2co_train_stage0/outputs/2026-04-10/12-35-54/1775817360/experiment_data/model/0
-    stage1_model: /Users/martin/Documents/GitHub/l2co_experiments/experiments/l2co_train_stage1/outputs/2026-04-10/12-32-58/1775817184/experiment_data/model/0
+    stage0_model: ???
+    stage1_model: ???
     t: 0.1  # Softmax temperature for strategy selection (lower = more greedy)
     swap_optimizers: true
