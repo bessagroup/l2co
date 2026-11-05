@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.8.1] - 2026-11-05
 
 The first release on PyPI (`pip install l2co`), with the repository made
-public now that the paper is published. No change to the library's code.
+public now that the paper is published. One fix, for matplotlib 3.11.
 
 ### Added
 
@@ -21,6 +21,15 @@ public now that the paper is published. No change to the library's code.
 - The README says the paper's results were produced with v1.3.1.
 - Documentation on readthedocs (`.readthedocs.yaml`), and a release
   workflow that publishes to PyPI when a new version reaches `main`.
+
+### Fixed
+
+- With matplotlib 3.11, an overlong curve label in `plot_ertd`'s
+  right-hand column (`right_labels=True`) ran a few pixels past the
+  axes and was cropped. Shrinking it to fit assumed text width is
+  proportional to font size, which stopped holding in 3.11: widths now
+  snap to whole pixels. The labels are now measured again after the
+  first shrink and shrunk further until they fit.
 
 ### Changed
 

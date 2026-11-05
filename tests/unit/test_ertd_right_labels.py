@@ -19,11 +19,14 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 from l2co._src.naming import SCHEDULE  # noqa: E402
 from l2co._src.visualize.colors import display_name  # noqa: E402
+from matplotlib.transforms import Bbox  # noqa: E402
+
 from l2co._src.visualize.plotting import (  # noqa: E402
     MIN_RIGHT_LABEL_FONTSIZE,
     _curve_end,
     _CurveEnd,
     _disambiguate,
+    _fit_label_width,
     _settings,
     _spread_labels,
     plot_ertd,
@@ -253,6 +256,43 @@ def test_an_overlong_name_shrinks_rather_than_overflowing():
     for text in ax.texts:
         assert text.get_window_extent(renderer).x1 <= axes_right + 1.0
     assert min(t.get_fontsize() for t in ax.texts) < MIN_RIGHT_LABEL_FONTSIZE
+    plt.close(fig)
+
+
+class _UnevenText:
+    """A label whose width is not proportional to its font size.
+
+    Since matplotlib 3.11, text widths snap to whole pixels and stop
+    scaling in proportion to the size. A fixed 40 px on top of a linear
+    width does the same thing on any matplotlib: one proportional
+    rescale leaves the label too wide.
+    """
+
+    def __init__(self, fontsize: float):
+        self.fontsize = fontsize
+
+    def get_position(self) -> tuple[float, float]:
+        return (0.7, 0.5)
+
+    def set_fontsize(self, size: float) -> None:
+        self.fontsize = size
+
+    def get_window_extent(self, renderer=None) -> Bbox:
+        return Bbox.from_bounds(0.0, 0.0, 10.0 * self.fontsize + 40.0, 5.0)
+
+
+def test_label_fit_keeps_shrinking_when_width_is_not_proportional():
+    fig, ax = plt.subplots(figsize=(3.5, 2.8))
+    texts = [_UnevenText(8.0), _UnevenText(8.0)]
+    right_edge = 0.98
+    fitted = _fit_label_width(ax, texts, fontsize=8.0, right_edge=right_edge)
+    fig.canvas.draw()
+    axes_width = ax.get_window_extent().width
+    available = right_edge - texts[0].get_position()[0]
+    assert fitted < 8.0
+    for text in texts:
+        assert text.fontsize == fitted
+        assert text.get_window_extent().width / axes_width <= available
     plt.close(fig)
 
 
