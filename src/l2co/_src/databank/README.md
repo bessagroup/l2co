@@ -8,6 +8,7 @@ filesystems where opening thousands of HDF5 files is expensive.
 ```
 <root>/<dataset_name>.zarr/                       # consolidated store
     loss_history (interp), performance, task, optimizer
+    l2co_stamp.json                               # protocol stamp (ADR 0025)
 <root>/<dataset_name>/loss_history_raw/           # per-pair raw netCDF
     loss_<taskID>_<optimizer_hash>.nc
 <root>/<dataset_name>/tasksets/<name>.txt         # named task selections
@@ -151,6 +152,26 @@ the raw history to `loss_history_raw/` and region-writes the interpolated histor
 Writes that touch distinct `(taskID, schedule)` cells are chunk-disjoint and
 safe to parallelise; resizing and `consolidate_metadata` are single-writer.
 
+### The protocol stamp
+
+A store's numbers depend on the run protocol that made them (budget, starting
+points, noise-free scoring, task hashes), and stores of two protocols can
+share a dataset name under different roots. So creation writes
+`l2co_stamp.json` inside the new store (`docs/adr/0025`):
+
+```json
+{"protocol": "dataset-paper-2026-11", "l2co_version": "...", "created": "..."}
+```
+
+`protocol` is `stamp.DATABANK_PROTOCOL`, set by hand and bumped in any change
+after which new numbers are not comparable with stored ones. It is a plain
+file, not a zarr root attribute, because every `to_zarr(mode="a")` the writer
+makes replaces the root attributes; append never touches the file. Before
+anything else, `mode="append"` and `mode="replace"` refuse a store whose stamp
+is missing or names another protocol (`StoreProtocolError`): append writes
+nothing, and replace deletes nothing, so an old store is only ever removed by
+hand. A store without a stamp was written by l2co 1.8.x or earlier.
+
 ### Runs below `global_min`
 
 A task's `global_min` is sometimes set empirically (CUTEst), so a run can
@@ -204,11 +225,17 @@ max_iterations}` (the `iterations` counter's max, which equals the stored run's
 *exceeds* the stored one — `mode="append"` then overwrites that cell in place.
 
 Every reader entry point that opens the zarr store routes through one choke
-point (`reader._open_store`) that refuses a store an aborted append left
-mid-flight (see Writing above), raising with the marker's timestamp and
-incoming task/schedule counts unless called with `allow_incomplete=True`.
-`verify_databank` passes that flag and reports the marker as an
-`append.in_progress` finding instead — auditing a broken store is its job.
+point (`reader._open_store`). It first refuses a store whose protocol stamp is
+missing or names another protocol (`StoreProtocolError`, see Writing above),
+so numbers from two protocols are never read together and a launch pointed at
+the wrong root stops at its first read; read such a store with the l2co that
+wrote it (1.8.x for a store without a stamp). It then refuses a store an
+aborted append left mid-flight (see Writing above), raising with the marker's
+timestamp and incoming task/schedule counts unless called with
+`allow_incomplete=True`. `verify_databank` skips both and reports them as
+`store.protocol` and `append.in_progress` findings instead — auditing a broken
+store is its job. `store_stamp(root, dataset_name)` returns a store's stamp
+(`None` without one).
 
 **Notes / gotchas**
 - Missing `(task, schedule)` cells read back as `NaN`; `load_databank_dataset`
@@ -233,8 +260,9 @@ fail on `not report.ok`. The severity model ("non-finite" = `NaN` or
 - **error** — a `loss_history` variable *entirely* non-finite for a
   populated pair; any non-finite value in `success` / `cost`; a
   half-written cell (performance present but all loss variables NaN, or
-  vice versa — an interrupted region write); a store an aborted append
-  left mid-flight (`append.in_progress`); schema violations (missing
+  vice versa — an interrupted region write); a store whose protocol stamp
+  is missing or names another protocol (`store.protocol`); a store an
+  aborted append left mid-flight (`append.in_progress`); schema violations (missing
   variables, wrong dims, bad budget grid / metric coord / recipe JSON);
   internal inconsistencies (non-binary or target-non-monotone `success`,
   negative `output_std` or counters, non-finite / unsorted

@@ -44,6 +44,11 @@ from l2co._src.databank.reader import (
     populated_pairs,
 )
 from l2co._src.databank.records import loss_preprocess
+from l2co._src.databank.stamp import (
+    DATABANK_PROTOCOL,
+    StoreProtocolError,
+    store_stamp,
+)
 from l2co._src.databank.tasksets import load_taskset, save_taskset
 from l2co._src.databank.verify import (
     DatabankVerificationReport,
@@ -61,9 +66,11 @@ from l2co._src.databank.writer import (
 
 __all__ = [
     "BUDGET_STEPS",
+    "DATABANK_PROTOCOL",
     "DatabankVerificationReport",
     "DumpPlan",
     "MissingManifestError",
+    "StoreProtocolError",
     "VerificationFinding",
     "WeightsHashMismatchError",
     "bump_manifest",
@@ -94,6 +101,7 @@ __all__ = [
     "record_task_hashes",
     "record_weights_hash",
     "save_taskset",
+    "store_stamp",
     "verify_databank",
     "weights_hash",
     "write_manifest",

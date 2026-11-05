@@ -28,6 +28,7 @@ from l2co._src.data.loader import DataLoader
 from l2co._src.databank import layout
 from l2co._src.databank.provenance import parse_provenance
 from l2co._src.databank.records import loss_preprocess
+from l2co._src.databank.stamp import check_protocol
 from l2co._src.databank.tasksets import load_taskset
 from l2co._src.databank.writer import silence_zarr_warnings
 
@@ -114,18 +115,25 @@ def _open_store(
     dataset_name: str,
     *,
     allow_incomplete: bool = False,
+    check_stamp: bool = True,
 ) -> xr.Dataset:
     """Open a dataset's consolidated store, guarding against a mid-append one.
 
     Every reader entry point that opens the zarr store routes through
-    here, so the guard applies uniformly. An append grows the store *in
+    here, so the guards apply uniformly. The first refuses a store
+    written under another run protocol: its protocol stamp must name
+    :data:`l2co._src.databank.stamp.DATABANK_PROTOCOL` (ADR 0025), so
+    numbers from two protocols are never read together, and a launch
+    pointed at the wrong root stops at its first read. The second
+    concerns appends. An append grows the store *in
     place* (:func:`l2co._src.databank.writer._template_append`), so a
     store an aborted append left mid-flight would otherwise read back
     with the incoming ``(task, schedule)`` cells as ``NaN`` --
     indistinguishable from "not yet run". This raises instead unless
     ``allow_incomplete=True``; :func:`~l2co._src.databank.verify.
     verify_databank` passes that and reports the marker as a finding,
-    since auditing a broken store is its job.
+    since auditing a broken store is its job; it likewise passes
+    ``check_stamp=False`` and reports the stamp as a finding.
 
     Parameters
     ----------
@@ -136,6 +144,9 @@ def _open_store(
     allow_incomplete : bool, optional
         Read the store even if it is marked mid-append. Default
         ``False``.
+    check_stamp : bool, optional
+        Refuse a store whose protocol stamp is missing or different.
+        Default ``True``; only verification turns it off.
 
     Returns
     -------
@@ -146,12 +157,17 @@ def _open_store(
     ------
     FileNotFoundError
         The store does not exist.
+    l2co._src.databank.stamp.StoreProtocolError
+        The store's protocol stamp is missing or names another protocol,
+        and ``check_stamp=True``.
     RuntimeError
         The store is marked mid-append and ``allow_incomplete=False``.
     """
     store = layout.zarr_store_path(root, dataset_name)
     if not store.exists():
         raise FileNotFoundError(f"No zarr store found at {store}.")
+    if check_stamp:
+        check_protocol(store, dataset_name, action="read")
     if not allow_incomplete:
         marker = layout.append_marker_path(root, dataset_name)
         if marker.exists():

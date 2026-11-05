@@ -22,6 +22,13 @@ Use :func:`load_databank_performance` for performance-only consumers
 writes); it returns a structured report and the caller decides whether
 to raise.
 
+Every new store carries a protocol stamp naming
+:data:`DATABANK_PROTOCOL`, and the readers, ``mode="append"`` and
+``mode="replace"`` refuse a store whose stamp is missing or names another
+protocol (:class:`StoreProtocolError`); :func:`store_stamp` reads it and
+:func:`verify_databank` reports it. Stores written under two protocols
+are not comparable. See ``docs/adr/0025-stores-carry-a-protocol-stamp.md``.
+
 Learned optimizers (rl2co / l2co policies) enter the store as regular
 schedules — same arrays, same dims — carrying a *provenance record*
 that identifies the evaluated **policy artifact** (one checkpoint of
@@ -39,9 +46,11 @@ artifact files under ``policy_artifacts/<schedule>/``. Read back with
 
 from l2co._src.databank import (
     BUDGET_STEPS,
+    DATABANK_PROTOCOL,
     DatabankVerificationReport,
     DumpPlan,
     MissingManifestError,
+    StoreProtocolError,
     VerificationFinding,
     WeightsHashMismatchError,
     bump_manifest,
@@ -72,6 +81,7 @@ from l2co._src.databank import (
     record_task_hashes,
     record_weights_hash,
     save_taskset,
+    store_stamp,
     verify_databank,
     weights_hash,
     write_manifest,
@@ -87,9 +97,11 @@ __status__ = "Stable"
 
 __all__ = [
     "BUDGET_STEPS",
+    "DATABANK_PROTOCOL",
     "DatabankVerificationReport",
     "DumpPlan",
     "MissingManifestError",
+    "StoreProtocolError",
     "VerificationFinding",
     "WeightsHashMismatchError",
     "bump_manifest",
@@ -120,6 +132,7 @@ __all__ = [
     "record_task_hashes",
     "record_weights_hash",
     "save_taskset",
+    "store_stamp",
     "verify_databank",
     "weights_hash",
     "write_manifest",
