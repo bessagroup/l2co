@@ -234,8 +234,10 @@ aborted append left mid-flight (see Writing above), raising with the marker's
 timestamp and incoming task/schedule counts unless called with
 `allow_incomplete=True`. `verify_databank` skips both and reports them as
 `store.protocol` and `append.in_progress` findings instead — auditing a broken
-store is its job. `store_stamp(root, dataset_name)` returns a store's stamp
-(`None` without one).
+store is its job. `load_loss_raw` reads the raw sidecar rather than the
+store, so it checks the store's stamp itself: the raw histories were written
+under the store's protocol. `store_stamp(root, dataset_name)` returns a
+store's stamp (`None` without one).
 
 **Notes / gotchas**
 - Missing `(task, schedule)` cells read back as `NaN`; `load_databank_dataset`
