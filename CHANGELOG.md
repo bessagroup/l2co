@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-11-05
+
+The first release on PyPI (`pip install l2co`), with the repository made
+public now that the paper is published. No change to the library's code.
+
+### Added
+
+- How to cite the paper, *Learning to Choose Optimizers* (IEEE CEC 2026,
+  doi:10.1109/CEC69861.2026.11727310): a BibTeX entry in the README and
+  on the docs home page, and a `preferred-citation` in `CITATION.cff`, so
+  GitHub's "Cite this repository" gives the paper.
+- The README says the paper's results were produced with v1.3.1.
+- Documentation on readthedocs (`.readthedocs.yaml`), and a release
+  workflow that publishes to PyPI when a new version reaches `main`.
+
+### Changed
+
+- The experiment configs `l2co`, `medium_plus_l2co` and
+  `gaussian_classification_plus_l2co` no longer hold paths to the
+  author's trained models. The model paths are now required values
+  (`???`) that you pass on the command line; Hydra stops with a
+  "missing mandatory value" error naming the key if you don't.
+- `experiments/generate_figures.py` takes its data folder as the first
+  command-line argument and writes figures to `./plots/`, as
+  `experiments/README.md` already said.
+
+### Removed
+
+- `experiments/conf/optimizers/l2co_gaussian_classification.yaml`, an
+  unreferenced near-copy of `gaussian_classification_plus_l2co`.
+- The README's list of related repositories; l2co-optimizers joins the
+  dependency table instead.
+
 ## [1.8.0] - 2026-11-04
 
 ### Changed

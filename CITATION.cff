@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-message: "If you use this software, please cite it as below."
+message: "If you use this software, please cite the paper below."
 title: "L2CO: Learning to Choose Optimizers"
 abstract: >-
   A research framework that learns to select from a set of static optimizers
@@ -9,9 +9,11 @@ authors:
   - family-names: "van der Schelling"
     given-names: "Martin P."
     email: "m.p.vanderschelling@tudelft.nl"
+    orcid: "https://orcid.org/0000-0003-3602-0452"
 license: BSD-3-Clause
 repository-code: "https://github.com/bessagroup/l2co"
-version: "1.8.0"
+url: "https://l2co.readthedocs.io"
+version: "1.8.1"
 type: software
 keywords:
   - optimization
@@ -19,3 +21,22 @@ keywords:
   - jax
   - equinox
   - learning-to-optimize
+preferred-citation:
+  type: conference-paper
+  title: "Learning to Choose Optimizers"
+  authors:
+    - family-names: "van der Schelling"
+      given-names: "Martin P."
+      orcid: "https://orcid.org/0000-0003-3602-0452"
+    - family-names: "Toshniwal"
+      given-names: "Deepesh"
+    - family-names: "Bessa"
+      given-names: "Miguel A."
+  collection-title: "2026 IEEE Congress on Evolutionary Computation (CEC)"
+  publisher:
+    name: "IEEE"
+  year: 2026
+  start: 1
+  end: 8
+  doi: "10.1109/CEC69861.2026.11727310"
+  url: "https://doi.org/10.1109/CEC69861.2026.11727310"

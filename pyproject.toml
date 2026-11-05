@@ -49,7 +49,7 @@ maintainers = [
 name = "l2co"
 readme = "README.md"
 requires-python = ">=3.12"
-version = "1.8.0"
+version = "1.8.1"
 
 [project.optional-dependencies]
 dev = [
@@ -73,8 +73,9 @@ tests = [
 ]
 
 [project.urls]
-Documentation = "https://github.com/bessagroup/l2co"
+Documentation = "https://l2co.readthedocs.io"
 Issues = "https://github.com/bessagroup/l2co/issues"
+Paper = "https://doi.org/10.1109/CEC69861.2026.11727310"
 Repository = "https://github.com/bessagroup/l2co"
 
 [tool.hatch.build.targets.sdist]

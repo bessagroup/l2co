@@ -48,9 +48,6 @@ extra_javascript:
     - _static/mathjax.js
     - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
 
-extra_css:
-    - _static/custom_css.css
-
 markdown_extensions:
     - attr_list
     - md_in_html
