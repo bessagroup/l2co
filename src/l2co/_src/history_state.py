@@ -13,6 +13,8 @@ those exports stay here as free functions.
 # Standard
 from __future__ import annotations
 
+from collections.abc import Callable
+
 # Third-party
 import jax
 import jax.numpy as jnp
@@ -33,6 +35,7 @@ from l2co._src.naming import (
     OUTPUT_DIM,
     OUTPUT_MEAN,
     OUTPUT_MIN,
+    OUTPUT_MIN_TRUE,
     OUTPUT_STD,
     REALIZATION,
     SCHEDULE,
@@ -56,6 +59,20 @@ __all__ = [
 ]
 
 # =============================================================================
+
+
+def _noise_free_series(
+    history_state: HistoryState, wrap: Callable[[jax.Array], xr.DataArray]
+) -> dict[str, xr.DataArray]:
+    """``{OUTPUT_MIN_TRUE: ...}`` for a run on a noisy task, else ``{}``.
+
+    A noise-free run (``output_min_true is None``) gets no variable at
+    all, not a copy of ``output_min``: its export, and every file and
+    store made from it, stays what it was (ADR 0024).
+    """
+    if history_state.output_min_true is None:
+        return {}
+    return {OUTPUT_MIN_TRUE: wrap(history_state.output_min_true)}
 
 
 def history_to_xarray(
@@ -83,7 +100,9 @@ def history_to_xarray(
     -------
     xr.Dataset
         Dataset containing the history with appropriate
-        coordinates.
+        coordinates. A run on a noisy task (``output_min_true`` set)
+        also carries ``output_min_true``, the lowest noise-free loss
+        per step, next to the observed ``output_min``.
 
     Notes
     -----
@@ -110,6 +129,7 @@ def history_to_xarray(
             UPDATE_STEP: _wrap(history_state.update_step),
             FEVALS: _wrap(fevals_cumsum),
             ITERATIONS: _wrap(iterations_cumsum),
+            **_noise_free_series(history_state, _wrap),
         }
     )
 
@@ -137,7 +157,9 @@ def history_to_xarray_realizations(
     -------
     xr.Dataset
         Dataset containing histories for all realizations, with
-        dims ``(REALIZATION, BUDGET, OUTPUT_DIM)``.
+        dims ``(REALIZATION, BUDGET, OUTPUT_DIM)``. A run on a noisy
+        task also carries ``output_min_true``, as
+        :func:`history_to_xarray`.
 
     Notes
     -----
@@ -173,6 +195,7 @@ def history_to_xarray_realizations(
             UPDATE_STEP: _wrap(history_state.update_step),
             FEVALS: _wrap(fevals_cumsum),
             ITERATIONS: _wrap(iterations_cumsum),
+            **_noise_free_series(history_state, _wrap),
         }
     ).assign_coords({REALIZATION: list(range(n_realizations))})
 
@@ -226,7 +249,9 @@ def history_to_dataloader(
     -------
     DataLoader
         DataLoader containing the optimization trajectories, ERT
-        metrics, and per-task labels.
+        metrics, and per-task labels. On a noisy task the ERT metrics
+        are those of the noise-free series (see
+        :func:`~l2co._src.performance.scoring_loss`).
     """
     xarr = history_to_xarray_realizations(
         history_state, budget_steps=budget_steps
