@@ -43,11 +43,16 @@ from l2co._src.databank.provenance import POLICY_OPTIMIZERS
 from l2co._src.performance import global_min_breaches
 from l2co._src.validation import normalize_budget_grid
 from l2co.naming import (
+    BUDGET,
+    EVALUATION_BUDGET,
+    F_STAR,
     FEATURE,
     FEVALS,
     GLOBAL_MIN,
     ITERATIONS,
     OPTIMIZATIONSTEP,
+    OUTPUT_MEAN,
+    OUTPUT_MIN,
     OUTPUT_MIN_TRUE,
     PROVENANCE,
     SCHEDULE,
@@ -55,6 +60,7 @@ from l2co.naming import (
     TASK_ID,
     TASK_LABELS,
     UPDATE_STEP,
+    VALUE_KIND,
 )
 
 #                                                          Authorship & Credits
@@ -73,6 +79,122 @@ BREACHES_ATTR = "global_min_breaches"
 # float and that must be cast back so dtypes stay consistent with the
 # rest of L2CO (see CLAUDE.md "Default float dtype").
 _INT_LOSS_VARS = (FEVALS, ITERATIONS, UPDATE_STEP)
+
+#: The loss variables stored as gaps to f* (ADR 0027). ``output_std`` and
+#: the counters are not shifted.
+GAP_VARS = (OUTPUT_MIN, OUTPUT_MIN_TRUE, OUTPUT_MEAN)
+
+#: ``value_kind`` of a raw file holding gaps / losses (no finite f*).
+GAP = "gap"
+RAW = "raw"
+
+
+def f_star_of(task: Task) -> float:
+    """The task's f* as float64: its ``global_min``, NaN when it has none."""
+    gmin = getattr(task, "global_min", None)
+    if gmin is None:
+        return float("nan")
+    return float(np.asarray(gmin, dtype=np.float64))
+
+
+def to_gap(ds: xr.Dataset, f_star: float) -> xr.Dataset:
+    """Subtract ``f_star`` from the gap variables, in float64.
+
+    A non-finite ``f_star`` leaves the values as they are (stored raw).
+    Either way the result is tagged with the ``f_star`` and
+    ``value_kind`` attributes the raw netCDF files carry.
+    """
+    finite = bool(np.isfinite(f_star))
+    shifted = {
+        name: (ds[name].astype(np.float64) - f_star) if finite else ds[name]
+        for name in GAP_VARS
+        if name in ds.data_vars
+    }
+    out = ds.assign(shifted)
+    out.attrs = {
+        **ds.attrs,
+        F_STAR: f_star,
+        VALUE_KIND: GAP if finite else RAW,
+    }
+    return out
+
+
+def _cell_budget_problem(ds: xr.Dataset, budget: int) -> str | None:
+    """Why one cell does not match the evaluation budget, or ``None``.
+
+    ``n`` is the cell's number of iterations (the ``iterations``
+    counter's maximum) and its cost per iteration is read from the
+    ``fevals`` increments. A cell whose every iteration costs the same
+    ``lambda`` evaluations must have ``n * lambda <= B < (n + 1) *
+    lambda`` (``n == B`` for one evaluation per iteration); a cell whose
+    cost varies (L-BFGS, Nelder-Mead) is budgeted at one evaluation per
+    iteration and must have ``n == B`` (ADR 0026, ADR 0027).
+    """
+    n_values = np.unique(ds[ITERATIONS].max(BUDGET).values)
+    if n_values.size != 1 or not np.isfinite(n_values[0]):
+        return (
+            "its runs made different numbers of iterations "
+            f"({n_values.tolist()})"
+        )
+    n = int(n_values[0])
+    # Evaluations per iteration: the fevals increments, the first one
+    # from 0 (every step is recorded, so fevals starts at its cost).
+    fevals = ds[FEVALS].astype(np.float64)
+    steps = fevals.diff(BUDGET, label="upper")
+    per_iteration = np.unique(
+        np.concatenate(
+            [
+                np.ravel(fevals.isel({BUDGET: 0}).values),
+                np.ravel(steps.values),
+            ]
+        )
+    )
+    per_iteration = per_iteration[np.isfinite(per_iteration)]
+    if per_iteration.size == 1:
+        lam = int(per_iteration[0])
+        if lam >= 1 and n * lam <= budget < (n + 1) * lam:
+            return None
+        return (
+            f"it made {n} iteration(s) at {lam} evaluations per iteration "
+            f"({n * lam} evaluations), but an evaluation budget of {budget} "
+            f"needs {budget // max(lam, 1)} iteration(s)"
+        )
+    if n == budget:
+        return None
+    return (
+        f"its cost per iteration varies ({int(per_iteration.min())} to "
+        f"{int(per_iteration.max())} evaluations), so it is budgeted at one "
+        f"evaluation per iteration and needs {budget} iteration(s), but it "
+        f"made {n}"
+    )
+
+
+def _check_cell_budgets(
+    task: Task,
+    ds_by_step: dict[OptimizationStep, xr.Dataset],
+    budget: int,
+) -> None:
+    """Refuse a task with any cell that does not match its budget B.
+
+    Raises
+    ------
+    ValueError
+        Naming the task, B and every mismatching schedule.
+    """
+    problems = {
+        step.name: problem
+        for step, ds in ds_by_step.items()
+        if (problem := _cell_budget_problem(ds, budget)) is not None
+    }
+    if problems:
+        detail = "; ".join(f"'{k}': {v}" for k, v in problems.items())
+        raise ValueError(
+            f"task {task.hash}: cells do not match the task's evaluation "
+            f"budget B = {budget} -- {detail}. Every run of a task gets the "
+            "same B (l2co ADR 0026); re-run these cells with the budget "
+            "function's iterations, or pass the B they were run with "
+            "(l2co ADR 0027)."
+        )
 
 
 def loss_preprocess(ds: xr.Dataset, budget_steps: int) -> xr.Dataset:
@@ -163,13 +285,19 @@ def _iter_task_runs(
         yield task, {step: path for step, path in present.items()}
 
 
-def _task_dataset(task: Any, target_value: xr.DataArray) -> xr.Dataset:
-    """Build the per-task payload (``task_labels`` + ``target_value``).
+def _task_dataset(
+    task: Any,
+    target_value: xr.DataArray,
+    evaluation_budget: int | None = None,
+) -> xr.Dataset:
+    """Build the per-task payload.
 
     Carries ``task_labels`` (the task tag plus ``global_min``, stringified
-    the same way :func:`l2co.create_combined_odata` does) and the per-task
+    the same way :func:`l2co.create_combined_odata` does), the per-task
     ERT ``target_value`` echoed by
-    :func:`l2co._src.performance.calculate_ert`.
+    :func:`l2co._src.performance.calculate_ert`, the float64 ``f_star``
+    the stored losses are gaps to (NaN: stored raw; ADR 0027) and, when
+    given, the task's ``evaluation_budget``.
     """
     row = {**task.tag, GLOBAL_MIN: task.global_min}
     features = list(row.keys())
@@ -180,7 +308,24 @@ def _task_dataset(task: Any, target_value: xr.DataArray) -> xr.Dataset:
         dims=[TASK_ID, FEATURE],
     ).astype(str)
     tv = target_value.expand_dims({TASK_ID: [task.hash]})
-    return xr.Dataset({TASK_LABELS: task_labels, TARGET_VALUE: tv})
+    out = xr.Dataset(
+        {
+            TASK_LABELS: task_labels,
+            TARGET_VALUE: tv,
+            F_STAR: xr.DataArray(
+                np.array([f_star_of(task)], dtype=np.float64),
+                coords={TASK_ID: [task.hash]},
+                dims=[TASK_ID],
+            ),
+        }
+    )
+    if evaluation_budget is not None:
+        out[EVALUATION_BUDGET] = xr.DataArray(
+            np.array([evaluation_budget], dtype=np.int64),
+            coords={TASK_ID: [task.hash]},
+            dims=[TASK_ID],
+        )
+    return out
 
 
 def _optimizer_dataset(
@@ -278,6 +423,7 @@ def _build_task_records(
     ds_by_step: dict[OptimizationStep, xr.Dataset],
     easiest_quantile: float,
     existing_targets: np.ndarray | None = None,
+    evaluation_budget: int | None = None,
 ) -> tuple[
     xr.Dataset,
     dict[int, xr.Dataset],
@@ -308,6 +454,13 @@ def _build_task_records(
         optimizers appended to an existing task stay consistent with the
         records written earlier. When ``None`` (a new task) the
         randomsearch-derived target is computed as before.
+    evaluation_budget : int or None, optional
+        The task's evaluation budget B (ADR 0027). When given, every
+        cell is checked against it (:func:`_cell_budget_problem`), the
+        scores ignore points past it
+        (:func:`l2co._src.performance.calculate_ert`) and ``task_ds``
+        carries it. The breach check still reads every point. ``None``
+        (default): no check, no cut, no variable.
 
     Returns
     -------
@@ -324,6 +477,14 @@ def _build_task_records(
         breaches are those of the noise-free ``output_min_true``
         (ADR 0024); the loss payloads keep both series.
 
+        The loss payloads hold gaps: once the scores, targets and
+        breaches above are computed from the losses, f* (the task's
+        ``global_min``) is subtracted in float64 from ``output_min``,
+        ``output_min_true`` and ``output_mean`` (:func:`to_gap`; a task
+        without a finite f* keeps its losses). Each payload carries
+        ``f_star`` and ``value_kind`` attributes, and ``task_ds`` an
+        ``f_star`` variable (ADR 0027).
+
     Raises
     ------
     ValueError
@@ -333,7 +494,8 @@ def _build_task_records(
         dump-time admissibility backstop (the evaluation pipeline
         should have failed fast much earlier). Also when the task's
         runs would be scored on mixed series (see
-        :func:`_check_noise_free_series`).
+        :func:`_check_noise_free_series`), and when a cell does not
+        match ``evaluation_budget``.
     """
     for step, ds in ds_by_step.items():
         if step.optimizer in POLICY_OPTIMIZERS and not str(
@@ -349,6 +511,8 @@ def _build_task_records(
             )
 
     _check_noise_free_series(task, ds_by_step)
+    if evaluation_budget is not None:
+        _check_cell_budgets(task, ds_by_step, int(evaluation_budget))
 
     gmin = task.global_min if task.global_min is not None else np.nan
     b = xr.concat(
@@ -363,9 +527,12 @@ def _build_task_records(
     ).assign_coords({GLOBAL_MIN: gmin})
 
     perf_all = _ert_from_quantile(
-        b, easiest_quantile=easiest_quantile, targets=existing_targets
+        b,
+        easiest_quantile=easiest_quantile,
+        targets=existing_targets,
+        evaluation_budget=evaluation_budget,
     )
-    task_ds = _task_dataset(task, perf_all[TARGET_VALUE])
+    task_ds = _task_dataset(task, perf_all[TARGET_VALUE], evaluation_budget)
     breaches = global_min_breaches(b, gmin)
     if breaches:
         task_ds.attrs[BREACHES_ATTR] = json.dumps(
@@ -373,12 +540,14 @@ def _build_task_records(
             default=str,
         )
     perf_vars = perf_all.drop_vars(TARGET_VALUE)
+    # Only now, with every score taken from the losses: store gaps.
+    f_star = f_star_of(task)
 
     loss_by_hash: dict[int, xr.Dataset] = {}
     perf_by_hash: dict[int, xr.Dataset] = {}
     opt_by_hash: dict[int, xr.Dataset] = {}
     for step, ds in ds_by_step.items():
-        loss_by_hash[step.hash] = ds.expand_dims(
+        loss_by_hash[step.hash] = to_gap(ds, f_star).expand_dims(
             {TASK_ID: [task.hash], SCHEDULE: [step.name]}
         )
         perf_by_hash[step.hash] = perf_vars.sel(

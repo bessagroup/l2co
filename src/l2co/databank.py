@@ -29,6 +29,14 @@ protocol (:class:`StoreProtocolError`); :func:`store_stamp` reads it and
 :func:`verify_databank` reports it. Stores written under two protocols
 are not comparable. See ``docs/adr/0025-stores-carry-a-protocol-stamp.md``.
 
+The store and the raw files hold each loss as its gap to the task's f*
+(``global_min``); every reader adds f* back in float64, so callers get
+losses. Given ``evaluation_budget=`` (B per task hash), the dump checks
+every cell against its task's B, cuts the scores at B and stores B; given
+``run_settings=``, the stamp records them and an append refuses others
+(:class:`RunSettingsError`; :func:`check_run_settings` for a create step).
+See ``docs/adr/0027-stores-hold-gaps-and-check-the-budget.md``.
+
 Learned optimizers (rl2co / l2co policies) enter the store as regular
 schedules — same arrays, same dims — carrying a *provenance record*
 that identifies the evaluated **policy artifact** (one checkpoint of
@@ -50,10 +58,12 @@ from l2co._src.databank import (
     DatabankVerificationReport,
     DumpPlan,
     MissingManifestError,
+    RunSettingsError,
     StoreProtocolError,
     VerificationFinding,
     WeightsHashMismatchError,
     bump_manifest,
+    check_run_settings,
     databank_root,
     dump_databank,
     dump_databank_finalize,
@@ -101,10 +111,12 @@ __all__ = [
     "DatabankVerificationReport",
     "DumpPlan",
     "MissingManifestError",
+    "RunSettingsError",
     "StoreProtocolError",
     "VerificationFinding",
     "WeightsHashMismatchError",
     "bump_manifest",
+    "check_run_settings",
     "databank_root",
     "dump_databank",
     "dump_databank_finalize",

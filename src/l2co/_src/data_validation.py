@@ -56,6 +56,7 @@ def _ert_from_quantile(
     data: xr.Dataset,
     easiest_quantile: float,
     targets: np.ndarray | None = None,
+    evaluation_budget: float | None = None,
 ) -> xr.Dataset:
     """Per-task ERT preprocess that derives targets from randomsearch.
 
@@ -78,6 +79,10 @@ def _ert_from_quantile(
         targets fixed elsewhere (e.g. the ``target_value`` already
         stored for an existing task) rather than re-deriving them from
         this dataset's randomsearch baseline.
+    evaluation_budget : float or None, optional
+        The task's evaluation budget B, forwarded to
+        :func:`calculate_ert` (points past B are ignored). ``None``
+        (default) reads every point.
     """
     global_min = data.coords.get(GLOBAL_MIN, np.nan)
     if global_min is None:
@@ -87,7 +92,12 @@ def _ert_from_quantile(
         targets = compute_task_targets(
             data_qv, easiest_quantile=easiest_quantile
         )
-    return calculate_ert(data, targets=targets, global_min=global_min)
+    return calculate_ert(
+        data,
+        targets=targets,
+        global_min=global_min,
+        evaluation_budget=evaluation_budget,
+    )
 
 
 def create_combined_odata(

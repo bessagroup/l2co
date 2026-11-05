@@ -95,6 +95,8 @@ lets old stores be inspected with current code before they are deleted.
   l2co stays generic.
 - **Gap storage.** Recording whether a store holds raw losses or gaps
   f − f\* comes with that change (decision 14 of the protocol revision).
+  Done in ADR 0027, which bumps the protocol to
+  `dataset-paper-2026-11.1` and adds the run settings to the stamp.
 - **ERTD reports** do not copy the stamp yet.
 
 ## Rejected

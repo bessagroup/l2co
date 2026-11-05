@@ -19,6 +19,11 @@ finding, and an all-NaN cell of it is fine on its own; what is an error
 is a task that has it on some populated pairs but not on others, whose
 schedules would be scored on different series.
 
+The loss variables hold gaps to each task's ``f_star`` (ADR 0027), a
+required per-task variable; ``evaluation_budget`` is conditional, like
+the noise-free series. No check reads the sign of a loss, so the audit
+is the same for gaps and losses.
+
 Verification reads the store with ``allow_incomplete=True`` (unlike
 every other reader entry point, which refuses a mid-append store
 outright -- see :func:`l2co._src.databank.reader._open_store`): auditing
@@ -59,6 +64,8 @@ from l2co._src.databank.tasksets import load_taskset
 from l2co.naming import (
     BUDGET,
     COST,
+    EVALUATION_BUDGET,
+    F_STAR,
     FEATURE,
     FEVALS,
     IN_TRAINING,
@@ -117,6 +124,8 @@ _EXPECTED_DIMS: dict[str, frozenset[str]] = {
     ),
     TASK_LABELS: frozenset((TASK_ID, FEATURE)),
     TARGET_VALUE: frozenset((TASK_ID, TARGET)),
+    F_STAR: frozenset((TASK_ID,)),
+    EVALUATION_BUDGET: frozenset((TASK_ID,)),
     OPTIMIZATIONSTEP: frozenset((SCHEDULE,)),
     PROVENANCE: frozenset((SCHEDULE,)),
     IN_TRAINING: frozenset((TASK_ID, SCHEDULE)),
@@ -129,8 +138,9 @@ _OPTIONAL_VARS = frozenset((PROVENANCE, IN_TRAINING))
 
 # Variables a store has only when its data calls for them: the
 # noise-free series, present iff the store holds a noisy task (ADR
-# 0024). Absent is silent; present, its dims are checked.
-_CONDITIONAL_VARS = frozenset((OUTPUT_MIN_TRUE,))
+# 0024), and the per-task evaluation budget, present iff the dump was
+# given one (ADR 0027). Absent is silent; present, their dims are checked.
+_CONDITIONAL_VARS = frozenset((OUTPUT_MIN_TRUE, EVALUATION_BUDGET))
 
 # Display caps so a badly broken store still yields a readable summary.
 _MAX_FINDINGS_SHOWN = 50

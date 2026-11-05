@@ -68,18 +68,17 @@ EPSILON = 1e-8
 DEFAULT_COST_VALUES = np.append(np.logspace(-1, 6, 1000) ** 0.8, 10**5)
 DEFAULT_TARGETS = np.linspace(0.0, 1.0, 51)
 
-#: Bootstrap replicates the ERTD averages over (the ``seed`` axis).
+#: Simulated restart orders the ERTD averages over (the ``seed`` axis).
+#: Each is a permutation of the runs (:func:`draw_samples`).
 ERTD_N_SEEDS = 50
 
-#: Realizations drawn (with replacement) per replicate.
-ERTD_N_PICKS = 50
-
 #: Replicates evaluated at once inside :func:`ertd`. The resampled
-#: ``cost`` / ``success`` arrays carry a ``seed x picks`` axis in place of
-#: ``realization``, so the peak footprint scales with this batch, not with
-#: :data:`ERTD_N_SEEDS`: on a full databank selection (~150 tasks x ~60
-#: schedules x 51 targets) the unbatched form allocates tens of GB to
-#: produce a sub-GB profile. The batching is exact -- see :func:`ertd`.
+#: ``cost`` / ``success`` arrays carry a ``seed x realization`` axis in
+#: place of ``realization``, so the peak footprint scales with this batch,
+#: not with :data:`ERTD_N_SEEDS`: on a full databank selection (~150
+#: tasks x ~60 schedules x 51 targets) the unbatched form allocates tens
+#: of GB to produce a sub-GB profile. The batching is exact -- see
+#: :func:`ertd`.
 ERTD_SEED_BATCH = 5
 
 
@@ -345,10 +344,10 @@ def _ert_for_seeds(ds: xr.Dataset, samples: xr.DataArray) -> xr.DataArray:
     become NaN, so the caller's ``mean(SEED)`` skips them.
 
     This is the memory-heavy inner step: the ``isel`` below replaces the
-    store's ``realization`` axis with ``seed x picks``, so the resampled
-    ``cost`` / ``success`` arrays are ``n_picks * n_seeds_in_batch /
-    n_realizations`` times the footprint of the input. Keeping the batch
-    small is what bounds :func:`ertd`'s peak.
+    store's ``realization`` axis with ``seed x realization`` (one
+    permutation per seed), so the resampled ``cost`` / ``success`` arrays
+    are ``n_seeds_in_batch`` times the footprint of the input. Keeping the
+    batch small is what bounds :func:`ertd`'s peak.
 
     Parameters
     ----------
@@ -394,7 +393,8 @@ def ertd(
 
     Estimates the fraction of problems solved within
     each cost budget, normalized by problem dimensionality,
-    using bootstrap sampling over realizations.
+    averaged over simulated restart orders: random permutations of the
+    realizations (:func:`draw_samples`, without replacement).
 
     The bootstrap is evaluated in batches of ``seed_batch`` replicates
     (see :func:`_ert_for_seeds`) and the per-batch ERTs are concatenated
@@ -466,11 +466,7 @@ def ertd(
 
     samples = np.stack(
         [
-            draw_samples(
-                seed=s,
-                n_realizations=ds[REALIZATION].size,
-                n_picks=ERTD_N_PICKS,
-            )
+            draw_samples(seed=s, n_realizations=ds[REALIZATION].size)
             for s in np.arange(ERTD_N_SEEDS)
         ],
         axis=0,
@@ -504,9 +500,8 @@ def ertd(
     return (ert_multi <= budgets).mean([OUTPUT_DIM, TARGET])
 
 
-def draw_samples(seed: int, n_realizations: int, n_picks: int):
-    """
-    Draw random samples with replacement for bootstrap sampling.
+def draw_samples(seed: int, n_realizations: int) -> np.ndarray:
+    """Draw one simulated order of restarts: a permutation of the runs.
 
     Parameters
     ----------
@@ -514,31 +509,24 @@ def draw_samples(seed: int, n_realizations: int, n_picks: int):
         Random seed for reproducibility.
     n_realizations : int
         Total number of realizations available.
-    n_picks : int
-        Number of samples to draw.
 
     Returns
     -------
     np.ndarray
-        Array of sampled indices with shape (n_picks,).
+        A random permutation of ``range(n_realizations)``.
 
     Notes
     -----
-    First draws a random permutation of all realizations, then
-    draws additional random samples with replacement if
-    n_picks > n_realizations.
+    The order is drawn without replacement. A tail drawn with
+    replacement after the permutation used to follow, but it was never
+    reached: the expected runtime sums costs up to the first success,
+    and a permutation of every run holds the first success if any run
+    has one. Removing it changes no result (the permutation is drawn
+    first from the same generator), only the memory the resampled
+    arrays take.
     """
     rng = np.random.default_rng(seed)
-    return np.concatenate(
-        [
-            rng.permutation(n_realizations),
-            rng.integers(
-                0,
-                n_realizations,
-                size=max(n_picks - n_realizations, 0),
-            ),
-        ]
-    )
+    return rng.permutation(n_realizations)
 
 
 def compute_ert_group(
@@ -591,9 +579,7 @@ def compute_ert_group(
     return ert.mean(SEED)
 
 
-def compute_ert_multi_seed(
-    ds: xr.Dataset, n_seeds: int, n_picks: int
-) -> xr.DataArray:
+def compute_ert_multi_seed(ds: xr.Dataset, n_seeds: int) -> xr.DataArray:
     """
     Compute ERT across multiple random seeds.
 
@@ -602,9 +588,7 @@ def compute_ert_multi_seed(
     ds : xr.Dataset
         Dataset containing cost, success, and dims variables.
     n_seeds : int
-        Number of random seeds to use for bootstrap sampling.
-    n_picks : int
-        Number of problem samples per seed.
+        Number of simulated restart orders (permutations).
 
     Returns
     -------
@@ -613,15 +597,13 @@ def compute_ert_multi_seed(
 
     Notes
     -----
-    Performs bootstrap sampling of problems for each seed to
-    estimate ERT distribution.
+    Draws one permutation of the realizations per seed
+    (:func:`draw_samples`) to estimate the ERT distribution.
     """
     n_realizations = int(ds[REALIZATION].max())
     samples = np.stack(
         [
-            draw_samples(
-                seed=s, n_realizations=n_realizations, n_picks=n_picks
-            )
+            draw_samples(seed=s, n_realizations=n_realizations)
             for s in np.arange(n_seeds)
         ],
         axis=0,
@@ -1007,6 +989,7 @@ def calculate_ert(
     data: xr.Dataset,
     targets: np.ndarray | None = None,
     global_min: np.ndarray | None = None,
+    evaluation_budget: float | None = None,
 ) -> xr.Dataset:
     """Calculate Expected Running Time (ERT) metrics.
 
@@ -1039,6 +1022,15 @@ def calculate_ert(
         turn triggers the per-task data-minimum fallback inside
         :func:`shift_to_quality_value`. When provided, the supplied
         value is used directly.
+    evaluation_budget : float or None, optional
+        The task's evaluation budget B (``docs/adr/0027``). When given,
+        every point whose ``fevals`` exceeds B is ignored, as if each
+        run's history ended at its last point within B: a target first
+        reached after B counts as missed, and a missed run is charged
+        at its last improvement within B, so at most B evaluations (and
+        the iterations it had made by then). Only a run whose cost per
+        iteration varies (L-BFGS, Nelder-Mead) has such points. ``None``
+        (default) reads every point, as before.
 
     Returns
     -------
@@ -1060,6 +1052,15 @@ def calculate_ert(
     target_idx = np.arange(targets_np.size)
 
     qv = output_cummin(data_qv[OUTPUT_MIN]).ffill(BUDGET).fillna(np.inf)
+    last_step = data.sizes[BUDGET] - 1
+    if evaluation_budget is not None:
+        # The cut at B: points past it are replaced by the run's last
+        # point within B, so nothing after B can solve a target or be
+        # the last improvement. fevals only grows along the budget, so
+        # the points within B are a prefix.
+        within = data[FEVALS] <= evaluation_budget
+        qv = qv.where(within).ffill(BUDGET).fillna(np.inf)
+        last_step = (within.sum(BUDGET) - 1).clip(min=0)
 
     targets_da = xr.DataArray(
         targets_np, dims=TARGET, coords={TARGET: target_idx}
@@ -1067,7 +1068,7 @@ def calculate_ert(
     solved = qv <= targets_da
     success = solved.any(BUDGET)
 
-    stopping_budget = (qv.argmin(BUDGET) + 1).clip(max=data.sizes[BUDGET] - 1)
+    stopping_budget = (qv.argmin(BUDGET) + 1).clip(max=last_step)
 
     first_solved = (
         solved.argmax(BUDGET).where(success, other=stopping_budget).compute()

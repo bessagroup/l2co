@@ -46,7 +46,9 @@ from l2co._src.databank.reader import (
 from l2co._src.databank.records import loss_preprocess
 from l2co._src.databank.stamp import (
     DATABANK_PROTOCOL,
+    RunSettingsError,
     StoreProtocolError,
+    check_run_settings,
     store_stamp,
 )
 from l2co._src.databank.tasksets import load_taskset, save_taskset
@@ -70,10 +72,12 @@ __all__ = [
     "DatabankVerificationReport",
     "DumpPlan",
     "MissingManifestError",
+    "RunSettingsError",
     "StoreProtocolError",
     "VerificationFinding",
     "WeightsHashMismatchError",
     "bump_manifest",
+    "check_run_settings",
     "databank_root",
     "dump_databank",
     "dump_databank_finalize",

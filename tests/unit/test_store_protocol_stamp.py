@@ -27,8 +27,15 @@ from l2co._src.databank.reader import (
 )
 from l2co._src.databank.stamp import (
     DATABANK_PROTOCOL,
+    RunSettingsError,
     StoreProtocolError,
+    check_run_settings,
     store_stamp,
+)
+from l2co._src.databank.writer import (
+    _dump_task_runs,
+    _dump_template_runs,
+    dump_databank_finalize,
 )
 from l2co._src.databank.verify import verify_databank
 
@@ -279,3 +286,120 @@ def test_the_facade_exports_the_stamp():
     assert databank.store_stamp is store_stamp
     assert databank.StoreProtocolError is StoreProtocolError
     assert issubclass(StoreProtocolError, RuntimeError)
+    assert databank.check_run_settings is check_run_settings
+    assert databank.RunSettingsError is RunSettingsError
+    assert issubclass(RunSettingsError, StoreProtocolError)
+
+
+def test_the_gap_change_bumped_the_protocol():
+    """Stores now hold f - f* (ADR 0027): a stored number means something
+    else, so the stamp's own rule bumps the protocol."""
+    assert DATABANK_PROTOCOL == "dataset-paper-2026-11.1"
+
+
+#                                                     run settings (decision g)
+# =============================================================================
+
+SETTINGS = {
+    "budget": {"evaluations_per_dimension": 1000, "max_evaluations": 100000},
+    "sampler": {"name": "uniform", "low": 0.0, "high": 1.0},
+    "seed": 42,
+    "n_realizations": 25,
+    "dimensions": [2, 10],
+}
+
+
+def _dump_with(root: Path, runs, *, mode: str, run_settings=None) -> Path:
+    plan = _dump_template_runs(
+        runs,
+        root,
+        NAME,
+        mode=mode,
+        easiest_quantile=0.75,
+        taskset=None,
+        budget_steps=BS,
+        run_settings=run_settings,
+    )
+    return dump_databank_finalize(_dump_task_runs(runs, plan), plan)
+
+
+def _settings_store(tmp_path, tasks, steps, settings=SETTINGS) -> Path:
+    runs = _write_raw_runs(tmp_path / "a", [(tasks[0], 20)], steps)
+    root = tmp_path / "db"
+    _dump_with(root, runs, mode="error", run_settings=settings)
+    return root
+
+
+def test_the_stamp_records_the_run_settings(tmp_path, tasks, steps):
+    root = _settings_store(tmp_path, tasks, steps)
+    stamp = store_stamp(root, NAME)
+    assert stamp["run_settings"] == SETTINGS
+    assert stamp["protocol"] == DATABANK_PROTOCOL
+
+
+def test_append_with_the_same_settings_works(tmp_path, tasks, steps):
+    root = _settings_store(tmp_path, tasks, steps)
+    runs_b = _write_raw_runs(tmp_path / "b", [(tasks[1], 20)], steps)
+    # Same mapping, other key order and a tuple for a list: equal as JSON.
+    same = dict(reversed(list(json.loads(json.dumps(SETTINGS)).items())))
+    same["dimensions"] = (2, 10)
+    _dump_with(root, runs_b, mode="append", run_settings=same)
+    assert len(populated_pairs(root, NAME)) == 2 * len(steps)
+    assert store_stamp(root, NAME)["run_settings"] == SETTINGS
+
+
+@pytest.mark.parametrize(
+    "incoming",
+    [{**SETTINGS, "seed": 145}, None],
+    ids=["other-seed", "none"],
+)
+def test_append_refuses_other_settings_before_touching_the_store(
+    tmp_path, tasks, steps, incoming
+):
+    root = _settings_store(tmp_path, tasks, steps)
+    runs_b = _write_raw_runs(tmp_path / "b", [(tasks[1], 20)], steps)
+    store = layout.zarr_store_path(root, NAME)
+    before = _snapshot(store)
+    with pytest.raises(RunSettingsError, match="Nothing was written"):
+        _dump_with(root, runs_b, mode="append", run_settings=incoming)
+    assert _snapshot(store) == before
+    assert not layout.append_marker_path(root, NAME).exists()
+
+
+def test_append_with_settings_into_a_store_without_refuses(
+    tmp_path, tasks, steps
+):
+    root = _store(tmp_path, tasks, steps)
+    runs_b = _write_raw_runs(tmp_path / "b", [(tasks[1], 20)], steps)
+    with pytest.raises(RunSettingsError, match="no run settings"):
+        _dump_with(root, runs_b, mode="append", run_settings=SETTINGS)
+
+
+def test_check_run_settings_for_the_create_step(tmp_path, tasks, steps):
+    # No store yet: nothing to compare with.
+    assert check_run_settings(tmp_path / "nowhere", NAME, SETTINGS) is None
+    root = _settings_store(tmp_path, tasks, steps)
+    assert check_run_settings(root, NAME, dict(SETTINGS)) is None
+    with pytest.raises(RunSettingsError) as err:
+        check_run_settings(root, NAME, {**SETTINGS, "n_realizations": 10})
+    assert "n_realizations" in str(err.value)
+    # Neither side has settings: as before.
+    plain = _store(tmp_path / "plain", tasks, steps)
+    assert check_run_settings(plain, NAME, None) is None
+
+
+def test_check_run_settings_refuses_another_protocol_first(
+    tmp_path, tasks, steps
+):
+    root = _settings_store(tmp_path, tasks, steps)
+    _restamp(root, "some-older-protocol")
+    with pytest.raises(StoreProtocolError, match="some-older-protocol"):
+        check_run_settings(root, NAME, SETTINGS)
+
+
+def test_run_settings_must_be_a_json_mapping(tmp_path, tasks, steps):
+    runs = _write_raw_runs(tmp_path / "a", [(tasks[0], 20)], steps)
+    for bad in ({"sampler": object()}, ["seed", 1], [("seed", 1)]):
+        with pytest.raises(TypeError, match="run_settings"):
+            _dump_with(tmp_path / "db", runs, mode="error", run_settings=bad)
+    assert not layout.zarr_store_path(tmp_path / "db", NAME).exists()
