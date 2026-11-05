@@ -645,11 +645,22 @@ def load_loss_raw(
     ------
     FileNotFoundError
         The raw loss file does not exist.
+    l2co._src.databank.stamp.StoreProtocolError
+        The dataset's store has no protocol stamp, or one naming another
+        protocol: the raw histories were written under the store's
+        protocol (ADR 0025).
     """
     rawroot = layout.raw_root(root, dataset_name)
     path = layout.loss_raw_path(rawroot, task_id, optimizer_hash)
     if not path.exists():
         raise FileNotFoundError(f"No raw loss history at {path}.")
+    # The sidecar is not the zarr store, so _open_store never sees this
+    # read; the store's stamp covers its raw histories too (ADR 0025).
+    check_protocol(
+        layout.zarr_store_path(root, dataset_name),
+        dataset_name,
+        action="read",
+    )
     ds = xr.load_dataset(path)
     if budget_steps is not None:
         ds = loss_preprocess(ds, budget_steps)

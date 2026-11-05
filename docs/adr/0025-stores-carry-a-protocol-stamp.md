@@ -57,7 +57,9 @@ the store. Showing it in a report takes one call to `store_stamp`.
   runs. So does every `load_databank*` loader: numbers from two
   protocols are never read together. A store without a stamp was
   written by l2co 1.8.x or earlier, and the message says to read it with
-  that version.
+  that version. `load_loss_raw` reads the raw sidecar, not the store, so
+  it checks the store's stamp itself: the sidecar was written under the
+  store's protocol.
 - **`mode="append"`,** checked in `_dump_template_runs` before a
   leftover rollback is restored, anything is snapshotted or the store
   grows. Nothing is written.

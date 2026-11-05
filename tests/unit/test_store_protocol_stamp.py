@@ -158,6 +158,23 @@ def test_reads_refuse_another_protocol(tmp_path, tasks, steps, reader):
     assert DATABANK_PROTOCOL in str(err.value)
 
 
+@pytest.mark.parametrize("protocol", [None, "some-older-protocol"])
+def test_raw_histories_are_refused_with_their_store(
+    tmp_path, tasks, steps, protocol
+):
+    """``load_loss_raw`` reads the raw sidecar, not the zarr store, but the
+    sidecar belongs to the store and was written under its protocol."""
+    root = _store(tmp_path, tasks, steps)
+    task_id, step_hash = tasks[0].hash, steps[0].hash
+    assert databank.load_loss_raw(NAME, root, task_id, step_hash) is not None
+    if protocol is None:
+        _make_unstamped(root)
+    else:
+        _restamp(root, protocol)
+    with pytest.raises(StoreProtocolError, match=DATABANK_PROTOCOL):
+        databank.load_loss_raw(NAME, root, task_id, step_hash)
+
+
 def test_an_unreadable_stamp_is_refused(tmp_path, tasks, steps):
     root = _store(tmp_path, tasks, steps)
     _stamp_file(root).write_text("{not json")
