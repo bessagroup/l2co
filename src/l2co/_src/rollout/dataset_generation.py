@@ -52,9 +52,14 @@ class RunOptimization(DataGenerator):
     ----------
     sampler : Callable
         Sampler function for generating initial parameters.
-    budget_fn : Callable[[], int]
-        Function to determine the optimization budget (number of iterations)
-        for the task.
+    budget_fn : Callable[..., int]
+        Function returning the number of iterations, called as
+        ``budget_fn(task=task, optimizer=update_class)`` once the
+        optimizer is built (``update_class`` is the run state's). Any
+        :mod:`l2co.budget` function fits; the iteration budgets ignore
+        ``optimizer``, and
+        :func:`~l2co.budget.evaluations_based_on_dimensionality` turns
+        an evaluation budget into iterations with it (ADR 0026).
     seed : int
         Random seed for reproducibility across optimization runs.
     n_realizations : int, optional
@@ -84,7 +89,7 @@ class RunOptimization(DataGenerator):
     >>> # Create a simple optimization runner
     >>> runner = RunOptimizationSimple(
     ...     sampler=uniform_sampler,
-    ...     budget_fn=lambda task: 100,
+    ...     budget_fn=lambda task, optimizer: 100,
     ...     seed=42,
     ...     n_realizations=5
     ... )
@@ -96,7 +101,7 @@ class RunOptimization(DataGenerator):
     def __init__(
         self,
         sampler: Callable,
-        budget_fn: Callable[[], int],
+        budget_fn: Callable[..., int],
         seed: int,
         n_realizations: int = 1,
         clear_jax_cache: bool = True,
@@ -172,7 +177,9 @@ class RunOptimization(DataGenerator):
 
         This method performs the core optimization logic including
         initializing the optimizer, running optimization iterations,
-        and storing the results.
+        and storing the results. The number of iterations comes from
+        ``budget_fn(task=task, optimizer=update_class)``, called after
+        the optimizer is built.
 
         Parameters
         ----------
@@ -209,14 +216,18 @@ class RunOptimization(DataGenerator):
 
         key = jr.key(self.seed)
 
-        n_iterations = self.budget_fn(task=task)
-
         rollout_wrapper: RolloutWrapper = RolloutWrapper.init(
             optimizer=optimizer,
             task=task,
             sampler=self.sampler,
             key=key,
             verbose=self.verbose,
+        )
+
+        # After init, so an evaluation budget knows what one iteration
+        # of the built optimizer costs (ADR 0026).
+        n_iterations = self.budget_fn(
+            task=task, optimizer=rollout_wrapper.run_state.update_class
         )
 
         _, _, history_state = rollout_wrapper.batch_evaluate(
