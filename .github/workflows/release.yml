@@ -29,12 +29,15 @@ jobs:
           # experiments/ is copied only for the test that walks it
           # (tests/unit/test_experiments_no_private_imports.py). Slow tests
           # are left out, as in the pull-request workflow.
+          # The action runs this script as bash -c "<script>", so it must not
+          # contain double quotes: they end the action's own quoting. Use
+          # single quotes.
           test-script: |
             cp -r ${{ github.workspace }}/tests ./tests
             cp -r ${{ github.workspace }}/experiments ./experiments
             cp ${{ github.workspace }}/pyproject.toml ./pyproject.toml
             uv sync --extra tests --no-install-project --inexact --no-sources
-            uv run --no-sync pytest -m "not slow"
+            uv run --no-sync pytest -m 'not slow'
           pypi-token: ${{ secrets.pypi_token }}
           github-user: bessagroup
           github-token: ${{ github.token }}
