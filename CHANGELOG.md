@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `l2co.budget.evaluations_based_on_dimensionality`: every run gets the
+  same number of function evaluations, B = min(1000·d, 10⁵), returned as
+  ⌊B/e⌋ iterations, where e is what one iteration of the optimizer costs
+  (its population size, or 1 for L-BFGS and Nelder–Mead). See
+  `docs/adr/0026`.
+- `l2co.budget.evaluation_budget(task, evaluations_per_dimension=1000,
+  max_evaluations=100_000)`: the number of function evaluations B a run on
+  the task gets, without needing an optimizer.
+  `evaluations_based_on_dimensionality` uses it.
+
+### Changed
+
+- `RunOptimization` now calls its budget function after the optimizer is
+  built, as `budget_fn(task=task, optimizer=update_class)`. A custom budget
+  function must accept the `optimizer` keyword: `lambda task: n` now
+  raises `TypeError`; use `lambda task, optimizer: n`, or
+  `fixed_budget` / `based_on_dimensionality`, which accept and ignore it.
+
 ## [1.8.1] - 2026-11-05
 
 The first release on PyPI (`pip install l2co`), with the repository made
