@@ -1,32 +1,24 @@
 # Installation
 
-The package is currently not available on PyPI. To install the package, follow the steps below:
-
 ### Installation instructions for users
 
-
-1. Create a new virtual environment (optional) with Python 3.12+
-
-
-2. Clone the repository:
+Install `l2co` from PyPI into an environment with Python 3.12 or newer:
 
 ```bash
-git clone https://github.com/bessagroup/l2co.git
-```
-
-3. Navigate to the repository and install the package using `pip`:
-
-```bash
-pip install -e .
+pip install l2co
 ```
 
 ### Installation instructions for developers
 
-To install the package for development (or for building the mkdocs documentation), install the development dependencies after normal installation:
+Clone the repository and install it in editable mode, with the development dependencies (also needed for building the mkdocs documentation):
 
 ```bash
+git clone https://github.com/bessagroup/l2co.git
+cd l2co
 pip install -e '.[dev,docs,tests]'
 ```
+
+With `uv`, a plain `uv sync` expects checkouts of `f3dasm`, `l2co-tasks`, `l2co-optimizers` and `bessaplots` next to this repository (see `[tool.uv.sources]` in `pyproject.toml`). Run `uv sync --no-sources` to take them from PyPI instead.
 
 > For detailed instructions on how to develop on this package, please refer to the Contributing Guide on the [GitHub repository](https://github.com/bessagroup/l2co).
 

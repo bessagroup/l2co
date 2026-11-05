@@ -137,6 +137,12 @@ Loads a completed optimization dataset via `l2co.DataLoader`, then generates:
 
 Saves all figures to `./plots/` and produces a PDF report via `bessaplots`.
 
+```bash
+python generate_figures.py /path/to/datasets
+```
+
+The argument is the folder that holds each dataset's `entire_dataset` and the stage-0 model.
+
 ### `submit_job.sh`
 
 SLURM job submission wrapper for running experiments on HPC clusters.

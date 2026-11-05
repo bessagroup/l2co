@@ -1,5 +1,7 @@
-# Medium optimizer set extended with both L2CO and RL2CO learned optimizers
-# Update model paths before use
+# Gaussian classification optimizer set extended with the L2CO learned optimizer.
+# The L2CO model paths are required (???); pass your trained checkpoints, e.g.
+#   optimizers.4.hyperparameters.stage0_model=/path/to/stage0/model
+#   optimizers.4.hyperparameters.stage1_model=/path/to/stage1/model
 - optimizer: sepcmaes
 - optimizer: adam
   hyperparameters:
@@ -8,7 +10,7 @@
 - optimizer: pso
 - optimizer: l2co
   hyperparameters:
-    stage0_model: /users/mvander7/scratch/l2co_train_stage0/1775721970/experiment_data/model/10
-    stage1_model: /users/mvander7/scratch/l2co_train_stage1/1775721941/experiment_data/model/25
+    stage0_model: ???
+    stage1_model: ???
     t: 0.1  # Softmax temperature for strategy selection (lower = more greedy)
     swap_optimizers: true

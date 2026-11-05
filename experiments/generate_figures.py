@@ -4,20 +4,17 @@ import bessaplots
 plt.style.use(["dissertation"])
 
 # =============================================================================
+import sys
 from pathlib import Path
 import l2co
 from l2co.naming import PROBLEM, REALIZATION, SCHEDULE, TASK_ID
 import matplotlib as mpl
 
 
-rootpath = Path("/Volumes/T7/data/wcci/")
-# plotsdir = Path.cwd() / "plots_pdf"
-plotsdir = (
-    Path(
-        "/Users/martin/Documents/GitHub/dissertation/-main_matter/learning_to_choose_optimizers/media"
-    )
-    / "rtd"
-)
+# The folder holding each <dataset>/entire_dataset and the stage-0 model,
+# passed as the first command-line argument.
+rootpath = Path(sys.argv[1])
+plotsdir = Path.cwd() / "plots"
 
 stage0_model_path = "10"
 

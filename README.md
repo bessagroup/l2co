@@ -1,23 +1,24 @@
 # Learning to Choose Optimizers (l2co)
 
 <div align="center">
-  <img src="img/logo.png" alt="BBOB functions 3D overview" width="50%">
+  <img src="https://raw.githubusercontent.com/bessagroup/l2co/main/img/logo.png" alt="BBOB functions 3D overview" width="50%">
 </div>
 
+[![Python](https://img.shields.io/pypi/pyversions/l2co)](https://www.python.org)
+[![pypi](https://img.shields.io/pypi/v/l2co.svg)](https://pypi.org/project/l2co/)
 [![GitHub license](https://img.shields.io/badge/license-BSD-blue)](https://github.com/bessagroup/l2co)
+[![Documentation Status](https://readthedocs.org/projects/l2co/badge/?version=latest)](https://l2co.readthedocs.io/en/latest/?badge=latest)
 
-
-**Docs**
+[**Docs**](https://l2co.readthedocs.io/)
 | [**GitHub**](https://github.com/bessagroup/l2co)
-| **PyPI**
-
-> Some links are not yet available, as the package is still under a private repository.
+| [**PyPI**](https://pypi.org/project/l2co/)
+| [**Paper**](https://doi.org/10.1109/CEC69861.2026.11727310)
 
 ***
 
 ## Summary
 
-**L2CO** is a Python project accompanying the paper 'Learning to Choose Optimizers'. 
+**L2CO** is a Python project accompanying the paper [*Learning to Choose Optimizers*](https://doi.org/10.1109/CEC69861.2026.11727310) (IEEE CEC 2026).
 
 ## Statement of need
 
@@ -27,7 +28,7 @@ We introduce a new approach called ''Learning to Choose Optimizers'' (L2CO). In 
 
 In this work, we train our model offline on a collection of benchmark functions, employing a mixture of gradient-based, population-based, and probabilistic model-based optimizers. We demonstrate the effectiveness of our method by comparing its performance to classical optimizers on standard benchmark problems and a neural net classification task. The empirical results indicate that L2CO is a promising tool with improved generalization capabilities.
 
-<div align="center"><img src="img/overview.svg" width="800"/></div>
+<div align="center"><img src="https://raw.githubusercontent.com/bessagroup/l2co/main/img/overview.svg" width="800"/></div>
 
 ## Key Features
 
@@ -46,6 +47,7 @@ L2CO builds on the following packages:
 | [f3dasm](https://github.com/bessagroup/f3dasm) | Framework for data-driven design and analysis of structures and materials |
 | [bbob-jax](https://github.com/bessagroup/bbob-jax) | JAX implementation of the BBOB benchmark functions |
 | [l2co-tasks](https://github.com/bessagroup/l2co-tasks) | Benchmark functions and tasks used by L2CO (BBOB, CEC 2005, PDE, neural network training) |
+| [l2co-optimizers](https://github.com/bessagroup/l2co-optimizers) | Bare optimizers compatible with the L2CO library |
 | [bessaplots](https://github.com/bessagroup/bessaplots) | Plotting utilities |
 | [JAX](https://github.com/jax-ml/jax) | Composable transformations of NumPy programs |
 | [Equinox](https://github.com/patrick-kidger/equinox) | Neural networks and more for JAX |
@@ -53,43 +55,31 @@ L2CO builds on the following packages:
 | [EvoSax](https://github.com/RobertTLange/evosax) | Evolutionary strategies in JAX |
 | [scikit-learn](https://github.com/scikit-learn/scikit-learn) | Machine learning in Python |
 
-## Authorship
-
-* Current creator and developer: [M.P. van der Schelling](https://github.com/mpvanderschelling/) (M.P.vanderSchelling@tudelft.nl)
-
 ## Getting started
-
-The package is currently not available on PyPI. To install the package, follow the steps below:
 
 ### Installation instructions for users
 
-
-1. Create a new virtual environment (optional) with Python 3.12+
-
-
-2. Clone the repository:
+Install `l2co` from PyPI into an environment with Python 3.12 or newer:
 
 ```bash
-git clone https://github.com/bessagroup/l2co.git
-```
-
-3. Navigate to the repository and install the package using `pip`:
-
-```bash
-pip install -e .
+pip install l2co
 ```
 
 ### Installation instructions for developers
 
-To install the package for development (or for building the mkdocs documentation), install the development dependencies after normal installation:
+Clone the repository and install it in editable mode, with the development dependencies (also needed for building the mkdocs documentation):
 
 ```bash
+git clone https://github.com/bessagroup/l2co.git
+cd l2co
 pip install -e '.[dev,docs,tests]'
 ```
 
-> For detailed instructions on how to develop on this package, please refer to the [Contributing Guide](CONTRIBUTING.md).
+With `uv`, a plain `uv sync` expects checkouts of `f3dasm`, `l2co-tasks`, `l2co-optimizers` and `bessaplots` next to this repository (see `[tool.uv.sources]` in `pyproject.toml`). Run `uv sync --no-sources` to take them from PyPI instead.
 
-After installation, start by looking at the [Getting Started Guide](./docs/usage.ipynb). To plug your own optimizer into the `RolloutWrapper`, see [Register your own optimizer](https://github.com/bessagroup/l2co-optimizers/blob/main/docs/register_optimizer.ipynb) in `l2co-optimizers`.
+> For detailed instructions on how to develop on this package, please refer to the [Contributing Guide](https://github.com/bessagroup/l2co/blob/main/CONTRIBUTING.md).
+
+After installation, start by looking at the [Getting Started Guide](https://l2co.readthedocs.io/en/latest/usage/). To plug your own optimizer into the `RolloutWrapper`, see [Register your own optimizer](https://github.com/bessagroup/l2co-optimizers/blob/main/docs/register_optimizer.ipynb) in `l2co-optimizers`.
 
 ## Experiments
 
@@ -101,14 +91,36 @@ The experimental pipeline consists of three stages, available in the `/experimen
 | [`l2co_train_stage0`](https://github.com/bessagroup/l2co/tree/main/experiments/l2co_train_stage0) | Train cold-start algorithm selection model (sklearn regressors) |
 | [`l2co_train_stage1`](https://github.com/bessagroup/l2co/tree/main/experiments/l2co_train_stage1) | Train trajectory-aware reassessment model (LSTM + MLP) |
 
-The `experiments/` folder also includes `generate_figures.py` for ERTD plot generation and `submit_job.sh` for SLURM cluster submission. See [`experiments/README.md`](experiments/README.md) for full documentation on configuration, parameters, and Hydra overrides.
+The `experiments/` folder also includes `generate_figures.py` for ERTD plot generation and `submit_job.sh` for SLURM cluster submission. See [`experiments/README.md`](https://github.com/bessagroup/l2co/blob/main/experiments/README.md) for full documentation on configuration, parameters, and Hydra overrides.
+
+The results in the paper were produced with l2co [v1.3.1](https://github.com/bessagroup/l2co/tree/v1.3.1). The code has evolved since.
+
+## Authorship & Citation
+
+Current creator and developer: [M.P. van der Schelling](https://github.com/mpvanderschelling/) (M.P.vanderSchelling@tudelft.nl, [ORCID](https://orcid.org/0000-0003-3602-0452))
+
+If you use `l2co` in your research or in a scientific publication, it is appreciated that you cite the paper below:
+
+**IEEE Congress on Evolutionary Computation (CEC) 2026** ([paper](https://doi.org/10.1109/CEC69861.2026.11727310)):
+```bibtex
+@inproceedings{vanderSchelling2026,
+  title     = {Learning to Choose Optimizers},
+  author    = {M. P. van der Schelling and D. Toshniwal and M. A. Bessa},
+  booktitle = {2026 IEEE Congress on Evolutionary Computation (CEC)},
+  year      = {2026},
+  pages     = {1--8},
+  publisher = {IEEE},
+  doi       = {10.1109/CEC69861.2026.11727310},
+  url       = {https://doi.org/10.1109/CEC69861.2026.11727310}
+}
+```
 
 ## Community Support
 
 * If you find any **issues, bugs or problems** within this repository, please use the [GitHub issue tracker](https://github.com/bessagroup/l2co/issues) to report them.
-* If you have **questions, feature requests or ideas** for this project, please use the [GitHub Discussions](https://github.com/bessagroup/L2CO/discussions)
+* If you have **questions, feature requests or ideas** for this project, please use the [GitHub Discussions](https://github.com/bessagroup/l2co/discussions)
 
-Please refer to L2CO's [Code of Conduct](CODE_OF_CONDUCT.md)
+Please refer to L2CO's [Code of Conduct](https://github.com/bessagroup/l2co/blob/main/CODE_OF_CONDUCT.md)
 
 ## License
 
@@ -116,16 +128,4 @@ Copyright 2026, Martin van der Schelling
 
 All rights reserved.
 
-This project is licensed under the BSD 3-Clause License. See [LICENSE](LICENSE) for the full license text.
-
-## Related repositories
-
-This package is part of the L2CO ecosystem developed in the [Bessa Research Group](https://github.com/bessagroup). The repositories below work together:
-
-- [l2co](https://github.com/bessagroup/L2CO) — Learning to Choose Optimizers: a meta-learner that selects an optimizer from problem features before any evaluations, then reassesses that choice from the observed optimization trajectory.
-- [rl2co](https://github.com/bessagroup/rl2co) — Reinforcement Learning to Choose Optimizers: a JAX-based RL agent that dynamically switches between optimizers during a run.
-- [l2co-tasks](https://github.com/bessagroup/l2co-tasks) — Optimization task definitions (BBOB, CEC 2005, PDE, spiral, …) compatible with the L2CO library.
-- [l2co_experiments](https://github.com/bessagroup/l2co_experiments) — Hydra + f3dasm experiment pipelines (dataset creation, training, rollouts, figures) for the L2CO studies.
-- [agentic-l2co](https://github.com/bessagroup/agentic-l2co) — An LLM-agent drop-in replacement for `l2co.L2COModel`, driving two-stage optimizer selection with an Ollama-hosted LLM.
-- [bbob-jax](https://github.com/bessagroup/bbob-jax) — JAX implementations of the BBOB and CEC 2005 black-box optimization benchmark functions.
-- [f3dasm](https://github.com/bessagroup/f3dasm) — Framework for Data-Driven Design and Analysis of Structures and Materials; provides `ExperimentData`, pipelines, and SLURM orchestration.
+This project is licensed under the BSD 3-Clause License. See [LICENSE](https://github.com/bessagroup/l2co/blob/main/LICENSE) for the full license text.
