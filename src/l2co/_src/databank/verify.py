@@ -23,7 +23,10 @@ Verification reads the store with ``allow_incomplete=True`` (unlike
 every other reader entry point, which refuses a mid-append store
 outright -- see :func:`l2co._src.databank.reader._open_store`): auditing
 a broken store is exactly this module's job, so a leftover append marker
-surfaces as an ``error``-level finding instead of an exception.
+surfaces as an ``error``-level finding instead of an exception. The same
+holds for the protocol stamp (ADR 0025): a store whose stamp is missing
+or names another protocol is audited as usual, and the stamp is reported
+as an ``error``-level ``store.protocol`` finding.
 
 All per-pair checks are evaluated as one batch of lazy dask reductions
 over the store and computed in a single pass, so verifying a large
@@ -49,6 +52,7 @@ import xarray as xr
 
 from l2co._src.databank import layout
 from l2co._src.databank.reader import _open_store, _resolve_task_ids
+from l2co._src.databank.stamp import DATABANK_PROTOCOL, protocol_problem
 from l2co._src.databank.tasksets import load_taskset
 
 # Local
@@ -861,9 +865,22 @@ def verify_databank(
         empty, or no requested task/schedule is present in the store.
     """
     store = layout.zarr_store_path(root, dataset_name)
-    ds = _open_store(root, dataset_name, allow_incomplete=True)
+    ds = _open_store(
+        root, dataset_name, allow_incomplete=True, check_stamp=False
+    )
 
     findings: list[VerificationFinding] = []
+    problem = protocol_problem(store)
+    if problem is not None:
+        findings.append(
+            VerificationFinding(
+                ERROR,
+                "store.protocol",
+                f"store {problem}; this code reads and writes protocol "
+                f"'{DATABANK_PROTOCOL}', and its numbers are not comparable "
+                "with this store's. Every other reader refuses it.",
+            )
+        )
     marker = layout.append_marker_path(root, dataset_name)
     if marker.exists():
         try:

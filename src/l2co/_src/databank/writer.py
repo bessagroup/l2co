@@ -112,6 +112,7 @@ from l2co._src.databank.schema import (
     downcast_floats,
     to_region_cell,
 )
+from l2co._src.databank.stamp import check_protocol, write_stamp
 from l2co._src.databank.tasksets import save_taskset
 from l2co._src.performance import DEFAULT_EASIEST_QUANTILE
 from l2co._src.validation import normalize_budget_grid
@@ -976,6 +977,12 @@ def _dump_template_runs(
             f"Zarr store {store} already exists; pass mode='replace' to "
             "wipe and rewrite, or mode='append' to extend it."
         )
+    # Only a store written under this code's protocol may be grown or
+    # replaced (ADR 0025). Checked before anything is restored, snapshot,
+    # grown or deleted: an old store is removed by hand, not as a side
+    # effect of a dump pointed at the wrong root.
+    if exists and mode in ("replace", "append"):
+        check_protocol(store, dataset_name, action=mode)
     if mode == "replace":
         if store.exists():
             shutil.rmtree(store)
@@ -1044,6 +1051,9 @@ def _template_create(
             zarr_format=3,
             consolidated=False,
         )
+    # A plain file inside the store, not a root attribute: every later
+    # ``to_zarr(mode="a")`` replaces those (ADR 0025).
+    write_stamp(store)
 
     return DumpPlan(
         store=str(store),
