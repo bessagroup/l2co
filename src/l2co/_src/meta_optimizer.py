@@ -349,7 +349,9 @@ class L2COUpdateClass(UpdateClass):
             ``based_on_dimensionality``). Resolves the budget the
             switch generation is computed against — it must equal
             the ``n_iterations`` of the eventual run for ``t`` to
-            keep its meaning.
+            keep its meaning. An iteration budget: called without an
+            optimizer, ``evaluations_based_on_dimensionality`` raises
+            (``docs/adr/0026``).
         stage0_model : str
             Path to the stage-0 model file (without extension),
             forwarded to ``L2COModel.load``.
