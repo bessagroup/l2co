@@ -32,6 +32,10 @@ OUTPUT_MEAN = "output_mean"
 INPUT_MEAN = "input_mean"
 OUTPUT_STD = "output_std"
 OUTPUT_MIN = "output_min"
+# Lowest *noise-free* loss per step, next to ``OUTPUT_MIN`` (the lowest
+# observed one) for a run on a noisy task; absent for a noise-free task.
+# Noisy tasks are scored on it (docs/adr/0024).
+OUTPUT_MIN_TRUE = "output_min_true"
 OPT_STEPS = "opt_steps"
 UPDATE_STEP = "update_step"
 TASK_LABELS = "task_labels"

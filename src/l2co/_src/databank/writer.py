@@ -52,6 +52,15 @@ append proceeds.
 All cell writes go through zarr array handles opened once per dump
 (:func:`_open_big_arrays`) rather than per-cell ``Dataset.to_zarr``
 calls, which would re-read the store metadata on every call.
+
+A store holds the noise-free series ``output_min_true`` (ADR 0024)
+exactly when one of its tasks is noisy (has a ``loss_fn_true``): the
+template takes its sample cell from the first such task
+(:func:`_template_sample_run`), so the variable's presence follows
+every task, not the first. A noise-free task's cells of that variable
+are never written: no chunk file, read back as NaN, and scored on the
+observed series. Append adds noise-free runs to such a store freely,
+but refuses noisy runs into a store without the variable.
 """
 
 #                                                                       Modules
@@ -111,6 +120,7 @@ from l2co.naming import (
     GLOBAL_MIN,
     IN_TRAINING,
     OPTIMIZATIONSTEP,
+    OUTPUT_MIN_TRUE,
     PROVENANCE,
     SCHEDULE,
     TARGET_VALUE,
@@ -750,6 +760,25 @@ def _template_sample(
     return _interp_loss(loss_raw[h], budget_steps), perf[h]
 
 
+def _template_sample_run(runs: list) -> tuple[Task, dict]:
+    """The ``(task, step_paths)`` run the store template is sized from.
+
+    The template's variables are those of its one sample cell
+    (:func:`l2co._src.databank.schema.big_template`), so the sample must
+    carry the noise-free series whenever any run does (ADR 0024): the
+    first noisy task -- one with a ``loss_fn_true`` -- else the first
+    run. Told from the task, so choosing opens no file. That a noisy
+    task's runs carry the series and no other task's do is
+    :func:`l2co._src.databank.records._check_noise_free_series`, which
+    the sample's own records run first; so a store has the variable
+    exactly when one of its tasks has a ``loss_fn_true``.
+    """
+    for task, step_paths in runs:
+        if getattr(task, "loss_fn_true", None) is not None:
+            return task, step_paths
+    return runs[0]
+
+
 def _accumulate_schedule(
     step_name: str,
     opt_ds: xr.Dataset,
@@ -999,7 +1028,7 @@ def _template_create(
             if step.name not in schedules:
                 schedules.append(step.name)
 
-    task0, steps0 = runs[0]
+    task0, steps0 = _template_sample_run(runs)
     sample_loss, sample_perf = _template_sample(
         task0, steps0, easiest_quantile, budget_steps
     )
@@ -1056,6 +1085,16 @@ def _validate_append_schema(
     transposes explicitly at write time either way. Both raise, naming
     the old vs. incoming shapes/names and pointing at ``mode="replace"``
     as the remedy.
+
+    The noise-free series ``output_min_true`` (ADR 0024) is the one
+    variable allowed to differ, in one direction: noise-free runs may
+    join a store that has it (their cells of it stay unwritten, as in a
+    fresh mixed store), but noisy runs may not join a store without it.
+    That store's targets, and the scores of any noisy task already in
+    it, were computed from observed values, and growing it would score
+    one dataset two ways. The sample is taken from a noisy task whenever
+    the incoming runs hold one (:func:`_template_sample_run`), so the
+    check sees every incoming run.
     """
     incoming_shape: dict[str, dict[str, int]] = {}
     for sample in (sample_loss, sample_perf):
@@ -1065,6 +1104,21 @@ def _validate_append_schema(
 
     store_vars = set(loss_vars) | set(perf_vars)
     incoming_vars = set(incoming_shape)
+    if OUTPUT_MIN_TRUE in incoming_vars - store_vars:
+        raise ValueError(
+            "cannot append to the store: the incoming runs include a "
+            f"noisy task, whose noise-free series '{OUTPUT_MIN_TRUE}' the "
+            "store has no variable for. Its targets and scores were "
+            "computed from observed values; re-dump everything with "
+            "mode='replace' (see l2co ADR 0024)."
+        )
+    if OUTPUT_MIN_TRUE in store_vars - incoming_vars:
+        # Noise-free runs into a store with noisy tasks: allowed.
+        incoming_vars = incoming_vars | {OUTPUT_MIN_TRUE}
+        incoming_shape[OUTPUT_MIN_TRUE] = {
+            d: old.sizes[d]
+            for d in canonical_dims(old[OUTPUT_MIN_TRUE].dims)[2:]
+        }
     if store_vars != incoming_vars:
         raise ValueError(
             "cannot append to the store: its per-pair variables do not "
@@ -1280,7 +1334,7 @@ def _template_append(
             if step.name not in schedules:
                 schedules.append(step.name)
 
-    task0, steps0 = runs[0]
+    task0, steps0 = _template_sample_run(runs)
     existing0 = (
         old_targets.sel({TASK_ID: task0.hash}).values
         if task0.hash in old_taskids

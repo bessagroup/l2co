@@ -8,7 +8,8 @@ helpers (``reset``, ``run``, ``evaluate``; all three re-exported from
 ``l2co_optimizers``, ADR 0017), ``init_run_state`` -- which resolves an
 ``OptimizationStep`` against a ``Task`` (ADR 0018) -- with
 ``task_bounds`` / ``refuse_constraints``, the only way bounds leave a
-task (ADR 0020) -- and the L2CO
+task (ADR 0020), and ``noise_free_loss``, how a noisy task's noise-free
+loss reaches the optimizer (ADR 0024) -- and the L2CO
 strategy wrapper
 (``l2co_population_strategy``) that exposes a trained two-stage model as an
 evosax-style strategy.
@@ -28,6 +29,7 @@ from l2co._src.rollout import RolloutWrapper, RunOptimization
 from l2co._src.strategy_wrapper import l2co_population_strategy
 from l2co._src.task_bridge import (
     init_run_state,
+    noise_free_loss,
     refuse_constraints,
     task_bounds,
 )
@@ -42,6 +44,7 @@ __all__ = [
     "evaluate",
     "init_run_state",
     "l2co_population_strategy",
+    "noise_free_loss",
     "refuse_constraints",
     "reset",
     "run",

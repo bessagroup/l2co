@@ -48,6 +48,7 @@ from l2co.naming import (
     GLOBAL_MIN,
     ITERATIONS,
     OPTIMIZATIONSTEP,
+    OUTPUT_MIN_TRUE,
     PROVENANCE,
     SCHEDULE,
     TARGET_VALUE,
@@ -209,6 +210,69 @@ def _optimizer_dataset(
     )
 
 
+def _check_noise_free_series(
+    task: Task, ds_by_step: dict[OptimizationStep, xr.Dataset]
+) -> None:
+    """Refuse a task whose runs would be scored on mixed series.
+
+    A noisy task is scored on its noise-free series
+    (:func:`l2co._src.performance.scoring_loss`; ADR 0024). Both checks
+    below guard against a run that lacks it being scored, silently, on
+    its observed values instead:
+
+    * either every schedule of the task carries ``output_min_true`` or
+      none does -- concatenated, a schedule without it would read back
+      as NaN there and score on its observed series next to the others;
+    * a task with a noise-free loss (``task.loss_fn_true``) must carry
+      it. Runs made before the series existed, or through a path that
+      does not record it (rl2co's environment; a direct
+      ``init_run_state`` without ``record_noise_free``), are refused.
+
+    A third keeps the store's schema a function of its tasks: a task
+    *without* a noise-free loss must not carry the series. The writer
+    sizes the store from the first task with one
+    (:func:`l2co._src.databank.writer._template_sample_run`), so a
+    series on any other task could meet a store without the variable.
+
+    Raises
+    ------
+    ValueError
+        On any violation, naming the schedules concerned.
+    """
+    carrying = [
+        step.name
+        for step, ds in ds_by_step.items()
+        if OUTPUT_MIN_TRUE in ds.data_vars
+    ]
+    if carrying and len(carrying) != len(ds_by_step):
+        lacking = [
+            step.name for step in ds_by_step if step.name not in carrying
+        ]
+        raise ValueError(
+            f"task {task.hash}: the noise-free series "
+            f"'{OUTPUT_MIN_TRUE}' is on schedules {sorted(carrying)} but "
+            f"not on {sorted(lacking)}. A noisy task is scored on it, so "
+            "every schedule of the task must carry it; re-run the "
+            "schedules without it (see l2co ADR 0024)."
+        )
+    noisy = getattr(task, "loss_fn_true", None) is not None
+    if carrying and not noisy:
+        raise ValueError(
+            f"task {task.hash} has no loss_fn_true but its schedules "
+            f"{sorted(carrying)} carry the noise-free series "
+            f"'{OUTPUT_MIN_TRUE}'. A store holds the series for its noisy "
+            "tasks only, those with a loss_fn_true; see l2co ADR 0024."
+        )
+    if not carrying and noisy:
+        raise ValueError(
+            f"task {task.hash} is noisy (it has a loss_fn_true) but none "
+            f"of its runs carries the noise-free series "
+            f"'{OUTPUT_MIN_TRUE}', which noisy tasks are scored on. Run "
+            "it through RolloutWrapper (or init_run_state with "
+            "record_noise_free=True); see l2co ADR 0024."
+        )
+
+
 def _build_task_records(
     task: Task,
     ds_by_step: dict[OptimizationStep, xr.Dataset],
@@ -256,7 +320,9 @@ def _build_task_records(
         global_min_breaches`), ``task_ds.attrs[BREACHES_ATTR]`` holds
         a JSON record: the task's ``tag``, its ``global_min`` and the
         breaching ``schedules``. Those losses still score as reaching
-        ``global_min``.
+        ``global_min``. On a noisy task, targets, performance and
+        breaches are those of the noise-free ``output_min_true``
+        (ADR 0024); the loss payloads keep both series.
 
     Raises
     ------
@@ -265,7 +331,9 @@ def _build_task_records(
         :data:`~l2co._src.databank.provenance.POLICY_OPTIMIZERS`)
         arrives without a provenance record on its loss history — the
         dump-time admissibility backstop (the evaluation pipeline
-        should have failed fast much earlier).
+        should have failed fast much earlier). Also when the task's
+        runs would be scored on mixed series (see
+        :func:`_check_noise_free_series`).
     """
     for step, ds in ds_by_step.items():
         if step.optimizer in POLICY_OPTIMIZERS and not str(
@@ -279,6 +347,8 @@ def _build_task_records(
                 "provenance manifest and attaches the record (there is "
                 "no bypass)."
             )
+
+    _check_noise_free_series(task, ds_by_step)
 
     gmin = task.global_min if task.global_min is not None else np.nan
     b = xr.concat(

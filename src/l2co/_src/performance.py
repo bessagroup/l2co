@@ -4,6 +4,8 @@ Module containing functions that compute the performance of optimizers
 Functions
 ---------
 
+scoring_loss
+    The loss series scores are computed from (noise-free when present).
 output_cummin
     Calculate the cumulative minimum of the given dataset.
 scale
@@ -42,6 +44,7 @@ from l2co._src.naming import (
     METRIC,
     OUTPUT_DIM,
     OUTPUT_MIN,
+    OUTPUT_MIN_TRUE,
     POSITION,
     PROBLEM,
     RATIO,
@@ -685,6 +688,121 @@ N_TARGETS = 51
 DEFAULT_EASIEST_QUANTILE = 0.75
 
 
+def scoring_loss(data: xr.Dataset) -> xr.DataArray:
+    """The loss series a run is scored on.
+
+    Noisy tasks are scored on their noise-free value (ADR 0024; spec
+    decision 12 of the dataset paper's protocol revision). A run on a
+    noisy task carries two series: ``output_min``, the lowest *observed*
+    loss per step -- what the optimizer saw -- and ``output_min_true``,
+    the lowest noise-free loss of the same evaluated population. This
+    returns the latter where a task has it and the former otherwise.
+
+    The choice is per task, because one dataset can hold both kinds: a
+    databank store with noisy and noise-free tasks reads
+    ``output_min_true`` back as NaN on the noise-free tasks' cells, as
+    do loaders concatenated from the two kinds. A task none of whose
+    runs has the series is scored on ``output_min``; a task with it, on
+    it. A task with the series on some runs and observed values alone
+    on others raises, since its runs would be scored on different
+    series. The dump refuses that within one store
+    (:func:`l2co._src.databank.records._check_noise_free_series`), but
+    it can arise where data from several sources is combined: an
+    overlay read, ``DataLoader.join`` or ``+``. A run with neither
+    series (an unwritten pair) counts as neither.
+
+    Tasks are told apart by the ``taskID`` coordinate: a dimension (a
+    databank read) or a level of ``problem`` (a ``DataLoader``). Data
+    without it, or with a scalar one, is one task.
+
+    Parameters
+    ----------
+    data : xr.Dataset
+        Loss histories with ``output_min`` and, for noisy tasks,
+        ``output_min_true`` (same dims).
+
+    Returns
+    -------
+    xr.DataArray
+        ``data["output_min"]`` itself when there is no
+        ``output_min_true`` -- so a noise-free task's scores are
+        computed exactly as before, and lazy data stays unread --
+        else ``output_min_true``, with each run that has no noise-free
+        series replaced by its observed one. Telling which runs have
+        it reads both series once.
+
+    Raises
+    ------
+    ValueError
+        If a task has the noise-free series on some of its runs and
+        observed values alone on others.
+    """
+    if OUTPUT_MIN_TRUE not in data.data_vars:
+        return data[OUTPUT_MIN]
+    true = data[OUTPUT_MIN_TRUE]
+    observed = data[OUTPUT_MIN]
+    # Small (no ``budget``), so computed once and reused below.
+    runs = xr.Dataset(
+        {"true": _per_run(true), "observed": _per_run(observed)}
+    ).compute()
+    has_series = runs["true"]
+    _refuse_mixed_series(has_series, runs["observed"] & ~has_series)
+    return true.where(has_series, observed)
+
+
+def _per_run(loss: xr.DataArray) -> xr.DataArray:
+    """Whether each run has any value of ``loss`` (reduces ``budget``)."""
+    present = loss.notnull()
+    return present.any(BUDGET) if BUDGET in present.dims else present
+
+
+#: Tasks a :func:`scoring_loss` error names before summarising the rest.
+_MAX_TASKS_SHOWN = 5
+
+
+def _refuse_mixed_series(
+    has_series: xr.DataArray, lacking: xr.DataArray
+) -> None:
+    """Raise if a task has runs in both ``has_series`` and ``lacking``.
+
+    ``has_series`` flags the runs with the noise-free series, ``lacking``
+    those with observed values but no noise-free series; both have the
+    same per-run dims (no ``budget``).
+    """
+    task_ids = has_series.coords.get(TASK_ID)
+    if task_ids is None or task_ids.ndim == 0:
+        if not (bool(has_series.any()) and bool(lacking.any())):
+            return
+        mixed = ["(one task)" if task_ids is None else str(task_ids.values)]
+    else:
+        (task_dim,) = task_ids.dims
+
+        def _tasks_with(flags: xr.DataArray) -> set:
+            others = [d for d in flags.dims if d != task_dim]
+            if others:
+                flags = flags.any(others)
+            ids = np.asarray(flags[TASK_ID].values)[flags.values]
+            return {str(task_id) for task_id in ids}
+
+        mixed = sorted(_tasks_with(has_series) & _tasks_with(lacking))
+        if not mixed:
+            return
+    shown = mixed[:_MAX_TASKS_SHOWN]
+    more = len(mixed) - len(shown)
+    raise ValueError(
+        f"the noise-free series '{OUTPUT_MIN_TRUE}' is on some of its runs "
+        f"only, for task(s) {shown}"
+        + (f" and {more} more" if more else "")
+        + ": the other runs have observed values alone, so the task's "
+        "runs would be scored on different series. The dump refuses this "
+        "within one store; here it comes from combining sources (an "
+        "overlay read, DataLoader.join or +) where some runs were made "
+        "without the series (e.g. rl2co's environment, or init_run_state "
+        "without record_noise_free). Re-run those through RolloutWrapper, "
+        "or leave them out (l2co ADR 0024)."
+    )
+
+
 def _fallback_targets(n_targets: int) -> np.ndarray:
     return np.logspace(
         np.log10(HARDEST_TARGET_QV),
@@ -694,13 +812,20 @@ def _fallback_targets(n_targets: int) -> np.ndarray:
 
 
 def shift_to_quality_value(data: xr.Dataset, g_min: float) -> xr.Dataset:
-    """Shift ``output_min`` into quality-value space (``g_min == 0``).
+    """Shift the scored loss into quality-value space (``g_min == 0``).
 
-    Subtracts the task's global minimum from ``output_min`` so the
-    resulting dataset lives in quality-value space, where the optimum
-    is 0 and the hardest target ``1e-8`` is meaningful regardless of
-    the original scale of the objective. If ``g_min`` is NaN, the
-    minimum of ``output_min`` over the data is used as a fallback.
+    Subtracts the task's global minimum from the series the task is
+    scored on (:func:`scoring_loss`: ``output_min``, or on a noisy task
+    its noise-free ``output_min_true``) so the resulting dataset lives
+    in quality-value space, where the optimum is 0 and the hardest
+    target ``1e-8`` is meaningful regardless of the original scale of
+    the objective. If ``g_min`` is NaN, the minimum of that series over
+    the data is used as a fallback.
+
+    The result holds the shifted series as ``output_min`` and no
+    ``output_min_true``, so everything downstream of the shift
+    (:func:`compute_task_targets` and its random-search anchor,
+    :func:`calculate_ert`) reads one variable whatever the task.
 
     A loss below ``g_min`` scores 0, as if it had reached ``g_min``.
     That happens when ``g_min`` was set empirically and an optimizer
@@ -718,12 +843,16 @@ def shift_to_quality_value(data: xr.Dataset, g_min: float) -> xr.Dataset:
     Returns
     -------
     xr.Dataset
-        Copy of ``data`` with ``output_min`` shifted by ``-g_min`` and
-        floored at 0.
+        Copy of ``data`` with ``output_min`` replaced by the scored
+        series shifted by ``-g_min`` and floored at 0, and
+        ``output_min_true`` dropped.
     """
+    loss = scoring_loss(data)
     if np.isnan(g_min):
-        g_min = float(data[OUTPUT_MIN].min(skipna=True))
-    return data.assign({OUTPUT_MIN: (data[OUTPUT_MIN] - g_min).clip(min=0.0)})
+        g_min = float(loss.min(skipna=True))
+    if OUTPUT_MIN_TRUE in data.data_vars:
+        data = data.drop_vars(OUTPUT_MIN_TRUE)
+    return data.assign({OUTPUT_MIN: (loss - g_min).clip(min=0.0)})
 
 
 #: A loss counts as a ``global_min`` breach below ``global_min - rtol *
@@ -745,7 +874,10 @@ def global_min_breaches(
     data : xr.Dataset
         One task's raw ``output_min`` over ``schedule`` (and any of
         ``realization`` / ``budget`` / ``output_dim``), before the shift
-        into quality-value space.
+        into quality-value space. On a noisy task the noise-free
+        ``output_min_true`` is judged instead (:func:`scoring_loss`): an
+        observed value below ``g_min`` is noise, not a ``g_min`` to
+        re-tune.
     g_min : float
         The task's ``global_min``. NaN means there is none to breach.
     rtol : float, optional
@@ -763,7 +895,7 @@ def global_min_breaches(
     if not np.isfinite(g_min):
         return {}
     floor = g_min - rtol * max(1.0, abs(g_min))
-    loss = data[OUTPUT_MIN]
+    loss = scoring_loss(data)
     breaches: dict[str, dict[str, float | int]] = {}
     for schedule in loss[SCHEDULE].values:
         values = loss.sel({SCHEDULE: schedule})
@@ -795,7 +927,9 @@ def compute_task_targets(
     """Build per-task log-spaced ERT targets in quality-value space.
 
     Expects ``data_qv`` already shifted so that ``global_min == 0``
-    (see :func:`shift_to_quality_value`). The hardest target is
+    (see :func:`shift_to_quality_value`), which also puts a noisy
+    task's noise-free series in ``output_min``: the anchor is then
+    random search's noise-free losses. The hardest target is
     ``1e-8`` and the easiest is set so that ``easiest_quantile`` of
     the ``randomsearch`` baseline's ``output_min`` values lie above
     (i.e. are worse than) it — equivalently, the
@@ -829,7 +963,20 @@ def compute_task_targets(
     np.ndarray
         1-D array of ``n_targets`` log-spaced target quality values,
         sorted from hardest (``1e-8``) to easiest.
+
+    Raises
+    ------
+    ValueError
+        If ``easiest_quantile`` is outside ``(0, 1)``, or ``data_qv``
+        still holds ``output_min_true`` -- it was not shifted, and the
+        anchor would be read off the observed series.
     """
+    if OUTPUT_MIN_TRUE in data_qv.data_vars:
+        raise ValueError(
+            "data_qv still holds 'output_min_true'; pass it through "
+            "shift_to_quality_value first, which puts the noise-free "
+            "series the task is scored on in 'output_min'."
+        )
     if not 0.0 < easiest_quantile < 1.0:
         raise ValueError(
             f"easiest_quantile must be in (0, 1), got {easiest_quantile}"
@@ -863,13 +1010,14 @@ def calculate_ert(
 ) -> xr.Dataset:
     """Calculate Expected Running Time (ERT) metrics.
 
-    Shifts ``output_min`` into quality-value space (subtracting
-    ``global_min``, falling back to the data minimum when it is NaN)
-    so the optimum is 0, then counts the first budget step that
-    reaches each supplied target. The supplied target quality values
-    are echoed as the ``target_value`` data variable so they survive
-    concatenation along ``TASK_ID``; the ``target`` dim itself is an
-    integer index ``0..len(targets)-1``.
+    Shifts the scored loss -- ``output_min``, or on a noisy task its
+    noise-free ``output_min_true`` (:func:`scoring_loss`) -- into
+    quality-value space (subtracting ``global_min``, falling back to
+    the data minimum when it is NaN) so the optimum is 0, then counts
+    the first budget step that reaches each supplied target. The
+    supplied target quality values are echoed as the ``target_value``
+    data variable so they survive concatenation along ``TASK_ID``; the
+    ``target`` dim itself is an integer index ``0..len(targets)-1``.
 
     Parameters
     ----------

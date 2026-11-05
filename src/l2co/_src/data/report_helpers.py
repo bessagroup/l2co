@@ -6,10 +6,15 @@ Every function here is a function of NumPy or xarray inputs only — no
 The log/ratio reductions (``descriptive_stats_log10``, ``pp_auc``,
 mean-log-regret) all consume :func:`shifted_final_min`, whose values are
 strictly positive by construction. The shift is the per-``taskID``
-``global_min`` if known and finite, else the empirical minimum of
-``output_min`` across ``(schedule, output_dim, budget, realization)`` for
-that task — same convention as
-:meth:`DataLoader.to_traj_and_stair`.
+``global_min`` if known and finite, else the empirical minimum of the
+scored loss across ``(schedule, output_dim, budget, realization)`` for
+that task.
+
+Every final-loss score here reads the scored loss,
+:func:`l2co._src.performance.scoring_loss`: a noisy task's noise-free
+series, the observed ``output_min`` otherwise (ADR 0024). Only the
+crash check (``valid_per_sched`` in :func:`build_report`) reads the
+observed series, which is the one a run always has.
 """
 
 from __future__ import annotations
@@ -40,6 +45,7 @@ from l2co._src.naming import (
     TARGET,
     TASK_ID,
 )
+from l2co._src.performance import scoring_loss
 
 if TYPE_CHECKING:
     # Only used as a type hint on ``build_report``. DataLoader imports
@@ -210,7 +216,9 @@ def per_task_shift(
 
     For each ``taskID`` the floor is ``global_min`` (from
     ``task_labels``) when that feature is present *and* finite; otherwise
-    it is the empirical minimum of ``output_min`` across
+    it is the empirical minimum of the scored loss
+    (:func:`l2co._src.performance.scoring_loss`: ``output_min``, or on a
+    noisy task its noise-free ``output_min_true``) across
     ``(schedule, output_dim, budget, realization)`` for that ``taskID``.
     The same value is broadcast to every problem sharing that ``taskID``.
 
@@ -222,8 +230,9 @@ def per_task_shift(
     Parameters
     ----------
     data : xarray.Dataset
-        DataLoader ``data`` with ``output_min`` and a stacked ``problem``
-        coordinate carrying a ``taskID`` level.
+        DataLoader ``data`` with ``output_min`` (and, for noisy tasks,
+        ``output_min_true``) and a stacked ``problem`` coordinate
+        carrying a ``taskID`` level.
     task_labels : xarray.DataArray
         DataLoader ``task_labels`` with dims ``(problem, feature)``.
 
@@ -232,7 +241,7 @@ def per_task_shift(
     xarray.DataArray
         1-D array indexed by ``problem``.
     """
-    om = data[OUTPUT_MIN]
+    om = scoring_loss(data)
     om_vals = np.asarray(om.values, dtype=float)
     problem_axis = om.dims.index(PROBLEM)
     other_axes = tuple(i for i in range(om_vals.ndim) if i != problem_axis)
@@ -278,7 +287,9 @@ def shifted_final_min(
     """``(schedule, problem)`` array of safe-for-log final losses.
 
     Computes ``output_min.min(BUDGET) - per_task_shift + EPSILON`` (with
-    ``output_dim`` squeezed away). The ``.min(BUDGET)`` reduction is used
+    ``output_dim`` squeezed away), on a noisy task with its noise-free
+    series in place of ``output_min`` (:func:`l2co._src.performance.
+    scoring_loss`). The ``.min(BUDGET)`` reduction is used
     instead of ``isel(BUDGET=-1)`` because the raw ``output_min`` is the
     *per-iteration* population minimum, which can be NaN at the
     interpolated trajectory boundary even when the optimizer converged
@@ -301,7 +312,7 @@ def shifted_final_min(
     xarray.DataArray
         Strictly positive values with dims ``(schedule, problem)``.
     """
-    final = data[OUTPUT_MIN].min(dim=BUDGET, skipna=True)
+    final = scoring_loss(data).min(dim=BUDGET, skipna=True)
     if OUTPUT_DIM in final.dims:
         final = final.isel({OUTPUT_DIM: 0}, drop=True)
     shift = per_task_shift(data=data, task_labels=task_labels)
@@ -552,7 +563,7 @@ def build_report(dataloader: DataLoader) -> dict[str, Any]:
     # raw ``output_min`` is the per-iteration population minimum, which
     # is sometimes NaN at the interpolated trajectory boundary even when
     # the optimizer converged earlier.
-    final_raw = data[OUTPUT_MIN].min(dim=BUDGET, skipna=True)
+    final_raw = scoring_loss(data).min(dim=BUDGET, skipna=True)
     if OUTPUT_DIM in final_raw.dims:
         final_raw = final_raw.isel({OUTPUT_DIM: 0}, drop=True)
 

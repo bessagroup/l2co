@@ -47,13 +47,12 @@ from l2co._src.naming import (
     GLOBAL_MIN,
     ITERATIONS,
     OUTPUT_DIM,
-    OUTPUT_MIN,
     PROBLEM,
     RATIO,
     SCHEDULE,
     UPDATE_STEP,
 )
-from l2co._src.performance import EPSILON
+from l2co._src.performance import EPSILON, scoring_loss
 from l2co._src.visualize.colors import (
     CATEGORY_PALETTES,
     display_name,
@@ -1903,7 +1902,8 @@ def plot_update_step(
         Whether to display a legend, by default True.
     hide_when_done : bool, optional
         When ``True``, every step from the first one whose running
-        ``OUTPUT_MIN`` reaches within ``EPSILON`` of the task's
+        ``OUTPUT_MIN`` (on a noisy task, its noise-free series)
+        reaches within ``EPSILON`` of the task's
         ``global_min`` onwards is rendered in black instead of the
         optimizer colour, indicating that the problem was already
         solved and subsequent optimizer choices are immaterial.
@@ -1930,8 +1930,12 @@ def plot_update_step(
         d.data[UPDATE_STEP].isel({OUTPUT_DIM: 0}).sel({SCHEDULE: schedule})
     )
     if hide_when_done:
+        # Solved as the ERT counts it: on a noisy task, by the
+        # noise-free series (ADR 0024).
         output_min = (
-            d.data[OUTPUT_MIN].isel({OUTPUT_DIM: 0}).sel({SCHEDULE: schedule})
+            scoring_loss(d.data)
+            .isel({OUTPUT_DIM: 0})
+            .sel({SCHEDULE: schedule})
         )
         global_min = d.task_labels.sel(
             {FEATURE: GLOBAL_MIN}, drop=True

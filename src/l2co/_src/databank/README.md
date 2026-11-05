@@ -60,6 +60,7 @@ exploding into one-file-per-record.
 | Array | Dims | Notes |
 |---|---|---|
 | `output_min` / `output_mean` / `output_std` / `fevals` / `iterations` / `update_step` | `(taskID, schedule, realization, output_dim, budget)` | `budget` = `BUDGET_STEPS`, canonical grid |
+| `output_min_true` | `(taskID, schedule, realization, output_dim, budget)` | **Conditional** (`docs/adr/0024`): present only in a store holding a noisy task (one with a `loss_fn_true`). The lowest *noise-free* loss per step, which noisy tasks are scored on (`output_min` stays the observed one). A noise-free task's cells of it are never written: no chunk file, `NaN` on read |
 | `success` | `(taskID, schedule, realization, output_dim, target)` | float (0/1, NaN if missing) |
 | `cost` | `(taskID, schedule, realization, output_dim, target, metric)` | float |
 | `task_labels` | `(taskID, feature)` | str |
@@ -237,10 +238,16 @@ fail on `not report.ok`. The severity model ("non-finite" = `NaN` or
   variables, wrong dims, bad budget grid / metric coord / recipe JSON);
   internal inconsistencies (non-binary or target-non-monotone `success`,
   negative `output_std` or counters, non-finite / unsorted
-  `target_value`).
+  `target_value`, a task with the noise-free series `output_min_true` on
+  some populated pairs only -- `task.noise_free_partial`).
 - **info** — completeness (`n_populated/n_expected` plus the
   fully-unwritten pairs, which are by design `NaN` and *not* errors) and
   a non-default budget-grid resolution.
+
+`output_min_true` is conditional (`docs/adr/0024`): a store without it
+gets no finding about it, and an all-`NaN` cell of it (a noise-free
+task's) is fine on its own. Where a pair has it, its non-finite values
+follow the `loss_history` rules above.
 
 All per-pair checks are evaluated as one batch of lazy dask reductions
 computed in a single pass over small per-pair summary arrays, so
