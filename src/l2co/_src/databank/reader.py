@@ -8,6 +8,11 @@ at read time. Missing ``(task, optimizer)`` cells read back as ``NaN``
 
 Numerical variables are returned as ``float`` (the on-disk dtype); cast
 to ``int`` / ``bool`` downstream if needed.
+
+The store and the raw files hold gaps to each task's f* (ADR 0027). The
+readers add f* back in float64 -- :func:`_load_one`, behind every
+``load_databank*`` call (overlay reads included), and
+:func:`load_loss_raw` -- so they return losses, as float64.
 """
 
 #                                                                       Modules
@@ -21,13 +26,14 @@ import logging
 from pathlib import Path
 
 # Third-party
+import numpy as np
 import xarray as xr
 from l2co_optimizers import OptimizationStep
 
 from l2co._src.data.loader import DataLoader
 from l2co._src.databank import layout
 from l2co._src.databank.provenance import parse_provenance
-from l2co._src.databank.records import loss_preprocess
+from l2co._src.databank.records import GAP, GAP_VARS, RAW, loss_preprocess
 from l2co._src.databank.stamp import check_protocol
 from l2co._src.databank.tasksets import load_taskset
 from l2co._src.databank.writer import silence_zarr_warnings
@@ -35,6 +41,8 @@ from l2co._src.databank.writer import silence_zarr_warnings
 # Local
 from l2co.naming import (
     COST,
+    EVALUATION_BUDGET,
+    F_STAR,
     IN_TRAINING,
     ITERATIONS,
     OPTIMIZATIONSTEP,
@@ -44,6 +52,7 @@ from l2co.naming import (
     TARGET_VALUE,
     TASK_ID,
     TASK_LABELS,
+    VALUE_KIND,
 )
 
 #                                                          Authorship & Credits
@@ -299,6 +308,35 @@ def populated_iterations(
     return stored
 
 
+def _add_f_star(ds: xr.Dataset, store: Path) -> xr.Dataset:
+    """Turn a selection's stored gaps back into losses, in float64.
+
+    Adds each task's ``f_star`` to the gap variables (ADR 0027); a task
+    without a finite f* was stored raw and gets nothing added. Lazy: the
+    addition is part of the dask graph, so no chunk is read here.
+
+    Raises
+    ------
+    ValueError
+        The store has no ``f_star`` variable (not written by this code;
+        the protocol stamp should have refused it already).
+    """
+    if F_STAR not in ds:
+        raise ValueError(
+            f"databank store {store} has no '{F_STAR}' variable, so its "
+            "losses cannot be recovered from the stored gaps (l2co ADR "
+            "0027)."
+        )
+    offset = ds[F_STAR].astype(np.float64).fillna(0.0)
+    return ds.assign(
+        {
+            name: ds[name].astype(np.float64) + offset
+            for name in GAP_VARS
+            if name in ds.data_vars
+        }
+    )
+
+
 def _load_one(
     dataset_name: str,
     optimizers: list[OptimizationStep] | list[int] | list[str],
@@ -372,6 +410,7 @@ def _load_one(
         return None
 
     ds = ds.sel({TASK_ID: present_ids, SCHEDULE: present_names})
+    ds = _add_f_star(ds, store)
 
     # Completeness check: count populated cells.
     n_expected = ds.sizes[TASK_ID] * ds.sizes[SCHEDULE]
@@ -442,6 +481,10 @@ def load_databank_dataset(
     xarray.Dataset
         Lazy (zarr-backed) selection. ``loss_history`` is already on the
         store's fixed budget grid; numerical variables are ``float``.
+        The loss variables (``output_min``, ``output_min_true``,
+        ``output_mean``) are losses in float64: the stored gaps plus the
+        per-task ``f_star``, which the selection also holds (ADR 0027),
+        as it holds ``evaluation_budget`` for a budgeted store.
 
     Raises
     ------
@@ -535,9 +578,10 @@ def load_databank(
 
     Thin wrapper over :func:`load_databank_dataset`: drops the
     per-schedule metadata variables (``optimizationstep``,
-    ``provenance``, ``in_training``) the DataLoader contract does not
-    cover -- read those via :func:`load_databank_dataset`,
-    :func:`load_provenance` or :func:`held_out_task_ids` -- and returns
+    ``provenance``, ``in_training``) and the per-task ``f_star`` /
+    ``evaluation_budget`` the DataLoader contract does not cover -- read
+    those via :func:`load_databank_dataset`, :func:`load_provenance` or
+    :func:`held_out_task_ids` -- and returns
     ``DataLoader.from_xarray(ds)``. The selection stays **lazy**
     (zarr-backed) -- dask reads only the chunks each downstream
     operation touches; call :meth:`l2co.DataLoader.load` to force the
@@ -557,7 +601,17 @@ def load_databank(
         taskset=taskset,
         overlay_roots=overlay_roots,
     )
-    drop = [v for v in (OPTIMIZATIONSTEP, PROVENANCE, IN_TRAINING) if v in ds]
+    drop = [
+        v
+        for v in (
+            OPTIMIZATIONSTEP,
+            PROVENANCE,
+            IN_TRAINING,
+            F_STAR,
+            EVALUATION_BUDGET,
+        )
+        if v in ds
+    ]
     ds = ds.drop_vars(drop)
     return DataLoader.from_xarray(ds)
 
@@ -639,7 +693,10 @@ def load_loss_raw(
     Returns
     -------
     xarray.Dataset
-        The raw (or resampled) loss history.
+        The raw (or resampled) loss history. The file holds gaps to the
+        task's f*; this adds f* (its ``f_star`` attribute) back in
+        float64, so the loss variables come back as losses, float64,
+        and the ``value_kind`` attribute is dropped (ADR 0027).
 
     Raises
     ------
@@ -661,10 +718,32 @@ def load_loss_raw(
         dataset_name,
         action="read",
     )
-    ds = xr.load_dataset(path)
+    ds = _raw_to_loss(xr.load_dataset(path), path)
     if budget_steps is not None:
         ds = loss_preprocess(ds, budget_steps)
     return ds
+
+
+def _raw_to_loss(ds: xr.Dataset, path: Path) -> xr.Dataset:
+    """Add a raw file's f* back to its gap variables (ADR 0027)."""
+    kind = ds.attrs.get(VALUE_KIND)
+    if kind not in (GAP, RAW):
+        raise ValueError(
+            f"raw loss history {path} has no valid '{VALUE_KIND}' "
+            f"attribute (got {kind!r}), so it is not known whether it "
+            "holds gaps or losses (l2co ADR 0027)."
+        )
+    f_star = float(ds.attrs.get(F_STAR, np.nan))
+    offset = f_star if kind == GAP else 0.0
+    out = ds.assign(
+        {
+            name: ds[name].astype(np.float64) + offset
+            for name in GAP_VARS
+            if name in ds.data_vars
+        }
+    )
+    out.attrs = {k: v for k, v in ds.attrs.items() if k != VALUE_KIND}
+    return out
 
 
 def load_provenance(root: Path, dataset_name: str) -> dict[str, dict]:

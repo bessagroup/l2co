@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Databank stores hold gaps** (`docs/adr/0027`). The writer stores
+  `output_min`, `output_min_true` and `output_mean` as f − f\* (f\* =
+  the task's `global_min`, subtracted in float64 after the dump-time
+  scores are computed), in the store and in the raw files. Every reader
+  (`load_databank*`, overlay reads, `load_loss_raw`) adds f\* back, so
+  callers still get losses, now as float64 and precise to float32 of the
+  gap. Each store has a float64 `f_star` variable per task; each raw
+  netCDF file has `f_star` and `value_kind` attributes. Tasks without a
+  finite f\* are stored raw. Code reading the store or raw files
+  directly now sees gaps.
+- **`DATABANK_PROTOCOL` is `dataset-paper-2026-11.1`.** Stores written
+  under `dataset-paper-2026-11` are refused.
+- The simulated restart orders of the ERTD are permutations only:
+  `draw_samples(seed, n_realizations)` lost its never-reached
+  with-replacement tail and its `n_picks` argument, `ERTD_N_PICKS` is
+  removed, and `compute_ert_multi_seed` lost `n_picks`. No ERTD value
+  changes.
+
+### Added
+
+- `evaluation_budget=` on `dump_databank`, `dump_runs` and
+  `dump_databank_template` (B per task hash): every cell is checked
+  against its task's B, the scores are cut at B, and B is stored as the
+  per-task `evaluation_budget` variable; an append refuses a differing
+  B. Without it, nothing changes.
+- `calculate_ert(..., evaluation_budget=B)`: points with `fevals` > B
+  are ignored, and a missed run is charged at most B.
+- `run_settings=` on the same entry points, stored in the protocol stamp
+  and compared on append; `l2co.databank.check_run_settings` and
+  `RunSettingsError` for a create step to check them before any cell
+  runs.
 ### Added
 
 - `l2co.budget.evaluations_based_on_dimensionality`: every run gets the

@@ -58,6 +58,17 @@ METRIC = "metric"
 TARGET_VALUE = "target_value"
 OPTIMIZATIONSTEP = "optimizationstep"
 
+# Gap storage and the evaluation budget (docs/adr/0027). ``F_STAR`` is the
+# per-task f* (the task's ``global_min``, float64) the stored losses are
+# relative to, both a ``(taskID,)`` store variable and a raw netCDF
+# attribute; ``VALUE_KIND`` is the raw attribute saying whether a raw
+# file holds the gap (``"gap"``) or the loss (``"raw"``, no finite f*).
+# ``EVALUATION_BUDGET`` is the per-task B a store's cells were checked
+# against.
+F_STAR = "f_star"
+VALUE_KIND = "value_kind"
+EVALUATION_BUDGET = "evaluation_budget"
+
 # Policy-artifact provenance (see l2co._src.databank.provenance).
 # ``PROVENANCE`` doubles as the loss-history dataset attribute the
 # evaluation pipeline attaches the record under and the ``(schedule,)``
