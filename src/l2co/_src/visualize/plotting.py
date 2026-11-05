@@ -958,6 +958,14 @@ def _disambiguate(ends: Sequence[_CurveEnd]) -> list[_CurveEnd]:
     ]
 
 
+#: Most measure-and-scale passes `_fit_label_width` makes.
+_LABEL_FIT_PASSES = 8
+
+#: Extra shrink on every pass after the first, so a width that snapped
+#: to the same pixel count at the smaller size still moves.
+_LABEL_FIT_STEP = 0.97
+
+
 def _fit_label_width(
     ax: plt.Axes,
     texts: Sequence[plt.Text],
@@ -969,8 +977,12 @@ def _fit_label_width(
 
     Column width is a *geometry* choice -- panels of one figure have to
     keep the same plotting area -- so an overlong name shrinks the type
-    rather than widening the band. Text width is linear in font size,
-    so one measure-and-scale pass lands on the answer.
+    rather than widening the band. The first pass scales the size by
+    how far the widest label overshoots, which is exact when text width
+    is proportional to font size, as it was up to matplotlib 3.10. From
+    3.11 widths snap to whole pixels and are only roughly proportional,
+    so the labels are measured again and shrunk a little further, up to
+    `_LABEL_FIT_PASSES` passes, until they fit.
 
     Parameters
     ----------
@@ -997,17 +1009,27 @@ def _fit_label_width(
         return fontsize
 
     axes_width = max(ax.get_window_extent(renderer).width, 1e-6)
-    widest = (
-        max(text.get_window_extent(renderer).width for text in texts)
-        / axes_width
-    )
     available = right_edge - texts[0].get_position()[0]
-    if widest <= available or widest <= 0.0:
+
+    def widest() -> float:
+        return (
+            max(text.get_window_extent(renderer).width for text in texts)
+            / axes_width
+        )
+
+    width = widest()
+    if width <= available or width <= 0.0:
         return fontsize
 
-    scaled = fontsize * available / widest
-    for text in texts:
-        text.set_fontsize(scaled)
+    scaled = fontsize
+    for attempt in range(_LABEL_FIT_PASSES):
+        step = 1.0 if attempt == 0 else _LABEL_FIT_STEP
+        scaled *= step * available / width
+        for text in texts:
+            text.set_fontsize(scaled)
+        width = widest()
+        if width <= available or width <= 0.0:
+            break
     return scaled
 
 
