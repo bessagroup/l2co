@@ -45,7 +45,9 @@ for the 10⁻⁸ targets. So the store and the raw files hold f − f\*.
 `evaluation_budget=`, a mapping from task hash to B. When it is given,
 it must cover every task of the dump, and:
 
-- **Every cell is checked** in the per-task step. `n` is the cell's
+- **Every cell is checked** in the template step, before anything is
+  written, deleted or marked, so a mismatch leaves the store as it was.
+  `n` is the cell's
   number of iterations. Its cost per iteration is read from the
   `fevals` increments, the first one counted from 0. If every iteration
   costs the same λ, the cell must have n·λ ≤ B < (n+1)·λ. That is n = B
@@ -109,13 +111,13 @@ These were left open by the decisions and settled here:
   optimizer. A variable-cost run whose increments happen to all equal
   some λ > 1 is judged as fixed-cost and refused. That is loud, not
   silent.
-- **Where the cell check runs:** in the per-task step, because the
-  template step loads at most two files per store (its memory bound). A
-  mismatched cell therefore stops the dump after the template exists:
-  a fresh store is left half-written, and an append is left marked
-  mid-append with its rollback snapshot, as for any per-task failure.
-  The mapping-level checks (coverage, the append comparisons, the run
-  settings) run in the template step and write nothing on refusal.
+- **Where the cell check runs:** in the template step, which reads only
+  the `iterations` and `fevals` counters of every cell (the template
+  step's memory bound allows at most two whole histories). Reading every
+  cell's counters costs one small read per raw file in one process;
+  the alternative, checking in the per-task step, left a fresh store
+  half-written, or an append marked mid-append, on a mismatch. The
+  per-task step checks again, from the histories it loads anyway.
 - **Policy schedules are checked like any other cell.** How
   meta-optimizer rows are budgeted is still undecided.
 - **Run settings are compared as JSON**: key order and tuple-versus-list

@@ -413,6 +413,79 @@ def test_a_variable_cost_cell_with_constant_steps_is_refused_loudly(tmp_path):
     assert "3 evaluations per iteration" in str(err.value)
 
 
+def test_a_mismatch_on_create_writes_nothing(tmp_path):
+    """The check runs in the template step, before the store exists."""
+    task = FakeTask("cr", "sphere", 10)
+    runs = _cell_runs(
+        tmp_path / "runs", task, {RS: _cell(20, [1]), CMA: _cell(10, [6])}
+    )
+    root = tmp_path / "db"
+    with pytest.raises(ValueError, match="Nothing was written"):
+        _dump_template_runs(
+            runs,
+            root,
+            NAME,
+            mode="error",
+            easiest_quantile=0.75,
+            taskset=None,
+            budget_steps=BS,
+            evaluation_budget={"cr": 20},
+        )
+    assert not layout.zarr_store_path(root, NAME).exists()
+    assert not layout.raw_root(root, NAME).exists()
+
+
+@pytest.mark.parametrize("mode", ["append", "replace"])
+def test_a_mismatch_leaves_an_existing_store_untouched(
+    tmp_path, tasks, steps, mode
+):
+    root = _two_stores(tmp_path, tasks, steps, {tasks[0].hash: 13})
+    store = layout.zarr_store_path(root, NAME)
+    rawroot = layout.raw_root(root, NAME)
+    before, raw_before = _snapshot(store), _snapshot(rawroot)
+    # tasks[1] ran 13 iterations but is given B = 14.
+    runs_b = _write_raw_runs(tmp_path / "b", [(tasks[1], 13)], steps)
+    with pytest.raises(ValueError, match="Nothing was written"):
+        _dump(root, runs_b, mode=mode, evaluation_budget={tasks[1].hash: 14})
+    assert _snapshot(store) == before
+    assert _snapshot(rawroot) == raw_before
+    assert not layout.append_marker_path(root, NAME).exists()
+    assert not layout.rollback_path(root, NAME).exists()
+
+
+def test_every_mismatching_task_is_reported_at_once(tmp_path, tasks, steps):
+    runs = _write_raw_runs(tmp_path / "runs", [(t, 13) for t in tasks], steps)
+    with pytest.raises(ValueError) as err:
+        _dump(
+            tmp_path / "db",
+            runs,
+            evaluation_budget={t.hash: 14 for t in tasks},
+        )
+    for t in tasks:
+        assert t.hash in str(err.value)
+
+
+def test_the_check_reads_only_the_counters(tmp_path, monkeypatch):
+    """The template step must not load whole histories (memory bound)."""
+    from l2co._src.databank import records
+
+    task = FakeTask("rc", "sphere", 10)
+    runs = _cell_runs(
+        tmp_path / "runs", task, {RS: _cell(20, [1]), CMA: _cell(3, [6])}
+    )
+    seen = []
+    real = records._budget_counters
+
+    def spy(path):
+        ds = real(path)
+        seen.append(set(ds.data_vars))
+        return ds
+
+    monkeypatch.setattr(records, "_budget_counters", spy)
+    records.check_run_budgets(runs, {"rc": 20})
+    assert seen == [{ITERATIONS, FEVALS}] * 2
+
+
 def test_every_task_needs_a_budget_when_any_has_one(tmp_path, tasks, steps):
     runs = _write_raw_runs(tmp_path / "runs", [(t, 13) for t in tasks], steps)
     with pytest.raises(ValueError, match=tasks[1].hash):

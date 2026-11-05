@@ -169,6 +169,33 @@ def _cell_budget_problem(ds: xr.Dataset, budget: int) -> str | None:
     )
 
 
+def _task_budget_problem(
+    task: Task,
+    ds_by_step: dict[OptimizationStep, xr.Dataset],
+    budget: int,
+) -> str | None:
+    """Why a task's cells do not match its budget B, or ``None``."""
+    problems = {
+        step.name: problem
+        for step, ds in ds_by_step.items()
+        if (problem := _cell_budget_problem(ds, budget)) is not None
+    }
+    if not problems:
+        return None
+    detail = "; ".join(f"'{k}': {v}" for k, v in problems.items())
+    return (
+        f"task {task.hash}: cells do not match the task's evaluation "
+        f"budget B = {budget} -- {detail}"
+    )
+
+
+_BUDGET_REMEDY = (
+    "Every run of a task gets the same B (l2co ADR 0026); re-run these "
+    "cells with the budget function's iterations, or pass the B they "
+    "were run with (l2co ADR 0027)."
+)
+
+
 def _check_cell_budgets(
     task: Task,
     ds_by_step: dict[OptimizationStep, xr.Dataset],
@@ -181,19 +208,52 @@ def _check_cell_budgets(
     ValueError
         Naming the task, B and every mismatching schedule.
     """
-    problems = {
-        step.name: problem
-        for step, ds in ds_by_step.items()
-        if (problem := _cell_budget_problem(ds, budget)) is not None
-    }
+    problem = _task_budget_problem(task, ds_by_step, budget)
+    if problem is not None:
+        raise ValueError(f"{problem}. {_BUDGET_REMEDY}")
+
+
+def _budget_counters(path: Path) -> xr.Dataset:
+    """The two counters the budget check reads, from one raw loss file.
+
+    Only ``iterations`` and ``fevals`` are loaded, not the whole history,
+    so checking every cell of a dump stays cheap.
+    """
+    with xr.open_dataset(path) as ds:
+        return ds[[ITERATIONS, FEVALS]].load()
+
+
+def check_run_budgets(runs: list, budgets: dict[str, int]) -> None:
+    """Refuse a dump with any cell that does not match its task's B.
+
+    Run by the template step, before anything is written, deleted or
+    marked, so a mismatch leaves the store as it was (ADR 0027). Every
+    task is checked and every mismatch is reported at once.
+
+    Parameters
+    ----------
+    runs : list
+        ``[(task, {step: loss_path})]``, as :func:`_iter_task_runs`
+        yields.
+    budgets : dict[str, int]
+        The evaluation budget B of each task, by task hash.
+
+    Raises
+    ------
+    ValueError
+        Naming every task, its B and every mismatching schedule.
+    """
+    problems = []
+    for task, step_paths in runs:
+        counters = {
+            step: _budget_counters(path) for step, path in step_paths.items()
+        }
+        problem = _task_budget_problem(task, counters, budgets[task.hash])
+        if problem is not None:
+            problems.append(problem)
     if problems:
-        detail = "; ".join(f"'{k}': {v}" for k, v in problems.items())
         raise ValueError(
-            f"task {task.hash}: cells do not match the task's evaluation "
-            f"budget B = {budget} -- {detail}. Every run of a task gets the "
-            "same B (l2co ADR 0026); re-run these cells with the budget "
-            "function's iterations, or pass the B they were run with "
-            "(l2co ADR 0027)."
+            "; ".join(problems) + f". {_BUDGET_REMEDY} Nothing was written."
         )
 
 

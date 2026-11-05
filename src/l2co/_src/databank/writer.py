@@ -115,6 +115,7 @@ from l2co._src.databank.records import (
     BREACHES_ATTR,
     _build_task_records,
     _iter_task_runs,
+    check_run_budgets,
 )
 from l2co._src.databank.schema import (
     STORE_DTYPE,
@@ -1085,6 +1086,10 @@ def _dump_template_runs(
     budgets = _budgets_for_runs(runs, evaluation_budget)
     if exists and mode == "append":
         _refuse_other_settings(store, dataset_name, run_settings)
+    # Every cell against its task's B, here rather than in the per-task
+    # step, so a mismatch leaves no half-written or marked store.
+    if budgets is not None:
+        check_run_budgets(runs, budgets)
     if mode == "replace":
         if store.exists():
             shutil.rmtree(store)
