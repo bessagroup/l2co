@@ -626,7 +626,12 @@ def test_loss_raw_roundtrips(tmp_path, tasks, steps):
     assert raw.sizes[BUDGET] == 13  # original variable length preserved
     # Float vars are downcast to float32 on the sidecar to save disk, but
     # the integer counters keep their integer dtype (selective downcast).
-    assert raw[OUTPUT_MIN].dtype == np.float32
+    path = layout.loss_raw_path(
+        layout.raw_root(tmp_path, "bbob"), tasks[1].hash, steps[0].hash
+    )
+    assert xr.load_dataset(path)[OUTPUT_MIN].dtype == np.float32
+    # The reader adds f* back to the stored gap in float64 (ADR 0027).
+    assert raw[OUTPUT_MIN].dtype == np.float64
     for var in (FEVALS, ITERATIONS, UPDATE_STEP):
         assert np.issubdtype(raw[var].dtype, np.integer)
 

@@ -68,6 +68,7 @@ from l2co._src.performance import (
     expected_runtime,
     output_cummin,
     scale_by_task,
+    scoring_loss,
 )
 from l2co._src.task_features import FeatureProcessor
 from l2co._src.tree_utils import traj_and_stair
@@ -143,9 +144,11 @@ class DataLoader:
 
     Holds the full optimization dataset -- both the loss-history variables
     (``output_min``, ``output_mean``, ``fevals``, ``iterations``,
-    ``update_step``) over the ``budget`` axis and the pre-computed ERT
-    metrics (``cost``, ``success``, ``target_value``) over the ``target`` /
-    ``metric`` axes -- together with the parsed task labels. Provides the
+    ``update_step``, and on data holding a noisy task the noise-free
+    ``output_min_true`` its scores are computed from; ADR 0024) over the
+    ``budget`` axis and the pre-computed ERT metrics (``cost``,
+    ``success``, ``target_value``) over the ``target`` / ``metric`` axes
+    -- together with the parsed task labels. Provides the
     problem/optimizer selection, concatenation, and feature-extraction
     logic as well as the loss-trajectory and performance operations.
 
@@ -708,6 +711,10 @@ class DataLoader:
         and cumulative-min output histories, producing a
         normalized (trajectory, staircase) representation.
 
+        Uses the *observed* ``output_min`` even on a noisy task: this
+        is the model's input, so it must be what a policy sees during
+        a run, not the noise-free series the task is scored on.
+
         Returns
         -------
         xr.DataArray
@@ -1139,6 +1146,10 @@ class DataLoader:
         """
         Computes the (loss-trajectory) performance of the optimizers.
 
+        Scored on :func:`~l2co._src.performance.scoring_loss`: a noisy
+        task's noise-free series, the observed one otherwise (ADR 0024).
+        The result holds it as ``output_min`` either way.
+
         Parameters
         ----------
         include_best : bool
@@ -1157,7 +1168,7 @@ class DataLoader:
         performance = xr.Dataset(
             {
                 OUTPUT_MIN: scale_by_task(
-                    data=output_cummin(self.data[OUTPUT_MIN]),
+                    data=output_cummin(scoring_loss(self.data)),
                     global_min=self.task_labels.sel(
                         {FEATURE: GLOBAL_MIN}
                     ).astype(float),

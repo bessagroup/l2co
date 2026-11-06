@@ -23,7 +23,7 @@ from l2co_optimizers import (
 from l2co_tasks import Task
 
 # Local
-from l2co._src.task_bridge import optimizer_mapping, task_bounds
+from l2co._src.task_bridge import init_run_state
 
 # =============================================================================
 
@@ -56,6 +56,13 @@ class RolloutWrapper(eqx.Module):
     ) -> RolloutWrapper:
         """Create a RolloutWrapper from an optimizer and task.
 
+        The run state comes from :func:`~l2co.optimization.init_run_state`
+        with ``record_noise_free=True``: on a noisy task (one with a
+        ``loss_fn_true``) the rollout's history also carries the
+        noise-free series, ``output_min_true``, which noisy tasks are
+        scored on (ADR 0024). What that covers, and what raises, is
+        listed there.
+
         Parameters
         ----------
         optimizer : OptimizationStep
@@ -74,22 +81,8 @@ class RolloutWrapper(eqx.Module):
         RolloutWrapper
             Initialized rollout wrapper.
         """
-        # Create the UpdateClass
-        update_class = optimizer_mapping(optimizer.optimizer)(
-            **optimizer.hyperparameters,
-            task=task,
-            opt_hash=optimizer.hash,
-            bounded=task_bounds(task),
-            stop_fn=optimizer.stopping_fn,
-        )
-
-        # Initialize the RunState
-        run_state = RunState.init(
-            update_class,
-            model=task.model,
-            dataset=task.loaded_dataset,
-            batch_size=task.batch_size,
-            key=key,
+        run_state = init_run_state(
+            optimizer, task, key, record_noise_free=True
         )
 
         dataset = task.loaded_dataset

@@ -6,6 +6,7 @@ caller-supplied root directory ``root``::
 
     <root>/<dataset_name>.zarr/                # consolidated store
         loss_history (interp), performance, task, optimizer
+        l2co_stamp.json                        # protocol stamp (ADR 0025)
     <root>/<dataset_name>/loss_history_raw/    # per-pair raw netCDF
         loss_<taskID>_<optimizer_hash>.nc
     <root>/<dataset_name>/tasksets/<name>.txt  # named task selections
@@ -76,6 +77,13 @@ BUDGET_STEPS = 1000
 # Living *inside* the store keeps the "do not trust this" flag attached
 # to the store bytes across a copy (e.g. ``sync_databank.sh``).
 APPEND_MARKER_NAME = "append_in_progress.json"
+
+# Name of the in-store protocol stamp every new store gets (see
+# ``stamp.py``; ADR 0025). Like the append marker it is a plain file
+# inside the store, so it travels with the store bytes, and no xarray
+# write touches it -- unlike the root attributes, which a
+# ``to_zarr(mode="a")`` replaces.
+STAMP_NAME = "l2co_stamp.json"
 
 # Suffix of the sibling directory an append snapshots the store's
 # about-to-be-mutated paths into before growing (see
@@ -168,6 +176,25 @@ def append_marker_path(root: Path, dataset_name: str) -> Path:
         required to exist -- its presence is the signal).
     """
     return zarr_store_path(root, dataset_name) / APPEND_MARKER_NAME
+
+
+def stamp_path(root: Path, dataset_name: str) -> Path:
+    """Path of the in-store protocol stamp.
+
+    Parameters
+    ----------
+    root : pathlib.Path
+        The databank base directory.
+    dataset_name : str
+        Name of the dataset.
+
+    Returns
+    -------
+    pathlib.Path
+        ``<root>/<dataset_name>.zarr/l2co_stamp.json`` (not required to
+        exist: a store written before stamps existed has none).
+    """
+    return zarr_store_path(root, dataset_name) / STAMP_NAME
 
 
 def rollback_path(root: Path, dataset_name: str) -> Path:

@@ -13,7 +13,7 @@ authors:
 license: BSD-3-Clause
 repository-code: "https://github.com/bessagroup/l2co"
 url: "https://l2co.readthedocs.io"
-version: "1.8.1"
+version: "2.0.0"
 type: software
 keywords:
   - optimization

@@ -7,6 +7,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-06
+
+The databank and run protocol of the dataset paper's re-run. Stores now
+carry a protocol stamp, hold gaps to f\*, score noisy tasks on their
+noise-free values, and check an evaluation budget; stores written before
+this release are refused. Requires `bbob-jax>=3.0.0`, `l2co-tasks>=0.5.0`
+and `l2co-optimizers>=0.5.0`.
+
+### Changed
+
+- **Stores carry a protocol stamp** (`docs/adr/0025`). Every new store
+  holds `l2co_stamp.json`, naming the run protocol (`DATABANK_PROTOCOL`)
+  it was written under. Every reader, `load_loss_raw` included, an append
+  and a `mode="replace"` dump refuse a store whose stamp is missing or
+  names another protocol (`StoreProtocolError`, a `RuntimeError`), before
+  anything is opened, written or deleted; `verify_databank` audits any
+  store and reports the stamp as a finding. **Every store written by
+  l2co 1.8.1 or earlier is refused**: re-run it, or read it with 1.8.x.
+- **Noisy tasks are scored on their noise-free value** (`docs/adr/0024`).
+  Dataset generation records `output_min_true`, the noise-free minimum
+  of each step's evaluated points (l2co-tasks `Task.loss_fn_true`,
+  l2co-optimizers' noise-free history), stores it, and the dump-time
+  scores of a noisy task (targets, ERT, breaches) read it instead of the
+  observed `output_min`.
+- **Databank stores hold gaps** (`docs/adr/0027`). The writer stores
+  `output_min`, `output_min_true` and `output_mean` as f − f\* (f\* =
+  the task's `global_min`, subtracted in float64 after the dump-time
+  scores are computed), in the store and in the raw files. Every reader
+  (`load_databank*`, overlay reads, `load_loss_raw`) adds f\* back, so
+  callers still get losses, now as float64 and precise to float32 of the
+  gap. Each store has a float64 `f_star` variable per task; each raw
+  netCDF file has `f_star` and `value_kind` attributes. Tasks without a
+  finite f\* are stored raw. Code reading the store or raw files
+  directly now sees gaps.
+- **`DATABANK_PROTOCOL` is `dataset-paper-2026-11.1`.** Stores written
+  under `dataset-paper-2026-11` are refused.
+- The simulated restart orders of the ERTD are permutations only:
+  `draw_samples(seed, n_realizations)` lost its never-reached
+  with-replacement tail and its `n_picks` argument, `ERTD_N_PICKS` is
+  removed, and `compute_ert_multi_seed` lost `n_picks`. No ERTD value
+  changes.
+- `RunOptimization` now calls its budget function after the optimizer is
+  built, as `budget_fn(task=task, optimizer=update_class)`. A custom budget
+  function must accept the `optimizer` keyword: `lambda task: n` now
+  raises `TypeError`; use `lambda task, optimizer: n`, or
+  `fixed_budget` / `based_on_dimensionality`, which accept and ignore it.
+- **An append refuses a task whose f\* differs from the stored one**
+  (`docs/adr/0027`). With l2co-tasks 0.5.0 a corrected `global_min` no
+  longer changes the task hash, so the same task can arrive with another
+  f\*. The append now stops before anything is written, deleted or
+  marked, naming each such task with its stored and incoming f\*
+  (`FStarError`); NaN (no finite f\*) equals NaN. Before, the incoming
+  f\* silently replaced the stored one for the tasks a dump wrote. A
+  dump (create, replace or append) also refuses runs that give one task
+  hash two different f\* values.
+- Dependency floors: `bbob-jax>=3.0.0` (CEC 2005 compositions follow the
+  official definitions), `l2co-tasks>=0.5.0` and `l2co-optimizers>=0.5.0`.
+
+### Added
+
+- `l2co.budget.evaluations_based_on_dimensionality`: every run gets the
+  same number of function evaluations, B = min(1000·d, 10⁵), returned as
+  ⌊B/e⌋ iterations, where e is what one iteration of the optimizer costs
+  (its population size, or 1 for L-BFGS and Nelder–Mead). See
+  `docs/adr/0026`.
+- `l2co.budget.evaluation_budget(task, evaluations_per_dimension=1000,
+  max_evaluations=100_000)`: the number of function evaluations B a run on
+  the task gets, without needing an optimizer.
+  `evaluations_based_on_dimensionality` uses it.
+- `evaluation_budget=` on `dump_databank`, `dump_runs` and
+  `dump_databank_template` (B per task hash): every cell is checked
+  against its task's B, the scores are cut at B, and B is stored as the
+  per-task `evaluation_budget` variable; an append refuses a differing
+  B. Without it, nothing changes.
+- `calculate_ert(..., evaluation_budget=B)`: points with `fevals` > B
+  are ignored, and a missed run is charged at most B.
+- `run_settings=` on the same entry points, stored in the protocol stamp
+  and compared on append; `l2co.databank.check_run_settings` and
+  `RunSettingsError` for a create step to check them before any cell
+  runs.
+- `l2co.databank.check_f_star(root, dataset_name, f_star_by_task)` and
+  `FStarError` (a `ValueError`): a create step checks each task's f\*
+  against the store before any cell runs. A missing store, and a task
+  the store does not hold, pass; a store left mid-append is refused.
+
 ## [1.8.1] - 2026-11-05
 
 The first release on PyPI (`pip install l2co`), with the repository made

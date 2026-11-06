@@ -22,6 +22,23 @@ Use :func:`load_databank_performance` for performance-only consumers
 writes); it returns a structured report and the caller decides whether
 to raise.
 
+Every new store carries a protocol stamp naming
+:data:`DATABANK_PROTOCOL`, and the readers, ``mode="append"`` and
+``mode="replace"`` refuse a store whose stamp is missing or names another
+protocol (:class:`StoreProtocolError`); :func:`store_stamp` reads it and
+:func:`verify_databank` reports it. Stores written under two protocols
+are not comparable. See ``docs/adr/0025-stores-carry-a-protocol-stamp.md``.
+
+The store and the raw files hold each loss as its gap to the task's f*
+(``global_min``); every reader adds f* back in float64, so callers get
+losses. Given ``evaluation_budget=`` (B per task hash), the dump checks
+every cell against its task's B, cuts the scores at B and stores B; given
+``run_settings=``, the stamp records them and an append refuses others
+(:class:`RunSettingsError`; :func:`check_run_settings` for a create step).
+An append also refuses a task whose f* differs from the stored one
+(:class:`FStarError`; :func:`check_f_star` for a create step).
+See ``docs/adr/0027-stores-hold-gaps-and-check-the-budget.md``.
+
 Learned optimizers (rl2co / l2co policies) enter the store as regular
 schedules — same arrays, same dims — carrying a *provenance record*
 that identifies the evaluated **policy artifact** (one checkpoint of
@@ -39,12 +56,18 @@ artifact files under ``policy_artifacts/<schedule>/``. Read back with
 
 from l2co._src.databank import (
     BUDGET_STEPS,
+    DATABANK_PROTOCOL,
     DatabankVerificationReport,
     DumpPlan,
+    FStarError,
     MissingManifestError,
+    RunSettingsError,
+    StoreProtocolError,
     VerificationFinding,
     WeightsHashMismatchError,
     bump_manifest,
+    check_f_star,
+    check_run_settings,
     databank_root,
     dump_databank,
     dump_databank_finalize,
@@ -72,6 +95,7 @@ from l2co._src.databank import (
     record_task_hashes,
     record_weights_hash,
     save_taskset,
+    store_stamp,
     verify_databank,
     weights_hash,
     write_manifest,
@@ -87,12 +111,18 @@ __status__ = "Stable"
 
 __all__ = [
     "BUDGET_STEPS",
+    "DATABANK_PROTOCOL",
     "DatabankVerificationReport",
     "DumpPlan",
+    "FStarError",
     "MissingManifestError",
+    "RunSettingsError",
+    "StoreProtocolError",
     "VerificationFinding",
     "WeightsHashMismatchError",
     "bump_manifest",
+    "check_f_star",
+    "check_run_settings",
     "databank_root",
     "dump_databank",
     "dump_databank_finalize",
@@ -120,6 +150,7 @@ __all__ = [
     "record_task_hashes",
     "record_weights_hash",
     "save_taskset",
+    "store_stamp",
     "verify_databank",
     "weights_hash",
     "write_manifest",

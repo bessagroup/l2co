@@ -8,6 +8,7 @@ filesystems where opening thousands of HDF5 files is expensive.
 ```
 <root>/<dataset_name>.zarr/                       # consolidated store
     loss_history (interp), performance, task, optimizer
+    l2co_stamp.json                               # protocol stamp (ADR 0025)
 <root>/<dataset_name>/loss_history_raw/           # per-pair raw netCDF
     loss_<taskID>_<optimizer_hash>.nc
 <root>/<dataset_name>/tasksets/<name>.txt         # named task selections
@@ -59,11 +60,14 @@ exploding into one-file-per-record.
 
 | Array | Dims | Notes |
 |---|---|---|
-| `output_min` / `output_mean` / `output_std` / `fevals` / `iterations` / `update_step` | `(taskID, schedule, realization, output_dim, budget)` | `budget` = `BUDGET_STEPS`, canonical grid |
+| `output_min` / `output_mean` / `output_std` / `fevals` / `iterations` / `update_step` | `(taskID, schedule, realization, output_dim, budget)` | `budget` = `BUDGET_STEPS`, canonical grid. `output_min` and `output_mean` hold the **gap** `f - f*` (`docs/adr/0027`; see "Gaps, not losses" below); `output_std` and the counters are unshifted |
+| `output_min_true` | `(taskID, schedule, realization, output_dim, budget)` | **Conditional** (`docs/adr/0024`): present only in a store holding a noisy task (one with a `loss_fn_true`). The lowest *noise-free* loss per step, which noisy tasks are scored on (`output_min` stays the observed one). A noise-free task's cells of it are never written: no chunk file, `NaN` on read. Stored as a gap, like `output_min` |
 | `success` | `(taskID, schedule, realization, output_dim, target)` | float (0/1, NaN if missing) |
 | `cost` | `(taskID, schedule, realization, output_dim, target, metric)` | float |
 | `task_labels` | `(taskID, feature)` | str |
 | `target_value` | `(taskID, target)` | float |
+| `f_star` | `(taskID,)` | float64: the f* (`global_min`) the task's losses are stored relative to; `NaN` for a task without a finite f*, stored raw (`docs/adr/0027`; dropped by the loader) |
+| `evaluation_budget` | `(taskID,)` | int: the task's evaluation budget B its cells were checked against. **Conditional**: only in a store dumped with `evaluation_budget=` (`docs/adr/0027`; dropped by the loader) |
 | `optimizationstep` | `(schedule,)` | str (JSON recipe; dropped by the loader) |
 | `provenance` | `(schedule,)` | str (JSON policy-artifact record; `""` for static optimizers; dropped by the loader) |
 | `in_training` | `(taskID, schedule)` | float (1/0 for policy schedules, NaN for static; dropped by the loader) |
@@ -150,6 +154,108 @@ the raw history to `loss_history_raw/` and region-writes the interpolated histor
 Writes that touch distinct `(taskID, schedule)` cells are chunk-disjoint and
 safe to parallelise; resizing and `consolidate_metadata` are single-writer.
 
+### Gaps, not losses
+
+The store and the raw files hold `f - f*`, where f* is the task's
+`global_min` (`docs/adr/0027`, the spec's decision c). With |f*| near 100, a
+float32 loss resolves only about `1e-5`, too coarse for the `1e-8` targets; a
+float32 gap is precise relative to the gap itself. The per-task step
+(`records._build_task_records`) first computes every dump-time number from
+the losses — targets, `success` / `cost`, the breach record — and only then
+subtracts f* in float64 from `output_min`, `output_min_true` and
+`output_mean` (`records.to_gap`). `output_std` and the counters are not
+shifted. A task without a finite f* is stored raw. f* is kept per task as the
+float64 `f_star` variable, and each raw netCDF file carries two attributes,
+so it describes itself outside l2co:
+
+| Attribute | Value |
+|---|---|
+| `f_star` | float64 f*, `NaN` when the task has none |
+| `value_kind` | `"gap"`, or `"raw"` for a task without a finite f* |
+
+The readers add f* back in float64 (see Reading), so callers keep getting
+losses. Code that reads the raw files or the zarr store directly sees gaps.
+
+A store holds one f* per task. Since l2co-tasks 0.5.0 leaves `global_min`
+out of `Task.hash`, a task with a corrected minimum keeps its hash, so an
+append refuses, in the template step before anything is written, deleted or
+marked, every incoming task whose f* (`records.f_star_of`) differs from the
+stored `f_star`, naming each with both values (`FStarError`, a `ValueError`).
+The comparison is exact in float64, and NaN equals NaN. An append cannot
+change a store's f*; a tool to update it is future work. Every dump, in any
+mode, also refuses runs that list one task hash with two different f* values.
+`check_f_star(root, dataset_name, f_star_by_task)` makes the same check for a
+create step: it first checks the protocol, refuses a store left mid-append, and
+passes for a missing store and for tasks the store does not hold.
+
+### The evaluation budget
+
+`evaluation_budget=` on `dump_databank`, `dump_runs` and
+`dump_databank_template` gives B per task, as a mapping from task hash to B
+(`docs/adr/0027`, the spec's decision d). When it is given, it must cover
+every task of the dump, and:
+
+- **every cell is checked** in the per-task step. `n` is the cell's number of
+  iterations and its cost per iteration comes from the `fevals` increments.
+  A cell whose every iteration costs the same `λ` must have
+  `n·λ ≤ B < (n+1)·λ` (`n = B` at one evaluation per iteration); a cell
+  whose cost varies (L-BFGS, Nelder-Mead) is budgeted at one evaluation per
+  iteration and must have `n = B`. A mismatch raises `ValueError` naming the
+  task and schedules.
+- **the scores are cut at B** (`calculate_ert(..., evaluation_budget=B)`,
+  decision e): points with `fevals > B` are ignored, as if each run ended at
+  its last point within B. A target first reached after B counts as missed,
+  and a missed run is charged at its last improvement within B, so at most B.
+  The breach record still reads every point, and the raw files keep the full
+  history.
+- **B is stored** as the `evaluation_budget` variable.
+
+An append refuses, before anything is written, a task whose incoming B
+differs from the stored one, budgeted runs into a store without the
+variable, and unbudgeted runs into a store with it. On the parallel path the
+template step takes `evaluation_budget=` and hands it on in
+`DumpPlan.evaluation_budget`, so `dump_databank_task` needs no new argument.
+Without `evaluation_budget=` nothing is checked, cut or stored, as before
+(l2co_experiments passes B once its wiring lands).
+
+### Run settings
+
+`run_settings=` on the same entry points is a plain JSON mapping of the
+settings that define a cell (budget rule, sampler and its parameters, seed,
+`n_realizations`; decision g). l2co does not interpret it. Creation stores it
+in the stamp under `"run_settings"`; an append compares it with the stamp for
+equality (as JSON, so key order and tuple-vs-list do not matter) and refuses
+a difference with `RunSettingsError`, a `StoreProtocolError`, before anything
+is written. `check_run_settings(root, dataset_name, run_settings)` makes the
+same check for a create step to call before any cell runs; it first checks
+the protocol, and passes when the store does not exist yet. When neither the
+store nor the caller has settings, nothing changes.
+
+### The protocol stamp
+
+A store's numbers depend on the run protocol that made them (budget, starting
+points, noise-free scoring, task hashes), and stores of two protocols can
+share a dataset name under different roots. So creation writes
+`l2co_stamp.json` inside the new store (`docs/adr/0025`):
+
+```json
+{"protocol": "dataset-paper-2026-11.1", "l2co_version": "...", "created": "...",
+ "run_settings": {"...": "..."}}
+```
+
+`protocol` is `stamp.DATABANK_PROTOCOL`, set by hand and bumped in any change
+after which new numbers are not comparable with stored ones. It was bumped
+from `dataset-paper-2026-11` to `dataset-paper-2026-11.1` when stores started
+holding gaps (`docs/adr/0027`), so a store written in between is refused.
+`run_settings` is there only when the store was created with them (see Run
+settings above). It is a plain
+file, not a zarr root attribute, because every `to_zarr(mode="a")` the writer
+makes replaces the root attributes; append never touches the file. Before
+anything else, `mode="append"` and `mode="replace"` refuse a store whose stamp
+is missing or names another protocol (`StoreProtocolError`): append writes
+nothing, and replace deletes nothing, so an old store is only ever removed by
+hand. A store without a stamp was written by l2co 1.8.x or earlier.
+
 ### Runs below `global_min`
 
 A task's `global_min` is sometimes set empirically (CUTEst), so a run can
@@ -174,7 +280,9 @@ target, and the read-side log scales stay finite. Finalize then writes
 
 `best` is the lowest loss over every run of the task, `margin` how far it
 sits below `global_min`. Losses come from the raw histories, at the
-precision the run wrote, not from the float32 store. A loss counts only
+precision the run wrote, not from the float32 store, and before the shift
+to gaps. With an evaluation budget, the check still reads points past B: a
+point below f* means f* is wrong, whatever the budget. A loss counts only
 when it is more than `1e-6 * max(1, |global_min|)` below `global_min`
 (`l2co._src.performance.GLOBAL_MIN_BREACH_RTOL`, the CUTEst floor test's
 rule), so float noise at an exact optimum is not reported. Every dump
@@ -186,9 +294,14 @@ into it: a schedule it re-runs replaces that schedule's entry, or drops it.
 `load_databank_dataset` opens the consolidated store, `.sel`s the requested
 tasks/optimizers (optimizers given as `OptimizationStep`, schedule-name strings,
 or integer hashes), and returns the lazy selection — no per-pair resampling,
-since `loss_history` is already on the `BUDGET_STEPS` grid. `load_databank`
-drops the per-schedule metadata variables (`optimizationstep`, `provenance`,
-`in_training`) and returns a lazy `DataLoader` (dask reads only the
+since `loss_history` is already on the `BUDGET_STEPS` grid. It adds each
+task's `f_star` back to the stored gaps in float64 (`reader._add_f_star`, part
+of the lazy graph), so `output_min`, `output_min_true` and `output_mean` are
+losses, as float64; overlay reads get the same, store by store. `load_loss_raw`
+does the same from the raw file's `f_star` attribute and drops `value_kind`.
+`load_databank` drops the per-schedule metadata variables
+(`optimizationstep`, `provenance`, `in_training`) and the per-task `f_star` /
+`evaluation_budget`, and returns a lazy `DataLoader` (dask reads only the
 chunks each operation touches; call `.load()` to force it all into memory).
 `load_databank_performance` keeps only the performance variables, so the large
 loss chunks are never read (use it for ERTD reporting). `load_loss_raw` reaches
@@ -203,15 +316,25 @@ max_iterations}` (the `iterations` counter's max, which equals the stored run's
 *exceeds* the stored one — `mode="append"` then overwrites that cell in place.
 
 Every reader entry point that opens the zarr store routes through one choke
-point (`reader._open_store`) that refuses a store an aborted append left
-mid-flight (see Writing above), raising with the marker's timestamp and
-incoming task/schedule counts unless called with `allow_incomplete=True`.
-`verify_databank` passes that flag and reports the marker as an
-`append.in_progress` finding instead — auditing a broken store is its job.
+point (`reader._open_store`). It first refuses a store whose protocol stamp is
+missing or names another protocol (`StoreProtocolError`, see Writing above),
+so numbers from two protocols are never read together and a launch pointed at
+the wrong root stops at its first read; read such a store with the l2co that
+wrote it (1.8.x for a store without a stamp). It then refuses a store an
+aborted append left mid-flight (see Writing above), raising with the marker's
+timestamp and incoming task/schedule counts unless called with
+`allow_incomplete=True`. `verify_databank` skips both and reports them as
+`store.protocol` and `append.in_progress` findings instead — auditing a broken
+store is its job. `load_loss_raw` reads the raw sidecar rather than the
+store, so it checks the store's stamp itself: the raw histories were written
+under the store's protocol. `store_stamp(root, dataset_name)` returns a
+store's stamp (`None` without one).
 
 **Notes / gotchas**
 - Missing `(task, schedule)` cells read back as `NaN`; `load_databank_dataset`
   logs an `n_filled / n_expected` completeness check.
+- Loss variables come back as float64 (gap + f*), twice the memory of the
+  float32 store once loaded.
 - `target` is matched **positionally** (its only coordinate is an integer
   index); all cells share the identical target ordering.
 
@@ -232,15 +355,27 @@ fail on `not report.ok`. The severity model ("non-finite" = `NaN` or
 - **error** — a `loss_history` variable *entirely* non-finite for a
   populated pair; any non-finite value in `success` / `cost`; a
   half-written cell (performance present but all loss variables NaN, or
-  vice versa — an interrupted region write); a store an aborted append
-  left mid-flight (`append.in_progress`); schema violations (missing
+  vice versa — an interrupted region write); a store whose protocol stamp
+  is missing or names another protocol (`store.protocol`); a store an
+  aborted append left mid-flight (`append.in_progress`); schema violations (missing
   variables, wrong dims, bad budget grid / metric coord / recipe JSON);
   internal inconsistencies (non-binary or target-non-monotone `success`,
   negative `output_std` or counters, non-finite / unsorted
-  `target_value`).
+  `target_value`, a task with the noise-free series `output_min_true` on
+  some populated pairs only -- `task.noise_free_partial`).
 - **info** — completeness (`n_populated/n_expected` plus the
   fully-unwritten pairs, which are by design `NaN` and *not* errors) and
   a non-default budget-grid resolution.
+
+`output_min_true` is conditional (`docs/adr/0024`): a store without it
+gets no finding about it, and an all-`NaN` cell of it (a noise-free
+task's) is fine on its own. Where a pair has it, its non-finite values
+follow the `loss_history` rules above.
+
+`f_star` is a required per-task variable (`docs/adr/0027`): a store without it
+gets a `structure.missing_var` ERROR, next to its `store.protocol` one.
+`evaluation_budget` is conditional, like `output_min_true`. No check reads the
+sign of a loss, so gaps and losses are audited the same way.
 
 All per-pair checks are evaluated as one batch of lazy dask reductions
 computed in a single pass over small per-pair summary arrays, so

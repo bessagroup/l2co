@@ -8,6 +8,11 @@ at read time. Missing ``(task, optimizer)`` cells read back as ``NaN``
 
 Numerical variables are returned as ``float`` (the on-disk dtype); cast
 to ``int`` / ``bool`` downstream if needed.
+
+The store and the raw files hold gaps to each task's f* (ADR 0027). The
+readers add f* back in float64 -- :func:`_load_one`, behind every
+``load_databank*`` call (overlay reads included), and
+:func:`load_loss_raw` -- so they return losses, as float64.
 """
 
 #                                                                       Modules
@@ -21,19 +26,23 @@ import logging
 from pathlib import Path
 
 # Third-party
+import numpy as np
 import xarray as xr
 from l2co_optimizers import OptimizationStep
 
 from l2co._src.data.loader import DataLoader
 from l2co._src.databank import layout
 from l2co._src.databank.provenance import parse_provenance
-from l2co._src.databank.records import loss_preprocess
+from l2co._src.databank.records import GAP, GAP_VARS, RAW, loss_preprocess
+from l2co._src.databank.stamp import check_protocol
 from l2co._src.databank.tasksets import load_taskset
 from l2co._src.databank.writer import silence_zarr_warnings
 
 # Local
 from l2co.naming import (
     COST,
+    EVALUATION_BUDGET,
+    F_STAR,
     IN_TRAINING,
     ITERATIONS,
     OPTIMIZATIONSTEP,
@@ -43,6 +52,7 @@ from l2co.naming import (
     TARGET_VALUE,
     TASK_ID,
     TASK_LABELS,
+    VALUE_KIND,
 )
 
 #                                                          Authorship & Credits
@@ -114,18 +124,25 @@ def _open_store(
     dataset_name: str,
     *,
     allow_incomplete: bool = False,
+    check_stamp: bool = True,
 ) -> xr.Dataset:
     """Open a dataset's consolidated store, guarding against a mid-append one.
 
     Every reader entry point that opens the zarr store routes through
-    here, so the guard applies uniformly. An append grows the store *in
+    here, so the guards apply uniformly. The first refuses a store
+    written under another run protocol: its protocol stamp must name
+    :data:`l2co._src.databank.stamp.DATABANK_PROTOCOL` (ADR 0025), so
+    numbers from two protocols are never read together, and a launch
+    pointed at the wrong root stops at its first read. The second
+    concerns appends. An append grows the store *in
     place* (:func:`l2co._src.databank.writer._template_append`), so a
     store an aborted append left mid-flight would otherwise read back
     with the incoming ``(task, schedule)`` cells as ``NaN`` --
     indistinguishable from "not yet run". This raises instead unless
     ``allow_incomplete=True``; :func:`~l2co._src.databank.verify.
     verify_databank` passes that and reports the marker as a finding,
-    since auditing a broken store is its job.
+    since auditing a broken store is its job; it likewise passes
+    ``check_stamp=False`` and reports the stamp as a finding.
 
     Parameters
     ----------
@@ -136,6 +153,9 @@ def _open_store(
     allow_incomplete : bool, optional
         Read the store even if it is marked mid-append. Default
         ``False``.
+    check_stamp : bool, optional
+        Refuse a store whose protocol stamp is missing or different.
+        Default ``True``; only verification turns it off.
 
     Returns
     -------
@@ -146,12 +166,17 @@ def _open_store(
     ------
     FileNotFoundError
         The store does not exist.
+    l2co._src.databank.stamp.StoreProtocolError
+        The store's protocol stamp is missing or names another protocol,
+        and ``check_stamp=True``.
     RuntimeError
         The store is marked mid-append and ``allow_incomplete=False``.
     """
     store = layout.zarr_store_path(root, dataset_name)
     if not store.exists():
         raise FileNotFoundError(f"No zarr store found at {store}.")
+    if check_stamp:
+        check_protocol(store, dataset_name, action="read")
     if not allow_incomplete:
         marker = layout.append_marker_path(root, dataset_name)
         if marker.exists():
@@ -283,6 +308,35 @@ def populated_iterations(
     return stored
 
 
+def _add_f_star(ds: xr.Dataset, store: Path) -> xr.Dataset:
+    """Turn a selection's stored gaps back into losses, in float64.
+
+    Adds each task's ``f_star`` to the gap variables (ADR 0027); a task
+    without a finite f* was stored raw and gets nothing added. Lazy: the
+    addition is part of the dask graph, so no chunk is read here.
+
+    Raises
+    ------
+    ValueError
+        The store has no ``f_star`` variable (not written by this code;
+        the protocol stamp should have refused it already).
+    """
+    if F_STAR not in ds:
+        raise ValueError(
+            f"databank store {store} has no '{F_STAR}' variable, so its "
+            "losses cannot be recovered from the stored gaps (l2co ADR "
+            "0027)."
+        )
+    offset = ds[F_STAR].astype(np.float64).fillna(0.0)
+    return ds.assign(
+        {
+            name: ds[name].astype(np.float64) + offset
+            for name in GAP_VARS
+            if name in ds.data_vars
+        }
+    )
+
+
 def _load_one(
     dataset_name: str,
     optimizers: list[OptimizationStep] | list[int] | list[str],
@@ -356,6 +410,7 @@ def _load_one(
         return None
 
     ds = ds.sel({TASK_ID: present_ids, SCHEDULE: present_names})
+    ds = _add_f_star(ds, store)
 
     # Completeness check: count populated cells.
     n_expected = ds.sizes[TASK_ID] * ds.sizes[SCHEDULE]
@@ -426,6 +481,10 @@ def load_databank_dataset(
     xarray.Dataset
         Lazy (zarr-backed) selection. ``loss_history`` is already on the
         store's fixed budget grid; numerical variables are ``float``.
+        The loss variables (``output_min``, ``output_min_true``,
+        ``output_mean``) are losses in float64: the stored gaps plus the
+        per-task ``f_star``, which the selection also holds (ADR 0027),
+        as it holds ``evaluation_budget`` for a budgeted store.
 
     Raises
     ------
@@ -519,9 +578,10 @@ def load_databank(
 
     Thin wrapper over :func:`load_databank_dataset`: drops the
     per-schedule metadata variables (``optimizationstep``,
-    ``provenance``, ``in_training``) the DataLoader contract does not
-    cover -- read those via :func:`load_databank_dataset`,
-    :func:`load_provenance` or :func:`held_out_task_ids` -- and returns
+    ``provenance``, ``in_training``) and the per-task ``f_star`` /
+    ``evaluation_budget`` the DataLoader contract does not cover -- read
+    those via :func:`load_databank_dataset`, :func:`load_provenance` or
+    :func:`held_out_task_ids` -- and returns
     ``DataLoader.from_xarray(ds)``. The selection stays **lazy**
     (zarr-backed) -- dask reads only the chunks each downstream
     operation touches; call :meth:`l2co.DataLoader.load` to force the
@@ -541,7 +601,17 @@ def load_databank(
         taskset=taskset,
         overlay_roots=overlay_roots,
     )
-    drop = [v for v in (OPTIMIZATIONSTEP, PROVENANCE, IN_TRAINING) if v in ds]
+    drop = [
+        v
+        for v in (
+            OPTIMIZATIONSTEP,
+            PROVENANCE,
+            IN_TRAINING,
+            F_STAR,
+            EVALUATION_BUDGET,
+        )
+        if v in ds
+    ]
     ds = ds.drop_vars(drop)
     return DataLoader.from_xarray(ds)
 
@@ -623,21 +693,57 @@ def load_loss_raw(
     Returns
     -------
     xarray.Dataset
-        The raw (or resampled) loss history.
+        The raw (or resampled) loss history. The file holds gaps to the
+        task's f*; this adds f* (its ``f_star`` attribute) back in
+        float64, so the loss variables come back as losses, float64,
+        and the ``value_kind`` attribute is dropped (ADR 0027).
 
     Raises
     ------
     FileNotFoundError
         The raw loss file does not exist.
+    l2co._src.databank.stamp.StoreProtocolError
+        The dataset's store has no protocol stamp, or one naming another
+        protocol: the raw histories were written under the store's
+        protocol (ADR 0025).
     """
     rawroot = layout.raw_root(root, dataset_name)
     path = layout.loss_raw_path(rawroot, task_id, optimizer_hash)
     if not path.exists():
         raise FileNotFoundError(f"No raw loss history at {path}.")
-    ds = xr.load_dataset(path)
+    # The sidecar is not the zarr store, so _open_store never sees this
+    # read; the store's stamp covers its raw histories too (ADR 0025).
+    check_protocol(
+        layout.zarr_store_path(root, dataset_name),
+        dataset_name,
+        action="read",
+    )
+    ds = _raw_to_loss(xr.load_dataset(path), path)
     if budget_steps is not None:
         ds = loss_preprocess(ds, budget_steps)
     return ds
+
+
+def _raw_to_loss(ds: xr.Dataset, path: Path) -> xr.Dataset:
+    """Add a raw file's f* back to its gap variables (ADR 0027)."""
+    kind = ds.attrs.get(VALUE_KIND)
+    if kind not in (GAP, RAW):
+        raise ValueError(
+            f"raw loss history {path} has no valid '{VALUE_KIND}' "
+            f"attribute (got {kind!r}), so it is not known whether it "
+            "holds gaps or losses (l2co ADR 0027)."
+        )
+    f_star = float(ds.attrs.get(F_STAR, np.nan))
+    offset = f_star if kind == GAP else 0.0
+    out = ds.assign(
+        {
+            name: ds[name].astype(np.float64) + offset
+            for name in GAP_VARS
+            if name in ds.data_vars
+        }
+    )
+    out.attrs = {k: v for k, v in ds.attrs.items() if k != VALUE_KIND}
+    return out
 
 
 def load_provenance(root: Path, dataset_name: str) -> dict[str, dict]:

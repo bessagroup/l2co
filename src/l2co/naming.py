@@ -6,6 +6,8 @@ from l2co._src.naming import (
     BATCH,
     BUDGET,
     COST,
+    EVALUATION_BUDGET,
+    F_STAR,
     FEATURE,
     FEVALS,
     GLOBAL_MIN,
@@ -22,6 +24,7 @@ from l2co._src.naming import (
     OUTPUT_DIM,
     OUTPUT_MEAN,
     OUTPUT_MIN,
+    OUTPUT_MIN_TRUE,
     OUTPUT_STD,
     PERFORMANCE,
     POSITION,
@@ -39,6 +42,7 @@ from l2co._src.naming import (
     TASK_LABELS,
     TRAJECTORY,
     UPDATE_STEP,
+    VALUE_KIND,
 )
 
 __all__ = [
@@ -59,6 +63,7 @@ __all__ = [
     "INPUT_MEAN",
     "OUTPUT_STD",
     "OUTPUT_MIN",
+    "OUTPUT_MIN_TRUE",
     "UPDATE_STEP",
     "TASK_LABELS",
     "TRAJECTORY",
@@ -78,6 +83,9 @@ __all__ = [
     "IN_TRAINING",
     "POSITION",
     "RATIO",
+    "F_STAR",
+    "VALUE_KIND",
+    "EVALUATION_BUDGET",
     "InputParameters",
     "OptState",
     "SamplerFunction",

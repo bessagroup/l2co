@@ -52,6 +52,26 @@ append proceeds.
 All cell writes go through zarr array handles opened once per dump
 (:func:`_open_big_arrays`) rather than per-cell ``Dataset.to_zarr``
 calls, which would re-read the store metadata on every call.
+
+A store holds the noise-free series ``output_min_true`` (ADR 0024)
+exactly when one of its tasks is noisy (has a ``loss_fn_true``): the
+template takes its sample cell from the first such task
+(:func:`_template_sample_run`), so the variable's presence follows
+every task, not the first. A noise-free task's cells of that variable
+are never written: no chunk file, read back as NaN, and scored on the
+observed series. Append adds noise-free runs to such a store freely,
+but refuses noisy runs into a store without the variable.
+
+The stored losses are gaps to the task's f* (ADR 0027): the per-task step
+subtracts it in float64 after the scores are computed
+(:func:`l2co._src.databank.records._build_task_records`), so the store
+and the raw files hold ``f - f*`` in float32 and the readers add f* back.
+Each task's f* is a small ``f_star`` variable next to ``target_value``.
+Given a per-task evaluation budget B (``evaluation_budget=``), every
+cell is checked against it, the scores are cut at it, and B is stored as
+the ``evaluation_budget`` variable; an append refuses a task whose B
+differs from the stored one. Given ``run_settings=``, the stamp records
+them at creation and an append refuses other ones.
 """
 
 #                                                                       Modules
@@ -65,12 +85,12 @@ import logging
 import os
 import shutil
 import warnings
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 # Third-party
 import numpy as np
@@ -95,6 +115,8 @@ from l2co._src.databank.records import (
     BREACHES_ATTR,
     _build_task_records,
     _iter_task_runs,
+    check_run_budgets,
+    f_star_of,
 )
 from l2co._src.databank.schema import (
     STORE_DTYPE,
@@ -103,14 +125,25 @@ from l2co._src.databank.schema import (
     downcast_floats,
     to_region_cell,
 )
+from l2co._src.databank.stamp import (
+    _one_f_star_per_task,
+    _refuse_other_f_star,
+    _refuse_other_settings,
+    check_protocol,
+    normalize_run_settings,
+    write_stamp,
+)
 from l2co._src.databank.tasksets import save_taskset
 from l2co._src.performance import DEFAULT_EASIEST_QUANTILE
 from l2co._src.validation import normalize_budget_grid
 from l2co.naming import (
+    EVALUATION_BUDGET,
+    F_STAR,
     FEATURE,
     GLOBAL_MIN,
     IN_TRAINING,
     OPTIMIZATIONSTEP,
+    OUTPUT_MIN_TRUE,
     PROVENANCE,
     SCHEDULE,
     TARGET_VALUE,
@@ -309,11 +342,15 @@ def _finalize_small(
     provenances: dict[str, xr.DataArray],
     taskids: list[str],
     schedules: list[str],
+    f_stars: dict[str, xr.DataArray] | None = None,
+    budgets: dict[str, xr.DataArray] | None = None,
 ) -> None:
     """Write the small string / target arrays and consolidate metadata.
 
     ``task_labels`` (taskID, feature), ``target_value`` (taskID, target),
-    ``optimizationstep`` / ``provenance`` (schedule,) and the derived
+    ``f_star`` and, for a budgeted store, ``evaluation_budget``
+    (taskID,), ``optimizationstep`` / ``provenance`` (schedule,) and the
+    derived
     ``in_training`` (taskID, schedule) mask are tiny, so they are
     assembled in full and written with ``mode="a"`` (which also creates
     the new ``feature`` coordinate). Metadata is consolidated last so
@@ -382,6 +419,12 @@ def _finalize_small(
             IN_TRAINING: _in_training_mask(provenances, taskids, schedules),
         }
     )
+    if f_stars:
+        small[F_STAR] = xr.concat([f_stars[t] for t in taskids], dim=TASK_ID)
+    if budgets:
+        small[EVALUATION_BUDGET] = xr.concat(
+            [budgets[t] for t in taskids], dim=TASK_ID
+        )
     with silence_zarr_warnings():
         small.to_zarr(store, mode="a", consolidated=False)
         zarr.consolidate_metadata(store)
@@ -392,8 +435,10 @@ def _accumulate_task(
     task_hash: str,
     labels: dict[str, xr.DataArray],
     targets: dict[str, xr.DataArray],
+    f_stars: dict[str, xr.DataArray] | None = None,
+    budgets: dict[str, xr.DataArray] | None = None,
 ) -> None:
-    """Record one task's labels / target_value.
+    """Record one task's labels / target_value / f_star / budget.
 
     Tasks are not required to share a ``feature`` ordering, or even the
     same *set* of features: a composite task suite that row-concatenates
@@ -410,6 +455,10 @@ def _accumulate_task(
     """
     labels[task_hash] = task_ds[TASK_LABELS]
     targets[task_hash] = task_ds[TARGET_VALUE]
+    if f_stars is not None and F_STAR in task_ds:
+        f_stars[task_hash] = task_ds[F_STAR]
+    if budgets is not None and EVALUATION_BUDGET in task_ds:
+        budgets[task_hash] = task_ds[EVALUATION_BUDGET]
 
 
 def dump_databank(
@@ -423,6 +472,8 @@ def dump_databank(
     easiest_quantile: float = DEFAULT_EASIEST_QUANTILE,
     taskset: str | None = None,
     budget_steps: int = layout.BUDGET_STEPS,
+    evaluation_budget: Mapping[str, int] | None = None,
+    run_settings: Mapping[str, Any] | None = None,
 ) -> Path:
     """Write finished optimization runs to a consolidated-zarr databank.
 
@@ -477,6 +528,25 @@ def dump_databank(
         Number of points on the fixed budget grid the zarr
         ``loss_history`` is interpolated onto, by default
         :data:`l2co._src.databank.layout.BUDGET_STEPS`.
+    evaluation_budget : Mapping[str, int] or None, optional
+        The evaluation budget B of each task, by task hash (ADR 0027).
+        When given, it must cover every task in the runs: every cell is
+        checked against its task's B (``n == B`` for a cell costing one
+        evaluation per iteration or a varying amount, ``n * lambda <= B
+        < (n + 1) * lambda`` for one costing ``lambda`` per iteration),
+        the scores ignore points past B, and B is stored per task as
+        the ``evaluation_budget`` variable. An append refuses a task
+        whose B differs from the stored one, and refuses to mix a
+        budgeted store with unbudgeted runs (either way). ``None``
+        (default): no check, no cut, no variable.
+    run_settings : Mapping or None, optional
+        The run settings that define a cell (a plain JSON mapping,
+        opaque to l2co: the budget rule, the sampler and its
+        parameters, the seed, ``n_realizations``). Stored in the
+        protocol stamp at creation; an append refuses settings that
+        differ from the stamp's (:class:`~l2co._src.databank.stamp.
+        RunSettingsError`), before anything is written. ``None`` on both
+        sides is a match.
 
     Returns
     -------
@@ -488,8 +558,11 @@ def dump_databank(
     FileExistsError
         The store exists and ``mode="error"``.
     ValueError
-        No runs are present, or (``mode="append"``) the incoming runs'
-        schema does not match the existing store's.
+        No runs are present, (``mode="append"``) the incoming runs'
+        schema does not match the existing store's, or a cell does not
+        match its task's ``evaluation_budget``.
+    RunSettingsError
+        (``mode="append"``) ``run_settings`` differ from the stamp's.
     """
     runs = [
         (task, step_paths)
@@ -508,6 +581,8 @@ def dump_databank(
         easiest_quantile=easiest_quantile,
         taskset=taskset,
         budget_steps=budget_steps,
+        evaluation_budget=evaluation_budget,
+        run_settings=run_settings,
     )
 
 
@@ -520,6 +595,8 @@ def dump_runs(
     easiest_quantile: float = DEFAULT_EASIEST_QUANTILE,
     taskset: str | None = None,
     budget_steps: int = layout.BUDGET_STEPS,
+    evaluation_budget: Mapping[str, int] | None = None,
+    run_settings: Mapping[str, Any] | None = None,
 ) -> Path:
     """Run all three dump phases over already-resolved runs, serially.
 
@@ -549,6 +626,8 @@ def dump_runs(
     budget_steps : int, optional
         Budget grid to interpolate onto; ignored for ``"append"``, which
         reuses the existing store's grid.
+    evaluation_budget, run_settings : optional
+        As :func:`dump_databank`.
 
     Returns
     -------
@@ -563,6 +642,8 @@ def dump_runs(
         easiest_quantile=easiest_quantile,
         taskset=taskset,
         budget_steps=budget_steps,
+        evaluation_budget=evaluation_budget,
+        run_settings=run_settings,
     )
     task_smalls = _dump_task_runs(runs, plan)
     return dump_databank_finalize(task_smalls, plan)
@@ -659,6 +740,7 @@ def _records_for_task(
     existing_targets,
     budget_steps: int,
     rawroot: Path,
+    evaluation_budget: int | None = None,
 ) -> tuple[xr.Dataset, dict[int, OptimizationStep], dict, dict, dict]:
     """Build one task's records and write its raw loss histories.
 
@@ -667,7 +749,11 @@ def _records_for_task(
     histories are written to ``loss_history_raw/`` as a side effect, with
     their float variables downcast to :data:`~l2co._src.databank.schema.
     STORE_DTYPE` (integer counters keep their dtype; see
-    :func:`l2co._src.databank.schema.downcast_floats`).
+    :func:`l2co._src.databank.schema.downcast_floats`). Both they and the
+    interpolated cells hold gaps to f*, and each raw file carries the
+    ``f_star`` (float64) and ``value_kind`` attributes (ADR 0027;
+    :func:`l2co._src.databank.records.to_gap`). With an
+    ``evaluation_budget``, every cell is checked against it first.
 
     Raw filenames are keyed by ``OptimizationStep.hash`` for static
     optimizers and by :func:`~l2co._src.databank.provenance.
@@ -681,7 +767,11 @@ def _records_for_task(
     hash_to_step = {step.hash: step for step in step_paths}
 
     task_ds, loss_raw, perf, opt = _build_task_records(
-        task, ds_by_step, easiest_quantile, existing_targets=existing_targets
+        task,
+        ds_by_step,
+        easiest_quantile,
+        existing_targets=existing_targets,
+        evaluation_budget=evaluation_budget,
     )
 
     loss_interp: dict[int, xr.Dataset] = {}
@@ -730,6 +820,7 @@ def _template_sample(
     easiest_quantile: float,
     budget_steps: int,
     existing_targets=None,
+    evaluation_budget: int | None = None,
 ) -> tuple[xr.Dataset, xr.Dataset]:
     """Cheaply derive one ``(loss_interp, perf)`` sample for the template.
 
@@ -744,10 +835,33 @@ def _template_sample(
     subset = _minimal_sample_steps(step_paths)
     ds_by_step = {step: xr.load_dataset(path) for step, path in subset.items()}
     _, loss_raw, perf, _ = _build_task_records(
-        task, ds_by_step, easiest_quantile, existing_targets=existing_targets
+        task,
+        ds_by_step,
+        easiest_quantile,
+        existing_targets=existing_targets,
+        evaluation_budget=evaluation_budget,
     )
     h = next(iter(loss_raw))
     return _interp_loss(loss_raw[h], budget_steps), perf[h]
+
+
+def _template_sample_run(runs: list) -> tuple[Task, dict]:
+    """The ``(task, step_paths)`` run the store template is sized from.
+
+    The template's variables are those of its one sample cell
+    (:func:`l2co._src.databank.schema.big_template`), so the sample must
+    carry the noise-free series whenever any run does (ADR 0024): the
+    first noisy task -- one with a ``loss_fn_true`` -- else the first
+    run. Told from the task, so choosing opens no file. That a noisy
+    task's runs carry the series and no other task's do is
+    :func:`l2co._src.databank.records._check_noise_free_series`, which
+    the sample's own records run first; so a store has the variable
+    exactly when one of its tasks has a ``loss_fn_true``.
+    """
+    for task, step_paths in runs:
+        if getattr(task, "loss_fn_true", None) is not None:
+            return task, step_paths
+    return runs[0]
 
 
 def _accumulate_schedule(
@@ -854,6 +968,12 @@ class DumpPlan:
         check must test "already present" against -- reading it off the
         (already-grown) store there would treat every brand-new schedule
         as pre-existing.
+    evaluation_budget : dict[str, int] | None
+        The evaluation budget B of each task this dump writes, by task
+        hash (ADR 0027), or ``None`` for an unbudgeted dump. The per-task
+        step checks and scores each task's cells against it; finalize
+        stores it, keeping the stored B of the tasks this dump does not
+        touch.
     """
 
     store: str
@@ -871,6 +991,7 @@ class DumpPlan:
     existing_targets: dict[str, list[float]] = field(default_factory=dict)
     taskset: str | None = None
     old_schedules: list[str] = field(default_factory=list)
+    evaluation_budget: dict[str, int] | None = None
 
 
 def dump_databank_template(
@@ -884,6 +1005,8 @@ def dump_databank_template(
     easiest_quantile: float = DEFAULT_EASIEST_QUANTILE,
     taskset: str | None = None,
     budget_steps: int = layout.BUDGET_STEPS,
+    evaluation_budget: Mapping[str, int] | None = None,
+    run_settings: Mapping[str, Any] | None = None,
 ) -> DumpPlan:
     """Phase A: lay out the union store; return a :class:`DumpPlan`.
 
@@ -896,7 +1019,11 @@ def dump_databank_template(
     loss history here (the one task loaded to size a fresh template's
     sample cell uses ``write_raw=False``).
 
-    Takes the same three source ExperimentData as :func:`dump_databank`.
+    Takes the same three source ExperimentData as :func:`dump_databank`,
+    and its ``evaluation_budget`` / ``run_settings``: the settings are
+    stamped (create) or checked (append) here, and the budgets travel to
+    the per-task and finalize steps in :attr:`DumpPlan.evaluation_budget`,
+    so :func:`dump_databank_task` needs no argument for them.
     Raises the same ``FileExistsError`` / ``ValueError`` as
     :func:`dump_databank` for ``mode="error"`` on an existing store, for
     an empty run set, and (``mode="append"``) for a schema mismatch
@@ -919,6 +1046,8 @@ def dump_databank_template(
         easiest_quantile=easiest_quantile,
         taskset=taskset,
         budget_steps=budget_steps,
+        evaluation_budget=evaluation_budget,
+        run_settings=run_settings,
     )
 
 
@@ -931,6 +1060,8 @@ def _dump_template_runs(
     easiest_quantile: float,
     taskset: str | None,
     budget_steps: int,
+    evaluation_budget: Mapping[str, int] | None = None,
+    run_settings: Mapping[str, Any] | None = None,
 ) -> DumpPlan:
     """Runs-level template core (f3dasm-free; shared with the tests).
 
@@ -947,6 +1078,26 @@ def _dump_template_runs(
             f"Zarr store {store} already exists; pass mode='replace' to "
             "wipe and rewrite, or mode='append' to extend it."
         )
+    # Only a store written under this code's protocol may be grown or
+    # replaced (ADR 0025). Checked before anything is restored, snapshot,
+    # grown or deleted: an old store is removed by hand, not as a side
+    # effect of a dump pointed at the wrong root.
+    if exists and mode in ("replace", "append"):
+        check_protocol(store, dataset_name, action=mode)
+    # Validated before anything is written or deleted.
+    run_settings = normalize_run_settings(run_settings)
+    budgets = _budgets_for_runs(runs, evaluation_budget)
+    if exists and mode == "append":
+        _refuse_other_settings(store, dataset_name, run_settings)
+    # Every cell against its task's B, here rather than in the per-task
+    # step, so a mismatch leaves no half-written or marked store.
+    if budgets is not None:
+        check_run_budgets(runs, budgets)
+    # The runs agree among themselves on each task's f*, in every mode;
+    # the store's f* is compared in the append step (ADR 0027).
+    _one_f_star_per_task(
+        ((task.hash, f_star_of(task)) for task, _ in runs), dataset_name
+    )
     if mode == "replace":
         if store.exists():
             shutil.rmtree(store)
@@ -968,6 +1119,7 @@ def _dump_template_runs(
             dataset_name,
             easiest_quantile,
             taskset,
+            budgets,
         )
     return _template_create(
         store,
@@ -978,7 +1130,40 @@ def _dump_template_runs(
         easiest_quantile,
         budget_steps,
         taskset,
+        budgets,
+        run_settings,
     )
+
+
+def _budgets_for_runs(
+    runs: list, evaluation_budget: Mapping[str, int] | None
+) -> dict[str, int] | None:
+    """The evaluation budget of each task in ``runs``, as plain ints.
+
+    Raises
+    ------
+    ValueError
+        ``evaluation_budget`` misses a task of the runs, or gives one a
+        B below 1.
+    """
+    if evaluation_budget is None:
+        return None
+    hashes = {task.hash for task, _ in runs}
+    missing = sorted(h for h in hashes if h not in evaluation_budget)
+    if missing:
+        raise ValueError(
+            f"evaluation_budget gives no B for task(s) {missing}: when it "
+            "is given, it must cover every task of the dump (l2co ADR "
+            "0027). Nothing was written."
+        )
+    budgets = {h: int(evaluation_budget[h]) for h in hashes}
+    bad = sorted(h for h, b in budgets.items() if b < 1)
+    if bad:
+        raise ValueError(
+            f"evaluation_budget gives task(s) {bad} a B below 1. Nothing "
+            "was written."
+        )
+    return budgets
 
 
 def _template_create(
@@ -990,6 +1175,8 @@ def _template_create(
     easiest_quantile: float,
     budget_steps: int,
     taskset: str | None,
+    budgets: dict[str, int] | None = None,
+    run_settings: dict[str, Any] | None = None,
 ) -> DumpPlan:
     """Lay out the deferred zarr template for a fresh store."""
     taskids = [task.hash for task, _ in runs]
@@ -999,9 +1186,13 @@ def _template_create(
             if step.name not in schedules:
                 schedules.append(step.name)
 
-    task0, steps0 = runs[0]
+    task0, steps0 = _template_sample_run(runs)
     sample_loss, sample_perf = _template_sample(
-        task0, steps0, easiest_quantile, budget_steps
+        task0,
+        steps0,
+        easiest_quantile,
+        budget_steps,
+        evaluation_budget=None if budgets is None else budgets[task0.hash],
     )
     template, encoding = big_template(
         sample_loss, sample_perf, taskids, schedules
@@ -1015,6 +1206,9 @@ def _template_create(
             zarr_format=3,
             consolidated=False,
         )
+    # A plain file inside the store, not a root attribute: every later
+    # ``to_zarr(mode="a")`` replaces those (ADR 0025).
+    write_stamp(store, run_settings)
 
     return DumpPlan(
         store=str(store),
@@ -1030,6 +1224,7 @@ def _template_create(
         root=str(root),
         dataset_name=dataset_name,
         taskset=taskset,
+        evaluation_budget=budgets,
     )
 
 
@@ -1056,6 +1251,16 @@ def _validate_append_schema(
     transposes explicitly at write time either way. Both raise, naming
     the old vs. incoming shapes/names and pointing at ``mode="replace"``
     as the remedy.
+
+    The noise-free series ``output_min_true`` (ADR 0024) is the one
+    variable allowed to differ, in one direction: noise-free runs may
+    join a store that has it (their cells of it stay unwritten, as in a
+    fresh mixed store), but noisy runs may not join a store without it.
+    That store's targets, and the scores of any noisy task already in
+    it, were computed from observed values, and growing it would score
+    one dataset two ways. The sample is taken from a noisy task whenever
+    the incoming runs hold one (:func:`_template_sample_run`), so the
+    check sees every incoming run.
     """
     incoming_shape: dict[str, dict[str, int]] = {}
     for sample in (sample_loss, sample_perf):
@@ -1065,6 +1270,21 @@ def _validate_append_schema(
 
     store_vars = set(loss_vars) | set(perf_vars)
     incoming_vars = set(incoming_shape)
+    if OUTPUT_MIN_TRUE in incoming_vars - store_vars:
+        raise ValueError(
+            "cannot append to the store: the incoming runs include a "
+            f"noisy task, whose noise-free series '{OUTPUT_MIN_TRUE}' the "
+            "store has no variable for. Its targets and scores were "
+            "computed from observed values; re-dump everything with "
+            "mode='replace' (see l2co ADR 0024)."
+        )
+    if OUTPUT_MIN_TRUE in store_vars - incoming_vars:
+        # Noise-free runs into a store with noisy tasks: allowed.
+        incoming_vars = incoming_vars | {OUTPUT_MIN_TRUE}
+        incoming_shape[OUTPUT_MIN_TRUE] = {
+            d: old.sizes[d]
+            for d in canonical_dims(old[OUTPUT_MIN_TRUE].dims)[2:]
+        }
     if store_vars != incoming_vars:
         raise ValueError(
             "cannot append to the store: its per-pair variables do not "
@@ -1220,6 +1440,7 @@ def _template_append(
     dataset_name: str,
     easiest_quantile: float,
     taskset: str | None,
+    budgets: dict[str, int] | None = None,
 ) -> DumpPlan:
     """Grow the existing store in place over the old ∪ new union.
 
@@ -1235,6 +1456,12 @@ def _template_append(
     value until the per-task step writes them; every untouched old cell
     is never written to, so its bytes are exactly what they were
     before this call.
+
+    A budgeted store (one with an ``evaluation_budget`` variable) takes
+    only budgeted runs whose B matches the stored B of every task it
+    already holds, and an unbudgeted store only unbudgeted runs
+    (:func:`_check_append_budgets`); like the schema, this is checked
+    before the snapshot, so a refusal leaves the store as it was.
     """
     rollback = layout.rollback_path(root, dataset_name)
     marker = layout.append_marker_path(root, dataset_name)
@@ -1264,12 +1491,20 @@ def _template_append(
         for v in (
             TASK_LABELS,
             TARGET_VALUE,
+            F_STAR,
+            EVALUATION_BUDGET,
             OPTIMIZATIONSTEP,
             PROVENANCE,
             IN_TRAINING,
         )
         if v in old.data_vars
     ]
+    _check_append_budgets(old, budgets, dataset_name)
+    # Against the restored store: a crashed append leaves new tasks with
+    # no f* yet, which a re-submit must not be refused for.
+    _refuse_other_f_star(
+        store, dataset_name, {task.hash: f_star_of(task) for task, _ in runs}
+    )
 
     taskids = list(old_taskids)
     schedules = list(old_scheds)
@@ -1280,7 +1515,7 @@ def _template_append(
             if step.name not in schedules:
                 schedules.append(step.name)
 
-    task0, steps0 = runs[0]
+    task0, steps0 = _template_sample_run(runs)
     existing0 = (
         old_targets.sel({TASK_ID: task0.hash}).values
         if task0.hash in old_taskids
@@ -1292,6 +1527,7 @@ def _template_append(
         easiest_quantile,
         budget_steps,
         existing_targets=existing0,
+        evaluation_budget=None if budgets is None else budgets[task0.hash],
     )
     _validate_append_schema(
         old, sample_loss, sample_perf, loss_vars, perf_vars
@@ -1352,7 +1588,63 @@ def _template_append(
         existing_targets=existing_targets,
         taskset=taskset,
         old_schedules=old_scheds,
+        evaluation_budget=budgets,
     )
+
+
+def _check_append_budgets(
+    old: xr.Dataset, budgets: dict[str, int] | None, dataset_name: str
+) -> None:
+    """Refuse incoming budgets that do not fit the store's (ADR 0027).
+
+    Raises
+    ------
+    ValueError
+        The store is budgeted and the runs are not, or the other way
+        round, or a task the store holds comes with another B.
+    """
+    stored = EVALUATION_BUDGET in old.data_vars
+    if not stored and budgets is None:
+        return
+    if not stored:
+        raise ValueError(
+            f"cannot append to databank '{dataset_name}': the incoming runs "
+            "come with an evaluation_budget, but the store records none, "
+            "so its cells were never checked against one. Nothing was "
+            "written. Dump without evaluation_budget, or re-dump "
+            "everything into a new store (l2co ADR 0027)."
+        )
+    if budgets is None:
+        raise ValueError(
+            f"cannot append to databank '{dataset_name}': the store records "
+            "an evaluation_budget per task, but the incoming runs come "
+            "without one. Nothing was written. Pass evaluation_budget "
+            "(l2co ADR 0027)."
+        )
+    old_taskids = [str(t) for t in old[TASK_ID].values]
+    old_b = dict(
+        zip(
+            old_taskids,
+            np.asarray(old[EVALUATION_BUDGET].values).tolist(),
+            strict=True,
+        )
+    )
+    differing = {
+        t: (int(old_b[t]), b)
+        for t, b in sorted(budgets.items())
+        if t in old_b and int(old_b[t]) != b
+    }
+    if differing:
+        detail = ", ".join(
+            f"{t}: stored {was}, incoming {now}"
+            for t, (was, now) in differing.items()
+        )
+        raise ValueError(
+            f"cannot append to databank '{dataset_name}': the incoming "
+            f"evaluation budget differs from the stored one for task(s) "
+            f"{detail}. A task's cells all share one B. Nothing was "
+            "written (l2co ADR 0027)."
+        )
 
 
 def dump_databank_task(
@@ -1425,6 +1717,11 @@ def _dump_task_runs(runs: list, plan: DumpPlan) -> list[xr.Dataset]:
             existing,
             plan.budget_steps,
             rawroot,
+            evaluation_budget=(
+                None
+                if plan.evaluation_budget is None
+                else plan.evaluation_budget[task.hash]
+            ),
         )
         ti = plan.taskids.index(task.hash)
         sched_payload: dict[str, dict[str, str]] = {}
@@ -1581,12 +1878,14 @@ def dump_databank_finalize(
 
     labels: dict[str, xr.DataArray] = {}
     targets: dict[str, xr.DataArray] = {}
+    f_stars: dict[str, xr.DataArray] = {}
+    budgets: dict[str, xr.DataArray] = {}
     recipes: dict[str, xr.DataArray] = {}
     provenances: dict[str, xr.DataArray] = {}
 
     for ds in task_smalls:
         th = str(ds.attrs["task_hash"])
-        _accumulate_task(ds, th, labels, targets)
+        _accumulate_task(ds, th, labels, targets, f_stars, budgets)
         for name, rp in json.loads(ds.attrs["schedules_json"]).items():
             _accumulate_schedule_payload(
                 name, rp["recipe"], rp["provenance"], recipes, provenances
@@ -1621,10 +1920,18 @@ def dump_databank_finalize(
                     str(old_provenances.sel({SCHEDULE: name}).values),
                     str(provenances[name].values.flat[0]),
                 )
+        old_f_stars = old[F_STAR].load() if F_STAR in old else None
+        old_budgets = (
+            old[EVALUATION_BUDGET].load() if EVALUATION_BUDGET in old else None
+        )
         for t in plan.taskids:
             if t not in labels:
                 labels[t] = old_labels.sel({TASK_ID: [t]})
                 targets[t] = old_targets.sel({TASK_ID: [t]})
+                if old_f_stars is not None:
+                    f_stars[t] = old_f_stars.sel({TASK_ID: [t]})
+                if old_budgets is not None:
+                    budgets[t] = old_budgets.sel({TASK_ID: [t]})
         for s in plan.schedules:
             if s not in recipes:
                 recipes[s] = old_recipes.sel({SCHEDULE: [s]})
@@ -1639,6 +1946,8 @@ def dump_databank_finalize(
         provenances,
         plan.taskids,
         plan.schedules,
+        f_stars=f_stars,
+        budgets=budgets,
     )
 
     _write_global_min_breaches(task_smalls, plan)

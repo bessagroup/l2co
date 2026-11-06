@@ -12,11 +12,26 @@ versa), or a store an aborted in-place append left mid-flight (see
 :mod:`l2co._src.databank.writer`). Fully-unwritten pairs are by design
 ``NaN`` and are only reported as completeness info.
 
+The noise-free series ``output_min_true`` (ADR 0024) is conditional: a
+store has it only when it holds a noisy task, and within such a store
+only the noisy tasks' cells are written. So its absence is never a
+finding, and an all-NaN cell of it is fine on its own; what is an error
+is a task that has it on some populated pairs but not on others, whose
+schedules would be scored on different series.
+
+The loss variables hold gaps to each task's ``f_star`` (ADR 0027), a
+required per-task variable; ``evaluation_budget`` is conditional, like
+the noise-free series. No check reads the sign of a loss, so the audit
+is the same for gaps and losses.
+
 Verification reads the store with ``allow_incomplete=True`` (unlike
 every other reader entry point, which refuses a mid-append store
 outright -- see :func:`l2co._src.databank.reader._open_store`): auditing
 a broken store is exactly this module's job, so a leftover append marker
-surfaces as an ``error``-level finding instead of an exception.
+surfaces as an ``error``-level finding instead of an exception. The same
+holds for the protocol stamp (ADR 0025): a store whose stamp is missing
+or names another protocol is audited as usual, and the stamp is reported
+as an ``error``-level ``store.protocol`` finding.
 
 All per-pair checks are evaluated as one batch of lazy dask reductions
 over the store and computed in a single pass, so verifying a large
@@ -42,12 +57,15 @@ import xarray as xr
 
 from l2co._src.databank import layout
 from l2co._src.databank.reader import _open_store, _resolve_task_ids
+from l2co._src.databank.stamp import DATABANK_PROTOCOL, protocol_problem
 from l2co._src.databank.tasksets import load_taskset
 
 # Local
 from l2co.naming import (
     BUDGET,
     COST,
+    EVALUATION_BUDGET,
+    F_STAR,
     FEATURE,
     FEVALS,
     IN_TRAINING,
@@ -57,6 +75,7 @@ from l2co.naming import (
     OUTPUT_DIM,
     OUTPUT_MEAN,
     OUTPUT_MIN,
+    OUTPUT_MIN_TRUE,
     OUTPUT_STD,
     PROVENANCE,
     REALIZATION,
@@ -98,12 +117,15 @@ _PERF_VARS = (SUCCESS, COST)
 _LOSS_DIMS = frozenset((TASK_ID, SCHEDULE, REALIZATION, OUTPUT_DIM, BUDGET))
 _EXPECTED_DIMS: dict[str, frozenset[str]] = {
     **{v: _LOSS_DIMS for v in _LOSS_VARS},
+    OUTPUT_MIN_TRUE: _LOSS_DIMS,
     SUCCESS: frozenset((TASK_ID, SCHEDULE, REALIZATION, OUTPUT_DIM, TARGET)),
     COST: frozenset(
         (TASK_ID, SCHEDULE, REALIZATION, OUTPUT_DIM, TARGET, METRIC)
     ),
     TASK_LABELS: frozenset((TASK_ID, FEATURE)),
     TARGET_VALUE: frozenset((TASK_ID, TARGET)),
+    F_STAR: frozenset((TASK_ID,)),
+    EVALUATION_BUDGET: frozenset((TASK_ID,)),
     OPTIMIZATIONSTEP: frozenset((SCHEDULE,)),
     PROVENANCE: frozenset((SCHEDULE,)),
     IN_TRAINING: frozenset((TASK_ID, SCHEDULE)),
@@ -113,6 +135,12 @@ _EXPECTED_DIMS: dict[str, frozenset[str]] = {
 # written before it, so a missing one is an INFO (legacy store), not an
 # ERROR. Their dims are still checked when present.
 _OPTIONAL_VARS = frozenset((PROVENANCE, IN_TRAINING))
+
+# Variables a store has only when its data calls for them: the
+# noise-free series, present iff the store holds a noisy task (ADR
+# 0024), and the per-task evaluation budget, present iff the dump was
+# given one (ADR 0027). Absent is silent; present, their dims are checked.
+_CONDITIONAL_VARS = frozenset((OUTPUT_MIN_TRUE, EVALUATION_BUDGET))
 
 # Display caps so a badly broken store still yields a readable summary.
 _MAX_FINDINGS_SHOWN = 50
@@ -250,6 +278,8 @@ def _check_structure(ds: xr.Dataset) -> list[VerificationFinding]:
     findings: list[VerificationFinding] = []
     for var, dims in _EXPECTED_DIMS.items():
         if var not in ds:
+            if var in _CONDITIONAL_VARS:
+                continue
             if var in _OPTIONAL_VARS:
                 findings.append(
                     VerificationFinding(
@@ -431,6 +461,12 @@ def _pair_summaries(ds: xr.Dataset) -> xr.Dataset:
         out[f"allnull__{var}"] = arr.isnull().all(interior)
         out[f"anypresent__{var}"] = arr.notnull().any(interior)
 
+    if OUTPUT_MIN_TRUE in ds:
+        arr = ds[OUTPUT_MIN_TRUE]
+        interior = _interior_dims(arr)
+        out["true_nonfinite"] = (~np.isfinite(arr)).sum(interior)
+        out["true_present"] = arr.notnull().any(interior)
+
     for var in _PERF_VARS:
         if var not in ds:
             continue
@@ -541,10 +577,15 @@ def _pair_findings(
             f"'{var}' decreases {{n}} time(s) along '{BUDGET}'",
         )
 
+    true_nonfinite = grid("true_nonfinite")
+    true_present = grid("true_present")
+
     findings: list[VerificationFinding] = []
     missing: list[tuple[str, str]] = []
     n_populated = 0
     for i, t in enumerate(taskids):
+        with_true: list[str] = []
+        without_true: list[str] = []
         for j, s in enumerate(schedules):
             pair = f"pair ({t}, {s})"
             if not populated[i, j]:
@@ -607,6 +648,18 @@ def _pair_findings(
                                 count=n_bad,
                             )
                         )
+                if true_present is not None:
+                    if true_present[i, j]:
+                        with_true.append(s)
+                        findings += _noise_free_findings(
+                            pair,
+                            t,
+                            s,
+                            int(true_nonfinite[i, j]),
+                            n_interior[OUTPUT_MIN_TRUE],
+                        )
+                    else:
+                        without_true.append(s)
 
             for var, counts in perf_nonfinite.items():
                 n_bad = int(counts[i, j])
@@ -640,6 +693,21 @@ def _pair_findings(
                         )
                     )
 
+        if with_true and without_true:
+            findings.append(
+                VerificationFinding(
+                    ERROR,
+                    "task.noise_free_partial",
+                    f"task {t}: the noise-free series '{OUTPUT_MIN_TRUE}' "
+                    f"is on schedules {with_true} but not on "
+                    f"{without_true}; their scores were computed from "
+                    "different series (l2co ADR 0024)",
+                    task_id=t,
+                    variable=OUTPUT_MIN_TRUE,
+                    count=len(without_true),
+                )
+            )
+
     if "tv_nonfinite" in summary:
         tv_nonfinite = summary["tv_nonfinite"].values
         tv_decreasing = summary["tv_decreasing"].values
@@ -670,6 +738,39 @@ def _pair_findings(
                 )
 
     return findings, missing, n_populated
+
+
+def _noise_free_findings(
+    pair: str, task_id: str, schedule: str, n_bad: int, n_interior: int
+) -> list[VerificationFinding]:
+    """Non-finite values in a populated pair's noise-free series.
+
+    Only called for a pair that has the series. Scattered ones are a
+    warning, as for the other loss variables; an entirely non-finite
+    series (present, so at least one ``inf``) an error.
+    """
+    if n_bad == 0:
+        return []
+    if n_bad == n_interior:
+        severity, check = ERROR, "loss.all_nonfinite"
+        message = f"{pair}: '{OUTPUT_MIN_TRUE}' is entirely non-finite"
+    else:
+        severity, check = WARNING, "loss.scattered_nonfinite"
+        message = (
+            f"{pair}: '{OUTPUT_MIN_TRUE}' has {n_bad}/{n_interior} "
+            "non-finite values"
+        )
+    return [
+        VerificationFinding(
+            severity,
+            check,
+            message,
+            task_id=task_id,
+            schedule=schedule,
+            variable=OUTPUT_MIN_TRUE,
+            count=n_bad,
+        )
+    ]
 
 
 def _subset(
@@ -729,7 +830,8 @@ def verify_databank(
       :mod:`l2co._src.databank.writer`), schema violations, and
       internal inconsistencies (non-binary or target-non-monotone
       ``success``, negative ``output_std`` or counters, non-finite /
-      unsorted ``target_value``);
+      unsorted ``target_value``, a task with the noise-free series on
+      some populated pairs only -- ``task.noise_free_partial``);
     * **info** -- completeness (fully-unwritten pairs read back as
       ``NaN`` by design and are *not* errors), non-default budget-grid
       resolution.
@@ -773,9 +875,22 @@ def verify_databank(
         empty, or no requested task/schedule is present in the store.
     """
     store = layout.zarr_store_path(root, dataset_name)
-    ds = _open_store(root, dataset_name, allow_incomplete=True)
+    ds = _open_store(
+        root, dataset_name, allow_incomplete=True, check_stamp=False
+    )
 
     findings: list[VerificationFinding] = []
+    problem = protocol_problem(store)
+    if problem is not None:
+        findings.append(
+            VerificationFinding(
+                ERROR,
+                "store.protocol",
+                f"store {problem}; this code reads and writes protocol "
+                f"'{DATABANK_PROTOCOL}', and its numbers are not comparable "
+                "with this store's. Every other reader refuses it.",
+            )
+        )
     marker = layout.append_marker_path(root, dataset_name)
     if marker.exists():
         try:
