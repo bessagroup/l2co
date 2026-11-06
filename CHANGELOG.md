@@ -7,8 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-06
+
+The databank and run protocol of the dataset paper's re-run. Stores now
+carry a protocol stamp, hold gaps to f\*, score noisy tasks on their
+noise-free values, and check an evaluation budget; stores written before
+this release are refused. Requires `bbob-jax>=3.0.0`, `l2co-tasks>=0.5.0`
+and `l2co-optimizers>=0.5.0`.
+
 ### Changed
 
+- **Stores carry a protocol stamp** (`docs/adr/0025`). Every new store
+  holds `l2co_stamp.json`, naming the run protocol (`DATABANK_PROTOCOL`)
+  it was written under. Every reader, `load_loss_raw` included, an append
+  and a `mode="replace"` dump refuse a store whose stamp is missing or
+  names another protocol (`StoreProtocolError`, a `RuntimeError`), before
+  anything is opened, written or deleted; `verify_databank` audits any
+  store and reports the stamp as a finding. **Every store written by
+  l2co 1.8.1 or earlier is refused**: re-run it, or read it with 1.8.x.
+- **Noisy tasks are scored on their noise-free value** (`docs/adr/0024`).
+  Dataset generation records `output_min_true`, the noise-free minimum
+  of each step's evaluated points (l2co-tasks `Task.loss_fn_true`,
+  l2co-optimizers' noise-free history), stores it, and the dump-time
+  scores of a noisy task (targets, ERT, breaches) read it instead of the
+  observed `output_min`.
 - **Databank stores hold gaps** (`docs/adr/0027`). The writer stores
   `output_min`, `output_min_true` and `output_mean` as f − f\* (f\* =
   the task's `global_min`, subtracted in float64 after the dump-time
@@ -26,20 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with-replacement tail and its `n_picks` argument, `ERTD_N_PICKS` is
   removed, and `compute_ert_multi_seed` lost `n_picks`. No ERTD value
   changes.
+- `RunOptimization` now calls its budget function after the optimizer is
+  built, as `budget_fn(task=task, optimizer=update_class)`. A custom budget
+  function must accept the `optimizer` keyword: `lambda task: n` now
+  raises `TypeError`; use `lambda task, optimizer: n`, or
+  `fixed_budget` / `based_on_dimensionality`, which accept and ignore it.
+- Dependency floors: `bbob-jax>=3.0.0` (CEC 2005 compositions follow the
+  official definitions), `l2co-tasks>=0.5.0` and `l2co-optimizers>=0.5.0`.
 
-### Added
-
-- `evaluation_budget=` on `dump_databank`, `dump_runs` and
-  `dump_databank_template` (B per task hash): every cell is checked
-  against its task's B, the scores are cut at B, and B is stored as the
-  per-task `evaluation_budget` variable; an append refuses a differing
-  B. Without it, nothing changes.
-- `calculate_ert(..., evaluation_budget=B)`: points with `fevals` > B
-  are ignored, and a missed run is charged at most B.
-- `run_settings=` on the same entry points, stored in the protocol stamp
-  and compared on append; `l2co.databank.check_run_settings` and
-  `RunSettingsError` for a create step to check them before any cell
-  runs.
 ### Added
 
 - `l2co.budget.evaluations_based_on_dimensionality`: every run gets the
@@ -51,14 +67,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   max_evaluations=100_000)`: the number of function evaluations B a run on
   the task gets, without needing an optimizer.
   `evaluations_based_on_dimensionality` uses it.
-
-### Changed
-
-- `RunOptimization` now calls its budget function after the optimizer is
-  built, as `budget_fn(task=task, optimizer=update_class)`. A custom budget
-  function must accept the `optimizer` keyword: `lambda task: n` now
-  raises `TypeError`; use `lambda task, optimizer: n`, or
-  `fixed_budget` / `based_on_dimensionality`, which accept and ignore it.
+- `evaluation_budget=` on `dump_databank`, `dump_runs` and
+  `dump_databank_template` (B per task hash): every cell is checked
+  against its task's B, the scores are cut at B, and B is stored as the
+  per-task `evaluation_budget` variable; an append refuses a differing
+  B. Without it, nothing changes.
+- `calculate_ert(..., evaluation_budget=B)`: points with `fevals` > B
+  are ignored, and a missed run is charged at most B.
+- `run_settings=` on the same entry points, stored in the protocol stamp
+  and compared on append; `l2co.databank.check_run_settings` and
+  `RunSettingsError` for a create step to check them before any cell
+  runs.
 
 ## [1.8.1] - 2026-11-05
 
