@@ -34,6 +34,10 @@ l2co. It is written at creation and compared for equality on every
 append and by :func:`check_run_settings`, which a create step calls
 before any cell runs. A store without settings and a caller without
 settings behave as before.
+
+:func:`check_f_star` is the create step's check of each task's f*
+against the store's ``f_star`` variable, the same one an append makes
+(:class:`FStarError`, ADR 0027). It is not part of the stamp.
 """
 
 #                                                                       Modules
@@ -44,13 +48,18 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Mapping
+import warnings
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Literal
 
+import numpy as np
+import xarray as xr
+
 from l2co._src.databank import layout
+from l2co.naming import F_STAR, TASK_ID
 
 #                                                          Authorship & Credits
 # =============================================================================
@@ -93,6 +102,10 @@ class StoreProtocolError(RuntimeError):
 
 class RunSettingsError(StoreProtocolError):
     """A store's stamp records other run settings than the caller's."""
+
+
+class FStarError(ValueError):
+    """A store holds another f* for a task than the caller's (ADR 0027)."""
 
 
 def normalize_run_settings(
@@ -348,4 +361,130 @@ def _refuse_other_settings(
         "cells made under one set of run settings. Nothing was written. "
         "Use the store's settings, or start a new store under a new "
         "databank_root or dataset name."
+    )
+
+
+def check_f_star(
+    root: Path,
+    dataset_name: str,
+    f_star_by_task: Mapping[str, float],
+) -> None:
+    """Refuse an f* that differs from the one a store holds for a task.
+
+    A store keeps one f* per task hash and holds that task's cells as
+    gaps to it, so an append refuses a task whose f* differs from the
+    stored one (ADR 0027). The create step calls this before any cell
+    runs, so a corrected minimum stops the launch before it spends
+    compute. The comparison is exact in float64, and NaN (no finite f*)
+    equals NaN. A store that does not exist yet, and a task the store
+    does not hold, pass. The store's protocol is checked first
+    (:func:`check_protocol`).
+
+    Parameters
+    ----------
+    root : pathlib.Path
+        The databank base directory.
+    dataset_name : str
+        Name of the dataset.
+    f_star_by_task : Mapping
+        The caller's f* per task hash: the task's ``global_min`` as
+        float64, NaN for a task without a finite one.
+
+    Raises
+    ------
+    StoreProtocolError
+        The store's stamp is missing or names another protocol.
+    RuntimeError
+        The store is marked mid-append: a dump crashed while appending,
+        and its f* values are not final until the next dump restores it.
+    FStarError
+        The store holds another f* for one or more of the tasks; the
+        message names each with its stored and incoming value.
+    """
+    store = layout.zarr_store_path(root, dataset_name)
+    if not store.exists():
+        return
+    check_protocol(store, dataset_name, action="append")
+    # A crashed append leaves the store half-grown: the tasks it added
+    # hold f* NaN until the next dump restores the rollback. Comparing
+    # against that would refuse a re-submit the append itself accepts.
+    if layout.append_marker_path(root, dataset_name).exists():
+        raise RuntimeError(
+            f"databank '{dataset_name}' at {store} is mid-append (a dump "
+            "crashed while appending); its f* values are not final. Re-run "
+            "the dump to restore it first, then check again."
+        )
+    _refuse_other_f_star(store, dataset_name, f_star_by_task)
+
+
+def _same_f_star(a: float, b: float) -> bool:
+    """Exact float64 equality, with NaN (no finite f*) equal to NaN."""
+    return a == b or (bool(np.isnan(a)) and bool(np.isnan(b)))
+
+
+def _one_f_star_per_task(
+    f_stars: Iterable[tuple[str, float]], dataset_name: str
+) -> dict[str, float]:
+    """The incoming f* per task hash, refusing a hash given two of them.
+
+    A dump's runs can list a task hash more than once; they must agree on
+    its f*, or one value would silently win (ADR 0027). Same comparison as
+    against the store: exact float64, NaN equals NaN.
+    """
+    first: dict[str, float] = {}
+    differing: dict[str, list[float]] = {}
+    for task, f in f_stars:
+        f = float(f)
+        if task not in first:
+            first[task] = f
+        elif not _same_f_star(first[task], f) and not any(
+            _same_f_star(seen, f) for seen in differing.get(task, [])
+        ):
+            differing.setdefault(task, [first[task]]).append(f)
+    if not differing:
+        return first
+    detail = ", ".join(
+        f"{t}: " + " and ".join(repr(v) for v in values)
+        for t, values in sorted(differing.items())
+    )
+    raise FStarError(
+        f"the runs to dump into databank '{dataset_name}' give more than "
+        f"one f* (global_min) for task(s) {detail}. A store holds one f* "
+        "per task, and its cells of that task are all gaps to it. Nothing "
+        "was written (l2co ADR 0027)."
+    )
+
+
+def _refuse_other_f_star(
+    store: Path,
+    dataset_name: str,
+    f_star_by_task: Mapping[str, float],
+) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ds = xr.open_zarr(store, consolidated=True)
+    stored = dict(
+        zip(
+            (str(t) for t in ds[TASK_ID].values),
+            np.asarray(ds[F_STAR].values, dtype=np.float64).tolist(),
+            strict=True,
+        )
+    )
+    differing = {
+        t: (stored[t], float(f))
+        for t, f in sorted(f_star_by_task.items())
+        if t in stored and not _same_f_star(stored[t], float(f))
+    }
+    if not differing:
+        return
+    detail = ", ".join(
+        f"{t}: stored {was!r}, incoming {now!r}"
+        for t, (was, now) in differing.items()
+    )
+    raise FStarError(
+        f"databank '{dataset_name}' at {store} holds another f* "
+        f"(global_min) for task(s) {detail}. A store's cells of a task are "
+        "all stored as gaps to one f*, and an append cannot change a "
+        "store's f* (a tool to update it is future work). Nothing was "
+        "written (l2co ADR 0027)."
     )

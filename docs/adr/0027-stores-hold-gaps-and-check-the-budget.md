@@ -31,6 +31,27 @@ for the 10⁻⁸ targets. So the store and the raw files hold f − f\*.
   `f_star`, next to `target_value`. Each raw netCDF file carries `f_star`
   (float64) and `value_kind` (`"gap"` or `"raw"`) as attributes, so it
   describes itself outside l2co. The stamp has no `value_kind` field.
+- **One f\* per task, fixed by the store.** l2co-tasks 0.5.0 leaves
+  `global_min` out of `Task.hash`, so a task whose minimum is corrected
+  keeps its hash and can arrive with another f\*. Mixing the two would
+  hold one task's cells as gaps to two values. So an append refuses,
+  in the template step before anything is written, deleted or marked,
+  every incoming task whose f\* (`records.f_star_of`) differs from the
+  stored `f_star` of the same hash, and names each with both values.
+  It compares after a leftover rollback from a crashed append is
+  restored, so the half-grown store's new tasks (no f\* yet) do not
+  block a re-submit. The runs of one dump, in any mode, must also
+  agree among themselves: a task hash listed twice with two f\* values
+  is refused before anything is written or deleted, or one value would
+  silently win.
+  The comparison is exact in float64, and NaN (no finite f\*) equals
+  NaN. An append cannot change a store's f\*; a tool to update it is
+  future work. `check_f_star(root, dataset_name, f_star_by_task)` is
+  the same check for a create step, as for the run settings (g); on a
+  store a crashed append left mid-append it raises instead of comparing,
+  since the tasks that append added hold f\* NaN until it is restored. The
+  refusal is `FStarError`, a `ValueError` like the budget refusals:
+  the store's protocol is not in question, the incoming data is.
 - **Readers add f\* back** in float64: `reader._load_one`, the helper
   behind every `load_databank*` call (overlay reads included, store by
   store), and `load_loss_raw`. They return losses, as float64.
@@ -57,7 +78,8 @@ it must cover every task of the dump, and:
 - **B is stored** per task as the int variable `evaluation_budget`.
 - **An append refuses**, before anything is written: a task whose
   incoming B differs from the stored one, budgeted runs into a store
-  without the variable, and unbudgeted runs into a store with it.
+  without the variable, and unbudgeted runs into a store with it. It
+  also refuses a differing f\* (see c).
 - **On the parallel path**, the template step takes the keyword and
   hands B on in `DumpPlan.evaluation_budget`. So `dump_databank_task`
   needs no new argument.

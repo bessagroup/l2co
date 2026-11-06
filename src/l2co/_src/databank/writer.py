@@ -116,6 +116,7 @@ from l2co._src.databank.records import (
     _build_task_records,
     _iter_task_runs,
     check_run_budgets,
+    f_star_of,
 )
 from l2co._src.databank.schema import (
     STORE_DTYPE,
@@ -125,6 +126,8 @@ from l2co._src.databank.schema import (
     to_region_cell,
 )
 from l2co._src.databank.stamp import (
+    _one_f_star_per_task,
+    _refuse_other_f_star,
     _refuse_other_settings,
     check_protocol,
     normalize_run_settings,
@@ -1090,6 +1093,11 @@ def _dump_template_runs(
     # step, so a mismatch leaves no half-written or marked store.
     if budgets is not None:
         check_run_budgets(runs, budgets)
+    # The runs agree among themselves on each task's f*, in every mode;
+    # the store's f* is compared in the append step (ADR 0027).
+    _one_f_star_per_task(
+        ((task.hash, f_star_of(task)) for task, _ in runs), dataset_name
+    )
     if mode == "replace":
         if store.exists():
             shutil.rmtree(store)
@@ -1492,6 +1500,11 @@ def _template_append(
         if v in old.data_vars
     ]
     _check_append_budgets(old, budgets, dataset_name)
+    # Against the restored store: a crashed append leaves new tasks with
+    # no f* yet, which a re-submit must not be refused for.
+    _refuse_other_f_star(
+        store, dataset_name, {task.hash: f_star_of(task) for task, _ in runs}
+    )
 
     taskids = list(old_taskids)
     schedules = list(old_scheds)

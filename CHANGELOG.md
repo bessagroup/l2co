@@ -53,6 +53,15 @@ and `l2co-optimizers>=0.5.0`.
   function must accept the `optimizer` keyword: `lambda task: n` now
   raises `TypeError`; use `lambda task, optimizer: n`, or
   `fixed_budget` / `based_on_dimensionality`, which accept and ignore it.
+- **An append refuses a task whose f\* differs from the stored one**
+  (`docs/adr/0027`). With l2co-tasks 0.5.0 a corrected `global_min` no
+  longer changes the task hash, so the same task can arrive with another
+  f\*. The append now stops before anything is written, deleted or
+  marked, naming each such task with its stored and incoming f\*
+  (`FStarError`); NaN (no finite f\*) equals NaN. Before, the incoming
+  f\* silently replaced the stored one for the tasks a dump wrote. A
+  dump (create, replace or append) also refuses runs that give one task
+  hash two different f\* values.
 - Dependency floors: `bbob-jax>=3.0.0` (CEC 2005 compositions follow the
   official definitions), `l2co-tasks>=0.5.0` and `l2co-optimizers>=0.5.0`.
 
@@ -78,6 +87,10 @@ and `l2co-optimizers>=0.5.0`.
   and compared on append; `l2co.databank.check_run_settings` and
   `RunSettingsError` for a create step to check them before any cell
   runs.
+- `l2co.databank.check_f_star(root, dataset_name, f_star_by_task)` and
+  `FStarError` (a `ValueError`): a create step checks each task's f\*
+  against the store before any cell runs. A missing store, and a task
+  the store does not hold, pass; a store left mid-append is refused.
 
 ## [1.8.1] - 2026-11-05
 

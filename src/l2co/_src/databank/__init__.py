@@ -46,8 +46,10 @@ from l2co._src.databank.reader import (
 from l2co._src.databank.records import loss_preprocess
 from l2co._src.databank.stamp import (
     DATABANK_PROTOCOL,
+    FStarError,
     RunSettingsError,
     StoreProtocolError,
+    check_f_star,
     check_run_settings,
     store_stamp,
 )
@@ -71,12 +73,14 @@ __all__ = [
     "DATABANK_PROTOCOL",
     "DatabankVerificationReport",
     "DumpPlan",
+    "FStarError",
     "MissingManifestError",
     "RunSettingsError",
     "StoreProtocolError",
     "VerificationFinding",
     "WeightsHashMismatchError",
     "bump_manifest",
+    "check_f_star",
     "check_run_settings",
     "databank_root",
     "dump_databank",
