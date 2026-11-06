@@ -73,16 +73,16 @@ wheels = [
 
 [[package]]
 name = "bbob-jax"
-version = "2.1.0"
+version = "3.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jax" },
     { name = "jaxtyping" },
     { name = "softjax" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fa/04/ec72e4867449a402d9b899d120f5a40a78c70478d1d358dc94f08c2d5399/bbob_jax-2.1.0.tar.gz", hash = "sha256:54c2cbade81e0503d5f5ddf5a8b2c58969adc1e8702b0869dfa31d66b4838fdf", size = 1246391, upload-time = "2026-08-21T10:35:07.371Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/dd/74/078907f72fd21a18f8c38221ed16f2033535b64064f6aa611e58891c4dea/bbob_jax-3.0.0.tar.gz", hash = "sha256:494b9ebfdb0ab722982f212f4729d584d3540a0d2e84f1e70c6dd2d68c406b3f", size = 1263170, upload-time = "2026-11-05T21:39:16.645Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/21/d9/d3925b4cdcc709d4178ffcd1a2fbd500fd595c8d58a94ba91b0e2b93ff1d/bbob_jax-2.1.0-py3-none-any.whl", hash = "sha256:35b787afa3a44e1987e0fa8321ec3cabfe43b33e516d6708f0c931886939e274", size = 1231463, upload-time = "2026-08-21T10:35:05.869Z" },
+    { url = "https://files.pythonhosted.org/packages/81/16/b9cd4a56499499911aa4d2ecb1a6e0a6a141510f43940ab663e1d29837b4/bbob_jax-3.0.0-py3-none-any.whl", hash = "sha256:6ce309f2e3e579a0939b73344193f0abde50d5449ce47eafedd0054adcbab44c", size = 1234368, upload-time = "2026-11-05T21:39:15.218Z" },
 ]
 
 [[package]]
@@ -710,7 +710,7 @@ wheels = [
 
 [[package]]
 name = "f3dasm"
-version = "2.4.0"
+version = "2.4.1"
 source = { editable = "../f3dasm" }
 dependencies = [
     { name = "cloudpickle" },
@@ -743,13 +743,13 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.0.3" },
     { name = "pathos", specifier = ">=0.3.4" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.4.0" },
-    { name = "pymdown-extensions", marker = "extra == 'docs'", specifier = ">=10.16.1" },
+    { name = "pymdown-extensions", marker = "extra == 'docs'", specifier = ">=10.16.1,<12" },
     { name = "pytest", marker = "extra == 'tests'", specifier = ">=8.4.1" },
     { name = "pytest-cov", marker = "extra == 'tests'", specifier = ">=6.2.1" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.14.10" },
     { name = "salib", specifier = ">=1.5.2" },
-    { name = "scipy", marker = "extra == 'all'", specifier = ">=1.10.1" },
-    { name = "scipy", marker = "extra == 'scipy'", specifier = ">=1.10.1" },
+    { name = "scipy", marker = "extra == 'all'", specifier = ">=1.15" },
+    { name = "scipy", marker = "extra == 'scipy'", specifier = ">=1.15" },
     { name = "xarray", specifier = ">=2023.1.0" },
 ]
 provides-extras = ["all", "dev", "docs", "figures", "scipy", "tests"]
@@ -1220,7 +1220,7 @@ wheels = [
 
 [[package]]
 name = "l2co"
-version = "1.8.1"
+version = "2.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "bbob-jax" },
@@ -1270,7 +1270,7 @@ tests = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bbob-jax", specifier = ">=2.1.0" },
+    { name = "bbob-jax", specifier = ">=3.0.0" },
     { name = "bessaplots", editable = "../bessaplots" },
     { name = "bottleneck", specifier = ">=1.6.0" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.3.0" },
@@ -1310,7 +1310,7 @@ provides-extras = ["dev", "docs", "tests"]
 
 [[package]]
 name = "l2co-optimizers"
-version = "0.4.0"
+version = "0.5.0"
 source = { editable = "../l2co-optimizers" }
 dependencies = [
     { name = "casadi" },
@@ -1363,7 +1363,7 @@ provides-extras = ["dev", "docs", "tests"]
 
 [[package]]
 name = "l2co-tasks"
-version = "0.4.0"
+version = "0.5.0"
 source = { editable = "../l2co-tasks" }
 dependencies = [
     { name = "bbob-jax" },
@@ -1382,7 +1382,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bbob-jax", specifier = ">=2.1.0" },
+    { name = "bbob-jax", specifier = ">=3.0.0" },
     { name = "build", marker = "extra == 'dev'" },
     { name = "cloudpickle", specifier = ">=3.1.1" },
     { name = "equinox", specifier = ">=0.13.0" },
