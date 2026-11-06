@@ -176,6 +176,18 @@ so it describes itself outside l2co:
 The readers add f* back in float64 (see Reading), so callers keep getting
 losses. Code that reads the raw files or the zarr store directly sees gaps.
 
+A store holds one f* per task. Since l2co-tasks 0.5.0 leaves `global_min`
+out of `Task.hash`, a task with a corrected minimum keeps its hash, so an
+append refuses, in the template step before anything is written, deleted or
+marked, every incoming task whose f* (`records.f_star_of`) differs from the
+stored `f_star`, naming each with both values (`FStarError`, a `ValueError`).
+The comparison is exact in float64, and NaN equals NaN. An append cannot
+change a store's f*; a tool to update it is future work. Every dump, in any
+mode, also refuses runs that list one task hash with two different f* values.
+`check_f_star(root, dataset_name, f_star_by_task)` makes the same check for a
+create step: it first checks the protocol, refuses a store left mid-append, and
+passes for a missing store and for tasks the store does not hold.
+
 ### The evaluation budget
 
 `evaluation_budget=` on `dump_databank`, `dump_runs` and

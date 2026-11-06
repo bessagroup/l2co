@@ -27,8 +27,10 @@ from l2co._src.databank.reader import (
 )
 from l2co._src.databank.stamp import (
     DATABANK_PROTOCOL,
+    FStarError,
     RunSettingsError,
     StoreProtocolError,
+    check_f_star,
     check_run_settings,
     store_stamp,
 )
@@ -289,6 +291,9 @@ def test_the_facade_exports_the_stamp():
     assert databank.check_run_settings is check_run_settings
     assert databank.RunSettingsError is RunSettingsError
     assert issubclass(RunSettingsError, StoreProtocolError)
+    assert databank.check_f_star is check_f_star
+    assert databank.FStarError is FStarError
+    assert issubclass(FStarError, ValueError)
 
 
 def test_the_gap_change_bumped_the_protocol():
@@ -395,6 +400,49 @@ def test_check_run_settings_refuses_another_protocol_first(
     _restamp(root, "some-older-protocol")
     with pytest.raises(StoreProtocolError, match="some-older-protocol"):
         check_run_settings(root, NAME, SETTINGS)
+
+
+#                                                     f* per task (ADR 0027)
+# =============================================================================
+
+
+def test_check_f_star_for_the_create_step(tmp_path, tasks, steps):
+    """A create step learns before any cell runs that a task's corrected
+    minimum would be refused by the dump's append."""
+    t0, t1 = tasks  # both stored with global_min 0.0
+    # No store yet: nothing to compare with.
+    assert (
+        databank.check_f_star(tmp_path / "nowhere", NAME, {t0.hash: 1.0})
+        is None
+    )
+    root = _store(tmp_path, tasks, steps)
+    assert databank.check_f_star(root, NAME, {t0.hash: 0.0}) is None
+    # A task the store does not hold passes, whatever its f*.
+    assert databank.check_f_star(root, NAME, {"not-stored": 7.0}) is None
+    with pytest.raises(databank.FStarError) as err:
+        databank.check_f_star(
+            root, NAME, {t0.hash: -2.5, t1.hash: float("nan")}
+        )
+    msg = str(err.value)
+    assert f"{t0.hash}: stored 0.0, incoming -2.5" in msg
+    assert f"{t1.hash}: stored 0.0, incoming nan" in msg
+    assert "cannot change" in msg
+
+
+def test_check_f_star_refuses_a_store_left_mid_append(tmp_path, tasks, steps):
+    """A crashed append's half-grown store holds f* NaN for the tasks it
+    added, so the check says the store is mid-append instead of comparing."""
+    root = _store(tmp_path, tasks, steps)
+    layout.append_marker_path(root, NAME).write_text("{}")
+    with pytest.raises(RuntimeError, match="mid-append"):
+        databank.check_f_star(root, NAME, {tasks[0].hash: 0.0})
+
+
+def test_check_f_star_refuses_another_protocol_first(tmp_path, tasks, steps):
+    root = _store(tmp_path, tasks, steps)
+    _restamp(root, "some-older-protocol")
+    with pytest.raises(StoreProtocolError, match="some-older-protocol"):
+        databank.check_f_star(root, NAME, {tasks[0].hash: 0.0})
 
 
 def test_run_settings_must_be_a_json_mapping(tmp_path, tasks, steps):

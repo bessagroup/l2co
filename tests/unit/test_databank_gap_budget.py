@@ -526,6 +526,118 @@ def test_append_refuses_a_differing_budget_before_touching_the_store(
     assert not layout.append_marker_path(root, NAME).exists()
 
 
+def _f_star_store(tmp_path, task, steps) -> Path:
+    root = tmp_path / "db"
+    _dump(root, _write_raw_runs(tmp_path / "a", [(task, 13)], steps))
+    return root
+
+
+def _append_refused_untouched(root, runs, match):
+    """The append raises ``FStarError`` and leaves every file as it was."""
+    store = layout.zarr_store_path(root, NAME)
+    rawroot = layout.raw_root(root, NAME)
+    before, raw_before = _snapshot(store), _snapshot(rawroot)
+    with pytest.raises(databank.FStarError, match=match) as err:
+        _dump(root, runs, mode="append")
+    assert _snapshot(store) == before
+    assert _snapshot(rawroot) == raw_before
+    assert not layout.append_marker_path(root, NAME).exists()
+    assert not layout.rollback_path(root, NAME).exists()
+    return str(err.value)
+
+
+def test_append_refuses_a_differing_f_star_before_touching_the_store(
+    tmp_path, tasks, steps
+):
+    """The same task hash with a corrected minimum: cells scored against
+    two f* values must not mix in one store."""
+    root = _f_star_store(tmp_path, tasks[0], steps)
+    moved = dataclasses.replace(tasks[0], global_min=-2.5)
+    extra = OptimizationStep(optimizer="sgd", hyperparameters={"lr": 0.1})
+    runs_b = _write_raw_runs(tmp_path / "b", [(moved, 13)], [extra])
+    msg = _append_refused_untouched(root, runs_b, "a1b2c3")
+    assert "stored 0.0" in msg
+    assert "incoming -2.5" in msg
+    assert "cannot change" in msg
+
+
+@pytest.mark.parametrize(
+    ("stored", "incoming", "stored_txt", "incoming_txt"),
+    [
+        (4.0, None, "stored 4.0", "incoming nan"),
+        (None, 4.0, "stored nan", "incoming 4.0"),
+    ],
+    ids=["finite-then-none", "none-then-finite"],
+)
+def test_append_refuses_a_minimum_gained_or_lost(
+    tmp_path, steps, stored, incoming, stored_txt, incoming_txt
+):
+    task = FakeTask("g1", "sphere", 10, global_min=stored)
+    root = _f_star_store(tmp_path, task, steps)
+    moved = dataclasses.replace(task, global_min=incoming)
+    runs_b = _write_raw_runs(tmp_path / "b", [(moved, 13)], steps)
+    msg = _append_refused_untouched(root, runs_b, "g1")
+    assert stored_txt in msg
+    assert incoming_txt in msg
+
+
+def test_append_of_a_task_with_the_same_f_star_is_accepted(tmp_path, steps):
+    task = FakeTask("s1", "sphere", 10, global_min=-2.5)
+    root = _f_star_store(tmp_path, task, steps)
+    extra = OptimizationStep(optimizer="sgd", hyperparameters={"lr": 0.1})
+    _dump(
+        root,
+        _write_raw_runs(tmp_path / "b", [(task, 13)], [extra]),
+        mode="append",
+    )
+    ds = load_databank_dataset(NAME, [extra.name], root)
+    assert float(ds[F_STAR].sel({TASK_ID: "s1"})) == -2.5
+
+
+def test_append_of_a_task_without_f_star_again_is_accepted(tmp_path, steps):
+    """No finite minimum on either side is the same f*: NaN equals NaN."""
+    task = FakeTask("nf", "sphere", 10, global_min=None)
+    root = _f_star_store(tmp_path, task, steps)
+    extra = OptimizationStep(optimizer="sgd", hyperparameters={"lr": 0.1})
+    _dump(
+        root,
+        _write_raw_runs(tmp_path / "b", [(task, 13)], [extra]),
+        mode="append",
+    )
+    ds = load_databank_dataset(NAME, [extra.name], root)
+    assert np.isnan(float(ds[F_STAR].sel({TASK_ID: "nf"})))
+
+
+def _two_f_stars_in_one_dump(tmp_path, steps):
+    """One task hash twice in ``runs``, with two different minima."""
+    task = FakeTask("dup", "sphere", 10, global_min=0.0)
+    moved = dataclasses.replace(task, global_min=-2.5)
+    extra = OptimizationStep(optimizer="sgd", hyperparameters={"lr": 0.1})
+    return _write_raw_runs(tmp_path / "c", [(task, 13)], steps) + (
+        _write_raw_runs(tmp_path / "d", [(moved, 13)], [extra])
+    )
+
+
+def test_a_create_refuses_one_task_with_two_f_stars(tmp_path, steps):
+    """The incoming runs must agree among themselves on each task's f*,
+    or one f* would silently win."""
+    root = tmp_path / "db"
+    runs = _two_f_stars_in_one_dump(tmp_path, steps)
+    with pytest.raises(databank.FStarError, match="dup") as err:
+        _dump(root, runs)
+    assert "0.0" in str(err.value)
+    assert "-2.5" in str(err.value)
+    assert not layout.zarr_store_path(root, NAME).exists()
+    assert not layout.raw_root(root, NAME).exists()
+
+
+def test_an_append_refuses_one_task_with_two_f_stars(tmp_path, tasks, steps):
+    root = _f_star_store(tmp_path, tasks[0], steps)
+    runs = _two_f_stars_in_one_dump(tmp_path, steps)
+    msg = _append_refused_untouched(root, runs, "dup")
+    assert "-2.5" in msg
+
+
 def test_append_with_the_same_budget_extends_the_variable(
     tmp_path, tasks, steps
 ):

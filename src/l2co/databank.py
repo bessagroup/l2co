@@ -35,6 +35,8 @@ losses. Given ``evaluation_budget=`` (B per task hash), the dump checks
 every cell against its task's B, cuts the scores at B and stores B; given
 ``run_settings=``, the stamp records them and an append refuses others
 (:class:`RunSettingsError`; :func:`check_run_settings` for a create step).
+An append also refuses a task whose f* differs from the stored one
+(:class:`FStarError`; :func:`check_f_star` for a create step).
 See ``docs/adr/0027-stores-hold-gaps-and-check-the-budget.md``.
 
 Learned optimizers (rl2co / l2co policies) enter the store as regular
@@ -57,12 +59,14 @@ from l2co._src.databank import (
     DATABANK_PROTOCOL,
     DatabankVerificationReport,
     DumpPlan,
+    FStarError,
     MissingManifestError,
     RunSettingsError,
     StoreProtocolError,
     VerificationFinding,
     WeightsHashMismatchError,
     bump_manifest,
+    check_f_star,
     check_run_settings,
     databank_root,
     dump_databank,
@@ -110,12 +114,14 @@ __all__ = [
     "DATABANK_PROTOCOL",
     "DatabankVerificationReport",
     "DumpPlan",
+    "FStarError",
     "MissingManifestError",
     "RunSettingsError",
     "StoreProtocolError",
     "VerificationFinding",
     "WeightsHashMismatchError",
     "bump_manifest",
+    "check_f_star",
     "check_run_settings",
     "databank_root",
     "dump_databank",
