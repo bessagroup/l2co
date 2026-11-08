@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-11-08
+
+### Fixed
+
+- **A dump of a task whose cells differ in length no longer fails.** Under
+  the evaluation budget a task's cells record different numbers of steps
+  (B for random search and first-order methods, about B / lambda for a
+  population method), and the run histories carry no `budget` coordinate,
+  so combining them to score the task raised `AlignmentError: cannot
+  reindex or align along dimension 'budget'` in both the template step
+  of a new store and every per-task step. `_build_task_records` now
+  extends each cell to the longest one by repeating its last recorded
+  step before scoring (a finished run stays at its final state), which
+  leaves every cell's ERT, successes and breaches unchanged. Stored cells
+  and raw histories are written as they ran.
+
 ## [2.0.0] - 2026-11-06
 
 The databank and run protocol of the dataset paper's re-run. Stores now
