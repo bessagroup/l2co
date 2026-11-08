@@ -196,6 +196,35 @@ _BUDGET_REMEDY = (
 )
 
 
+def _align_cell_lengths(
+    ds_by_step: dict[OptimizationStep, xr.Dataset],
+) -> dict[OptimizationStep, xr.Dataset]:
+    """A task's cells at one common length, for scoring them together.
+
+    Under the evaluation budget a task's cells record different numbers
+    of steps (B for random search, about B / lambda for a population
+    method), and the run loop's histories carry no ``budget``
+    coordinate, so they cannot be combined as they are. Each cell gets a
+    ``budget`` index and is extended to the longest cell by repeating
+    its last recorded step: a run that has ended stays at its final
+    state (its evaluations, its best value), which leaves its ERT, its
+    successes and its breaches unchanged. Values inside a run are not
+    touched. Only the combined scoring sees the extension; every cell
+    is stored, and its raw history written, as it ran.
+    """
+    longest = max(ds.sizes[BUDGET] for ds in ds_by_step.values())
+    out = {}
+    for step, ds in ds_by_step.items():
+        n = ds.sizes[BUDGET]
+        indexed = ds.assign_coords({BUDGET: np.arange(n)})
+        if n < longest:
+            indexed = indexed.reindex(
+                {BUDGET: np.arange(longest)}, method="ffill"
+            )
+        out[step] = indexed
+    return out
+
+
 def _check_cell_budgets(
     task: Task,
     ds_by_step: dict[OptimizationStep, xr.Dataset],
@@ -575,10 +604,11 @@ def _build_task_records(
         _check_cell_budgets(task, ds_by_step, int(evaluation_budget))
 
     gmin = task.global_min if task.global_min is not None else np.nan
+    aligned = _align_cell_lengths(ds_by_step)
     b = xr.concat(
         [
             ds.expand_dims({SCHEDULE: [step.name]})
-            for step, ds in ds_by_step.items()
+            for step, ds in aligned.items()
         ],
         dim=SCHEDULE,
         coords="minimal",
