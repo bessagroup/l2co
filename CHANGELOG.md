@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`l2co.data.time_shared_portfolio`: the time-shared portfolio of
+  stored schedules as a schedule of its own** (l2co#115). Run r of the
+  portfolio interleaves run r of K members in round robin, with no state
+  transfer: `best_portfolio(F) = min_k best_k(w_k F)`. It is built from
+  the stored histories, with no new optimization, on the members' budget
+  grid, with `output_min` (and `output_min_true` for noisy tasks),
+  `fevals` and `iterations`, so `calculate_ert`, ERTD and AUC read it
+  unchanged. Options: `weights` (equal by default) and `granularity`
+  (`"fevals"`, idealized, or whole `"iterations"`). The schedule is named
+  `portfolio(<m1>+<m2>+...)` and its attrs mark it as derived.
+
 ## [2.0.1] - 2026-11-08
 
 ### Fixed
