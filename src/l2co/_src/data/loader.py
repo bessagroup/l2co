@@ -36,6 +36,7 @@ from typing import Any, Literal
 # Third-party
 import jax
 import numpy as np
+import pandas as pd
 import xarray as xr
 
 from l2co._src.data.baselines import calculate_sbs, calculate_vbs
@@ -599,6 +600,166 @@ class DataLoader:
 
         return replace(self, data=data)
 
+    def create_run_strategy(
+        self, schedule: str, choices: xr.DataArray, name: str
+    ) -> DataLoader:
+        """Create a pseudo-schedule from one run of ``schedule`` per task.
+
+        The derived-schedule counterpart of :meth:`create_strategy` one
+        level down: where that picks a *schedule* per problem, this picks
+        a *run* (a realization) of one schedule per task, and copies the
+        picked run into every realization slot of its task. The restart
+        bootstrap of :meth:`ertd_profile` then only ever draws that run,
+        so the pseudo-schedule's expected runtime is the run's own cost.
+
+        Parameters
+        ----------
+        schedule : str
+            The schedule whose runs are picked from.
+        choices : xr.DataArray
+            The picked realization (a ``realization`` value, not a
+            position) per ``taskID``.
+        name : str
+            Name for the new pseudo-schedule.
+
+        Returns
+        -------
+        DataLoader
+            Loader with the pseudo-schedule appended along the schedule
+            dimension; the existing schedules are left as they are.
+        """
+        tasks = self.data[TASK_ID].values
+        runs = self.data[REALIZATION].values
+        position = {
+            key: i for i, key in enumerate(zip(runs, tasks, strict=True))
+        }
+        picked = choices.sel({TASK_ID: xr.DataArray(tasks)}).values
+        index = [position[(p, t)] for p, t in zip(picked, tasks, strict=True)]
+
+        strategy = (
+            self.data.sel({SCHEDULE: schedule}, drop=True)
+            .isel({PROBLEM: index})
+            .drop_vars([PROBLEM, REALIZATION, TASK_ID])
+            .assign_coords(
+                xr.Coordinates.from_pandas_multiindex(
+                    self.data.indexes[PROBLEM], PROBLEM
+                )
+            )
+            .expand_dims({SCHEDULE: [name]})
+        )
+        data = xr.concat([self.data, strategy], dim=SCHEDULE)
+        return replace(self, data=data)
+
+    def create_best_run_strategy(
+        self,
+        schedule: str,
+        name: str = "random_best_of_N",
+        cost_values: np.ndarray = DEFAULT_COST_VALUES,
+        realizations: Sequence[int] | None = None,
+    ) -> DataLoader:
+        """Add the best-of-N reference: per task, the best run of a schedule.
+
+        A tractable stand-in for the best *dynamic* schedule, which is
+        intractable to compute. For each task, of the N runs of
+        ``schedule`` (in practice the uniform-random schedule, so N is
+        its realization count) the one whose own ERTD curve has the
+        largest area is picked and scored as a schedule of its own
+        (:meth:`create_run_strategy`).
+
+        Runs are ranked by the area under the curve :meth:`ertd_profile`
+        draws for the run alone (the fraction of targets reached within
+        each cost per dimension, on fevals, averaged over
+        ``cost_values``), so per task the reference's area is at least
+        every run's on fevals; the iterations rows draw the same pick, so
+        there it need not beat every run. Ties go to the run that
+        reached more targets, then to a valid run over a hole (a run
+        with no data, such as a timed-out cell), then to the lower
+        realization. The targets were scored on
+        :func:`~l2co._src.performance.scoring_loss` when the data was
+        made, so a noisy task is ranked on its noise-free series.
+
+        The reference is **optimistic**: it selects on the outcome, so it
+        knows which run will do best before any of them is run. And as
+        the picked run fills every realization slot of its task, a
+        simulated restart only ever repeats that run: its expected
+        runtime is the run's own cost, and a target the run missed stays
+        missed. Only the per-task best-area variant is offered; a
+        per-target pick would mix runs within a task.
+
+        Parameters
+        ----------
+        schedule : str
+            The schedule whose runs are picked from.
+        name : str, optional
+            Name for the new pseudo-schedule, by default
+            ``"random_best_of_N"``.
+        cost_values : np.ndarray, optional
+            The cost-per-dimension grid the area is taken over, by
+            default ``DEFAULT_COST_VALUES``: pass the grid of the profile
+            the reference is drawn in.
+        realizations : Sequence[int], optional
+            Positional indices of the runs that may be picked, by default
+            None (every run): pass the restart pool of the profile, as
+            :meth:`ertd_profile` does, so that disjoint halves stay
+            independent estimates.
+
+        Returns
+        -------
+        DataLoader
+            Loader with the pseudo-schedule appended.
+        """
+        area = self._run_ertd_area(schedule, cost_values)
+        reached = (
+            self.data[SUCCESS]
+            .sel({SCHEDULE: schedule}, drop=True)
+            .sum([OUTPUT_DIM, TARGET])
+        )
+        valid = self.valid_files.sel({SCHEDULE: schedule}, drop=True).isel(
+            {OUTPUT_DIM: 0}, drop=True
+        )
+        ranked = pd.DataFrame(
+            {
+                "area": area.values,
+                "reached": reached.values,
+                "valid": valid.values,
+                REALIZATION: self.data[REALIZATION].values,
+                TASK_ID: self.data[TASK_ID].values,
+            }
+        )[_in_realization_pool(self.data, realizations).values].sort_values(
+            ["area", "reached", "valid", REALIZATION],
+            ascending=[False, False, False, True],
+        )
+        best = ranked.drop_duplicates(TASK_ID).set_index(TASK_ID)
+        choices = xr.DataArray(
+            best[REALIZATION].values,
+            dims=[TASK_ID],
+            coords={TASK_ID: best.index.values},
+        )
+        return self.create_run_strategy(schedule, choices, name)
+
+    def _run_ertd_area(
+        self, schedule: str, cost_values: np.ndarray
+    ) -> xr.DataArray:
+        """Area under each run's own ERTD curve, per problem.
+
+        The curve :meth:`ertd_profile` would draw for the run alone: the
+        fraction of targets it reached within each cost per dimension,
+        on the fevals metric, averaged over the grid.
+        """
+        grid = np.unique(cost_values)
+        data = self.data.sel({SCHEDULE: schedule}, drop=True)
+        dims = self.task_labels.sel({FEATURE: "dimensionality"}, drop=True)
+        cost = data[COST].sel({METRIC: FEVALS}, drop=True) / dims.astype(float)
+        # Grid points at or above a run's cost per dimension, over the grid.
+        covered = xr.apply_ufunc(
+            lambda x: (grid.size - np.searchsorted(grid, x, side="left"))
+            / grid.size,
+            cost,
+            dask="parallelized",
+        )
+        reached = data[SUCCESS].fillna(0.0).astype(bool) & cost.notnull()
+        return covered.where(reached, 0.0).mean([OUTPUT_DIM, TARGET])
+
     def isel(self, problems: Iterable[int]) -> DataLoader:
         """
         Select a subset of problems of the loader.
@@ -859,6 +1020,7 @@ class DataLoader:
         seed_batch: int = ERTD_SEED_BATCH,
         realizations: Sequence[int] | None = None,
         include_task_best: bool = False,
+        include_random_best: str | None = None,
     ) -> xr.DataArray:
         """
         Compute the expected runtime distribution (ERTD) profile.
@@ -909,6 +1071,16 @@ class DataLoader:
             schedule for the whole selection -- is not a per-task
             quantity, so it is not offered here; see
             :meth:`single_best_schedule`.
+        include_random_best : str, optional
+            The schedule to build the best-of-N reference from, by
+            default None (no reference): adds the schedule
+            ``"random_best_of_N"``, for each task the one run of that
+            schedule whose own curve has the largest area
+            (:meth:`create_best_run_strategy`). Pass the uniform-random
+            schedule, so N is its realization count. It is
+            **optimistic** -- it selects on the outcome, and a simulated
+            restart repeats the picked run -- so it bounds what a dynamic
+            schedule might reach rather than being one.
 
         Returns
         -------
@@ -934,6 +1106,13 @@ class DataLoader:
                 _pool_over_task(speed.where(in_pool), "mean"),
             )
             d = d.create_strategy(choices=vbs_task, name="vbs_task")
+
+        if include_random_best is not None:
+            d = d.create_best_run_strategy(
+                include_random_best,
+                cost_values=cost_values,
+                realizations=realizations,
+            )
         dims = self.task_labels.sel(
             {FEATURE: "dimensionality"}, drop=True
         ).astype(int)
@@ -958,6 +1137,12 @@ class DataLoader:
         # from _ertd. fill_value=True ensures that any schedule NOT in
         # self.data (like vbs) defaults to True.
         mask = mask.reindex_like(_ertd[SCHEDULE], method=None, fill_value=True)
+        # The best-of-N reference is masked like the run it copies, so it
+        # leaves out the same holes as its source schedule.
+        if include_random_best is not None:
+            mask.loc[{SCHEDULE: "random_best_of_N"}] = d.valid_files.sel(
+                {SCHEDULE: "random_best_of_N"}
+            ).isel({OUTPUT_DIM: 0}, drop=True)
 
         # 3. Apply the expanded mask
         _ertd = _ertd.where(mask)

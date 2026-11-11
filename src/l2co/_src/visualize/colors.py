@@ -153,6 +153,17 @@ BASE_OPT_STYLES.update(
         # dashed sbs and the dotted vbs, as it is between them in what it
         # may know. An exact key, so it pins ahead of base "vbs".
         "vbs_task": OptStyle(color="#000000", marker=None, linestyle="-."),
+        # "random_best_of_N" -- the best-of-N random-schedule reference,
+        # `ertd_profile(include_random_best=...)`: per task, the best run
+        # of the random schedule. Black like the oracles it sits beside
+        # (it is as optimistic: it selects on the outcome), dotted like
+        # vbs, the other bound, and starred to tell the two apart. An
+        # exact key, so the ``split("_")[0]`` fallback never sends it to
+        # a "random" base (an unlisted name falls to black solid, the
+        # learned policies' line).
+        "random_best_of_N": OptStyle(
+            color="#000000", marker="*", linestyle=":"
+        ),
         # Variant pin (a key with an underscore suffix, resolved ahead of
         # the base optimizer -- see get_schedule_styles). Every rl2co
         # schedule otherwise collapses onto base "rl2co" and so onto one
@@ -468,6 +479,7 @@ LABEL_MAP = {
     "sbs": "SBS",
     "vbs": "VBS (per run)",
     "vbs_task": "VBS (per task)",
+    "random_best_of_N": "Best of N random (per task)",
     # "l2co": r"\textbf{L2CO (Ours)}",  # You can even use LaTeX bold here
     "stage0": r"L2CO ($g_\text{first}$)",
     "l2co": r"L2CO ($g_\text{first} \rightarrow g_\text{second}$)",

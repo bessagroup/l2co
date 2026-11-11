@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A best-of-N random-schedule reference for the ERTD profile.** The best
+  dynamic schedule cannot be computed, so `ertd_profile(include_random_best=
+  "<schedule>")` adds a tractable stand-in, `random_best_of_N`: for each
+  task, the one run of the named schedule (the uniform-random schedule, so
+  N is its realization count) whose own ERTD curve has the largest area,
+  ties to the run that reached more targets. The reference is
+  **optimistic**: it selects on the outcome, and the picked run fills every
+  realization slot of its task, so a simulated restart only repeats that
+  run and its expected runtime is the run's own cost. Only the runs in
+  `realizations` are candidates. Available on its own as
+  `DataLoader.create_best_run_strategy`, built on the generic
+  `DataLoader.create_run_strategy` (one picked run of one schedule per
+  task, as a new schedule). Plots draw it as a black dotted line with star
+  markers, labelled "Best of N random (per task)" (#118).
+
 ## [2.0.1] - 2026-11-08
 
 ### Fixed
