@@ -9,6 +9,7 @@ decide e: ``popsize`` for a fixed cost per step, and a set
 ``max_fevals_per_step`` for the two whose cost per step varies.
 """
 
+import dataclasses
 from functools import partial
 
 import pytest
@@ -35,6 +36,28 @@ def _built(name: str, task, **hyperparameters):
         stop_fn=None,
         **hyperparameters,
     )
+
+
+def _with_shrink_schedule(update_class, generations):
+    """``update_class`` with a stub ``generations_for_budget`` hook.
+
+    A shrinking-population entry declares the hook on its own class
+    (l2co#121); this subclass copies a built optimizer and adds one that
+    records its arguments and returns ``generations``.
+    """
+    calls = []
+
+    class _Shrinking(type(update_class)):
+        def generations_for_budget(self, budget, dimensionality):
+            calls.append((budget, dimensionality))
+            return generations
+
+    fields = {
+        f.name: getattr(update_class, f.name)
+        for f in dataclasses.fields(update_class)
+        if f.init
+    }
+    return _Shrinking(**fields), calls
 
 
 @pytest.fixture(scope="module")
@@ -264,6 +287,56 @@ def test_an_optimization_step_is_not_an_optimizer(task_10d):
     step = OptimizationStep("adam", hyperparameters={"learning_rate": 1e-2})
     with pytest.raises(TypeError, match="UpdateClass; got OptimizationStep"):
         evaluations_based_on_dimensionality(task=task_10d, optimizer=step)
+
+
+#                           an optimizer with a shrinking population (#121)
+# =============================================================================
+
+
+@pytest.mark.parametrize("name", ["cmaes", "lbfgs"])
+def test_shrink_schedule_hook_gives_the_iterations(name):
+    # B and d go to the hook as plain ints: d is the ambient dimension of
+    # an embedded task, and B is capped at 10^5 (1000 * 1024 > 10^5).
+    # The hook wins over popsize and over max_fevals_per_step (L-BFGS).
+    task = create_embedded_bbob_task(
+        fn_name="sphere", seed=0, intrinsic_dim=2, ambient_dim=1024
+    )
+    shrinking, calls = _with_shrink_schedule(_built(name, task), 4_321)
+
+    assert (
+        evaluations_based_on_dimensionality(task=task, optimizer=shrinking)
+        == 4_321
+    )
+    assert calls == [(100_000, 1024)]
+    ((budget, dimensionality),) = calls
+    assert type(budget) is int and type(dimensionality) is int
+
+
+def test_shrink_schedule_skips_the_starting_popsize_check(task_10d):
+    # B = 5 is below the starting lambda = 10, but the population shrinks,
+    # so the hook decides whether the budget pays for a step.
+    shrinking, _ = _with_shrink_schedule(_built("cmaes", task_10d), 1)
+
+    assert (
+        evaluations_based_on_dimensionality(
+            task=task_10d,
+            optimizer=shrinking,
+            evaluations_per_dimension=1,
+            max_evaluations=5,
+        )
+        == 1
+    )
+
+
+@pytest.mark.parametrize("generations", [0, -3])
+def test_shrink_schedule_below_one_step_raises(generations, task_10d):
+    # A run of 0 steps is never meant, whatever the schedule says.
+    shrinking, _ = _with_shrink_schedule(
+        _built("cmaes", task_10d), generations
+    )
+
+    with pytest.raises(ValueError, match="less than one iteration"):
+        evaluations_based_on_dimensionality(task=task_10d, optimizer=shrinking)
 
 
 #                                       the iteration budgets keep meaning
