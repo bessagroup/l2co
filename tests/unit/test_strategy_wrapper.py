@@ -44,7 +44,7 @@ from l2co._src.meta_optimizer import L2COUpdateClass
 from l2co._src.meta_optimizer import l2co_population_based_fn
 from l2co._src.strategy_wrapper import State, l2co_population_strategy
 from l2co.models import MLP, LSTM_Encoder
-from l2co.optimizers import grad_sub_optimizer
+from l2co.optimizers import CONF_ABSENT, TransferBundle, grad_sub_optimizer
 from l2co.sampling import normal_sampling
 
 MAX_ITERATIONS = 8
@@ -60,6 +60,9 @@ ADAM = OptimizationStep(
     optimizer="adam", hyperparameters={"learning_rate": 0.03}
 )
 MENU = (SEPCMAES, ADAM)
+CMAES = OptimizationStep(optimizer="cma_es")
+LBFGS = OptimizationStep(optimizer="lbfgs")
+SIMPLE_GA = OptimizationStep(optimizer="simple_ga")
 
 
 def _task():
@@ -82,7 +85,7 @@ def _force_choice(mlp: MLP, idx: int) -> MLP:
     )
 
 
-def _make_model(stage0_idx: int, stage1_idx: int) -> L2COModel:
+def _make_model(stage0_idx: int, stage1_idx: int, menu=MENU) -> L2COModel:
     """Build a tiny L2COModel whose two fires are forced to the
     given menu indices."""
     key = jr.key(7)
@@ -90,19 +93,19 @@ def _make_model(stage0_idx: int, stage1_idx: int) -> L2COModel:
 
     fp_task = FeatureProcessor.init(schema={"dimensionality": "continuous"})
     fp_opt = FeatureProcessor.init(
-        schema={"optimizer": [step.name for step in MENU]}
+        schema={"optimizer": [step.name for step in menu]}
     )
 
     stage0_mlp = _force_choice(
         MLP.init(
-            in_size=1, out_size=len(MENU), width_size=8, depth=1, key=k_s0
+            in_size=1, out_size=len(menu), width_size=8, depth=1, key=k_s0
         ),
         stage0_idx,
     )
     stage0 = EquinoxStage0Model.init(
         feature_processor_task=fp_task,
         model=stage0_mlp,
-        optimizers=list(MENU),
+        optimizers=list(menu),
     )
 
     history_encoder = LSTM_Encoder(
@@ -117,7 +120,7 @@ def _make_model(stage0_idx: int, stage1_idx: int) -> L2COModel:
     stage1_mlp = _force_choice(
         MLP.init(
             in_size=8 * 2 + 8,
-            out_size=len(MENU),
+            out_size=len(menu),
             width_size=8,
             depth=1,
             key=k_mlp,
@@ -131,7 +134,7 @@ def _make_model(stage0_idx: int, stage1_idx: int) -> L2COModel:
         mixed_embedding_optimizer=me_opt,
         history_encoder=history_encoder,
         model=stage1_mlp,
-        optimizers=list(MENU),
+        optimizers=list(menu),
     )
     return L2COModel(stage0_model=stage0, stage1_model=stage1)
 
@@ -166,7 +169,9 @@ def _zero_grads(population):
     return jax.tree.map(jnp.zeros_like, population)
 
 
-def _run_generations(strategy, state, fitness_per_gen, start_key=100):
+def _run_generations(
+    strategy, state, fitness_per_gen, start_key=100, value_fn=None
+):
     """Drive ``len(fitness_per_gen)`` ask/tell cycles with synthetic
     per-generation fitness vectors; returns the final state."""
     for g, fitness in enumerate(fitness_per_gen):
@@ -179,6 +184,7 @@ def _run_generations(strategy, state, fitness_per_gen, start_key=100):
             state,
             strategy.default_params,
             grads=_zero_grads(population),
+            value_fn=value_fn,
         )
     return state
 
@@ -832,3 +838,246 @@ class TestOptStateHandshakeGate:
             best_leaf = jax.tree.leaves(state.best_solution)[0]
             assert jnp.allclose(leaf[0], best_leaf), variant
             assert jnp.isfinite(leaf[1:]).all(), variant
+
+
+#                                              opt_state_handshake="bundle"
+# =============================================================================
+
+
+def _bundle_fire(
+    stage0_idx,
+    stage1_idx,
+    menu=MENU,
+    mode="bundle",
+    prep=None,
+    edit_strategy=None,
+):
+    """Drive a strategy up to its stage-1 fire and run the firing ``ask``.
+
+    ``best_solution`` is displaced before the firing ask (see
+    :meth:`TestOptStateHandshakeGate._switching_fire`); ``prep`` may
+    edit the pre-fire state further. Returns the strategy, the pre-fire
+    state, the emitted population, the post-ask state and the key the
+    firing ``ask`` got.
+    """
+    strategy = l2co_population_strategy(
+        model=_make_model(stage0_idx, stage1_idx, menu),
+        task=_task(),
+        sampler=normal_sampling,
+        t=T,
+        max_iterations=MAX_ITERATIONS,
+        opt_state_handshake=mode,
+    )
+    if edit_strategy is not None:
+        strategy = edit_strategy(strategy)
+    n = strategy.population_size
+    _, state = _initial_state(strategy)
+    values = [LOSS_BASE + v for v in (5.0, 4.0, 6.0, 3.0)][
+        : strategy.switch_generation
+    ]
+    fits = [jnp.full((n,), jnp.nan).at[0].set(v) for v in values]
+    # A line-search menu entry (lbfgs) needs a value_fn in every tell.
+    state = _run_generations(
+        strategy, state, fits, value_fn=lambda p: jnp.sum(p**2)
+    )
+    state = eqx.tree_at(
+        lambda s: s.best_solution,
+        state,
+        jax.tree.map(lambda x: x + 5.0, state.best_solution),
+    )
+    if prep is not None:
+        state = prep(state)
+    key = jr.key(999)
+    population, after = strategy.ask(key, state, strategy.default_params)
+    assert bool(after.fired)
+    assert int(after.active_opt_idx) == stage1_idx
+    return strategy, state, population, after, key
+
+
+def _outgoing_bundle(strategy, before, out_idx):
+    """The bundle read off the outgoing (stage-0) optimizer."""
+    sigma, conf = strategy.sub_optimizers[out_idx].transfer_read_fn(
+        before.sub_states[out_idx]
+    )
+    return TransferBundle(
+        x=before.best_solution,
+        f=before.best_fitness,
+        sigma=sigma,
+        conf_sigma=conf,
+    )
+
+
+def _trees_equal(a, b) -> bool:
+    return TestOptStateHandshakeGate._leaves_equal(
+        jax.tree.leaves(a), jax.tree.leaves(b)
+    )
+
+
+class TestBundleHandshake:
+    """``opt_state_handshake="bundle"``: rl2co's three steps at the fire.
+
+    Expected values are composed by hand from the sub-optimizers' own
+    ports in rl2co's order -- read the outgoing scale, reset-or-continue
+    the incoming state, write the scale, then the incoming optimizer's
+    own ``ask`` or the canonical layout, NaN-padded (l2co#120).
+    """
+
+    def test_es_continues_with_the_carried_scale_and_asks_for_itself(self):
+        # cma_es (1) -> sepcmaes (0): continue, rescale, own ask. (This
+        # harness feeds adam zero grads, so adam would carry no scale.)
+        strategy, before, population, after, key = _bundle_fire(
+            1, 0, menu=(SEPCMAES, CMAES)
+        )
+        _, key_ask = jr.split(key)
+        incoming = strategy.sub_optimizers[0]
+        bundle = _outgoing_bundle(strategy, before, 1)
+        assert float(bundle.conf_sigma) > CONF_ABSENT
+
+        written = incoming.transfer_write_fn(bundle, before.sub_states[0])
+        rows, expected = incoming.step_fn(None, written, key_ask)
+
+        assert not _trees_equal(written, before.sub_states[0])
+        assert _trees_equal(after.sub_states[0], expected)
+        assert _trees_equal(population, rows)
+
+    def test_layout_population_is_nan_padded_to_the_generation_width(self):
+        # sepcmaes (0) -> adam (1): no own ask, so the canonical layout
+        # at best_solution, one row for adam and NaN past it.
+        strategy, before, population, after, key = _bundle_fire(0, 1)
+        _, key_ask = jr.split(key)
+        incoming = strategy.sub_optimizers[1]
+        bundle = _outgoing_bundle(strategy, before, 0)
+        assert incoming.popsize == 1 < strategy.population_size
+
+        leaf = jax.tree.leaves(population)[0]
+        rows = incoming.handshake_population(
+            before.best_solution, normal_sampling, key_ask
+        )
+        np.testing.assert_array_equal(
+            np.asarray(leaf[:1]), np.asarray(jax.tree.leaves(rows)[0])
+        )
+        np.testing.assert_array_equal(
+            np.asarray(leaf[0]),
+            np.asarray(jax.tree.leaves(before.best_solution)[0]),
+        )
+        assert jnp.isnan(leaf[1:]).all()
+        # adam's writer is a no-op here, so its state half is covered by
+        # the simple_ga test below, not by this one.
+
+    def test_layout_puts_the_best_solution_last_and_writes_the_scale(self):
+        # sepcmaes (0) -> simple_ga (1): no own ask and popsize > 1, so
+        # the canonical best_one layout (draws first, best LAST -- not
+        # the legacy slot 0) and a writer that acts on the carried scale.
+        strategy, before, population, after, key = _bundle_fire(
+            0, 1, menu=(SEPCMAES, SIMPLE_GA)
+        )
+        _, key_ask = jr.split(key)
+        incoming = strategy.sub_optimizers[1]
+        assert not incoming.own_ask
+        assert incoming.opt_state_handshake == "continue"
+        assert incoming.popsize > 1
+        bundle = _outgoing_bundle(strategy, before, 0)
+
+        leaf = jax.tree.leaves(population)[0]
+        best = np.asarray(jax.tree.leaves(before.best_solution)[0])
+        np.testing.assert_array_equal(np.asarray(leaf[-1]), best)
+        assert not np.array_equal(np.asarray(leaf[0]), best)
+        rows = incoming.handshake_population(
+            before.best_solution, normal_sampling, key_ask
+        )
+        n = incoming.popsize
+        assert _trees_equal(jax.tree.map(lambda a: a[:n], population), rows)
+
+        written = incoming.transfer_write_fn(bundle, before.sub_states[1])
+        assert not _trees_equal(written, before.sub_states[1])
+        assert _trees_equal(after.sub_states[1], written)
+
+    def test_lbfgs_is_reset_around_the_best_solution(self):
+        # sepcmaes (0) -> lbfgs (1). lbfgs's state never moves while it
+        # is inactive, so perturb it: a reset is then observable.
+        def perturb_lbfgs(state):
+            bumped = jax.tree.map(
+                lambda a: a + 1 if jnp.issubdtype(a.dtype, jnp.number) else a,
+                state.sub_states[1],
+            )
+            return eqx.tree_at(lambda s: s.sub_states[1], state, bumped)
+
+        strategy, before, population, after, key = _bundle_fire(
+            0, 1, menu=(SEPCMAES, LBFGS), prep=perturb_lbfgs
+        )
+        key_reset, _ = jr.split(key)
+        incoming = strategy.sub_optimizers[1]
+        assert incoming.opt_state_handshake == "reset"
+        bundle = _outgoing_bundle(strategy, before, 0)
+
+        expected = incoming.transfer_write_fn(
+            bundle, incoming.init_fn(before.best_solution, key_reset)
+        )
+        assert _trees_equal(after.sub_states[1], expected)
+        assert not _trees_equal(after.sub_states[1], before.sub_states[1])
+        leaf = jax.tree.leaves(population)[0]
+        np.testing.assert_array_equal(
+            np.asarray(leaf[0]),
+            np.asarray(jax.tree.leaves(before.best_solution)[0]),
+        )
+        assert jnp.isnan(leaf[1:]).all()
+
+    def test_reselecting_stage0_is_the_plain_ask(self):
+        # A fire that keeps sepcmaes hands nothing over: identical to
+        # the legacy mode, which also skips the handshake here.
+        _, _, bundle_pop, bundle_state, _ = _bundle_fire(0, 0)
+        _, _, legacy_pop, legacy_state, _ = _bundle_fire(
+            0, 0, mode="legacy_reset"
+        )
+        assert _trees_equal(bundle_pop, legacy_pop)
+        assert _trees_equal(bundle_state, legacy_state)
+
+    def test_an_outgoing_optimizer_without_a_reader_carries_no_scale(self):
+        # cma_es (1) -> sepcmaes (0) with cma_es's reader removed: the
+        # bundle carries location only (CONF_ABSENT): sepcmaes's writer
+        # still re-centres on x but folds in no scale, unlike with the
+        # reader in place.
+        readers = {}
+
+        def drop_reader(strategy):
+            readers["cma_es"] = strategy.sub_optimizers[1].transfer_read_fn
+            return eqx.tree_at(
+                lambda s: s.sub_optimizers[1],
+                strategy,
+                dataclasses.replace(
+                    strategy.sub_optimizers[1], transfer_read_fn=None
+                ),
+            )
+
+        strategy, before, population, after, key = _bundle_fire(
+            1, 0, menu=(SEPCMAES, CMAES), edit_strategy=drop_reader
+        )
+        _, key_ask = jr.split(key)
+        incoming = strategy.sub_optimizers[0]
+
+        absent = TransferBundle.absent(
+            before.best_solution, before.best_fitness
+        )
+        assert float(absent.conf_sigma) == CONF_ABSENT
+        rows, expected = incoming.step_fn(
+            None,
+            incoming.transfer_write_fn(absent, before.sub_states[0]),
+            key_ask,
+        )
+        assert _trees_equal(after.sub_states[0], expected)
+        assert _trees_equal(population, rows)
+
+        # Non-vacuous: the scale cma_es would have carried changes it.
+        sigma, conf = readers["cma_es"](before.sub_states[1])
+        assert float(conf) > CONF_ABSENT
+        carried = incoming.transfer_write_fn(
+            TransferBundle(
+                x=before.best_solution,
+                f=before.best_fitness,
+                sigma=sigma,
+                conf_sigma=conf,
+            ),
+            before.sub_states[0],
+        )
+        _, with_scale = incoming.step_fn(None, carried, key_ask)
+        assert not _trees_equal(expected, with_scale)

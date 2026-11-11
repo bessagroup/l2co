@@ -112,12 +112,14 @@ from jaxtyping import Array, Bool, Float, Int, PRNGKeyArray, PyTree
 from l2co_optimizers import (
     OptimizationStep,
     SamplerFunction,
+    TransferBundle,
 )
 from l2co_tasks import Task
 
 # Local
 from l2co._src.models.l2co_model import L2COModel
 from l2co._src.models.stage1 import Stage1Model
+from l2co._src.switching.handshake import switch_handshake
 from l2co._src.switching.sub_optimizer import SubOpt, optstep_to_subopt
 from l2co._src.task_bridge import refuse_constraints
 from l2co._src.tree_utils import traj_and_stair
@@ -125,6 +127,9 @@ from l2co._src.tree_utils import traj_and_stair
 # =============================================================================
 
 __all__ = ["Params", "State", "l2co_population_strategy"]
+
+OPT_STATE_HANDSHAKES = ("legacy_reset", "per_optimizer", "bundle")
+"""The values ``l2co_population_strategy(opt_state_handshake=...)`` takes."""
 
 
 #                                                             Params and State
@@ -298,8 +303,9 @@ def l2co_population_strategy(
         generation is ``0``, the stage-1 model is not traceable, its
         logit head does not match the menu size,
         ``opt_state_handshake`` is not one of ``"legacy_reset"`` /
-        ``"per_optimizer"``, or ``task`` has constraints: a strategy
-        has no way to enforce them (l2co ADR 0020).
+        ``"per_optimizer"`` / ``"bundle"``, or ``task`` has
+        constraints: a strategy has no way to enforce them (l2co ADR
+        0020).
     """
     refuse_constraints(task, "l2co_population_strategy")
     return _l2co_population_strategy(
@@ -325,10 +331,10 @@ def _l2co_population_strategy(
     For a caller that enforces the task's box itself: the l2co
     meta-optimizer clips every population it is handed (ADR 0020).
     """
-    if opt_state_handshake not in ("legacy_reset", "per_optimizer"):
+    if opt_state_handshake not in OPT_STATE_HANDSHAKES:
         raise ValueError(
-            f"opt_state_handshake must be 'legacy_reset' or "
-            f"'per_optimizer'; got {opt_state_handshake!r}"
+            f"opt_state_handshake must be one of {OPT_STATE_HANDSHAKES}; "
+            f"got {opt_state_handshake!r}"
         )
 
     menu: tuple[OptimizationStep, ...] = tuple(model.stage1_model.optimizers)
@@ -480,7 +486,8 @@ class _L2COPopulationStrategy(eqx.Module):
         Static. ``"legacy_reset"`` (default) resets every incoming
         sub-optimizer on a switching fire; ``"per_optimizer"`` resets
         only those whose ``SubOpt.opt_state_handshake`` is
-        ``"reset"``. See :meth:`_reset_active_substate` and
+        ``"reset"``; ``"bundle"`` runs :meth:`_bundle_handshake`
+        instead. See :meth:`_reset_active_substate` and
         ``docs/adr/0009``.
     """
 
@@ -940,6 +947,107 @@ class _L2COPopulationStrategy(eqx.Module):
         branches = tuple(make_branch(i) for i in range(self.n_opt))
         return jax.lax.switch(state.active_opt_idx, branches, state)
 
+    def _bundle_handshake(
+        self, state: State, key_reset: PRNGKeyArray, key_ask: PRNGKeyArray
+    ) -> tuple[PyTree, State]:
+        """Hand over to the incoming optimizer the way rl2co does.
+
+        The ``opt_state_handshake="bundle"`` path of :meth:`ask` on a
+        switching fire. Reads the stage-0 optimizer into a
+        :class:`~l2co_optimizers.TransferBundle`
+        (:meth:`_read_bundle`), then dispatches on
+        ``state.active_opt_idx`` into
+        :func:`~l2co._src.switching.handshake.switch_handshake` for
+        the incoming sub-optimizer, and pads its ``popsize`` rows with
+        NaN to :attr:`population_size` -- mirroring
+        ``rl2co._src.evosax_wrapper``'s ``_handshake_population``.
+
+        Parameters
+        ----------
+        state : State
+            Post-fire state (``active_opt_idx`` already updated).
+        key_reset : PRNGKeyArray
+            Key for a reset's ``init_fn``.
+        key_ask : PRNGKeyArray
+            Key for the own ``ask`` or the layout's draws.
+
+        Returns
+        -------
+        tuple[PyTree, State]
+            ``(population, new_state)``; population leading axis
+            :attr:`population_size`.
+        """
+        bundle = self._read_bundle(state)
+
+        def make_branch(i: int):
+            sub_i = self.sub_optimizers[i]
+
+            def branch(state: State) -> tuple[PyTree, State]:
+                new_sub_state, rows = switch_handshake(
+                    sub_i,
+                    state.sub_states[i],
+                    bundle,
+                    self.sampler,
+                    key_reset,
+                    key_ask,
+                )
+                population = jax.tree.map(
+                    lambda r: (
+                        jnp.full(
+                            (self.population_size, *r.shape[1:]),
+                            jnp.nan,
+                            dtype=float,
+                        )
+                        .at[: sub_i.popsize]
+                        .set(r.astype(float))
+                    ),
+                    rows,
+                )
+                new_sub_states = eqx.tree_at(
+                    lambda t: t[i], state.sub_states, new_sub_state
+                )
+                return population, eqx.tree_at(
+                    lambda s: s.sub_states, state, new_sub_states
+                )
+
+            return branch
+
+        branches = tuple(make_branch(i) for i in range(self.n_opt))
+        return jax.lax.switch(state.active_opt_idx, branches, state)
+
+    def _read_bundle(self, state: State) -> TransferBundle:
+        """Project the outgoing (stage-0) optimizer onto a bundle.
+
+        The outgoing optimizer is always the static
+        :attr:`stage0_idx`: the wrapper fires once, and only hands over
+        when that fire switches away. One whose
+        ``transfer_read_fn`` is ``None`` carries location only
+        (``CONF_ABSENT``), as in rl2co.
+
+        Parameters
+        ----------
+        state : State
+            Post-fire state.
+
+        Returns
+        -------
+        TransferBundle
+            ``best_solution`` / ``best_fitness`` plus the stage-0 scale.
+        """
+        out = self.stage0_idx
+        read_fn = self.sub_optimizers[out].transfer_read_fn
+        if read_fn is None:
+            return TransferBundle.absent(
+                state.best_solution, state.best_fitness
+            )
+        sigma, conf = read_fn(state.sub_states[out])
+        return TransferBundle(
+            x=state.best_solution,
+            f=state.best_fitness,
+            sigma=sigma,
+            conf_sigma=conf,
+        )
+
     def _tell_dispatch(
         self,
         state: State,
@@ -1069,7 +1177,9 @@ class _L2COPopulationStrategy(eqx.Module):
         ``generation_counter >= switch_generation``. On a switching
         fire the incoming sub-optimizer's state is reset around the
         best-so-far and the emitted population is the ``best_one``
-        handshake; a fire that re-selects the stage-0 optimizer, and
+        handshake (under ``opt_state_handshake="bundle"``,
+        :meth:`_bundle_handshake` instead); a fire that re-selects the
+        stage-0 optimizer, and
         every other generation, dispatches the active sub-optimizer's
         own ``ask``.
 
@@ -1111,6 +1221,13 @@ class _L2COPopulationStrategy(eqx.Module):
         do_handshake = jnp.logical_and(
             do_fire, state.active_opt_idx != self.stage0_idx
         )
+        if self.opt_state_handshake == "bundle":
+            return jax.lax.cond(
+                do_handshake,
+                lambda s: self._bundle_handshake(s, key_reset, key_ask),
+                lambda s: self._ask_dispatch(s, key_ask),
+                state,
+            )
         state = jax.lax.cond(
             do_handshake,
             lambda s: self._reset_active_substate(s, key_reset),

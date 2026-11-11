@@ -110,6 +110,7 @@ from l2co_optimizers import (
 )
 
 # Local
+from l2co._src.switching.handshake import switch_handshake
 from l2co._src.switching.handshake_policy import (
     DEFAULT_HANDSHAKE_POLICY,
     HANDSHAKE_POLICY,
@@ -175,6 +176,7 @@ __all__ = [
     "register_schedule_namer",
     "shade_popsize",
     "shade_update",
+    "switch_handshake",
     "vmapped_loss",
     "vmapped_loss_and_grad",
     "vmapped_loss_with_rng",
