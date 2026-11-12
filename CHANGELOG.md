@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Switch-level transfer mode** (#117, `docs/adr/0028`).
+  `l2co.optimizers` exports `TRANSFER_MODES` (`"full"`, `"none"`),
+  `DEFAULT_TRANSFER_MODE` (`"full"`), `validate_transfer_mode` and
+  `transfer_mode_index` (the mode's stable integer code, for a traced
+  per-switch argument). `none` is a cold switch: the incoming
+  optimizer starts as at the beginning of a run and nothing crosses the
+  switch. The behaviour will be implemented in the rl2co environment.
+  `l2co_population_strategy` accepts `transfer_mode` (default `"full"`)
+  and raises `NotImplementedError` on `"none"`.
+- **`opt_state_handshake="bundle"` on `l2co_population_strategy`**
+  (l2co#120). At a switching stage-1 fire the wrapper now can apply
+  rl2co's three-step handshake: reset or continue the incoming state as
+  `HANDSHAKE_POLICY` says, fold in the scale read from the stage-0
+  optimizer, then take the population from the incoming optimizer's own
+  `ask` (where `own_ask`) or the canonical layout, NaN-padded. This is
+  the handshake an RL2CO policy is deployed with, for a matched
+  comparison. `"legacy_reset"` stays the default, so published L2CO
+  results reproduce; the handshake generation is billed as before
+  (ADR 0004).
+- **`l2co.optimizers.switch_handshake`**: the three steps on one
+  `SubOpt` and a `TransferBundle`, free of any caller's run state, so
+  rl2co's environment and wrappers can share it (ADR 0019).
+- **`l2co.data.time_shared_portfolio`: the time-shared portfolio of
+  stored schedules as a schedule of its own** (l2co#115). Run r of the
+  portfolio interleaves run r of K members in round robin, with no state
+  transfer: `best_portfolio(F) = min_k best_k(w_k F)`. It is built from
+  the stored histories, with no new optimization, on the members' budget
+  grid, with `output_min` (and `output_min_true` for noisy tasks),
+  `fevals` and `iterations`, so `calculate_ert`, ERTD and AUC read it
+  unchanged. Options: `weights` (equal by default) and `granularity`
+  (`"fevals"`, idealized, or whole `"iterations"`). The schedule is named
+  `portfolio(<m1>+<m2>+...)` and its attrs mark it as derived.
 - **Optimizers whose population shrinks get their whole evaluation
   budget.** `evaluations_based_on_dimensionality` divided the budget B
   by the optimizer's `popsize`, which for JDE21, MadDE and NL-SHADE-RSP
