@@ -753,6 +753,31 @@ class TestOptStateHandshakeGate:
                 opt_state_handshake="reset_everything",
             )
 
+    def test_cold_transfer_mode_is_refused(self):
+        # A cold switch (issue #117) is implemented in the rl2co env
+        # only; this wrapper must refuse it rather than silently run a
+        # full handshake.
+        with pytest.raises(NotImplementedError, match="transfer_mode='none'"):
+            l2co_population_strategy(
+                model=_make_model(0, 0),
+                task=_task(),
+                sampler=normal_sampling,
+                t=T,
+                max_iterations=MAX_ITERATIONS,
+                transfer_mode="none",
+            )
+
+    def test_unknown_transfer_mode_is_rejected(self):
+        with pytest.raises(ValueError, match="transfer mode"):
+            l2co_population_strategy(
+                model=_make_model(0, 0),
+                task=_task(),
+                sampler=normal_sampling,
+                t=T,
+                max_iterations=MAX_ITERATIONS,
+                transfer_mode="cold",
+            )
+
     def _switching_fire(self, opt_state_handshake):
         """Fire stage-1 from adam (idx 1) onto sepcmaes (idx 0).
 

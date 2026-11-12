@@ -71,6 +71,7 @@ __status__ = "Stable"
 
 __all__ = [
     "DEFAULT_HANDSHAKE_POLICY",
+    "DEFAULT_TRANSFER_MODE",
     "HANDSHAKE_POLICY",
     "POPULATION_HANDSHAKES",
     "population_best",
@@ -78,8 +79,11 @@ __all__ = [
     "population_handshake_for",
     "OPT_STATE_VARIANTS",
     "POPULATION_VARIANTS",
+    "TRANSFER_MODES",
     "HandshakePolicy",
     "handshake_policy_for",
+    "transfer_mode_index",
+    "validate_transfer_mode",
 ]
 
 
@@ -123,6 +127,30 @@ class HandshakePolicy(eqx.Module):
 
 POPULATION_VARIANTS = ("best", "best_one")
 OPT_STATE_VARIANTS = ("reset", "continue")
+
+TRANSFER_MODES = ("full", "none")
+"""Switch-level transfer modes (``docs/adr/0028``).
+
+Orthogonal to the per-optimizer :data:`HANDSHAKE_POLICY` table, which
+only says *how* a transfer is done. ``"full"`` -- today's handshake:
+the table's population and opt-state variants plus the transfer-port
+write. ``"none"`` -- a cold start: the incoming optimizer is
+initialised exactly as at the start of a run, from the run's sampler
+with a fresh key, and nothing of the outgoing run reaches it. A tuple
+of string constants, like :data:`POPULATION_VARIANTS`, so a later mode
+is an addition rather than a breaking change.
+
+The order is append-only: a mode's position is its integer code
+(:func:`transfer_mode_index`), which a traced per-switch argument
+carries. New modes go at the end so existing codes never change.
+"""
+
+DEFAULT_TRANSFER_MODE = "full"
+"""The transfer mode every caller that accepts one defaults to.
+
+``"full"`` is the handshake as it was before transfer modes existed, so
+a caller that does not ask for a mode reproduces its old trajectories.
+"""
 
 DEFAULT_HANDSHAKE_POLICY = HandshakePolicy(
     population="best_one", opt_state="continue"
@@ -196,6 +224,63 @@ def handshake_policy_for(
         else optimizer
     )
     return HANDSHAKE_POLICY.get(name, DEFAULT_HANDSHAKE_POLICY)
+
+
+def validate_transfer_mode(mode: str) -> str:
+    """Check that ``mode`` names a switch-level transfer mode.
+
+    Parameters
+    ----------
+    mode : str
+        Candidate mode, spelled exactly as in :data:`TRANSFER_MODES`.
+
+    Returns
+    -------
+    str
+        ``mode`` unchanged, so a caller can validate inline.
+
+    Raises
+    ------
+    TypeError
+        If ``mode`` is not a ``str`` (for example a traced or array
+        code); convert a name with :func:`transfer_mode_index` instead.
+    ValueError
+        If ``mode`` is not one of :data:`TRANSFER_MODES`.
+    """
+    if not isinstance(mode, str):
+        raise TypeError(
+            "transfer mode must be a str naming one of TRANSFER_MODES; got "
+            f"{type(mode).__name__}. A traced per-switch mode is an int "
+            "code: build it from a name with transfer_mode_index."
+        )
+    if mode not in TRANSFER_MODES:
+        valid = ", ".join(repr(m) for m in TRANSFER_MODES)
+        raise ValueError(f"transfer mode must be one of {valid}; got {mode!r}")
+    return mode
+
+
+def transfer_mode_index(mode: str) -> int:
+    """Integer code of a transfer mode, for a traced per-switch argument.
+
+    The code is the mode's position in :data:`TRANSFER_MODES`, whose
+    order is append-only, so codes stay stable when modes are added.
+
+    Parameters
+    ----------
+    mode : str
+        Mode name, spelled exactly as in :data:`TRANSFER_MODES`.
+
+    Returns
+    -------
+    int
+        ``TRANSFER_MODES.index(mode)``.
+
+    Raises
+    ------
+    TypeError, ValueError
+        As :func:`validate_transfer_mode`.
+    """
+    return TRANSFER_MODES.index(validate_transfer_mode(mode))
 
 
 # =============================================================================
