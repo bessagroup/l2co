@@ -307,3 +307,18 @@ def test_oracle_labels_name_their_granularity() -> None:
     assert display_name("sbs") == "SBS"
     assert display_name("vbs") == "VBS (per run)"
     assert display_name("vbs_task") == "VBS (per task)"
+
+
+def test_the_best_of_n_reference_has_its_own_style_and_label() -> None:
+    """``random_best_of_N`` draws a black line of its own, with a label.
+
+    Unlisted, it falls back to a plain black solid line -- the trained
+    policies' -- and to its raw name.
+    """
+    names = ["sbs", "vbs", "vbs_task", "l2co", "rl2co", "random_best_of_N"]
+    styles = get_schedule_styles([*names, "randomsearch", "cmaes"])
+    ref = styles["random_best_of_N"]
+    assert ref.color == "#000000"
+    others = {(styles[s].linestyle, styles[s].marker) for s in names[:-1]}
+    assert (ref.linestyle, ref.marker) not in others
+    assert display_name("random_best_of_N") == "Best of N random (per task)"
