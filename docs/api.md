@@ -124,6 +124,15 @@ of it into ratio curves, and `plot_performance_profile` draws one.
 
 ::: l2co.plotting.plot_performance_profile
 
+### Time-shared portfolio
+
+A reference schedule built from stored runs with no new optimization:
+K schedules interleaved in round robin over function evaluations,
+without passing state between them (l2co#115). The result is a schedule
+like any other, so ERT, ERTD and AUC read it unchanged.
+
+::: l2co.data.time_shared_portfolio
+
 ## Databank
 
 A lazy-loadable databank that stores a whole dataset in a single

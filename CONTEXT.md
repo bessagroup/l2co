@@ -78,6 +78,15 @@ entry i.
 _Avoid_: "portfolio" (reserved for the benchmark algorithm
 portfolio run during dataset creation), "optimizer list"
 
+**Time-shared portfolio**:
+A schedule derived from K stored schedules rather than run: run r
+interleaves run r of every member in round robin over function
+evaluations (shares `w_k`), with no state passed between them, so its
+best-so-far after F fevals is `min_k best_k(w_k F)`. Built by
+`l2co.data.time_shared_portfolio` and named `portfolio(<m1>+...)`.
+Not the benchmark algorithm portfolio of dataset creation.
+_Avoid_: bare "portfolio"
+
 **Generation width**:
 The fixed leading axis of every population a strategy wrapper emits:
 `max(popsize)` over the menu. A property of the *menu*, constant for
