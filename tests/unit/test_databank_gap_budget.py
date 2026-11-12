@@ -397,6 +397,75 @@ def test_a_variable_cost_cell_needs_n_equal_b(tmp_path):
         _dump(tmp_path / "db2", runs, evaluation_budget={"vc": spent})
 
 
+def _real_cell(n: int, increments, scale: float = 10.0) -> xr.Dataset:
+    """A cell as the run loop writes it: no ``budget`` coordinate.
+
+    Under the evaluation budget a task's cells differ in length (B
+    iterations for random search, B / lambda for a population method),
+    and the run histories carry no coordinate along ``budget``.
+    """
+    return _cell(n, increments, scale).drop_vars(BUDGET)
+
+
+def _scores_alone(cell: xr.Dataset, store: xr.Dataset, task_id, budget):
+    """The cell's ERT against the store's targets, scored on its own."""
+    targets = store[TARGET_VALUE].sel({TASK_ID: task_id}).values
+    return calculate_ert(
+        cell, targets=targets, global_min=0.0, evaluation_budget=budget
+    )
+
+
+def test_a_task_mixing_cell_lengths_is_dumped_into_a_new_store(tmp_path):
+    """Random search (B iterations) beside CMA-ES (B / lambda), no budget
+    coordinate: the G0 pilot's fresh store failed to lay out."""
+    task = FakeTask("mx", "sphere", 10)
+    cells = {RS: _real_cell(60, [1]), CMA: _real_cell(10, [6])}
+    runs = _cell_runs(tmp_path / "runs", task, cells)
+    root = tmp_path / "db"
+    _dump(root, runs, evaluation_budget={"mx": 60})
+
+    ds = load_databank_dataset(NAME, [RS.name, CMA.name], root)
+    # Each cell is stored as it ran, the short one not padded.
+    assert load_loss_raw(NAME, root, "mx", CMA.hash).sizes[BUDGET] == 10
+    assert load_loss_raw(NAME, root, "mx", RS.hash).sizes[BUDGET] == 60
+    # Each cell's scores are its own, against the task's stored targets.
+    for step in (RS, CMA):
+        alone = _scores_alone(cells[step], ds, "mx", 60)
+        stored = ds[COST].sel({TASK_ID: "mx", SCHEDULE: step.name})
+        np.testing.assert_allclose(
+            stored.transpose(*alone[COST].dims).values, alone[COST].values
+        )
+        np.testing.assert_array_equal(
+            ds[SUCCESS]
+            .sel({TASK_ID: "mx", SCHEDULE: step.name})
+            .transpose(*alone[SUCCESS].dims)
+            .values,
+            alone[SUCCESS].values,
+        )
+
+
+def test_a_shorter_cell_is_appended_to_a_store(tmp_path):
+    """G1's case: population cells appended where G2's B-long cells are."""
+    task = FakeTask("ap", "sphere", 10)
+    root = tmp_path / "db"
+    _dump(
+        root,
+        _cell_runs(tmp_path / "a", task, {RS: _real_cell(60, [1])}),
+        evaluation_budget={"ap": 60},
+    )
+    runs = _cell_runs(
+        tmp_path / "b",
+        task,
+        {RS: _real_cell(60, [1]), CMA: _real_cell(10, [6])},
+    )
+    _dump(root, runs, mode="append", evaluation_budget={"ap": 60})
+    ds = load_databank_dataset(NAME, [RS.name, CMA.name], root)
+    assert bool(
+        np.isfinite(ds[COST].sel({TASK_ID: "ap", SCHEDULE: CMA.name})).all()
+    )
+    assert verify_databank(root, NAME).ok
+
+
 def test_a_variable_cost_cell_with_constant_steps_is_refused_loudly(tmp_path):
     """Fixed vs variable cost is read from the data (ADR 0027).
 
