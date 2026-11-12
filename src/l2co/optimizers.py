@@ -110,13 +110,18 @@ from l2co_optimizers import (
 )
 
 # Local
+from l2co._src.switching.handshake import switch_handshake
 from l2co._src.switching.handshake_policy import (
     DEFAULT_HANDSHAKE_POLICY,
+    DEFAULT_TRANSFER_MODE,
     HANDSHAKE_POLICY,
+    TRANSFER_MODES,
     HandshakePolicy,
     handshake_policy_for,
     population_best,
     population_best_one,
+    transfer_mode_index,
+    validate_transfer_mode,
 )
 from l2co._src.switching.menu_eval import menu_loss_and_grad
 from l2co._src.switching.sub_optimizer import (
@@ -137,6 +142,7 @@ __all__ = [
     "CONF_ESTIMATED",
     "CONF_EXACT",
     "DEFAULT_HANDSHAKE_POLICY",
+    "DEFAULT_TRANSFER_MODE",
     "FAMILIES",
     "FAMILY_DISTRIBUTION",
     "FAMILY_GRADIENT",
@@ -154,6 +160,7 @@ __all__ = [
     "StepFunction",
     "StopFunction",
     "SubOpt",
+    "TRANSFER_MODES",
     "TransferBundle",
     "TransferReadFunction",
     "TransferWriteFunction",
@@ -175,6 +182,9 @@ __all__ = [
     "register_schedule_namer",
     "shade_popsize",
     "shade_update",
+    "switch_handshake",
+    "transfer_mode_index",
+    "validate_transfer_mode",
     "vmapped_loss",
     "vmapped_loss_and_grad",
     "vmapped_loss_with_rng",

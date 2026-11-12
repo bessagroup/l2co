@@ -50,6 +50,8 @@ The switching layer (ADR 0019): the `SubOpt` adapter a strategy wrapper dispatch
 
 ::: l2co.optimizers.handshake_policy_for
 
+::: l2co.optimizers.switch_handshake
+
 ::: l2co.optimizers.population_best
 
 ::: l2co.optimizers.population_best_one
