@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Switch-level transfer mode** (#117, `docs/adr/0028`).
+  `l2co.optimizers` exports `TRANSFER_MODES` (`"full"`, `"none"`),
+  `DEFAULT_TRANSFER_MODE` (`"full"`), `validate_transfer_mode` and
+  `transfer_mode_index` (the mode's stable integer code, for a traced
+  per-switch argument). `none` is a cold switch: the incoming
+  optimizer starts as at the beginning of a run and nothing crosses the
+  switch. The behaviour will be implemented in the rl2co environment.
+  `l2co_population_strategy` accepts `transfer_mode` (default `"full"`)
+  and raises `NotImplementedError` on `"none"`.
 - **`opt_state_handshake="bundle"` on `l2co_population_strategy`**
   (l2co#120). At a switching stage-1 fire the wrapper now can apply
   rl2co's three-step handshake: reset or continue the incoming state as

@@ -11,6 +11,7 @@ tests pin the table's contents, the fallback, and the propagation into
 # =============================================================================
 
 # Third-party
+import jax.numpy as jnp
 import pytest
 
 # Local
@@ -26,10 +27,14 @@ from l2co._src.switching.handshake_policy import (
 )
 from l2co.optimizers import (
     DEFAULT_HANDSHAKE_POLICY,
+    DEFAULT_TRANSFER_MODE,
     HANDSHAKE_POLICY,
+    TRANSFER_MODES,
     HandshakePolicy,
     handshake_policy_for,
     optstep_to_subopt,
+    transfer_mode_index,
+    validate_transfer_mode,
 )
 
 from .toy_problems import rastrigin_problem
@@ -154,3 +159,40 @@ class TestSubOptPropagation:
 
         sub = optstep_to_subopt(OptimizationStep(optimizer="lbfgs"), **problem)
         assert jax.tree.leaves(sub) == []
+
+
+class TestTransferModes:
+    def test_modes_are_full_and_none(self):
+        # Switch-level transfer mode (issue #117): ``full`` is today's
+        # handshake, ``none`` a cold start of the incoming optimizer.
+        assert TRANSFER_MODES == ("full", "none")
+
+    @pytest.mark.parametrize("mode", ["cold", "Full", "", "sigma"])
+    def test_unknown_mode_is_rejected_naming_the_valid_ones(self, mode):
+        with pytest.raises(ValueError, match=r"'full'.*'none'"):
+            validate_transfer_mode(mode)
+
+    def test_default_mode_is_full(self):
+        # ``full`` is today's behaviour; every caller that accepts a
+        # mode defaults to it so existing trajectories are unchanged.
+        assert DEFAULT_TRANSFER_MODE == "full"
+
+    def test_mode_index_is_the_position_in_the_enum(self):
+        # The rl2co env carries the mode as a traced per-switch int; the
+        # code is the mode's position in TRANSFER_MODES, so new modes
+        # append and never renumber existing ones.
+        assert transfer_mode_index("full") == 0
+        assert transfer_mode_index("none") == 1
+        assert [transfer_mode_index(m) for m in TRANSFER_MODES] == list(
+            range(len(TRANSFER_MODES))
+        )
+
+    def test_mode_index_rejects_unknown_names(self):
+        with pytest.raises(ValueError, match=r"'full'.*'none'"):
+            transfer_mode_index("cold")
+
+    def test_non_string_mode_is_a_type_error_pointing_at_the_index(self):
+        # A traced/array mode is an int code, not a name: say so instead
+        # of reporting it as an unknown name.
+        with pytest.raises(TypeError, match="transfer_mode_index"):
+            validate_transfer_mode(jnp.int32(1))

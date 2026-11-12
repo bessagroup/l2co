@@ -120,6 +120,10 @@ from l2co_tasks import Task
 from l2co._src.models.l2co_model import L2COModel
 from l2co._src.models.stage1 import Stage1Model
 from l2co._src.switching.handshake import switch_handshake
+from l2co._src.switching.handshake_policy import (
+    DEFAULT_TRANSFER_MODE,
+    validate_transfer_mode,
+)
 from l2co._src.switching.sub_optimizer import SubOpt, optstep_to_subopt
 from l2co._src.task_bridge import refuse_constraints
 from l2co._src.tree_utils import traj_and_stair
@@ -234,6 +238,7 @@ def l2co_population_strategy(
     t: float,
     max_iterations: int,
     opt_state_handshake: str = "legacy_reset",
+    transfer_mode: str = DEFAULT_TRANSFER_MODE,
 ) -> _L2COPopulationStrategy:
     """Wrap a trained L2CO model as an evosax-style strategy.
 
@@ -287,6 +292,12 @@ def l2co_population_strategy(
         ES state is preserved -- matching what the rl2co environment
         does. Opt-in
         because it changes L2CO results; see ``docs/adr/0009``.
+    transfer_mode : str, optional
+        Switch-level transfer mode of the stage-1 fire, one of
+        :data:`~l2co._src.switching.handshake_policy.TRANSFER_MODES`.
+        Only ``"full"`` (default) is supported here: the cold
+        ``"none"`` mode is implemented in the rl2co environment only
+        (``docs/adr/0028``) and raises.
 
     Returns
     -------
@@ -303,9 +314,11 @@ def l2co_population_strategy(
         generation is ``0``, the stage-1 model is not traceable, its
         logit head does not match the menu size,
         ``opt_state_handshake`` is not one of ``"legacy_reset"`` /
-        ``"per_optimizer"`` / ``"bundle"``, or ``task`` has
-        constraints: a strategy has no way to enforce them (l2co ADR
-        0020).
+        ``"per_optimizer"`` / ``"bundle"``, ``transfer_mode`` is not a
+        transfer mode, or ``task`` has constraints: a strategy has no
+        way to enforce them (l2co ADR 0020).
+    NotImplementedError
+        If ``transfer_mode`` is ``"none"``.
     """
     refuse_constraints(task, "l2co_population_strategy")
     return _l2co_population_strategy(
@@ -315,6 +328,7 @@ def l2co_population_strategy(
         t=t,
         max_iterations=max_iterations,
         opt_state_handshake=opt_state_handshake,
+        transfer_mode=transfer_mode,
     )
 
 
@@ -325,6 +339,7 @@ def _l2co_population_strategy(
     t: float,
     max_iterations: int,
     opt_state_handshake: str = "legacy_reset",
+    transfer_mode: str = DEFAULT_TRANSFER_MODE,
 ) -> _L2COPopulationStrategy:
     """:func:`l2co_population_strategy` without its constraint check.
 
@@ -335,6 +350,12 @@ def _l2co_population_strategy(
         raise ValueError(
             f"opt_state_handshake must be one of {OPT_STATE_HANDSHAKES}; "
             f"got {opt_state_handshake!r}"
+        )
+    if validate_transfer_mode(transfer_mode) != "full":
+        raise NotImplementedError(
+            f"transfer_mode={transfer_mode!r} is not supported by the l2co "
+            f"strategy wrapper: a cold switch is implemented in the rl2co "
+            f"environment only (docs/adr/0028). Use transfer_mode='full'."
         )
 
     menu: tuple[OptimizationStep, ...] = tuple(model.stage1_model.optimizers)
