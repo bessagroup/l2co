@@ -60,6 +60,32 @@ count with this budget would see every population cell as short. A
 budget smaller than one iteration (B < e) raises `ValueError` instead of
 returning 0 iterations; only tiny custom settings reach it.
 
+## Optimizers whose population shrinks
+
+Some optimizers start with a large population and shrink it as the run
+goes on, billing only the individuals still alive at each step: JDE21,
+MadDE and NL-SHADE-RSP in l2co-optimizers (#60, #61, #62). MadDE, for
+example, starts at 2·d² and ends at 4. Dividing B by the starting size
+would stop such a run at a fraction of its budget (l2co#121).
+
+Such an entry declares the number of steps itself. Its `UpdateClass`
+subclass defines `generations_for_budget(B, d)`, which returns the number
+of steps its shrink schedule needs to spend exactly B. The budget
+function looks the method up by name (`getattr(optimizer,
+"generations_for_budget", None)`); the `UpdateClass` base class does not
+change, so each entry adds the method itself.
+- When the method exists, the budget function returns its value, called
+  with B and d as plain Python ints. B and d are as above: d is
+  `task.dimensionality`, and the caps apply.
+- The method wins over both rules for e: neither `popsize` (the
+  starting size) nor `max_fevals_per_step` is read.
+- The B < e check is skipped, because `popsize` is only the starting
+  size. A value below 1 raises `ValueError` instead.
+- Every other optimizer keeps ⌊B / e⌋.
+
+Runs that the RL-DAS wrapper in metabbo-jax drives (metabbo-jax#6) step
+the optimizers themselves and do not go through this function.
+
 ## The one core edit
 
 `RunOptimization.run_optimization` (`_src/rollout/dataset_generation.py`)

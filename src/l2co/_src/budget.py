@@ -153,6 +153,12 @@ def evaluations_based_on_dimensionality(
       evaluations past ``B`` are meant to be ignored in
       post-processing.
 
+    An optimizer whose population shrinks during a run (JDE21, MadDE,
+    NL-SHADE-RSP) declares its own number of steps instead: when
+    ``optimizer`` has a ``generations_for_budget(B, d)`` method, this
+    returns its value, called with ``B`` and ``d`` as Python ints. The
+    method wins over both rules for ``e`` (l2co#121).
+
     Dataset generation calls this with the optimizer it built
     (``docs/adr/0026``; the rationale is Section 3.2 of the dataset
     paper's protocol revision). The meta-optimizers, rl2co's training
@@ -176,7 +182,8 @@ def evaluations_based_on_dimensionality(
     Returns
     -------
     int
-        The number of iterations, ``floor(B / e)``.
+        The number of iterations, ``floor(B / e)``, or the value of
+        ``optimizer.generations_for_budget(B, d)`` when it has one.
 
     Raises
     ------
@@ -189,7 +196,10 @@ def evaluations_based_on_dimensionality(
     ValueError
         If ``B < e``: the budget does not pay for one iteration, so the
         run would get 0 iterations. Only tiny custom settings reach
-        this; the decided ones give ``B >= 2000`` at ``d >= 2``.
+        this; the decided ones give ``B >= 2000`` at ``d >= 2``. For an
+        optimizer with ``generations_for_budget``, the check is instead
+        that the hook returns at least 1, because its ``popsize`` is only
+        the starting size.
     """
     if optimizer is None:
         raise TypeError(
@@ -214,6 +224,20 @@ def evaluations_based_on_dimensionality(
         evaluations_per_dimension=evaluations_per_dimension,
         max_evaluations=max_evaluations,
     )
+    generations_for_budget = getattr(optimizer, "generations_for_budget", None)
+    if generations_for_budget is not None:
+        generations = generations_for_budget(
+            int(budget), int(task.dimensionality)
+        )
+        if generations < 1:
+            raise ValueError(
+                f"an evaluation budget of {budget} is less than one "
+                "iteration of this optimizer's shrink schedule: its "
+                f"generations_for_budget returned {generations}, so the "
+                "run would get no iterations. Raise "
+                "evaluations_per_dimension or max_evaluations."
+            )
+        return generations
     per_iteration = _evaluations_per_iteration(optimizer)
     if budget < per_iteration:
         raise ValueError(

@@ -41,6 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged. Options: `weights` (equal by default) and `granularity`
   (`"fevals"`, idealized, or whole `"iterations"`). The schedule is named
   `portfolio(<m1>+<m2>+...)` and its attrs mark it as derived.
+- **Optimizers whose population shrinks get their whole evaluation
+  budget.** `evaluations_based_on_dimensionality` divided the budget B
+  by the optimizer's `popsize`, which for JDE21, MadDE and NL-SHADE-RSP
+  is only the starting size, so their runs spent a fraction of B. An
+  optimizer that defines `generations_for_budget(B, d)` on its
+  `UpdateClass` now gets that many steps instead; it wins over
+  `popsize` and `max_fevals_per_step`, and a value below 1 raises
+  `ValueError`. Every other optimizer keeps floor(B / e) (#121,
+  `docs/adr/0026`).
 
 ## [2.0.1] - 2026-11-08
 

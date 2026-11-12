@@ -6,6 +6,7 @@ about to roll out, so an evaluation budget can turn into the right
 number of iterations (ADR 0026).
 """
 
+import dataclasses
 from functools import partial
 
 import pytest
@@ -99,3 +100,63 @@ def test_a_population_run_spends_at_most_b_evaluations():
     history = sample.stored["loss history"]
     assert history.sizes[BUDGET] == 40 // 6
     assert int(history[FEVALS].isel({BUDGET: -1}).max()) == (40 // 6) * 6
+
+
+@pytest.mark.slow
+def test_a_shrinking_optimizer_runs_the_steps_its_schedule_gives(
+    monkeypatch,
+):
+    # A shrinking-population entry declares generations_for_budget on its
+    # own class (l2co#121); a CMA-ES subclass with a stub hook stands in.
+    calls = []
+    real_init = RolloutWrapper.init
+
+    class _ShrinkingRolloutWrapper:
+        @staticmethod
+        def init(**kwargs):
+            wrapper = real_init(**kwargs)
+            built = wrapper.run_state.update_class
+
+            class _Shrinking(type(built)):
+                def generations_for_budget(self, budget, dimensionality):
+                    calls.append((budget, dimensionality))
+                    return 3
+
+            shrinking = _Shrinking(
+                **{
+                    f.name: getattr(built, f.name)
+                    for f in dataclasses.fields(built)
+                    if f.init
+                }
+            )
+            return dataclasses.replace(
+                wrapper,
+                run_state=dataclasses.replace(
+                    wrapper.run_state, update_class=shrinking
+                ),
+            )
+
+    monkeypatch.setattr(
+        dataset_generation, "RolloutWrapper", _ShrinkingRolloutWrapper
+    )
+    task = create_bbob_task(fn_name="sphere", seed=0, dimensionality=2)
+    # B = 20 * 2 = 40; floor(40 / lambda) would be 40 // 6 = 6 steps.
+    runner = RunOptimization(
+        sampler=normal_sampling,
+        budget_fn=partial(
+            evaluations_based_on_dimensionality, evaluations_per_dimension=20
+        ),
+        seed=0,
+        n_realizations=2,
+        clear_jax_cache=False,
+    )
+    sample = _FakeSample()
+
+    runner.run_optimization(
+        experiment_sample=sample,
+        task=task,
+        optimizer=OptimizationStep("cmaes"),
+    )
+
+    assert calls == [(40, 2)]
+    assert sample.stored["loss history"].sizes[BUDGET] == 3
