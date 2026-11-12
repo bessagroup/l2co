@@ -5,6 +5,9 @@
   ``l2co_optimizers.optimizer_parts`` plus its handshake.
 * ``handshake_policy`` -- which handshake each optimizer gets on a
   switch, and the canonical population layouts.
+* ``handshake`` -- :func:`switch_handshake`, the three steps that hand
+  control to one incoming ``SubOpt``: reset or continue, fold the
+  carried scale in, produce the population.
 * ``menu_eval`` -- menu-dispatched loss evaluation that spends only the
   active optimizer's evaluation width (ADR 0011).
 

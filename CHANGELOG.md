@@ -18,6 +18,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   switch. The behaviour will be implemented in the rl2co environment.
   `l2co_population_strategy` accepts `transfer_mode` (default `"full"`)
   and raises `NotImplementedError` on `"none"`.
+- **`opt_state_handshake="bundle"` on `l2co_population_strategy`**
+  (l2co#120). At a switching stage-1 fire the wrapper now can apply
+  rl2co's three-step handshake: reset or continue the incoming state as
+  `HANDSHAKE_POLICY` says, fold in the scale read from the stage-0
+  optimizer, then take the population from the incoming optimizer's own
+  `ask` (where `own_ask`) or the canonical layout, NaN-padded. This is
+  the handshake an RL2CO policy is deployed with, for a matched
+  comparison. `"legacy_reset"` stays the default, so published L2CO
+  results reproduce; the handshake generation is billed as before
+  (ADR 0004).
+- **`l2co.optimizers.switch_handshake`**: the three steps on one
+  `SubOpt` and a `TransferBundle`, free of any caller's run state, so
+  rl2co's environment and wrappers can share it (ADR 0019).
 
 ## [2.0.1] - 2026-11-08
 
