@@ -25,3 +25,5 @@ initial-sampling history entry exists anywhere on the bridge path,
 so there is nothing to pad (the wrapper's fixed `population_size` =
 max menu popsize only changes the width of `reset`'s hidden,
 uncounted pass).
+
+> Since `docs/adr/0029`, the l2co meta-optimizer also adds each generation's cost, the handshake included, to the strategy's `total_fevals`, which its evaluation-budget stop reads.

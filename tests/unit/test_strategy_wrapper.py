@@ -42,7 +42,11 @@ from l2co import (
 )
 from l2co._src.meta_optimizer import L2COUpdateClass
 from l2co._src.meta_optimizer import l2co_population_based_fn
-from l2co._src.strategy_wrapper import State, l2co_population_strategy
+from l2co._src.strategy_wrapper import (
+    State,
+    _l2co_population_strategy,
+    l2co_population_strategy,
+)
 from l2co.models import MLP, LSTM_Encoder
 from l2co.optimizers import CONF_ABSENT, TransferBundle, grad_sub_optimizer
 from l2co.sampling import normal_sampling
@@ -632,6 +636,129 @@ class TestStage1Fire:
         assert int(state.active_opt_idx) == 0
 
 
+#                                                Evaluation budget (l2co#128)
+# =============================================================================
+
+
+def _make_eval_strategy(max_evaluations, t=T, stage0_idx=0, stage1_idx=1):
+    """The strategy as the meta-optimizer builds it: switch by evaluations."""
+    task = _task()
+    strategy = _l2co_population_strategy(
+        model=_make_model(stage0_idx, stage1_idx),
+        task=task,
+        sampler=normal_sampling,
+        t=t,
+        max_evaluations=max_evaluations,
+    )
+    return strategy, task
+
+
+def _sep_fitness(strategy, value):
+    """Full-width fitness for one sepcmaes generation (menu slot 0)."""
+    n = strategy.population_size
+    return value + 0.1 * jnp.arange(n, dtype=float)
+
+
+class TestEvaluationBudget:
+    def test_total_fevals_counts_each_generations_evaluations(self):
+        strategy, _ = _make_eval_strategy(max_evaluations=1000)
+        sep_popsize = strategy.sub_optimizers[0].popsize
+        _, state = _initial_state(strategy)
+        assert int(state.total_fevals) == 0
+        state = _run_generations(
+            strategy,
+            state,
+            [_sep_fitness(strategy, LOSS_BASE + g) for g in range(3)],
+        )
+        assert int(state.total_fevals) == 3 * sep_popsize
+
+    def test_fires_at_first_ask_once_t_of_the_evaluations_are_spent(self):
+        # B = 50, t = 0.5: stage-1 fires once 25 evaluations are spent,
+        # not after round(t * B) = 25 generations.
+        strategy, _ = _make_eval_strategy(max_evaluations=50, t=0.5)
+        sep_popsize = strategy.sub_optimizers[0].popsize
+        assert sep_popsize > 1
+        generations_to_spend_25 = -(-25 // sep_popsize)
+        _, state = _initial_state(strategy)
+        for g in range(generations_to_spend_25):
+            population, state = strategy.ask(
+                jr.key(100 + g), state, strategy.default_params
+            )
+            assert not bool(state.fired)
+            state, _ = strategy.tell(
+                jr.key(150 + g),
+                population,
+                _sep_fitness(strategy, LOSS_BASE + 10.0 - g),
+                state,
+                strategy.default_params,
+                grads=_zero_grads(population),
+            )
+        assert int(state.total_fevals) >= 25
+        _, state = strategy.ask(jr.key(999), state, strategy.default_params)
+        assert bool(state.fired)
+        assert int(state.active_opt_idx) == 1
+
+    def test_stage1_sees_the_training_grid_length_up_to_t(self):
+        # Stage-1 was trained on histories nearest-resampled onto the
+        # BUDGET_STEPS grid and cut at t (DataLoader.select_t). Under an
+        # evaluation budget it sees that many points, whatever the
+        # number of generations; the raw buffer holds round(t * B).
+        import xarray as xr
+
+        from l2co._src.databank.layout import BUDGET_STEPS
+        from l2co._src.naming import BUDGET
+        from l2co._src.validation import normalize_budget_grid
+
+        grid = normalize_budget_grid(
+            xr.Dataset({"v": (BUDGET, np.arange(50.0))}), BUDGET_STEPS
+        )
+        trained_length = grid.sel(
+            {BUDGET: slice(grid[BUDGET][0].item(), 0.5)}
+        ).sizes[BUDGET]
+
+        seen = []
+
+        class RecordingEncoder(eqx.Module):
+            def __call__(self, x):
+                jax.debug.callback(lambda v: seen.append(np.asarray(v)), x)
+                return jnp.zeros(8)
+
+        task = _task()
+        model = _make_model(0, 1)
+        model = eqx.tree_at(
+            lambda m: m.stage1_model.history_encoder, model, RecordingEncoder()
+        )
+        strategy = _l2co_population_strategy(
+            model=model,
+            task=task,
+            sampler=normal_sampling,
+            t=0.5,
+            max_evaluations=50,
+        )
+        _, state = _initial_state(strategy)
+        assert state.traj_mean.shape == (25,)
+        sep_popsize = strategy.sub_optimizers[0].popsize
+        n_gens = -(-25 // sep_popsize)
+        state = _run_generations(
+            strategy,
+            state,
+            [
+                _sep_fitness(strategy, LOSS_BASE + 10.0 - g)
+                for g in range(n_gens)
+            ],
+        )
+        _, state = strategy.ask(jr.key(999), state, strategy.default_params)
+        assert bool(state.fired)
+        (x_history,) = seen
+        assert x_history.shape[0] == trained_length
+        assert np.isfinite(x_history).all()
+        # The losses fell every generation, so the resampled trajectory
+        # runs from the first generation's value down to the last's.
+        traj = x_history[:, 0]
+        assert (np.diff(traj) <= 0).all()
+        assert traj[0] > traj[-1]
+
+
 #                                                                       Bridge
 # =============================================================================
 
@@ -688,6 +815,41 @@ class TestBridge:
         # Pre-fire generations billed the stage-0 optimizer.
         assert active == 1  # forced switch to adam
 
+    def test_step_fn_bills_lbfgs_line_search_and_matches_total_fevals(self):
+        # stage-0 = lbfgs, never left within these steps. Its line
+        # search evaluates the loss more than once in a step; the history
+        # records that cost, and the history and the strategy's running
+        # count are the same number (l2co#128).
+        task = _task()
+        strategy = _l2co_population_strategy(
+            model=_make_model(1, 1, menu=(SEPCMAES, LBFGS)),
+            task=task,
+            sampler=normal_sampling,
+            t=T,
+            max_evaluations=1000,
+        )
+        _, static = eqx.partition(task.model, eqx.is_inexact_array)
+        init_fn, step_fn = l2co_population_based_fn(
+            strategy=strategy,
+            static=static,
+            loss_fn=task.loss_fn,
+            bounded=(None, None),
+            pass_rng=task.pass_rng,
+        )
+        template = eqx.filter(task.model, eqx.is_inexact_array)
+        population = normal_sampling(
+            jr.key(0), template, strategy.population_size
+        )
+        carry = (population, init_fn(population, jr.key(1)), jr.key(2))
+        billed = []
+        for _ in range(4):
+            carry, history = step_fn(carry, {})
+            billed.append(int(history.fevals))
+        _, state, _ = carry
+        assert int(state.active_opt_idx) == 1
+        assert max(billed) > 1
+        assert sum(billed) == int(state.total_fevals)
+
     def test_l2co_update_registry_contract_via_factory(self):
         # The full disk-loading path is covered by the integration
         # test; here we check the classmethod's non-loading plumbing
@@ -704,7 +866,8 @@ class TestBridge:
             update_class = L2COUpdateClass.l2co_population_update(
                 task=task,
                 opt_hash=1234,
-                budget_fn=lambda *, task: MAX_ITERATIONS,
+                # B = 8 evaluations: t * B = 4 (docs/adr/0029).
+                budget_fn=lambda *, task: 8,
                 stage0_model="unused",
                 stage1_model="unused",
                 t=T,
@@ -716,6 +879,87 @@ class TestBridge:
             _resolved_popsize(step, task) for step in MENU
         )
         assert update_class.hash == 1234
+
+    @staticmethod
+    def _factory(task, budget_fn, stop_fn=None):
+        import l2co._src.models.l2co_model as l2co_model_mod
+
+        model = _make_model(0, 1)
+        original = l2co_model_mod.L2COModel.load
+        l2co_model_mod.L2COModel.load = classmethod(
+            lambda cls, stage0_model, stage1_model: model
+        )
+        try:
+            return L2COUpdateClass.l2co_population_update(
+                task=task,
+                opt_hash=1234,
+                budget_fn=budget_fn,
+                stage0_model="unused",
+                stage1_model="unused",
+                t=T,
+                sampler=normal_sampling,
+                stop_fn=stop_fn,
+            )
+        finally:
+            l2co_model_mod.L2COModel.load = original
+
+    @staticmethod
+    def _state_at(update_class, task, total_fevals):
+        template = eqx.filter(task.model, eqx.is_inexact_array)
+        population = normal_sampling(jr.key(0), template, update_class.popsize)
+        state = update_class.init_fn(population, jr.key(1))
+        return eqx.tree_at(
+            lambda s: s.total_fevals,
+            state,
+            jnp.asarray(total_fevals, dtype=state.total_fevals.dtype),
+        )
+
+    @pytest.mark.parametrize("user_fires", [None, False, True])
+    def test_factory_stop_fn_stops_at_b_or_the_users_stop(self, user_fires):
+        # The factory's stop_fn is (total_fevals >= B) OR the step's own
+        # stopping criteria (l2co#128): the B-stop never replaces the
+        # user's stop, and the user's stop never masks the B-stop.
+        task = _task()
+        b = 8
+        user_stop = (
+            None
+            if user_fires is None
+            else (lambda recent, state: jnp.asarray(user_fires))
+        )
+        update_class = self._factory(
+            task, budget_fn=lambda *, task: b, stop_fn=user_stop
+        )
+        user = bool(user_fires)
+        for spent, b_reached in ((0, False), (b - 1, False), (b, True)):
+            state = self._state_at(update_class, task, spent)
+            assert bool(update_class.stop_fn(None, state)) == (
+                b_reached or user
+            ), (spent, user_fires)
+
+    def test_factory_b_matches_the_runs_scan_length(self):
+        # Dataset generation sizes the run's scan with
+        # budget_fn(task=task, optimizer=update_class); the factory reads
+        # B from budget_fn(task=task). With the schedule budget function
+        # the two agree, so the scan has room for every step B can buy
+        # and the stop sits at the same B (l2co#128).
+        from functools import partial
+
+        from l2co.budget import evaluation_budget
+
+        task = _task()
+        budget_fn = partial(evaluation_budget, evaluations_per_dimension=4)
+        update_class = self._factory(task, budget_fn=budget_fn)
+        b = budget_fn(task=task)
+        assert b == 4 * task.dimensionality
+        assert budget_fn(task=task, optimizer=update_class) == b
+        assert not bool(
+            update_class.stop_fn(
+                None, self._state_at(update_class, task, b - 1)
+            )
+        )
+        assert bool(
+            update_class.stop_fn(None, self._state_at(update_class, task, b))
+        )
 
 
 def _resolved_popsize(step: OptimizationStep, task) -> int:

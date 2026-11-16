@@ -100,6 +100,10 @@ the same jitted rollout machinery as any plain optimizer. The stage-0
 fire happens at construction; the stage-1 fire happens in-graph, once,
 at the switch generation. See the design record in
 `docs/adr/0002-l2co-strategy-canonical-path-via-updateclass-bridge.md`.
+Through the registry the budget is in function evaluations: the
+meta-optimizer switches once `round(t * B)` evaluations are spent and
+stops after the generation that reaches B
+(`docs/adr/0029-the-l2co-meta-optimizer-switches-and-stops-by-evaluations.md`).
 
 ::: l2co.l2co_population_strategy
 

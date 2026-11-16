@@ -6,9 +6,10 @@ stage-0 (scikit) and stage-1 (Equinox) models stored to disk, an
 registry by ``RolloutWrapper.init``, and a jitted, vmapped
 ``batch_evaluate`` rollout. Both fires are forced (constant-output
 stage-0 regressor, one-hot-biased stage-1 head) so the run
-deterministically switches from sepcmaes to adam at the switch
-generation, which the stored history must show via the dynamic
-per-generation ``update_step`` hash.
+deterministically switches from sepcmaes to adam once ``t`` of the
+evaluation budget B is spent, which the stored history must show via
+the dynamic per-generation ``update_step`` hash, and stops after the
+first generation that reaches B (``docs/adr/0029``).
 """
 
 from functools import partial
@@ -29,12 +30,12 @@ from l2co import (
     RolloutWrapper,
     ScikitStage0Model,
 )
-from l2co.budget import fixed_budget
+from l2co.budget import evaluation_budget
 from l2co.models import MLP, LSTM_Encoder, Stage0Loader, Stage1Loader
 from l2co.sampling import normal_sampling
 
-N_ITERATIONS = 8
-T = 0.5  # switch generation = 4
+EVALS_PER_DIM = 150  # B = 300 on the 2-D sphere
+T = 0.5  # stage-1 fires once 150 evaluations are spent
 N_REALIZATIONS = 2
 
 SEPCMAES = OptimizationStep(optimizer="sepcmaes")
@@ -100,11 +101,18 @@ def _store_models(tmp_path):
     Stage1Loader.store(stage1, str(tmp_path / "stage1"))
 
 
-@pytest.mark.slow
-def test_l2co_registry_rollout_switches_at_switch_generation(tmp_path):
+def _rollout(tmp_path, stopping_criteria=None):
+    """Run the stored l2co models through the registry under B = 300.
+
+    Returns ``(task, budget, history_state)``. The run's scan length is
+    what dataset generation gives it,
+    ``budget_fn(task=task, optimizer=update_class)``.
+    """
     _store_models(tmp_path)
     task = create_bbob_task(fn_name="sphere", seed=0, dimensionality=2)
-
+    budget_fn = partial(
+        evaluation_budget, evaluations_per_dimension=EVALS_PER_DIM
+    )
     step = OptimizationStep(
         optimizer="l2co",
         hyperparameters={
@@ -112,51 +120,77 @@ def test_l2co_registry_rollout_switches_at_switch_generation(tmp_path):
             "stage1_model": str(tmp_path / "stage1"),
             "t": T,
             "sampler": normal_sampling,
-            "budget_fn": partial(fixed_budget, budget=N_ITERATIONS),
+            "budget_fn": budget_fn,
             "swap_optimizers": None,
         },
+        stopping_criteria=stopping_criteria or {},
     )
-
     rollout_wrapper = RolloutWrapper.init(
         optimizer=step,
         task=task,
         sampler=normal_sampling,
         key=jr.key(0),
     )
+    n_iterations = budget_fn(
+        task=task, optimizer=rollout_wrapper.run_state.update_class
+    )
     _, _, history_state = rollout_wrapper.batch_evaluate(
         key=jr.key(1),
-        n_iterations=N_ITERATIONS,
+        n_iterations=n_iterations,
         n_realizations=N_REALIZATIONS,
     )
+    return task, budget_fn(task=task), history_state
 
-    switch_generation = round(T * N_ITERATIONS)
+
+@pytest.mark.slow
+def test_l2co_registry_rollout_switches_and_stops_by_evaluations(tmp_path):
+    task, budget, history_state = _rollout(tmp_path)
+    assert budget == 300
+    # The run's scan is B long, the most generations B could buy.
+    assert history_state.update_step.shape == (N_REALIZATIONS, budget)
+
     sep_hash, adam_hash = int(SEPCMAES.hash), int(ADAM.hash)
-
-    assert history_state.update_step.shape == (
-        N_REALIZATIONS,
-        N_ITERATIONS,
-    )
+    switch_fevals = round(T * budget)
     for r in range(N_REALIZATIONS):
-        hashes = [int(h) for h in history_state.update_step[r]]
-        # run_ scans n+1 steps and drops the first entry, so the
-        # stored history covers generations 2..n+1: the stage-0
-        # optimizer owns generations 1..switch_generation (of which
-        # switch_generation - 1 survive the drop) and the switched-to
-        # adam owns the rest.
-        expected = [sep_hash] * (switch_generation - 1) + [adam_hash] * (
-            N_ITERATIONS - switch_generation + 1
-        )
-        assert hashes == expected
+        fevals = np.asarray(history_state.fevals[r])
+        hashes = np.asarray(history_state.update_step[r])
+        ran = fevals > 0
+        n_ran = int(ran.sum())
+        # The generations that ran come first; every later one is a
+        # skipped NaN entry that bills nothing.
+        assert ran[:n_ran].all()
+        assert not ran[n_ran:].any()
+        assert n_ran < budget
+        assert bool(jnp.isnan(history_state.output_min[r, n_ran:]).all())
 
-        # Feval billing follows the active optimizer's popsize.
-        fevals = [int(f) for f in history_state.fevals[r]]
-        sep_popsize = fevals[0]
+        # Stage-0 (sepcmaes) runs until it has spent t * B evaluations;
+        # the next generation is adam's.
+        sep_popsize = int(fevals[0])
         assert sep_popsize > 1
-        assert fevals == [sep_popsize] * (switch_generation - 1) + [1] * (
-            N_ITERATIONS - switch_generation + 1
-        )
+        n_sep = -(-switch_fevals // sep_popsize)
+        assert (hashes[:n_sep] == sep_hash).all()
+        assert (fevals[:n_sep] == sep_popsize).all()
+        assert (hashes[n_sep:n_ran] == adam_hash).all()
 
-        # The recorded losses are real evaluations, above the optimum.
-        mins = history_state.output_min[r]
+        # The run stops after the first generation that reaches B:
+        # adam costs 1, so it overshoots by less than one generation.
+        total = int(fevals.sum())
+        assert budget <= total < budget + 1
+        assert int(fevals[: n_ran - 1].sum()) < budget
+
+        mins = history_state.output_min[r, :n_ran]
         assert bool(jnp.isfinite(mins).all())
         assert bool((mins >= task.global_min).all())
+
+
+@pytest.mark.slow
+def test_l2co_registry_rollout_user_stopping_criteria_still_stop(tmp_path):
+    # A loss tolerance no run can miss stops the run once the recent
+    # history window is full, long before B.
+    _, budget, history_state = _rollout(
+        tmp_path,
+        stopping_criteria={"type": "loss_based", "loss_tol": 1e30},
+    )
+    for r in range(N_REALIZATIONS):
+        fevals = np.asarray(history_state.fevals[r])
+        assert 0 < int(fevals.sum()) < budget // 2
