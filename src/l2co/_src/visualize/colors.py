@@ -13,7 +13,6 @@ from evosax.algorithms.population_based import population_based_algorithms
 # Local
 from l2co_optimizers import (
     lbfgs_mapping,
-    nl_shade_rsp_mapping,
     normalized_evosax,
     optax_mapping,
     optimizers,
@@ -217,12 +216,20 @@ _NAMED_GRADIENT = ("nonlinearcg",)
 _NAMED_MODEL_BASED = ("cobyla", "cobyqa")
 _NAMED_DIRECT_SEARCH = ("mlsl", "neldermead", "powell")
 # The differential-evolution ports with a population-size reduction
-# planned against the budget (jDE21, MadDE, each with its MetaBox twin)
-# are registered from private modules too; NL-SHADE-RSP has a public
-# mapping and is read off it below. MLSL samples the box uniformly and
+# planned against the budget (jDE21, MadDE and NL-SHADE-RSP, each with
+# its MetaBox twin) are named too: the released l2co-optimizers that the
+# docs build installs predates them, so no mapping of theirs is imported
+# here. MLSL samples the box uniformly and
 # runs Powell from the promising points: no gradient and no model, so it
 # sits with the direct searches.
-_NAMED_POPULATION = ("jde21", "jde21metabox", "madde", "maddemetabox")
+_NAMED_POPULATION = (
+    "jde21",
+    "jde21metabox",
+    "madde",
+    "maddemetabox",
+    "nlshadersp",
+    "nlshaderspmetabox",
+)
 
 #: Every categorised optimizer, per category, in the fixed order its
 #: members take their styles in. Read off the registries where they are
@@ -253,7 +260,6 @@ CATEGORY_MEMBERS: dict[str, tuple[str, ...]] = {
                 if cls in population_based_algorithms.values()
             ]
             + list(shade_mapping)
-            + list(nl_shade_rsp_mapping)
             + list(_NAMED_POPULATION)
         )
     ),
