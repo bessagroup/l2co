@@ -35,7 +35,11 @@ ask/tell loop:
   recorded per-generation ``(mean, min)`` loss trajectory through
   :func:`~l2co._src.tree_utils.traj_and_stair` and the stage-1
   network, and argmaxes the logits into the menu. The fire happens at
-  most once (``state.fired``).
+  most once (``state.fired``). The l2co meta-optimizer builds the
+  strategy with ``max_evaluations`` instead: the fire then happens once
+  ``round(t × max_evaluations)`` function evaluations are spent
+  (``state.total_fevals``), and the trajectory is resampled onto the
+  stage-1 training grid first (``docs/adr/0029``).
 
 **Handshake** (``reset_opt_state`` + ``best_one``, reproducing the
 former ``reset_from_stage0`` path). When the stage-1 fire selects a
@@ -107,6 +111,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 import optax
 from jaxtyping import Array, Bool, Float, Int, PRNGKeyArray, PyTree
 from l2co_optimizers import (
@@ -117,6 +122,7 @@ from l2co_optimizers import (
 from l2co_tasks import Task
 
 # Local
+from l2co._src.databank.layout import BUDGET_STEPS
 from l2co._src.models.l2co_model import L2COModel
 from l2co._src.models.stage1 import Stage1Model
 from l2co._src.switching.handshake import switch_handshake
@@ -127,6 +133,7 @@ from l2co._src.switching.handshake_policy import (
 from l2co._src.switching.sub_optimizer import SubOpt, optstep_to_subopt
 from l2co._src.task_bridge import refuse_constraints
 from l2co._src.tree_utils import traj_and_stair
+from l2co._src.validation import budget_grid_coordinates
 
 # =============================================================================
 
@@ -196,6 +203,12 @@ class State(eqx.Module):
     best_fitness : Float[Array, ""]
         Lowest fitness seen so far; ``+inf`` until a finite fitness
         is observed.
+    total_fevals : Int[Array, ""]
+        Function evaluations spent by the completed ``tell``s, each
+        billed through :meth:`SubOpt.bill_fevals` of the sub-optimizer
+        active in it (so an L-BFGS step counts its line-search trials,
+        ``docs/adr/0010``). The unevaluated initial population at
+        ``init`` costs nothing.
     """
 
     population: PyTree
@@ -208,6 +221,7 @@ class State(eqx.Module):
     traj_min: Float[Array, " switch_generation"]
     best_solution: PyTree
     best_fitness: Float[Array, ""]
+    total_fevals: Int[Array, ""]
 
 
 def _nan_safe_argmin(fitness: Float[Array, " n"]) -> Int[Array, ""]:
@@ -337,14 +351,29 @@ def _l2co_population_strategy(
     task: Task,
     sampler: SamplerFunction,
     t: float,
-    max_iterations: int,
+    max_iterations: int | None = None,
     opt_state_handshake: str = "legacy_reset",
     transfer_mode: str = DEFAULT_TRANSFER_MODE,
+    *,
+    max_evaluations: int | None = None,
 ) -> _L2COPopulationStrategy:
     """:func:`l2co_population_strategy` without its constraint check.
 
     For a caller that enforces the task's box itself: the l2co
     meta-optimizer clips every population it is handed (ADR 0020).
+
+    Takes exactly one of ``max_iterations`` (the switch after
+    ``round(t * max_iterations)`` generations, as the public factory)
+    and ``max_evaluations`` (the switch once ``round(t *
+    max_evaluations)`` evaluations are spent, with the stage-1 input
+    resampled onto its training grid; ``docs/adr/0029``).
+
+    Raises
+    ------
+    ValueError
+        If both or neither of ``max_iterations`` and
+        ``max_evaluations`` are given, and as
+        :func:`l2co_population_strategy`.
     """
     if opt_state_handshake not in OPT_STATE_HANDSHAKES:
         raise ValueError(
@@ -362,17 +391,45 @@ def _l2co_population_strategy(
     if not menu:
         raise ValueError("model.stage1_model.optimizers must be non-empty")
 
-    if max_iterations <= 0:
-        raise ValueError(f"max_iterations must be positive; {max_iterations=}")
+    if (max_iterations is None) == (max_evaluations is None):
+        raise ValueError(
+            "give exactly one of max_iterations and max_evaluations; got "
+            f"{max_iterations=}, {max_evaluations=}"
+        )
+    # The switch is counted in generations, or, under an evaluation
+    # budget, in evaluations. Every generation bills at least one
+    # evaluation, so ``round(t * max_evaluations)`` generations also
+    # bound the stage-0 trajectory and size its buffers.
+    budget = max_iterations if max_evaluations is None else max_evaluations
+    budget_name = (
+        "max_iterations" if max_evaluations is None else "max_evaluations"
+    )
+    if budget <= 0:
+        raise ValueError(f"{budget_name} must be positive; got {budget}")
 
-    switch_generation = int(round(t * max_iterations))
-    switch_generation = max(min(switch_generation, max_iterations), 0)
+    switch_generation = int(round(t * budget))
+    switch_generation = max(min(switch_generation, budget), 0)
     if switch_generation == 0:
         raise ValueError(
-            f"switch generation resolved to 0 ({t=}, {max_iterations=}): "
+            f"switch generation resolved to 0 ({t=}, {budget_name}={budget}): "
             f"the stage-1 model cannot fire on an empty trajectory. Use "
-            f"t large enough that round(t * max_iterations) >= 1."
+            f"t large enough that round(t * {budget_name}) >= 1."
         )
+    switch_fevals = None if max_evaluations is None else switch_generation
+    # Under an evaluation budget the stage-1 network sees the stage-0
+    # trajectory resampled onto the points of its training grid up to t
+    # (``DataLoader.select_t``), not the raw per-generation buffer,
+    # whose filled length varies with the stage-0 optimizer's popsize.
+    stage1_history_length = (
+        None
+        if max_evaluations is None
+        else int(np.count_nonzero(budget_grid_coordinates(BUDGET_STEPS) <= t))
+    )
+    history_length = (
+        switch_generation
+        if stage1_history_length is None
+        else stage1_history_length
+    )
 
     if task.global_min is None:
         raise ValueError(
@@ -431,7 +488,7 @@ def _l2co_population_strategy(
         return stage1((task_features, optimizer_features, x_history))
 
     traj_struct = jax.ShapeDtypeStruct(
-        (switch_generation,), jnp.result_type(float)
+        (history_length,), jnp.result_type(float)
     )
     try:
         logits_struct = jax.eval_shape(
@@ -461,6 +518,8 @@ def _l2co_population_strategy(
         population_size=population_size,
         sampler=sampler,
         opt_state_handshake=opt_state_handshake,
+        switch_fevals=switch_fevals,
+        stage1_history_length=stage1_history_length,
     )
 
 
@@ -510,6 +569,20 @@ class _L2COPopulationStrategy(eqx.Module):
         ``"reset"``; ``"bundle"`` runs :meth:`_bundle_handshake`
         instead. See :meth:`_reset_active_substate` and
         ``docs/adr/0009``.
+    switch_fevals : int | None
+        Static. ``None`` (the public :func:`l2co_population_strategy`)
+        fires stage-1 after :attr:`switch_generation` generations. An
+        integer (the l2co meta-optimizer, built with
+        ``max_evaluations``) fires it in the first ``ask`` once
+        ``total_fevals >= switch_fevals``, ``round(t * B)`` evaluations
+        (``docs/adr/0029``); :attr:`switch_generation` is then only the
+        trajectory buffer length.
+    stage1_history_length : int | None
+        Static. ``None``: the stage-1 fire reads the raw buffers. An
+        integer (set with :attr:`switch_fevals`): the fire resamples the
+        generations recorded so far, nearest-neighbour and evenly, onto
+        this many points, the length of the stage-1 training histories
+        cut at ``t`` (``docs/adr/0029``).
     """
 
     stage1_model: Stage1Model
@@ -523,6 +596,8 @@ class _L2COPopulationStrategy(eqx.Module):
     population_size: int = eqx.field(static=True)
     sampler: SamplerFunction = eqx.field(static=True)
     opt_state_handshake: str = eqx.field(static=True, default="legacy_reset")
+    switch_fevals: int | None = eqx.field(static=True, default=None)
+    stage1_history_length: int | None = eqx.field(static=True, default=None)
 
     @property
     def n_opt(self) -> int:
@@ -617,6 +692,7 @@ class _L2COPopulationStrategy(eqx.Module):
             traj_min=jnp.full((self.switch_generation,), jnp.nan),
             best_solution=best_candidate,
             best_fitness=best_fitness,
+            total_fevals=jnp.array(0, dtype=int),
         )
 
     # ---------- helpers -------------------------------------------------
@@ -624,9 +700,12 @@ class _L2COPopulationStrategy(eqx.Module):
     def _fire_stage1(self, state: State) -> State:
         """Run the stage-1 fire and load the new ``active_opt_idx``.
 
-        Deterministic (argmax over logits) — no key needed. The
-        trajectory buffers are full by construction when this runs
-        (``generation_counter >= switch_generation``).
+        Deterministic (argmax over logits) — no key needed. Under a
+        generation switch the trajectory buffers are full when this
+        runs (``generation_counter >= switch_generation``). Under an
+        evaluation switch the ``generation_counter`` generations
+        recorded so far are resampled onto
+        :attr:`stage1_history_length` points first.
 
         Parameters
         ----------
@@ -638,9 +717,15 @@ class _L2COPopulationStrategy(eqx.Module):
         State
             State with the stage-1 choice active and ``fired`` set.
         """
-        x_history = traj_and_stair(
-            state.traj_mean, state.traj_min, self.global_min_const
-        )
+        mean, min_ = state.traj_mean, state.traj_min
+        if self.stage1_history_length is not None:
+            k = self.stage1_history_length
+            n = jnp.clip(state.generation_counter, 1, self.switch_generation)
+            idx = jnp.round(
+                jnp.linspace(0.0, 1.0, k) * (n - 1).astype(float)
+            ).astype(int)
+            mean, min_ = mean[idx], min_[idx]
+        x_history = traj_and_stair(mean, min_, self.global_min_const)
         logits = self.stage1_model(
             (self.task_features, self.optimizer_features, x_history)
         )
@@ -775,7 +860,9 @@ class _L2COPopulationStrategy(eqx.Module):
         )
 
         idx = state.generation_counter
-        write = idx < self.switch_generation
+        write = jnp.logical_and(
+            idx < self.switch_generation, jnp.logical_not(state.fired)
+        )
         safe_idx = jnp.minimum(idx, self.switch_generation - 1)
         new_mean = state.traj_mean.at[safe_idx].set(
             jnp.where(write, mean_loss, state.traj_mean[safe_idx])
@@ -1184,6 +1271,34 @@ class _L2COPopulationStrategy(eqx.Module):
         branches = tuple(make_branch(i) for i in range(self.n_opt))
         return jax.lax.switch(state.active_opt_idx, branches, state)
 
+    def _billed_fevals(self, before: State, after: State) -> Int[Array, ""]:
+        """Evaluations one ``tell`` spent, billed by the active sub-opt.
+
+        Parameters
+        ----------
+        before : State
+            State before the active sub-optimizer's step.
+        after : State
+            State after it.
+
+        Returns
+        -------
+        Int[Array, ""]
+            :meth:`SubOpt.bill_fevals` of the active sub-optimizer.
+        """
+
+        def make_branch(i: int):
+            sub_i = self.sub_optimizers[i]
+
+            def branch(operand) -> Int[Array, ""]:
+                pre, post = operand
+                return sub_i.bill_fevals(pre.sub_states[i], post.sub_states[i])
+
+            return branch
+
+        branches = tuple(make_branch(i) for i in range(self.n_opt))
+        return jax.lax.switch(after.active_opt_idx, branches, (before, after))
+
     # ---------- ask -----------------------------------------------------
 
     def ask(
@@ -1223,10 +1338,11 @@ class _L2COPopulationStrategy(eqx.Module):
         """
         key_reset, key_ask = jr.split(key)
 
-        do_fire = jnp.logical_and(
-            jnp.logical_not(state.fired),
-            state.generation_counter >= self.switch_generation,
-        )
+        if self.switch_fevals is None:
+            due = state.generation_counter >= self.switch_generation
+        else:
+            due = state.total_fevals >= self.switch_fevals
+        do_fire = jnp.logical_and(jnp.logical_not(state.fired), due)
         # Wrap the branch in a lambda: jax hashes branch callables, and
         # a *bound method* hashes through its instance — whose
         # ``MixedEmbedding.embedders`` list is unhashable. Lambdas hash
@@ -1314,13 +1430,17 @@ class _L2COPopulationStrategy(eqx.Module):
         """
         state = self._push_trajectory_entry(state, fitness)
         state = self._update_best(state, population, fitness)
+        before = state
         state = self._tell_dispatch(
             state, population, fitness, grads, value_fn, key
         )
         state = eqx.tree_at(
-            lambda s: s.generation_counter,
+            lambda s: (s.generation_counter, s.total_fevals),
             state,
-            state.generation_counter + 1,
+            (
+                state.generation_counter + 1,
+                state.total_fevals + self._billed_fevals(before, state),
+            ),
         )
 
         safe = jnp.where(jnp.isnan(fitness), jnp.inf, fitness)

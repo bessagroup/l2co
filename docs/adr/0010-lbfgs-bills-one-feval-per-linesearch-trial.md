@@ -201,3 +201,5 @@ a distribution.
   diagnostic.** Preserves comparability with existing data, but leaves
   `AUCEnv` rewarding a converged L-BFGS as though it were free, which
   is the concrete defect that forced this decision.
+
+> Since `docs/adr/0029`, the l2co meta-optimizer's bridge bills through `SubOpt.bill_fevals` too, so its L-BFGS generations record their line-search trials.

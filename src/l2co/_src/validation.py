@@ -69,12 +69,32 @@ def normalize_budget_grid(ds: xr.Dataset, budget_steps: int) -> xr.Dataset:
         {BUDGET: np.linspace(0.0, 1.0, budget_steps, dtype=np.float64)},
         method="nearest",
     )
+    return ds_interp.assign_coords(
+        {BUDGET: budget_grid_coordinates(budget_steps)}
+    )
+
+
+def budget_grid_coordinates(budget_steps: int) -> np.ndarray:
+    """The relabelled ``BUDGET`` coordinate of the canonical grid.
+
+    ``[-step, 0, step, ..., 1]`` with ``step = 1 / (budget_steps - 2)``,
+    the labels :func:`normalize_budget_grid` gives its output (the data
+    at slot ``j`` was sampled at ``j / (budget_steps - 1)``).
+
+    Parameters
+    ----------
+    budget_steps : int
+        Number of grid points, ``>= 3``.
+
+    Returns
+    -------
+    np.ndarray
+        Float64 coordinate of length ``budget_steps``.
+    """
     n = budget_steps - 1
     step = 1.0 / (n - 1)
     arr_interp = np.linspace(0.0, 1.0, n, dtype=np.float64)
-    new_budget_coord = np.concatenate([[-step], arr_interp])
-
-    return ds_interp.assign_coords({BUDGET: new_budget_coord})
+    return np.concatenate([[-step], arr_interp])
 
 
 def validation_fn(

@@ -22,6 +22,7 @@ its ``(init_fn, step_fn)`` lives here for the same reason.
 # Standard
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -142,9 +143,6 @@ def l2co_population_based_fn(
     popsize = strategy.population_size
     default_params = strategy.default_params
     name_hashes = strategy.name_hashes_arr
-    popsizes = jnp.array(
-        [sub.popsize for sub in strategy.sub_optimizers], dtype=int
-    )
     evaluate = menu_loss_and_grad(
         sub_optimizers=strategy.sub_optimizers,
         population_size=popsize,
@@ -217,8 +215,8 @@ def l2co_population_based_fn(
         population, state = strategy.ask(ask_key, state, default_params)
         population = jax.tree.map(lambda p: jnp.clip(p, *bounded), population)
 
-        # The sub-optimizer active *this* generation; drives both the
-        # dynamic history hash and the feval count.
+        # The sub-optimizer active *this* generation; drives the
+        # dynamic history hash and the evaluation width.
         active_idx = state.active_opt_idx
 
         # Eval at the active sub-optimizer's evaluation width: a
@@ -241,6 +239,7 @@ def l2co_population_based_fn(
                 return loss_fn(candidate_model, key=eval_keys[0], **sample)
             return loss_fn(candidate_model, **sample)
 
+        fevals_before = state.total_fevals
         state, _ = strategy.tell(
             tell_key,
             population,
@@ -256,12 +255,65 @@ def l2co_population_based_fn(
             params=population,
             grads=grads,
             update_step=name_hashes[active_idx].astype(int),
-            fevals=popsizes[active_idx],
+            # Billed by the active sub-optimizer (an L-BFGS step counts
+            # its line-search trials, docs/adr/0010): the same number the
+            # strategy adds to ``total_fevals``, which the budget stop
+            # reads (docs/adr/0029).
+            fevals=state.total_fevals - fevals_before,
             iterations=jnp.array(1, dtype=int),
         )
         return (population, state, new_key), history
 
     return init_fn, step_fn
+
+
+#                                                                   Budget stop
+# =============================================================================
+
+
+@dataclasses.dataclass(frozen=True)
+class _StopAtEvaluations:
+    """Stop once the strategy has spent B evaluations, or the user's rule.
+
+    The ``stop_fn`` of the l2co meta-optimizer. ``UpdateClass.step``
+    checks it before each generation, so the generation that brings
+    ``total_fevals`` to B runs and every later one is a skipped NaN
+    entry: the run overshoots B by less than one generation
+    (``docs/adr/0029``). A frozen dataclass rather than a closure so
+    that two builds with the same B compare equal (``stop_fn`` is a
+    static field).
+
+    Attributes
+    ----------
+    max_evaluations : int
+        The evaluation budget B.
+    user_stop : StopFunction | None
+        The step's own stopping criteria (``OptimizationStep.
+        stopping_fn``), OR-ed in; ``None`` adds nothing.
+    """
+
+    max_evaluations: int
+    user_stop: StopFunction | None = None
+
+    def __call__(self, recent_history, opt_state) -> jax.Array:
+        """Whether the next generation is skipped.
+
+        Parameters
+        ----------
+        recent_history : RecentHistory
+            Rolling window of recent entries, for ``user_stop``.
+        opt_state : State
+            The strategy state; its ``total_fevals`` is read.
+
+        Returns
+        -------
+        jax.Array
+            Boolean scalar.
+        """
+        stop = opt_state.total_fevals >= self.max_evaluations
+        if self.user_stop is not None:
+            stop = stop | self.user_stop(recent_history, opt_state)
+        return stop
 
 
 #                                                               L2COUpdateClass
@@ -317,8 +369,12 @@ class L2COUpdateClass(UpdateClass):
         (which performs the stage-0 fire eagerly, at construction),
         and bridges it through :func:`l2co_population_based_fn` so
         the ordinary rollout machinery drives it like any plain
-        optimizer. The stage-1 fire happens in-graph at
-        ``round(t * budget_fn(task=task))`` completed generations.
+        optimizer. The budget is in function evaluations:
+        ``B = budget_fn(task=task)``. The stage-1 fire happens in-graph
+        in the first generation after ``round(t * B)`` evaluations are
+        spent, and the run stops after the first generation that brings
+        the strategy's ``total_fevals`` to B, through ``stop_fn``
+        (``docs/adr/0029``).
 
         This signature matches the meta-optimizer registry contract
         called by :func:`l2co.init_run_state`: ``task``, ``opt_hash``,
@@ -344,14 +400,17 @@ class L2COUpdateClass(UpdateClass):
             only for the ``skip_step`` dummy entry and
             ``OptHistory.init``.
         budget_fn : Callable
-            Budget function called as ``budget_fn(task=task)``
-            (matching ``l2co.budget.fixed_budget`` /
-            ``based_on_dimensionality``). Resolves the budget the
-            switch generation is computed against — it must equal
-            the ``n_iterations`` of the eventual run for ``t`` to
-            keep its meaning. An iteration budget: called without an
-            optimizer, ``evaluations_based_on_dimensionality`` raises
-            (``docs/adr/0026``).
+            Budget function called as ``budget_fn(task=task)``. Returns
+            B, the run's budget in **function evaluations**
+            (``l2co.budget.evaluation_budget``, the budget function of
+            a schedule): the switch point is ``round(t * B)``
+            evaluations and the run stops once B are spent. The run's
+            scan must be at least B long for the stop to be reached;
+            dataset generation's ``budget_fn(task=task,
+            optimizer=update_class)`` gives B for
+            ``evaluation_budget``. Before ``docs/adr/0029`` this was an
+            iteration count; an iteration budget passed here is now
+            read as evaluations.
         stage0_model : str
             Path to the stage-0 model file (without extension),
             forwarded to ``L2COModel.load``.
@@ -393,7 +452,8 @@ class L2COUpdateClass(UpdateClass):
             Box bounds clipped onto every asked population before
             evaluation. ``None`` is treated as ``(None, None)``.
         stop_fn : StopFunction | None, optional
-            Stopping function.
+            The step's own stopping function. OR-ed with the budget
+            stop (``total_fevals >= B``), never replaced by it.
         **hyperparameters
             Ignored; accepted so unrecognised schedule
             hyperparameters do not break the registry call.
@@ -435,14 +495,14 @@ class L2COUpdateClass(UpdateClass):
         if bounded is None:
             bounded = (None, None)
 
-        max_iterations = budget_fn(task=task)
+        max_evaluations = int(budget_fn(task=task))
 
         strategy = _l2co_population_strategy(
             model=model,
             task=task,
             sampler=sampler,
             t=t,
-            max_iterations=max_iterations,
+            max_evaluations=max_evaluations,
         )
 
         _, static = eqx.partition(task.model, eqx.is_inexact_array)
@@ -459,7 +519,9 @@ class L2COUpdateClass(UpdateClass):
             step_fn=step_fn,
             popsize=strategy.population_size,
             hash=opt_hash,
-            stop_fn=stop_fn,
+            stop_fn=_StopAtEvaluations(
+                max_evaluations=max_evaluations, user_stop=stop_fn
+            ),
         )
 
 
