@@ -110,6 +110,54 @@ def test_evaluation_budget_needs_no_optimizer(task_10d):
     assert type(evaluation_budget(task_10d)) is int
 
 
+#                    a schedule's budget function (#127, l2co_experiments#123)
+# =============================================================================
+
+
+def test_a_schedule_gets_b_with_any_optimizer(task_10d):
+    # Dataset generation calls a schedule's budget function as
+    # budget_fn(task=task, optimizer=update_class); the meta-optimizers
+    # call it as budget_fn(task=task). Both get B = 1000 * 10 as the
+    # iteration count, whatever the optimizer is.
+    adam = _built("adam", task_10d, learning_rate=1e-2)
+    cmaes = _built("cmaes", task_10d)
+    step = OptimizationStep("rl2co", hyperparameters={"model": "/m"})
+    for optimizer in (None, adam, cmaes, step):
+        assert evaluation_budget(task=task_10d, optimizer=optimizer) == 10_000
+
+
+def test_a_configured_schedule_budget_takes_the_optimizer(task_10d):
+    # The form a config builds: settings bound, called by the runner.
+    configured = partial(
+        evaluation_budget, evaluations_per_dimension=7, max_evaluations=1_000
+    )
+    cmaes = _built("cmaes", task_10d)
+    assert configured(task=task_10d, optimizer=cmaes) == 70
+    assert configured(task=task_10d) == 70
+
+
+def test_a_schedule_budget_keeps_the_cap_and_the_ambient_dimension(
+    task_1024d,
+):
+    adam = _built("adam", task_1024d, learning_rate=1e-2)
+    assert evaluation_budget(task=task_1024d, optimizer=adam) == 100_000
+    embedded = create_embedded_bbob_task(
+        fn_name="sphere", seed=0, intrinsic_dim=2, ambient_dim=64
+    )
+    step = OptimizationStep("l2co", hyperparameters={})
+    assert evaluation_budget(task=embedded, optimizer=step) == 64_000
+
+
+def test_a_schedule_step_is_not_budgeted_as_one_optimizer(task_10d):
+    # The single-optimizer rule does not guess that a step is a schedule;
+    # its error points schedules at evaluation_budget (ADR 0026).
+    step = OptimizationStep("rl2co", hyperparameters={"model": "/m"})
+    with pytest.raises(TypeError, match="evaluation_budget"):
+        evaluations_based_on_dimensionality(task=task_10d, optimizer=step)
+    with pytest.raises(TypeError, match="schedule.*evaluation_budget"):
+        evaluations_based_on_dimensionality(task=task_10d)
+
+
 def test_iterations_are_the_evaluation_budget_over_e(task_10d):
     # The two functions agree on B for every setting.
     cmaes = _built("cmaes", task_10d)

@@ -32,7 +32,10 @@ are not comparable. See ``docs/adr/0025-stores-carry-a-protocol-stamp.md``.
 The store and the raw files hold each loss as its gap to the task's f*
 (``global_min``); every reader adds f* back in float64, so callers get
 losses. Given ``evaluation_budget=`` (B per task hash), the dump checks
-every cell against its task's B, cuts the scores at B and stores B; given
+every cell against its task's B, cuts the scores at B and stores B (a
+policy schedule's cell -- rl2co or l2co -- must have stopped at the
+first step that reached B, each run on its own; every other cell is
+judged by its iterations); given
 ``run_settings=``, the stamp records them and an append refuses others
 (:class:`RunSettingsError`; :func:`check_run_settings` for a create step).
 An append also refuses a task whose f* differs from the stored one

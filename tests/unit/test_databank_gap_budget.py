@@ -36,6 +36,7 @@ from l2co._src.databank.reader import (
     load_databank_dataset,
     load_loss_raw,
 )
+from l2co._src.databank.provenance import dumps_provenance
 from l2co._src.databank.records import BREACHES_ATTR, _build_task_records
 from l2co._src.databank.verify import verify_databank
 from l2co._src.databank.writer import (
@@ -55,6 +56,7 @@ from l2co.naming import (
     OUTPUT_MEAN,
     OUTPUT_MIN,
     OUTPUT_STD,
+    PROVENANCE,
     REALIZATION,
     SCHEDULE,
     SUCCESS,
@@ -910,3 +912,147 @@ def test_the_dead_tail_changed_no_ertd_value(monkeypatch, pool):
     )
     old = _loader(_TASK_IDS).ertd_profile(realizations=pool)
     xr.testing.assert_identical(new, old)
+
+
+#                     d. a policy schedule stops at B (#127, ADR 0027 d)
+# =============================================================================
+
+RL2CO = OptimizationStep(
+    optimizer="rl2co",
+    hyperparameters={"model": "/some/dir/policy", "policy": "trained"},
+)
+L2CO = OptimizationStep(optimizer="l2co", hyperparameters={"model": "/m"})
+
+
+def _schedule_cell(n: int, *increments) -> xr.Dataset:
+    """A schedule's cell: one list of step costs per realization.
+
+    Each realization runs its own steps, then stops: a stopped run's
+    remaining ``n`` rows cost 0, so its cumulative ``fevals`` stays flat
+    at the final count F, as the run loop writes a stopped cell.
+    """
+    ds = _cell(n, [1])
+    fevals = np.zeros(ds[FEVALS].shape, dtype=int)
+    for r, costs in enumerate(increments):
+        per_step = np.zeros(n, dtype=int)
+        per_step[: len(costs)] = costs
+        fevals[r, :, 0] = np.cumsum(per_step)
+    ds[FEVALS] = ds[FEVALS].copy(data=fevals)
+    return ds
+
+
+def _counters(ds: xr.Dataset) -> xr.Dataset:
+    """Only the two counters, as the template step reads a cell."""
+    return ds[[ITERATIONS, FEVALS]]
+
+
+@pytest.mark.parametrize(
+    "increments",
+    [
+        # F == B, each realization a different F and number of steps.
+        ([10, 10], [5, 15], [1, 1, 18]),
+        # B < F < B + c: the last step (cost 10) crosses B = 20.
+        ([10, 10], [15, 10], [19, 10]),
+        # F == B + c - 1: the largest overshoot that still stopped.
+        ([11, 18], [11, 18], [11, 18]),
+        # A single step that reaches B.
+        ([20], [25], [39]),
+    ],
+)
+def test_a_schedule_cell_that_stopped_at_b_is_accepted(increments):
+    from l2co._src.databank.records import _cell_budget_problem
+
+    ds = _counters(_schedule_cell(8, *increments))
+    for step in (RL2CO, L2CO):
+        assert _cell_budget_problem(step, ds, 20) is None
+
+
+@pytest.mark.parametrize(
+    ("increments", "reason"),
+    [
+        # F == B - 1: stopped short (the 40-decision cap, or too few
+        # iterations); one realization is enough to refuse the cell.
+        (([10, 10], [10, 9], [20]), "stopped short"),
+        # F == B + c: the step before the last already reached B.
+        (([10, 10], [20, 10], [20]), "did not stop"),
+        # Never stopped: an iteration-budget run far past B.
+        (([10] * 8, [10] * 8, [10] * 8), "did not stop"),
+    ],
+)
+def test_a_schedule_cell_that_did_not_stop_at_b_is_refused(increments, reason):
+    from l2co._src.databank.records import _cell_budget_problem
+
+    ds = _counters(_schedule_cell(8, *increments))
+    problem = _cell_budget_problem(RL2CO, ds, 20)
+    assert problem is not None and reason in problem
+    assert "B = 20" in problem or "budget of 20" in problem
+
+
+def _schedule_runs(rundir: Path, task, cells: dict) -> list:
+    """``_cell_runs`` with a provenance record on each policy cell."""
+    from .test_databank_provenance import _make_record
+
+    record = _make_record(rundir / "ckpt", task_hashes=("other",))
+    for step, ds in cells.items():
+        if step.optimizer in ("rl2co", "l2co"):
+            ds.attrs[PROVENANCE] = dumps_provenance(record)
+    return _cell_runs(rundir, task, cells)
+
+
+def test_a_schedule_that_stopped_at_b_is_dumped_beside_single_optimizers(
+    tmp_path,
+):
+    # B = 60: random search 60 steps, CMA-ES 10 steps of 6, and a
+    # schedule whose runs end at 60, 65 and 69 after different numbers
+    # of steps, with a flat tail after the stop.
+    task = FakeTask("sc", "sphere", 10)
+    cells = {
+        RS: _cell(60, [1]),
+        CMA: _cell(10, [6]),
+        RL2CO: _schedule_cell(70, [10] * 6, [5] * 11 + [10], [1] * 59 + [10]),
+    }
+    root = tmp_path / "db"
+    _dump(
+        root,
+        _schedule_runs(tmp_path / "runs", task, cells),
+        evaluation_budget={"sc": 60},
+    )
+    ds = load_databank_dataset(NAME, [RS.name, CMA.name, RL2CO.name], root)
+    assert ds[EVALUATION_BUDGET].sel({TASK_ID: "sc"}).values == 60
+    cost = ds[COST].sel({TASK_ID: "sc", SCHEDULE: RL2CO.name})
+    assert bool(np.isfinite(cost).all())
+
+
+def test_a_schedule_that_ran_past_b_is_refused_before_anything_is_written(
+    tmp_path, tasks, steps
+):
+    root = _two_stores(tmp_path, tasks, steps, {tasks[0].hash: 13})
+    store = layout.zarr_store_path(root, NAME)
+    before = _snapshot(store)
+    # An iteration-budget run: 13 steps of 10 evaluations, far past B.
+    cells = {
+        steps[0]: _cell(13, [1]),
+        L2CO: _schedule_cell(13, *[[10] * 13] * 3),
+    }
+    runs = _schedule_runs(tmp_path / "b", tasks[1], cells)
+    with pytest.raises(ValueError, match="Nothing was written") as err:
+        _dump(root, runs, mode="append", evaluation_budget={tasks[1].hash: 13})
+    assert L2CO.name in str(err.value)
+    assert "did not stop" in str(err.value)
+    assert steps[0].name not in str(err.value)
+    assert _snapshot(store) == before
+
+
+def test_a_single_optimizer_beside_a_schedule_keeps_its_own_rule(tmp_path):
+    # The schedule is fine; CMA-ES spends 66 > B = 60 and is refused by
+    # the fixed-cost rule, as without a schedule beside it.
+    task = FakeTask("mix", "sphere", 10)
+    cells = {
+        CMA: _cell(11, [6]),
+        RL2CO: _schedule_cell(8, [30, 30], [59, 1], [60]),
+    }
+    runs = _schedule_runs(tmp_path / "runs", task, cells)
+    with pytest.raises(ValueError, match=CMA.name) as err:
+        _dump(tmp_path / "db", runs, evaluation_budget={"mix": 60})
+    assert "6 evaluations per iteration" in str(err.value)
+    assert RL2CO.name not in str(err.value)

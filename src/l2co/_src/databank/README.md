@@ -200,8 +200,12 @@ every task of the dump, and:
   A cell whose every iteration costs the same `λ` must have
   `n·λ ≤ B < (n+1)·λ` (`n = B` at one evaluation per iteration); a cell
   whose cost varies (L-BFGS, Nelder-Mead) is budgeted at one evaluation per
-  iteration and must have `n = B`. A mismatch raises `ValueError` naming the
-  task and schedules.
+  iteration and must have `n = B`. A policy schedule's cell (`rl2co` or
+  `l2co` step) is judged per run instead: it must have stopped at the first
+  step that reached B, `P < B ≤ F` with F the run's final `fevals` and P the
+  count before its last step; the flat tail after the stop is ignored and
+  `iterations` is not read (ADR 0027, amendment 2026-11-16). A mismatch
+  raises `ValueError` naming the task and schedules.
 - **the scores are cut at B** (`calculate_ert(..., evaluation_budget=B)`,
   decision e): points with `fevals > B` are ignored, as if each run ended at
   its last point within B. A target first reached after B counts as missed,

@@ -140,8 +140,9 @@ These were left open by the decisions and settled here:
   the alternative, checking in the per-task step, left a fresh store
   half-written, or an append marked mid-append, on a mismatch. The
   per-task step checks again, from the histories it loads anyway.
-- **Policy schedules are checked like any other cell.** How
-  meta-optimizer rows are budgeted is still undecided.
+- **Policy schedules are checked by their own rule** (amendment
+  2026-11-16 below): each run must stop at the first step that
+  reaches B.
 - **Run settings are compared as JSON**: key order and tuple-versus-list
   do not count. `check_run_settings` checks the protocol first, so an
   old store is refused for its protocol, and it passes when the store
@@ -171,3 +172,42 @@ These were left open by the decisions and settled here:
   the per-file attributes and `f_star` carry it.
 - **Deciding the cost model from the optimizer:** the dump has only the
   `OptimizationStep` recipe, not the built optimizer.
+
+## Amendment 2026-11-16 (#123)
+
+Decided in l2co_experiments#123 and done in l2co#127. It replaces the
+line "Policy schedules are checked like any other cell" in d. The ADR
+stays accepted.
+
+**A schedule's cell must have stopped at B.** A schedule (rl2co with a
+trained or random policy, and the `"l2co"` meta-optimizer) gets B
+through `evaluation_budget` and stops itself once its evaluations reach
+B (ADR 0026, amendment 2026-11-16). The dump recognises its cell by the
+step: `step.optimizer` in `POLICY_OPTIMIZERS` (`"l2co"`, `"rl2co"`),
+the same test as the provenance backstop. The random schedule is an
+`rl2co` step with `policy: random`, so it is covered. Every other cell
+keeps the rules in d.
+
+**The rule, per run.** Let F be the run's final evaluation count and c
+what its last step cost. The run is valid when B ≤ F < B + c: it
+stopped at the first step that reached B. Read from `fevals` alone,
+with P the count before the step that reached F (0 if it was the
+first), that is P < B ≤ F. The bound is the last step's observed cost,
+not a bound from the schedule's menu, because the dump has only the
+recipe (see Rejected: deciding the cost model from the optimizer).
+
+- Every run is checked, and runs may differ in F and in their number of
+  steps. `iterations` is not read.
+- The rows after the stop are ignored. A stopped run's history keeps
+  `fevals` flat there (the run loop writes a skipped step as zero
+  evaluations, and the stored counter is cumulative); a zero or
+  non-finite tail is ignored too.
+- **Refused:** a run that stopped short (F < B, for example one that
+  hit the 40-decision cap) and a run that did not stop (P ≥ B, for
+  example a run under an iteration budget). The error names the step,
+  B, F and the last step's cost.
+
+B is stored per task as before, the same B for schedules and single
+optimizers, so an append needs no new check. `calculate_ert` already
+cuts at B (e), so a schedule's overshoot past B needs no new code
+there.
