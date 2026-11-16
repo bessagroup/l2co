@@ -104,6 +104,9 @@ hand-written `lambda task: n` passed to `RunOptimization` now fails with
 
 ## Who keeps the iteration budgets
 
+> Amended 2026-11-16 (#123, l2co#127): the schedules no longer keep
+> iteration budgets. See the amendment at the end.
+
 Callers that have no built optimizer keep calling `budget_fn(task=task)`
 with an iteration budget:
 - the `"l2co"` meta-optimizer (`L2COUpdateClass.l2co_population_update`
@@ -126,12 +129,13 @@ silently using a wrong budget.
   store. Its runner injects its own `budget_fn` into `"l2co"` and
   `"rl2co"` schedules, so those cells raise with the new function until
   that is settled.
-- **What e should be for the meta-optimizers.** By the rule above they
-  get e = `popsize`, which for `"l2co"`, `"rl2co"` and the random
-  meta-policy is the largest `popsize` on their menu. They are billed the
-  active sub-optimizer's cost per step, so a run that switches to a
-  single-point method spends well under B. A menu with L-BFGS can bill
-  more than e per step.
+- **What e should be for the meta-optimizers.** Settled by the
+  amendment below: a schedule gets B and needs no e. Kept for the
+  record: by the rule above they get e = `popsize`, which for `"l2co"`,
+  `"rl2co"` and the random meta-policy is the largest `popsize` on
+  their menu. They are billed the active sub-optimizer's cost per step,
+  so a run that switches to a single-point method spends well under B.
+  A menu with L-BFGS can bill more than e per step.
 
 ## Rejected
 
@@ -140,3 +144,43 @@ In one line each; Section 3.2 of the revision has the reasons.
   which gives L-BFGS ⌊B / 21⌋ iterations.
 - Stopping inside the run loop at B, which edits the core loop.
 - Treating a missing optimizer as e = 1 (above).
+
+## Amendment 2026-11-16 (#123)
+
+Decided in l2co_experiments#123 and done in l2co#127. The ADR stays
+accepted.
+
+**A policy schedule spends B evaluations, not an iteration budget.**
+A schedule (rl2co with a trained or random policy, and the `"l2co"`
+meta-optimizer) runs until its evaluations reach B and then stops
+itself. So its iteration count no longer decides its cost, and it needs
+no e.
+
+**Its budget function is `evaluation_budget`.** `evaluation_budget`
+gains a keyword-only `optimizer=None` that it ignores, so both
+`budget_fn(task=task, optimizer=update_class)` (dataset generation) and
+`budget_fn(task=task)` (the meta-optimizers, rl2co) work. It returns B
+as the iteration count: the most iterations B could buy, at one
+evaluation per iteration. That only sizes the run's scan and history
+buffer. It does not stop the run: the stop is the schedule's own job,
+through `UpdateClass.stop_fn` (rl2co#82; the `"l2co"` meta-optimizer
+in l2co#128).
+
+**`evaluations_based_on_dimensionality` stays for single optimizers.**
+It does not detect a schedule: a built `rl2co` or `l2co` bridge is a
+real `UpdateClass`, so telling it apart would need a marker, and this
+ADR refuses to guess. It still raises `TypeError` without an optimizer
+or with an `OptimizationStep`, and returns ⌊B / e⌋ for any built
+`UpdateClass`. The runner picks the function per row:
+`evaluation_budget` for rl2co and l2co rows,
+`evaluations_based_on_dimensionality` for single optimizers
+(l2co_experiments#124). A schedule row given the single-optimizer
+function is a configuration mistake.
+
+**Who keeps the iteration budgets now:** only callers that still use
+`fixed_budget` or `based_on_dimensionality` on purpose. The `"l2co"`
+meta-optimizer's switch generation (`round(t * budget_fn(task=task))`)
+is reconsidered in l2co#128.
+
+The dump checks that a schedule's cell stopped at B (ADR 0027 d,
+amendment 2026-11-16).

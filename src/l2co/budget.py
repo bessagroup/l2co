@@ -5,7 +5,9 @@ Budget functions: how many iterations a run takes.
 ``evaluations_based_on_dimensionality`` gives every run the same number
 of function evaluations and needs the built optimizer to turn them into
 iterations (``docs/adr/0026``). ``evaluation_budget`` returns that
-number of evaluations, B, and needs no optimizer.
+number of evaluations, B, and needs no optimizer; it is the budget
+function of a policy schedule (rl2co, the l2co meta-optimizer), which
+gets B as its iteration count and stops itself at B evaluations.
 """
 
 #                                                                       Modules

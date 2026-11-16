@@ -6,10 +6,14 @@ generation (:class:`~l2co.optimization.RunOptimization`) calls it as
 ``budget_fn(task=task, optimizer=update_class)``, once the optimizer is
 built; the meta-optimizers call it as ``budget_fn(task=task)``. The
 iteration budgets (:func:`fixed_budget`, :func:`based_on_dimensionality`)
-accept and ignore ``optimizer``. The evaluation budget
+accept and ignore ``optimizer``. The evaluation budget for one optimizer
 (:func:`evaluations_based_on_dimensionality`) needs it, and so works in
 dataset generation only (``docs/adr/0026``). :func:`evaluation_budget`
-returns that rule's number of evaluations, B, and needs no optimizer.
+returns that rule's number of evaluations, B, and accepts and ignores
+``optimizer``: it is the budget function of a policy schedule (rl2co,
+the l2co meta-optimizer), which gets B as its iteration count and stops
+itself once its runs have spent B evaluations (``docs/adr/0026``,
+amendment 2026-11-16). The runner picks the function per row.
 """
 
 #                                                                       Modules
@@ -96,6 +100,8 @@ def evaluation_budget(
     task: Task,
     evaluations_per_dimension: int = 1000,
     max_evaluations: int = 100_000,
+    *,
+    optimizer: object = None,
 ) -> int:
     """
     Return the number of function evaluations a run on ``task`` gets.
@@ -106,6 +112,16 @@ def evaluation_budget(
     optimizer, so it needs none; :func:`evaluations_based_on_dimensionality`
     turns it into iterations for one optimizer (``docs/adr/0026``).
 
+    This is also the budget function of a policy schedule (rl2co, the
+    l2co meta-optimizer): it returns B as the iteration count, the most
+    iterations B could buy at one evaluation per iteration. That only
+    sizes the run's scan and history buffer; the schedule stops itself
+    through ``UpdateClass.stop_fn`` once it has spent B evaluations
+    (``docs/adr/0026``, amendment 2026-11-16). ``optimizer`` is accepted
+    and ignored, so dataset generation's
+    ``budget_fn(task=task, optimizer=update_class)`` and the
+    meta-optimizers' ``budget_fn(task=task)`` both work.
+
     Parameters
     ----------
     task : Task
@@ -114,6 +130,8 @@ def evaluation_budget(
         Function evaluations per dimension of the task, by default 1000.
     max_evaluations : int, optional
         Most function evaluations in one run, by default 100 000.
+    optimizer : object, optional
+        Ignored; accepted so that a schedule's runner can pass it.
 
     Returns
     -------
@@ -161,9 +179,13 @@ def evaluations_based_on_dimensionality(
 
     Dataset generation calls this with the optimizer it built
     (``docs/adr/0026``; the rationale is Section 3.2 of the dataset
-    paper's protocol revision). The meta-optimizers, rl2co's training
-    and the databank's re-run check call their budget function without
-    an optimizer; they keep the iteration budgets.
+    paper's protocol revision). It is for single optimizers only. A
+    built ``rl2co`` or ``l2co`` bridge is an ``UpdateClass`` too, and
+    this returns ``floor(B / e)`` for it without guessing that it is a
+    schedule; a schedule's budget function is :func:`evaluation_budget`,
+    which returns B. The runner picks the function per row, so a
+    schedule row given this function is a configuration mistake
+    (``docs/adr/0026``, amendment 2026-11-16).
 
     Parameters
     ----------
@@ -206,17 +228,18 @@ def evaluations_based_on_dimensionality(
             "evaluations_based_on_dimensionality needs the optimizer: "
             "pass optimizer=<the run's UpdateClass>. It turns an "
             "evaluation budget into iterations, so without the optimizer "
-            "the cost of one iteration is unknown. Callers that cannot "
-            "pass one (the meta-optimizers, rl2co, the databank's re-run "
-            "check) keep an iteration budget such as "
-            "based_on_dimensionality (l2co ADR 0026)."
+            "the cost of one iteration is unknown. A policy schedule "
+            "(rl2co, the l2co meta-optimizer) takes evaluation_budget "
+            "instead, which returns B and needs no optimizer (l2co ADR "
+            "0026)."
         )
     if not isinstance(optimizer, UpdateClass):
         raise TypeError(
             "evaluations_based_on_dimensionality needs the built "
             f"optimizer, an UpdateClass; got {type(optimizer).__name__}. "
-            "Dataset generation passes the run state's update_class "
-            "(l2co ADR 0026)."
+            "Dataset generation passes the run state's update_class. A "
+            "policy schedule's budget function is evaluation_budget, "
+            "not this one (l2co ADR 0026)."
         )
 
     budget = evaluation_budget(

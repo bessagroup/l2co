@@ -119,8 +119,58 @@ def to_gap(ds: xr.Dataset, f_star: float) -> xr.Dataset:
     return out
 
 
-def _cell_budget_problem(ds: xr.Dataset, budget: int) -> str | None:
+def _schedule_budget_problem(ds: xr.Dataset, budget: int) -> str | None:
+    """Why a policy schedule's cell did not stop at B, or ``None``.
+
+    A schedule (rl2co, the l2co meta-optimizer) runs until its
+    evaluations reach B and then stops itself, so each run must end
+    with ``B <= F < B + c``: F is the run's final evaluation count and
+    c what its last step cost. Read from ``fevals`` alone, that is
+    ``P < B <= F``, where P is the count before the step that reached
+    F (0 if it was the first). Runs may differ in F and in their number
+    of steps. The rows after the stop are not read: the run loop
+    leaves ``fevals`` flat there (a zero or non-finite tail is ignored
+    too). ``iterations`` is not read (ADR 0027 d, amendment 2026-11-16).
+    """
+    fevals = ds[FEVALS].astype(np.float64).transpose(..., BUDGET).values
+    problems = []
+    for run, counts in enumerate(fevals.reshape(-1, fevals.shape[-1])):
+        counts = np.where(np.isfinite(counts), counts, -np.inf)
+        final = counts.max(initial=0.0)
+        reached = int(np.argmax(counts == final))
+        before = counts[:reached].max(initial=0.0)
+        if before < budget <= final:
+            continue
+        if final < budget:
+            problems.append(
+                f"run {run} stopped short at {int(final)} evaluations"
+            )
+        else:
+            problems.append(
+                f"run {run} did not stop at B: it ended at {int(final)} "
+                f"evaluations, and its last step (cost "
+                f"{int(final - before)}) began at {int(before)}, already "
+                "at or past B"
+            )
+    if not problems:
+        return None
+    return (
+        "it is a policy schedule, which must stop at the first step that "
+        f"reaches its evaluation budget B = {budget}, but "
+        + "; ".join(problems)
+    )
+
+
+def _cell_budget_problem(
+    step: OptimizationStep, ds: xr.Dataset, budget: int
+) -> str | None:
     """Why one cell does not match the evaluation budget, or ``None``.
+
+    A policy schedule's cell (``step.optimizer`` in
+    :data:`~l2co._src.databank.provenance.POLICY_OPTIMIZERS`: rl2co,
+    trained or random, and the l2co meta-optimizer) must have stopped
+    at B (:func:`_schedule_budget_problem`). Every other cell is judged
+    by its iterations, as follows.
 
     ``n`` is the cell's number of iterations (the ``iterations``
     counter's maximum) and its cost per iteration is read from the
@@ -130,6 +180,8 @@ def _cell_budget_problem(ds: xr.Dataset, budget: int) -> str | None:
     cost varies (L-BFGS, Nelder-Mead) is budgeted at one evaluation per
     iteration and must have ``n == B`` (ADR 0026, ADR 0027).
     """
+    if step.optimizer in POLICY_OPTIMIZERS:
+        return _schedule_budget_problem(ds, budget)
     n_values = np.unique(ds[ITERATIONS].max(BUDGET).values)
     if n_values.size != 1 or not np.isfinite(n_values[0]):
         return (
@@ -178,7 +230,7 @@ def _task_budget_problem(
     problems = {
         step.name: problem
         for step, ds in ds_by_step.items()
-        if (problem := _cell_budget_problem(ds, budget)) is not None
+        if (problem := _cell_budget_problem(step, ds, budget)) is not None
     }
     if not problems:
         return None
@@ -192,7 +244,9 @@ def _task_budget_problem(
 _BUDGET_REMEDY = (
     "Every run of a task gets the same B (l2co ADR 0026); re-run these "
     "cells with the budget function's iterations, or pass the B they "
-    "were run with (l2co ADR 0027)."
+    "were run with (l2co ADR 0027). A policy schedule (rl2co, l2co) "
+    "takes evaluation_budget as its budget function and must stop at "
+    "the first step that reaches B (l2co ADR 0027 d)."
 )
 
 
