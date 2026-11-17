@@ -20,6 +20,18 @@ import l2co
 # required learning rate); everything else builds from its defaults.
 _REQUIRED = {"learning_rate": 1e-2}
 _NEEDS_BOUNDS = {"shade", "turbo", "rbftrustregion"}
+# Ports that sample or clip to the box and read it from ``bounded`` only.
+_NEEDS_BOX = {"jde21", "jde21metabox", "mlsl"}
+# Differential-evolution ports that plan their population-size reduction
+# against the run's evaluation budget and refuse to build without it.
+_NEEDS_BUDGET = {
+    "jde21",
+    "jde21metabox",
+    "madde",
+    "maddemetabox",
+    "nlshadersp",
+    "nlshaderspmetabox",
+}
 
 
 @pytest.fixture(scope="module", params=[False, True], ids=["det", "noisy"])
@@ -81,6 +93,10 @@ def test_every_bare_factory_builds_and_steps_through_the_bridge(name, task):
     kwargs = dict(task=task, opt_hash=1)
     if name in _NEEDS_BOUNDS:
         kwargs.update(bounded=(-5.0, 5.0), x_min=-5.0, x_max=5.0)
+    if name in _NEEDS_BOX:
+        kwargs.update(bounded=(-5.0, 5.0))
+    if name in _NEEDS_BUDGET:
+        kwargs.update(max_fevals=4000)
     try:
         update_class = factory(**kwargs)
     except TypeError:

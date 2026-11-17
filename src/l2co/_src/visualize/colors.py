@@ -214,7 +214,22 @@ _NAMED_QUASI_NEWTON = (
 )
 _NAMED_GRADIENT = ("nonlinearcg",)
 _NAMED_MODEL_BASED = ("cobyla", "cobyqa")
-_NAMED_DIRECT_SEARCH = ("neldermead", "powell")
+_NAMED_DIRECT_SEARCH = ("mlsl", "neldermead", "powell")
+# The differential-evolution ports with a population-size reduction
+# planned against the budget (jDE21, MadDE and NL-SHADE-RSP, each with
+# its MetaBox twin) are named too: the released l2co-optimizers that the
+# docs build installs predates them, so no mapping of theirs is imported
+# here. MLSL samples the box uniformly and
+# runs Powell from the promising points: no gradient and no model, so it
+# sits with the direct searches.
+_NAMED_POPULATION = (
+    "jde21",
+    "jde21metabox",
+    "madde",
+    "maddemetabox",
+    "nlshadersp",
+    "nlshaderspmetabox",
+)
 
 #: Every categorised optimizer, per category, in the fixed order its
 #: members take their styles in. Read off the registries where they are
@@ -245,6 +260,7 @@ CATEGORY_MEMBERS: dict[str, tuple[str, ...]] = {
                 if cls in population_based_algorithms.values()
             ]
             + list(shade_mapping)
+            + list(_NAMED_POPULATION)
         )
     ),
     CATEGORY_MODEL_BASED: tuple(
@@ -275,6 +291,11 @@ OPTIMIZER_CATEGORIES: dict[str, str] = {
 #: vision is OKLab dE 15.1 (population's lighter green against
 #: model-based gold).
 #:
+#: Population-based has a third, darker green (one L step below, chroma
+#: eased to 85% to stay in gamut) since the differential-evolution ports
+#: took it to 14 members, past two shades times six patterns; it leaves
+#: the worst cross-category pair at dE 15.1.
+#:
 #: Quasi-Newton's second shade steps *darker*: a lighter purple drifts
 #: toward the blues, dropping its protanopic distance to them from 4.5 to
 #: 3.5, while the darker one keeps every other category at dE >= 18.1
@@ -303,7 +324,7 @@ CATEGORY_PALETTES: dict[str, tuple[str, ...]] = {
         "#d45624",
         "#e9693a",
     ),
-    CATEGORY_POPULATION: ("#089d49", "#29b159"),
+    CATEGORY_POPULATION: ("#148840", "#089d49", "#29b159"),
     CATEGORY_MODEL_BASED: ("#bd9f13",),
     CATEGORY_DIRECT_SEARCH: ("#014441",),
 }
