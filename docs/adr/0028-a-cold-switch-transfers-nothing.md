@@ -21,8 +21,9 @@ in `l2co._src.switching.handshake_policy`, next to
 `POPULATION_VARIANTS` and `OPT_STATE_VARIANTS`. `validate_transfer_mode`
 rejects any other name. `DEFAULT_TRANSFER_MODE` is `"full"`, and every
 caller that accepts a mode defaults to it. The mode is a tuple of string
-constants, like the table's variants, so a third mode (σ only, no shape,
-left to the rl2co#68 grilling) is an addition, not a breaking change.
+constants, like the table's variants, so a third mode would be an
+addition, not a breaking change. (No third mode is planned; see "Update
+2026-11-17" below.)
 
 **The mode is orthogonal to the table.** The table is a property of the
 *optimizer*: can its state survive an iterate jump. The mode is a
@@ -96,3 +97,24 @@ take the same guard in the rl2co change.
   callers that only pass `full` or `none` are unaffected.
 - The strategy wrapper refuses `none` at construction rather than
   silently running a full handshake.
+
+## Update 2026-11-17: no third mode, and the bridges still need `none`
+
+The rl2co#68 grilling
+(https://github.com/bessagroup/rl2co/issues/68#issuecomment-6945646737)
+settled the modes:
+
+- **`TRANSFER_MODES` stays `("full", "none")`.** `full` carries only the
+  best point and σ, because the transfer bundle holds no shape (ADR
+  0013). A middle mode (σ only, or a fresh state at the best point) adds
+  nothing: the hand-over of the best point and the width both measured
+  as helpful. Shape transfer did not help in any of three runs (BBOB
+  10/40D scripted oracle, 65 pairs at 10/40D, CUTEst near 100D and
+  embedded BBOB at 256/1024D), so it is closed.
+- **A learned per-switch choice is deferred.** It is built only if fixed
+  always-`full` and always-`none` arms each win on some segment
+  (l2co_experiments#84).
+- **The rl2co deployment bridges still ignore `transfer_mode`,** so a
+  databank row configured with `none` silently runs `full`. Neither the
+  cold start nor the refusal described above has landed there yet.
+  rl2co#84 tracks it.
