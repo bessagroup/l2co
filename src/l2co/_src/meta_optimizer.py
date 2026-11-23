@@ -356,6 +356,7 @@ class L2COUpdateClass(UpdateClass):
         feature_processor_impute: Mapping[str, Any] | None = None,
         bounded: tuple[float | None, float | None] | None = (None, None),
         stop_fn: StopFunction | None = None,
+        opt_state_handshake: str = "legacy_reset",
         **hyperparameters,
     ) -> UpdateClass:
         """Construct an ``UpdateClass`` running the L2CO strategy.
@@ -454,6 +455,17 @@ class L2COUpdateClass(UpdateClass):
         stop_fn : StopFunction | None, optional
             The step's own stopping function. OR-ed with the budget
             stop (``total_fevals >= B``), never replaced by it.
+        opt_state_handshake : str, optional
+            Which ``opt_state`` handshake the stage-1 switch applies,
+            forwarded to the strategy factory: ``"legacy_reset"``
+            (default), ``"per_optimizer"`` or ``"bundle"`` (see
+            :data:`~l2co._src.strategy_wrapper.OPT_STATE_HANDSHAKES`
+            and :func:`~l2co._src.strategy_wrapper.
+            l2co_population_strategy`). A step opts in by declaring it
+            in its ``hyperparameters``. It does not enter the step's
+            :attr:`OptimizationStep.name` (the ``l2co`` namer uses only
+            the checkpoint stems and ``t``), so two steps differing only
+            in this mode share a name unless given distinct ``alias``es.
         **hyperparameters
             Ignored; accepted so unrecognised schedule
             hyperparameters do not break the registry call.
@@ -471,8 +483,9 @@ class L2COUpdateClass(UpdateClass):
         ValueError
             Propagated from the strategy factory: empty menu,
             stage-0 choice missing from the menu, missing
-            ``task.global_min``, zero switch generation, or a
-            non-traceable stage-1 model. Also propagated from
+            ``task.global_min``, zero switch generation, a
+            non-traceable stage-1 model, or an ``opt_state_handshake``
+            outside ``OPT_STATE_HANDSHAKES``. Also propagated from
             ``FeatureProcessor.with_imputation`` when
             ``feature_processor_impute`` names a feature the
             processor does not encode, or gives a fill value outside
@@ -502,6 +515,7 @@ class L2COUpdateClass(UpdateClass):
             task=task,
             sampler=sampler,
             t=t,
+            opt_state_handshake=opt_state_handshake,
             max_evaluations=max_evaluations,
         )
 
@@ -537,7 +551,8 @@ class L2COUpdateClass(UpdateClass):
 # (``docs/adr/0007``). ``task``, ``opt_hash``, ``bounded`` and ``stop_fn``
 # are explicit parameters; the remaining construction arguments
 # (``budget_fn``, ``stage0_model``, ``stage1_model``, ``t``, ``sampler``,
-# ``swap_optimizers``) flow in through the step's ``**hyperparameters``.
+# ``swap_optimizers``, ``opt_state_handshake``) flow in through the
+# step's ``**hyperparameters``.
 register_optimizer("l2co", L2COUpdateClass.l2co_population_update)
 
 
