@@ -881,7 +881,7 @@ class TestBridge:
         assert update_class.hash == 1234
 
     @staticmethod
-    def _factory(task, budget_fn, stop_fn=None):
+    def _factory(task, budget_fn, stop_fn=None, **hyperparameters):
         import l2co._src.models.l2co_model as l2co_model_mod
 
         model = _make_model(0, 1)
@@ -899,6 +899,7 @@ class TestBridge:
                 t=T,
                 sampler=normal_sampling,
                 stop_fn=stop_fn,
+                **hyperparameters,
             )
         finally:
             l2co_model_mod.L2COModel.load = original
@@ -960,6 +961,46 @@ class TestBridge:
         assert bool(
             update_class.stop_fn(None, self._state_at(update_class, task, b))
         )
+
+    @pytest.mark.parametrize(
+        ("hyperparameters", "expected"),
+        [
+            ({}, "legacy_reset"),
+            ({"opt_state_handshake": "bundle"}, "bundle"),
+            ({"opt_state_handshake": "per_optimizer"}, "per_optimizer"),
+        ],
+    )
+    def test_factory_forwards_opt_state_handshake(
+        self, monkeypatch, hyperparameters, expected
+    ):
+        # A step's hyperparameters reach the factory as keyword
+        # arguments (the registry call in init_run_state). The handshake
+        # mode among them must reach the strategy, not vanish into
+        # **hyperparameters; without one the default stays legacy_reset.
+        import l2co._src.meta_optimizer as meta_mod
+
+        built = []
+        original = meta_mod._l2co_population_strategy
+
+        def spy(*args, **kwargs):
+            strategy = original(*args, **kwargs)
+            built.append(strategy)
+            return strategy
+
+        monkeypatch.setattr(meta_mod, "_l2co_population_strategy", spy)
+        self._factory(_task(), budget_fn=lambda *, task: 8, **hyperparameters)
+        assert len(built) == 1
+        assert built[0].opt_state_handshake == expected
+
+    def test_factory_rejects_unknown_opt_state_handshake(self):
+        # An unknown mode is refused by the strategy's own validation,
+        # not silently dropped.
+        with pytest.raises(ValueError, match="opt_state_handshake"):
+            self._factory(
+                _task(),
+                budget_fn=lambda *, task: 8,
+                opt_state_handshake="reset_everything",
+            )
 
 
 def _resolved_popsize(step: OptimizationStep, task) -> int:
