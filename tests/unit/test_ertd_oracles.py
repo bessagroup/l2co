@@ -300,7 +300,9 @@ def test_the_four_oracles_draw_distinct_black_lines(by: str) -> None:
     names = ("sbs", "vbs", "vbs_task", "vbs_budget")
     styles = get_schedule_styles([*names, "cmaes"], by=by)
     oracle = [styles[s] for s in names]
-    assert {st.color for st in oracle} == {"#000000"}
+    assert {styles[s].color for s in names[:3]} == {"#000000"}
+    # vbs_budget runs close to vbs_task: grey, and not randomsearch's grey.
+    assert styles["vbs_budget"].color not in ("#000000", "#888888")
     assert len({st.linestyle for st in oracle}) == 4
 
 

@@ -139,8 +139,9 @@ BASE_OPT_STYLES.update(
         # drew rl2co black, and the manuscript describes it as black.
         "rl2co": OptStyle(color="#000000", marker="o", linestyle="-"),
         "randomsearch": OptStyle(color="#888888", marker=None, linestyle=":"),
-        # The four oracle references: black, and each in its own broken
-        # line so none reads as one of the portfolio's solid curves.
+        # The four oracle references: black (vbs_budget grey), each in
+        # its own broken line so none reads as one of the portfolio's
+        # solid curves.
         #
         # "sbs" -- the single best solver, one optimizer for the whole task
         # set (`DataLoader.single_best_schedule`).
@@ -157,11 +158,13 @@ BASE_OPT_STYLES.update(
         "vbs_task": OptStyle(color="#000000", marker=None, linestyle="-."),
         # "vbs_budget" -- the per-task, per-cost virtual best solver: on
         # each task and at each cost, the best curve any candidate reaches
-        # (l2co_experiments' ertd_report, oracle_pick="auc"). It may know
-        # the most of the four, so it gets the densest broken line,
-        # dash-dot-dot. An exact key, so it pins ahead of base "vbs".
+        # (l2co_experiments' ertd_report, oracle_pick="auc"). It runs
+        # close to vbs_task, so it is the one oracle in grey (a darker
+        # grey than randomsearch's), and it may know the most of the four,
+        # so it gets the densest broken line, dash-dot-dot. An exact key,
+        # so it pins ahead of base "vbs".
         "vbs_budget": OptStyle(
-            color="#000000", marker=None, linestyle=(0, (3, 1, 1, 1, 1, 1))
+            color="#6E6E6E", marker=None, linestyle=(0, (3, 1, 1, 1, 1, 1))
         ),
         # "random_best_of_N" -- the best-of-N random-schedule reference,
         # `ertd_profile(include_random_best=...)`: per task, the best run
