@@ -40,6 +40,17 @@ from l2co_tasks import Task
 # Local
 from l2co._src.data_validation import _ert_from_quantile, loss_column_name
 from l2co._src.databank.provenance import POLICY_OPTIMIZERS
+
+# Schedules that stop themselves at the first step reaching the
+# evaluation budget B, so a run's number of iterations depends on the
+# members it ran: the policy schedules (which also need a provenance
+# record) plus rl2co's untrained ones, the uniform-random and the
+# scripted (fixed) schedules, which have no checkpoint to trace.
+SELF_STOPPING_OPTIMIZERS = (
+    *POLICY_OPTIMIZERS,
+    "rl2co-random",
+    "rl2co-scripted",
+)
 from l2co._src.performance import global_min_breaches
 from l2co._src.validation import normalize_budget_grid
 from l2co.naming import (
@@ -166,10 +177,10 @@ def _cell_budget_problem(
 ) -> str | None:
     """Why one cell does not match the evaluation budget, or ``None``.
 
-    A policy schedule's cell (``step.optimizer`` in
-    :data:`~l2co._src.databank.provenance.POLICY_OPTIMIZERS`: rl2co,
-    trained or random, and the l2co meta-optimizer) must have stopped
-    at B (:func:`_schedule_budget_problem`). Every other cell is judged
+    A schedule's cell (``step.optimizer`` in
+    :data:`SELF_STOPPING_OPTIMIZERS`: rl2co, trained, random or
+    scripted, and the l2co meta-optimizer) must have stopped at B
+    (:func:`_schedule_budget_problem`). Every other cell is judged
     by its iterations, as follows.
 
     ``n`` is the cell's number of iterations (the ``iterations``
@@ -180,7 +191,7 @@ def _cell_budget_problem(
     cost varies (L-BFGS, Nelder-Mead) is budgeted at one evaluation per
     iteration and must have ``n == B`` (ADR 0026, ADR 0027).
     """
-    if step.optimizer in POLICY_OPTIMIZERS:
+    if step.optimizer in SELF_STOPPING_OPTIMIZERS:
         return _schedule_budget_problem(ds, budget)
     n_values = np.unique(ds[ITERATIONS].max(BUDGET).values)
     if n_values.size != 1 or not np.isfinite(n_values[0]):
