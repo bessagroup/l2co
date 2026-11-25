@@ -291,22 +291,24 @@ def test_single_best_scores_add_up_over_task_shards(shard_size: int) -> None:
 
 
 @pytest.mark.parametrize("by", ["optimizer", "category"])
-def test_the_three_oracles_draw_distinct_black_lines(by: str) -> None:
+def test_the_four_oracles_draw_distinct_black_lines(by: str) -> None:
     """Each oracle keeps its own dash pattern, in either colouring mode.
 
-    ``vbs_task`` must not collapse onto base ``vbs``'s style through the
-    ``split("_")[0]`` fallback.
+    ``vbs_task`` and ``vbs_budget`` must not collapse onto base
+    ``vbs``'s style through the ``split("_")[0]`` fallback.
     """
-    styles = get_schedule_styles(["sbs", "vbs", "vbs_task", "cmaes"], by=by)
-    oracle = [styles[s] for s in ("sbs", "vbs", "vbs_task")]
+    names = ("sbs", "vbs", "vbs_task", "vbs_budget")
+    styles = get_schedule_styles([*names, "cmaes"], by=by)
+    oracle = [styles[s] for s in names]
     assert {st.color for st in oracle} == {"#000000"}
-    assert len({st.linestyle for st in oracle}) == 3
+    assert len({st.linestyle for st in oracle}) == 4
 
 
 def test_oracle_labels_name_their_granularity() -> None:
     assert display_name("sbs") == "SBS"
     assert display_name("vbs") == "VBS (per run)"
     assert display_name("vbs_task") == "VBS (per task)"
+    assert display_name("vbs_budget") == "VBS (per task and cost)"
 
 
 def test_the_best_of_n_reference_has_its_own_style_and_label() -> None:

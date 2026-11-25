@@ -60,13 +60,15 @@ class OptStyle:
         Hex colour code, by default ``"#000000"``.
     marker : str or None
         Matplotlib marker symbol, by default ``None``.
-    linestyle : str
-        Matplotlib linestyle string, by default ``"-"``.
+    linestyle : str or tuple
+        Matplotlib linestyle: a named string, or an ``(offset, (on, off,
+        ...))`` dash tuple once the four named styles are taken; by
+        default ``"-"``.
     """
 
     color: str = "#000000"
     marker: str | None = None
-    linestyle: str = "-"
+    linestyle: str | tuple = "-"
 
 
 BASE_OPT_STYLES = {
@@ -137,7 +139,7 @@ BASE_OPT_STYLES.update(
         # drew rl2co black, and the manuscript describes it as black.
         "rl2co": OptStyle(color="#000000", marker="o", linestyle="-"),
         "randomsearch": OptStyle(color="#888888", marker=None, linestyle=":"),
-        # The three oracle references: black, and each in its own broken
+        # The four oracle references: black, and each in its own broken
         # line so none reads as one of the portfolio's solid curves.
         #
         # "sbs" -- the single best solver, one optimizer for the whole task
@@ -153,6 +155,14 @@ BASE_OPT_STYLES.update(
         # dashed sbs and the dotted vbs, as it is between them in what it
         # may know. An exact key, so it pins ahead of base "vbs".
         "vbs_task": OptStyle(color="#000000", marker=None, linestyle="-."),
+        # "vbs_budget" -- the per-task, per-cost virtual best solver: on
+        # each task and at each cost, the best curve any candidate reaches
+        # (l2co_experiments' ertd_report, oracle_pick="auc"). It may know
+        # the most of the four, so it gets the densest broken line,
+        # dash-dot-dot. An exact key, so it pins ahead of base "vbs".
+        "vbs_budget": OptStyle(
+            color="#000000", marker=None, linestyle=(0, (3, 1, 1, 1, 1, 1))
+        ),
         # "random_best_of_N" -- the best-of-N random-schedule reference,
         # `ertd_profile(include_random_best=...)`: per task, the best run
         # of the random schedule. Black like the oracles it sits beside
@@ -500,6 +510,7 @@ LABEL_MAP = {
     "sbs": "SBS",
     "vbs": "VBS (per run)",
     "vbs_task": "VBS (per task)",
+    "vbs_budget": "VBS (per task and cost)",
     "random_best_of_N": "Best of N random (per task)",
     # "l2co": r"\textbf{L2CO (Ours)}",  # You can even use LaTeX bold here
     "stage0": r"L2CO ($g_\text{first}$)",
