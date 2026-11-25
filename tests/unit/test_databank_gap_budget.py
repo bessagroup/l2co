@@ -922,6 +922,16 @@ RL2CO = OptimizationStep(
     hyperparameters={"model": "/some/dir/policy", "policy": "trained"},
 )
 L2CO = OptimizationStep(optimizer="l2co", hyperparameters={"model": "/m"})
+SCRIPTED = OptimizationStep(
+    optimizer="rl2co-scripted",
+    hyperparameters={
+        "policy": "scripted",
+        "schedule_spec": {"family": "round_robin", "tau": 10},
+    },
+)
+RANDOM = OptimizationStep(
+    optimizer="rl2co-random", hyperparameters={"policy": "random"}
+)
 
 
 def _schedule_cell(n: int, *increments) -> xr.Dataset:
@@ -963,7 +973,7 @@ def test_a_schedule_cell_that_stopped_at_b_is_accepted(increments):
     from l2co._src.databank.records import _cell_budget_problem
 
     ds = _counters(_schedule_cell(8, *increments))
-    for step in (RL2CO, L2CO):
+    for step in (RL2CO, L2CO, SCRIPTED, RANDOM):
         assert _cell_budget_problem(step, ds, 20) is None
 
 
@@ -1056,3 +1066,38 @@ def test_a_single_optimizer_beside_a_schedule_keeps_its_own_rule(tmp_path):
         _dump(tmp_path / "db", runs, evaluation_budget={"mix": 60})
     assert "6 evaluations per iteration" in str(err.value)
     assert RL2CO.name not in str(err.value)
+
+
+@pytest.mark.parametrize("step", [SCRIPTED, RANDOM])
+def test_an_untrained_schedule_that_ran_past_b_is_refused(step):
+    # The scripted and random schedules get the stop-at-B rule too, so
+    # a run past B is still refused, by that rule.
+    from l2co._src.databank.records import _cell_budget_problem
+
+    ds = _counters(_schedule_cell(8, *[[10] * 8] * 3))
+    problem = _cell_budget_problem(step, ds, 20)
+    assert problem is not None and "did not stop" in problem
+
+
+def test_a_scripted_schedule_is_dumped_without_a_provenance_record(
+    tmp_path,
+):
+    # A fixed schedule's runs stop at B after different numbers of
+    # steps (its members spend different evaluations per iteration),
+    # and it has no checkpoint, so its cell carries no provenance.
+    task = FakeTask("scr", "sphere", 10)
+    cells = {
+        RS: _cell(60, [1]),
+        SCRIPTED: _schedule_cell(
+            70, [10] * 6, [5] * 11 + [10], [1] * 59 + [10]
+        ),
+    }
+    root = tmp_path / "db"
+    _dump(
+        root,
+        _cell_runs(tmp_path / "runs", task, cells),
+        evaluation_budget={"scr": 60},
+    )
+    ds = load_databank_dataset(NAME, [RS.name, SCRIPTED.name], root)
+    cost = ds[COST].sel({TASK_ID: "scr", SCHEDULE: SCRIPTED.name})
+    assert bool(np.isfinite(cost).all())
